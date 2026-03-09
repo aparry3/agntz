@@ -1,7 +1,7 @@
 {
   "name": "@agent-runner/studio",
   "version": "0.1.0",
-  "description": "Development studio for agent-runner — visual agent editor, playground, tool catalog, and eval dashboard",
+  "description": "Development studio for agent-runner \u2014 visual agent editor, playground, tool catalog, and eval dashboard",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -26,7 +26,8 @@
     "dev:ui": "vite --config vite.config.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "tsup && vite build"
   },
   "keywords": [
     "ai",

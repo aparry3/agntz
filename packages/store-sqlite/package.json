@@ -1,7 +1,7 @@
 {
   "name": "@agent-runner/store-sqlite",
   "version": "0.1.0",
-  "description": "SQLite store adapter for agent-runner — single-server production storage",
+  "description": "SQLite store adapter for agent-runner \u2014 single-server production storage",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -19,7 +19,8 @@
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "tsup"
   },
   "dependencies": {
     "better-sqlite3": "^11.8.1"

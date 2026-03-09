@@ -31,7 +31,8 @@
     "test:watch": "vitest",
     "bench": "vitest bench",
     "lint": "biome check src/",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "tsup"
   },
   "keywords": [
     "ai",
@@ -62,11 +63,21 @@
     "@opentelemetry/api": "^1.0.0"
   },
   "peerDependenciesMeta": {
-    "@ai-sdk/anthropic": { "optional": true },
-    "@ai-sdk/google": { "optional": true },
-    "@ai-sdk/openai": { "optional": true },
-    "@modelcontextprotocol/sdk": { "optional": true },
-    "@opentelemetry/api": { "optional": true }
+    "@ai-sdk/anthropic": {
+      "optional": true
+    },
+    "@ai-sdk/google": {
+      "optional": true
+    },
+    "@ai-sdk/openai": {
+      "optional": true
+    },
+    "@modelcontextprotocol/sdk": {
+      "optional": true
+    },
+    "@opentelemetry/api": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",

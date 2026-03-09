@@ -1,7 +1,7 @@
 {
   "name": "@agent-runner/store-postgres",
   "version": "0.1.0",
-  "description": "PostgreSQL store adapter for agent-runner — multi-server production storage",
+  "description": "PostgreSQL store adapter for agent-runner \u2014 multi-server production storage",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -19,7 +19,8 @@
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "tsup"
   },
   "dependencies": {
     "pg": "^8.13.0"
