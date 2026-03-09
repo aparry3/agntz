@@ -23,6 +23,7 @@ Usage:
 Commands:
   init              Scaffold a new agent-runner project
   invoke <agentId>  Invoke an agent (requires agent-runner.config.ts)
+  eval <agentId>    Run eval suite for an agent
   studio            Launch the Studio UI
 
 Options:
@@ -59,6 +60,9 @@ async function main() {
       break;
     case "invoke":
       await cmdInvoke(args.slice(1));
+      break;
+    case "eval":
+      await cmdEval(args.slice(1));
       break;
     case "studio":
       await cmdStudio();
@@ -184,6 +188,70 @@ async function cmdInvoke(args: string[]) {
       for (const tc of result.toolCalls) {
         console.log(`  • ${tc.name} (${tc.duration}ms)`);
       }
+    }
+  } catch (error) {
+    console.error(`❌ ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// eval — run eval suite
+// ═══════════════════════════════════════════════════════════════════
+
+async function cmdEval(args: string[]) {
+  if (args.length < 1) {
+    console.error("Usage: agent-runner eval <agentId>");
+    process.exit(1);
+  }
+
+  const agentId = args[0];
+
+  const configPath = resolve(process.cwd(), "agent-runner.config.ts");
+  if (!existsSync(configPath)) {
+    console.error("❌ No agent-runner.config.ts found. Run `agent-runner init` first.");
+    process.exit(1);
+  }
+
+  try {
+    const config = await import(configPath);
+    const runner = config.default;
+
+    if (!runner?.eval) {
+      console.error("❌ agent-runner.config.ts must export a Runner as default.");
+      process.exit(1);
+    }
+
+    console.log(`🧪 Running evals for "${agentId}"...\n`);
+
+    const result = await runner.eval(agentId, {
+      onProgress: (completed: number, total: number, name: string) => {
+        if (name !== "done") {
+          console.log(`  [${completed + 1}/${total}] ${name}...`);
+        }
+      },
+    });
+
+    // Print results
+    console.log("");
+    for (const tc of result.testCases) {
+      const icon = tc.passed ? "✅" : "❌";
+      console.log(`${icon} ${tc.name} (score: ${(tc.score * 100).toFixed(0)}%)`);
+      for (const a of tc.assertions) {
+        const aIcon = a.passed ? "  ✓" : "  ✗";
+        console.log(`${aIcon} [${a.type}] ${a.reason ?? ""}`);
+      }
+    }
+
+    console.log(`\n─── Summary ───`);
+    console.log(`Total:    ${result.summary.total}`);
+    console.log(`Passed:   ${result.summary.passed}`);
+    console.log(`Failed:   ${result.summary.failed}`);
+    console.log(`Score:    ${(result.summary.score * 100).toFixed(1)}%`);
+    console.log(`Duration: ${result.duration}ms`);
+
+    if (result.summary.failed > 0) {
+      process.exit(1);
     }
   } catch (error) {
     console.error(`❌ ${error instanceof Error ? error.message : String(error)}`);

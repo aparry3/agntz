@@ -18,6 +18,10 @@ export { AISDKModelProvider } from "./model-provider.js";
 export { MCPClientManager } from "./mcp/client-manager.js";
 export type { MCPTool } from "./mcp/client-manager.js";
 
+// Eval
+export { runEval } from "./eval.js";
+export type { AssertionResult, EvalRunOptions } from "./eval.js";
+
 // Errors
 export {
   AgentRunnerError,

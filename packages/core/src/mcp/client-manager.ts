@@ -96,12 +96,15 @@ export class MCPClientManager {
       const { StdioClientTransport } = await import(
         "@modelcontextprotocol/sdk/client/stdio.js"
       );
+      const mergedEnv: Record<string, string> = {};
+      for (const [k, v] of Object.entries(process.env)) {
+        if (v !== undefined) mergedEnv[k] = v;
+      }
+      if (config.env) Object.assign(mergedEnv, config.env);
       transport = new StdioClientTransport({
         command: config.command,
         args: config.args,
-        env: config.env
-          ? { ...process.env, ...config.env }
-          : (process.env as Record<string, string>),
+        env: mergedEnv,
       });
     } else if (config.url) {
       // HTTP/SSE transport

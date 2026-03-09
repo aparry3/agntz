@@ -33,6 +33,8 @@ import {
   ToolExecutionError,
   ToolNotFoundError,
 } from "./errors.js";
+import { runEval } from "./eval.js";
+import type { EvalRunOptions } from "./eval.js";
 
 /** Maximum tool call iterations to prevent infinite loops */
 const DEFAULT_MAX_STEPS = 10;
@@ -205,6 +207,32 @@ export class Runner {
         this.contextStore.addContext(contextId, { ...entry, contextId }),
       clear: (contextId: string) => this.contextStore.clearContext(contextId),
     };
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Evaluation
+  // ═══════════════════════════════════════════════════════════════════
+
+  /**
+   * Run the eval suite for an agent.
+   */
+  async eval(
+    agentId: string,
+    options: {
+      testCases?: import("./types.js").EvalTestCase[];
+      signal?: AbortSignal;
+      onProgress?: (completed: number, total: number, testCase: string) => void;
+    } = {}
+  ): Promise<import("./types.js").EvalResult> {
+    const agent = await this.resolveAgent(agentId);
+
+    return runEval(agent, {
+      testCases: options.testCases,
+      invoke: (aid, input, opts) => this.invoke(aid, input, opts),
+      modelProvider: this.modelProvider,
+      signal: options.signal,
+      onProgress: options.onProgress,
+    });
   }
 
   // ═══════════════════════════════════════════════════════════════════
