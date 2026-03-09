@@ -36,6 +36,13 @@
     "mcp"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AaronBidworthy/agent-runner.git",
+    "directory": "packages/studio"
+  },
+  "homepage": "https://github.com/AaronBidworthy/agent-runner#readme",
+  "author": "Aaron Bidworthy",
   "dependencies": {
     "@hono/node-server": "^1.19.11",
     "hono": "^4.7.0",

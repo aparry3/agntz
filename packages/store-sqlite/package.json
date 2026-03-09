@@ -41,5 +41,12 @@
     "ai",
     "agents"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AaronBidworthy/agent-runner.git",
+    "directory": "packages/store-sqlite"
+  },
+  "homepage": "https://github.com/AaronBidworthy/agent-runner#readme",
+  "author": "Aaron Bidworthy"
 }

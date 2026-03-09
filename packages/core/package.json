@@ -38,6 +38,13 @@
     "sdk"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AaronBidworthy/agent-runner.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/AaronBidworthy/agent-runner#readme",
+  "author": "Aaron Bidworthy",
   "dependencies": {
     "@ai-sdk/anthropic": "^1.0.0",
     "@ai-sdk/google": "^1.0.0",

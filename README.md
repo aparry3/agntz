@@ -357,6 +357,158 @@ const runner = createRunner({
 });
 ```
 
+## MCP Integration
+
+Use tools from any MCP-compatible server:
+
+```typescript
+const runner = createRunner({
+  mcp: {
+    servers: {
+      github: { url: "http://localhost:3001/mcp" },
+      filesystem: { command: "npx", args: ["-y", "@anthropic/mcp-fs"] },
+    },
+  },
+});
+
+runner.registerAgent(defineAgent({
+  id: "code-reviewer",
+  name: "Code Reviewer",
+  systemPrompt: "Review code from GitHub PRs...",
+  model: { provider: "anthropic", name: "claude-sonnet-4-20250514" },
+  tools: [
+    { type: "mcp", server: "github", tools: ["get_file_contents"] },
+  ],
+}));
+```
+
+Expose your agents as an MCP server:
+
+```typescript
+import { createMCPServer } from "agent-runner/mcp-server";
+const server = createMCPServer(runner);
+// Each agent becomes a callable MCP tool
+```
+
+## Evals
+
+Built-in evaluation with assertions, LLM-as-judge, and CI integration:
+
+```typescript
+runner.registerAgent(defineAgent({
+  id: "classifier",
+  name: "Classifier",
+  systemPrompt: "Classify support tickets...",
+  model: { provider: "openai", name: "gpt-4o" },
+  eval: {
+    rubric: "Must correctly classify the ticket category",
+    testCases: [
+      {
+        name: "billing issue",
+        input: "I was charged twice",
+        assertions: [
+          { type: "contains", value: "billing" },
+          { type: "llm-rubric", value: "Response identifies this as a billing issue" },
+        ],
+      },
+    ],
+  },
+}));
+
+// Run evals programmatically
+const results = await runner.eval("classifier");
+console.log(results.summary);
+// → { total: 1, passed: 1, failed: 0, score: 1.0 }
+```
+
+Assertion types: `contains`, `not-contains`, `regex`, `json-schema`, `llm-rubric`, `semantic-similar`, plus custom assertion plugins.
+
+## Session Strategies
+
+Control how conversation history is managed:
+
+```typescript
+const runner = createRunner({
+  session: {
+    maxMessages: 50,
+    strategy: "sliding",   // Keep last N messages (default)
+    // strategy: "summary", // LLM-summarizes old messages, keeps recent
+    // strategy: "none",    // Keep all messages (no trimming)
+  },
+});
+```
+
+The `summary` strategy uses the agent's model to compress older messages while keeping recent context intact — great for long-running conversations.
+
+## Retry & Error Recovery
+
+Configurable retry with exponential backoff for transient failures:
+
+```typescript
+const result = await runner.invoke("writer", "Hello", {
+  retry: {
+    maxRetries: 3,
+    initialDelayMs: 1000,
+    backoffMultiplier: 2,
+  },
+});
+```
+
+## Graceful Shutdown
+
+Clean up MCP connections and flush stores:
+
+```typescript
+// Close all connections
+await runner.shutdown();
+
+// Or handle process signals
+process.on("SIGTERM", async () => {
+  await runner.shutdown();
+  process.exit(0);
+});
+```
+
+## Studio
+
+Visual development UI for defining, testing, and debugging agents:
+
+```bash
+npx agent-runner studio
+```
+
+Or embed in your app:
+
+```typescript
+import { createStudio } from "@agent-runner/studio";
+const studio = createStudio(runner);
+studio.listen(4000);
+
+// Or as middleware
+import { studioMiddleware } from "@agent-runner/studio/middleware";
+app.use("/studio", studioMiddleware(runner));
+```
+
+**Studio pages:** Agent Editor, Tool Catalog, MCP Servers, Playground, Evals Dashboard, Context Browser, Sessions, Logs.
+
+## SQLite Store
+
+For production single-server deployments:
+
+```bash
+npm install @agent-runner/store-sqlite
+```
+
+```typescript
+import { SqliteStore } from "@agent-runner/store-sqlite";
+
+const runner = createRunner({
+  store: new SqliteStore("./data.db"),
+});
+```
+
+WAL mode enabled by default, automatic migrations, full-text search on logs.
+
 ## CLI
 
 ```bash
@@ -366,18 +518,20 @@ npx agent-runner init
 # Invoke an agent
 npx agent-runner invoke greeter "Hello!"
 
-# Launch the Studio (coming soon)
+# Run evals
+npx agent-runner eval classifier
+
+# Launch the Studio
 npx agent-runner studio
 ```
 
-## Roadmap
+## Packages
 
-- [x] **Phase 1:** Core SDK — createRunner, invoke, agents, tools, stores ✅
-- [x] **Phase 1.5:** Streaming + typed errors ✅
-- [ ] **Phase 2:** MCP integration + context strategies
-- [ ] **Phase 3:** Studio UI (visual agent editor, playground, logs)
-- [ ] **Phase 4:** Eval system (assertions, LLM-as-judge, CI)
-- [ ] **Phase 5:** Production hardening (SQLite, retries, graceful shutdown)
+| Package | Description |
+|---|---|
+| `agent-runner` | Core SDK — createRunner, invoke, agents, tools, stores |
+| `@agent-runner/studio` | Development UI — agent editor, playground, evals dashboard |
+| `@agent-runner/store-sqlite` | SQLite store adapter for production use |
 
 ## License
 
