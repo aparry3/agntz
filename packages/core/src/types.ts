@@ -113,6 +113,8 @@ export interface InvokeOptions {
   signal?: AbortSignal;
   /** Maximum tool call loop iterations (default: 10) */
   maxSteps?: number;
+  /** @internal Recursion depth tracker for agent-as-tool chains */
+  _recursionDepth?: number;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -314,6 +316,21 @@ export interface RunnerConfig {
     temperature?: number;
     maxTokens?: number;
   };
+
+  /** Retry configuration for model calls */
+  retry?: {
+    /** Maximum number of retries (default: 2) */
+    maxRetries?: number;
+    /** Initial delay in milliseconds (default: 1000) */
+    initialDelayMs?: number;
+    /** Backoff multiplier (default: 2) */
+    backoffMultiplier?: number;
+    /** Maximum delay in milliseconds (default: 30000) */
+    maxDelayMs?: number;
+  };
+
+  /** Maximum recursion depth for agent-as-tool chains (default: 3) */
+  maxRecursionDepth?: number;
 }
 
 export interface MCPServerConfig {

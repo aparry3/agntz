@@ -30,14 +30,20 @@ import {
   AgentNotFoundError,
   InvocationCancelledError,
   MaxStepsExceededError,
+  MaxRecursionDepthError,
   ToolExecutionError,
   ToolNotFoundError,
 } from "./errors.js";
 import { runEval } from "./eval.js";
 import type { EvalRunOptions } from "./eval.js";
+import { withRetry } from "./utils/retry.js";
+import type { RetryConfig } from "./utils/retry.js";
 
 /** Maximum tool call iterations to prevent infinite loops */
 const DEFAULT_MAX_STEPS = 10;
+
+/** Default maximum recursion depth for agent-as-tool chains */
+const DEFAULT_MAX_RECURSION_DEPTH = 3;
 
 /**
  * The Runner. Central orchestrator for agent-runner.
@@ -534,6 +540,13 @@ export class Runner {
    * Invoke an agent. This is the main entry point for running an agent.
    */
   async invoke(agentId: string, input: string, options: InvokeOptions = {}): Promise<InvokeResult> {
+    // Check recursion depth for agent-as-tool chains
+    const currentDepth = options._recursionDepth ?? 0;
+    const maxDepth = this.config.maxRecursionDepth ?? DEFAULT_MAX_RECURSION_DEPTH;
+    if (currentDepth > maxDepth) {
+      throw new MaxRecursionDepthError(agentId, maxDepth);
+    }
+
     // Ensure MCP servers are connected before resolving tools
     await this.ensureMCPInitialized();
 
@@ -605,14 +618,18 @@ export class Runner {
         ? { name: `${agent.id}_output`, schema: agent.outputSchema }
         : undefined;
 
-      // Call the model
-      const result = await this.modelProvider.generateText({
-        model: modelConfig,
-        messages,
-        tools: availableTools.length > 0 ? availableTools : undefined,
-        outputSchema,
-        signal: options.signal,
-      });
+      // Call the model (with retry)
+      const result = await withRetry(
+        () => this.modelProvider.generateText({
+          model: modelConfig,
+          messages,
+          tools: availableTools.length > 0 ? availableTools : undefined,
+          outputSchema,
+          signal: options.signal,
+        }),
+        this.config.retry,
+        options.signal,
+      );
 
       // Accumulate usage
       totalUsage.promptTokens += result.usage.promptTokens;
@@ -635,10 +652,14 @@ export class Runner {
           sessionId: options.sessionId,
           contextIds: options.contextIds,
           invocationId,
+          _recursionDepth: currentDepth,
           invoke: (agentId: string, input: string, opts?: InvokeOptions) =>
-            this.invoke(agentId, input, opts),
+            this.invoke(agentId, input, {
+              ...opts,
+              _recursionDepth: (opts?._recursionDepth ?? currentDepth) + 1,
+            }),
           ...(options.toolContext ?? {}),
-        };
+        } as ToolContext;
 
         let output: unknown;
         let error: string | undefined;
@@ -646,6 +667,10 @@ export class Runner {
         try {
           output = await this.toolRegistry.execute(tc.name, tc.args, toolCtx);
         } catch (err) {
+          // Propagate critical errors instead of swallowing them
+          if (err instanceof MaxRecursionDepthError || err instanceof InvocationCancelledError) {
+            throw err;
+          }
           error = err instanceof Error ? err.message : String(err);
           output = { error };
         }
@@ -870,6 +895,7 @@ export class Runner {
     // We use a simple schema: { input: string }
     const { z } = require("zod");
 
+    const self = this;
     const agentTool: ToolDefinition = {
       name: toolName,
       description,
@@ -877,7 +903,11 @@ export class Runner {
         input: z.string().describe("The input/question to send to the agent"),
       }),
       async execute(input: { input: string }, ctx: ToolContext) {
-        const result = await ctx.invoke(agentId, input.input);
+        // Pass recursion depth through to prevent infinite agent chains
+        const parentDepth = (ctx as any)._recursionDepth ?? 0;
+        const result = await ctx.invoke(agentId, input.input, {
+          _recursionDepth: parentDepth + 1,
+        });
         return { output: result.output, toolCalls: result.toolCalls.length };
       },
     };

@@ -129,6 +129,41 @@ export class MaxStepsExceededError extends AgentRunnerError {
 }
 
 /**
+ * Thrown when agent-as-tool recursion exceeds the max depth.
+ */
+export class MaxRecursionDepthError extends AgentRunnerError {
+  readonly maxDepth: number;
+  readonly agentId: string;
+
+  constructor(agentId: string, maxDepth: number) {
+    super(
+      "MAX_RECURSION_DEPTH",
+      `Agent "${agentId}" exceeded maximum recursion depth (${maxDepth}). This may indicate circular agent-as-tool references.`,
+    );
+    this.name = "MaxRecursionDepthError";
+    this.agentId = agentId;
+    this.maxDepth = maxDepth;
+  }
+}
+
+/**
+ * Thrown when a model call fails after all retries are exhausted.
+ */
+export class RetryExhaustedError extends AgentRunnerError {
+  readonly attempts: number;
+
+  constructor(attempts: number, cause?: Error) {
+    super(
+      "RETRY_EXHAUSTED",
+      `Model call failed after ${attempts} attempts: ${cause?.message ?? "unknown error"}`,
+      { cause },
+    );
+    this.name = "RetryExhaustedError";
+    this.attempts = attempts;
+  }
+}
+
+/**
  * Thrown when agent definition validation fails.
  */
 export class ValidationError extends AgentRunnerError {

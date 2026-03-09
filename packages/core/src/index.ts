@@ -17,6 +17,12 @@ export { AISDKModelProvider } from "./model-provider.js";
 // MCP
 export { MCPClientManager } from "./mcp/client-manager.js";
 export type { MCPTool } from "./mcp/client-manager.js";
+export { createMCPServer } from "./mcp/server.js";
+export type { MCPServerOptions } from "./mcp/server.js";
+
+// Utilities
+export { withRetry } from "./utils/retry.js";
+export type { RetryConfig } from "./utils/retry.js";
 
 // Eval
 export { runEval } from "./eval.js";
@@ -32,6 +38,8 @@ export {
   ProviderNotFoundError,
   InvocationCancelledError,
   MaxStepsExceededError,
+  MaxRecursionDepthError,
+  RetryExhaustedError,
   ValidationError,
 } from "./errors.js";
 
