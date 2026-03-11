@@ -33,7 +33,7 @@
     "vitest": "^2.0.0"
   },
   "peerDependencies": {
-    "@agent-runner/core": ">=0.1.1"
+    "@agent-runner/core": ">=0.1.2"
   },
   "keywords": [
     "agent-runner",
