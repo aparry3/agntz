@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { createRunner, defineAgent, defineTool, MemoryStore } from "agent-runner";
-import type { Runner } from "agent-runner";
+import { createRunner, defineAgent, defineTool, MemoryStore } from "@agent-runner/core";
+import type { Runner } from "@agent-runner/core";
 import { createStudioAPI } from "../src/server/api.js";
 import { z } from "zod";
 

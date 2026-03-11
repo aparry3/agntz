@@ -70,12 +70,12 @@ importers:
         specifier: ^8.13.0
         version: 8.20.0
     devDependencies:
+      '@agent-runner/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/pg':
         specifier: ^8.11.0
         version: 8.18.0
-      agent-runner:
-        specifier: workspace:*
-        version: link:../core
       tsup:
         specifier: ^8.0.0
         version: 8.5.1(postcss@8.5.8)(typescript@5.9.3)
@@ -92,12 +92,12 @@ importers:
         specifier: ^11.8.1
         version: 11.10.0
     devDependencies:
+      '@agent-runner/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/better-sqlite3':
         specifier: ^7.6.12
         version: 7.6.13
-      agent-runner:
-        specifier: workspace:*
-        version: link:../core
       tsup:
         specifier: ^8.0.0
         version: 8.5.1(postcss@8.5.8)(typescript@5.9.3)
@@ -126,6 +126,9 @@ importers:
         specifier: ^7.13.1
         version: 7.13.1(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
     devDependencies:
+      '@agent-runner/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
@@ -138,9 +141,6 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^5.1.4
         version: 5.1.4(vite@7.3.1(@types/node@22.19.15))
-      agent-runner:
-        specifier: workspace:*
-        version: link:../core
       tsup:
         specifier: ^8.4.0
         version: 8.5.1(postcss@8.5.8)(typescript@5.9.3)

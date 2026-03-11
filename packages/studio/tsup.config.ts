@@ -8,6 +8,6 @@ export default defineConfig({
   format: ["esm"],
   dts: true,
   clean: true,
-  external: ["agent-runner"],
+  external: ["@agent-runner/core"],
   sourcemap: true,
 });

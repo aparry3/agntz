@@ -2,7 +2,7 @@
 // Studio middleware exports for embedding in existing apps
 // ═══════════════════════════════════════════════════════════════════════
 
-import type { Runner } from "agent-runner";
+import type { Runner } from "@agent-runner/core";
 import { createStudioAPI } from "./server/api.js";
 
 /**

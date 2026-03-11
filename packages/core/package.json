@@ -1,5 +1,5 @@
 {
-  "name": "agent-runner",
+  "name": "@agent-runner/core",
   "version": "0.1.0",
   "description": "TypeScript SDK for defining, running, and evaluating AI agents with first-class MCP support and pluggable storage",
   "type": "module",
@@ -42,13 +42,16 @@
     "typescript",
     "sdk"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/aparryopenclaw/agent-runner.git",
+    "url": "https://github.com/aparry3/agent-runner.git",
     "directory": "packages/core"
   },
-  "homepage": "https://github.com/aparryopenclaw/agent-runner#readme",
+  "homepage": "https://github.com/aparry3/agent-runner#readme",
   "author": "Aaron Bidworthy",
   "dependencies": {
     "ai": "^4.3.0",

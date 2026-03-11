@@ -6,5 +6,5 @@ export default defineConfig({
   dts: true,
   clean: true,
   sourcemap: true,
-  external: ["pg", "agent-runner"],
+  external: ["pg", "@agent-runner/core"],
 });

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import type { Runner } from "agent-runner";
+import type { Runner } from "@agent-runner/core";
 
 /**
  * Create the Studio API routes. Binds to a Runner instance's stores and tools.

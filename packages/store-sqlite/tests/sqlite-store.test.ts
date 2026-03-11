@@ -5,7 +5,7 @@ import type {
   Message,
   ContextEntry,
   InvocationLog,
-} from "agent-runner";
+} from "@agent-runner/core";
 
 describe("SqliteStore", () => {
   let store: SqliteStore;

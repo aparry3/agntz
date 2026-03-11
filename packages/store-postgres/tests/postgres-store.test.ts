@@ -4,7 +4,7 @@ import type {
   Message,
   ContextEntry,
   InvocationLog,
-} from "agent-runner";
+} from "@agent-runner/core";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Mock pg.Pool — defined BEFORE vi.mock due to hoisting

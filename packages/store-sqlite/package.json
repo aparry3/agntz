@@ -26,14 +26,14 @@
     "better-sqlite3": "^11.8.1"
   },
   "devDependencies": {
-    "agent-runner": "workspace:*",
+    "@agent-runner/core": "workspace:*",
     "@types/better-sqlite3": "^7.6.12",
     "tsup": "^8.0.0",
     "typescript": "^5.7.0",
     "vitest": "^2.0.0"
   },
   "peerDependencies": {
-    "agent-runner": ">=0.1.0"
+    "@agent-runner/core": ">=0.1.0"
   },
   "keywords": [
     "agent-runner",
@@ -42,13 +42,16 @@
     "ai",
     "agents"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/aparryopenclaw/agent-runner.git",
+    "url": "https://github.com/aparry3/agent-runner.git",
     "directory": "packages/store-sqlite"
   },
-  "homepage": "https://github.com/aparryopenclaw/agent-runner#readme",
+  "homepage": "https://github.com/aparry3/agent-runner#readme",
   "author": "Aaron Bidworthy",
   "engines": {
     "node": ">=20.0.0"

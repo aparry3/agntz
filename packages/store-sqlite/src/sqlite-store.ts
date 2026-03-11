@@ -12,7 +12,7 @@ import type {
   ContextEntry,
   InvocationLog,
   LogFilter,
-} from "agent-runner";
+} from "@agent-runner/core";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Schema Migrations

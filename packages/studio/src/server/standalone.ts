@@ -1,6 +1,6 @@
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
-import type { Runner } from "agent-runner";
+import type { Runner } from "@agent-runner/core";
 import { createStudioAPI } from "./api.js";
 import { existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
@@ -20,7 +20,7 @@ export interface StudioOptions {
  *
  * @example
  * ```ts
- * import { createRunner } from "agent-runner";
+ * import { createRunner } from "@agent-runner/core";
  * import { createStudio } from "@agent-runner/studio";
  *
  * const runner = createRunner({ ... });

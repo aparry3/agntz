@@ -6,5 +6,5 @@ export default defineConfig({
   dts: true,
   clean: true,
   sourcemap: true,
-  external: ["better-sqlite3", "agent-runner"],
+  external: ["better-sqlite3", "@agent-runner/core"],
 });
