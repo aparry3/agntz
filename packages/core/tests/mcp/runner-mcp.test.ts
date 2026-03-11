@@ -15,12 +15,6 @@ vi.mock("@modelcontextprotocol/sdk/client/index.js", () => ({
   },
 }));
 
-vi.mock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
-  StdioClientTransport: function () {
-    return {};
-  },
-}));
-
 vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
   StreamableHTTPClientTransport: function () {
     return {};

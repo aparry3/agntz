@@ -20,21 +20,20 @@ export interface MCPServerOptions {
  * - Input: `{ input: string, sessionId?: string }`
  * - Output: The agent's response text
  *
- * Usage with stdio transport:
+ * Usage with HTTP transport:
  * ```typescript
  * import { createRunner } from "agent-runner";
  * import { createMCPServer } from "agent-runner/mcp-server";
  *
  * const runner = createRunner({ ... });
  * const server = createMCPServer(runner);
- * await server.start();
+ * await server.connect(httpTransport);
  * ```
  *
  * Note: This requires the @modelcontextprotocol/sdk package.
  */
 export async function createMCPServer(runner: Runner, options: MCPServerOptions = {}) {
   const { Server } = await import("@modelcontextprotocol/sdk/server/index.js");
-  const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
 
   const serverName = options.name ?? "agent-runner";
   const serverVersion = options.version ?? "0.1.0";
@@ -120,17 +119,8 @@ export async function createMCPServer(runner: Runner, options: MCPServerOptions 
     server,
 
     /**
-     * Start the MCP server with stdio transport.
-     * This connects stdin/stdout and begins processing requests.
-     */
-    async start() {
-      const transport = new StdioServerTransport();
-      await server.connect(transport);
-      return server;
-    },
-
-    /**
-     * Connect to a custom transport (e.g., HTTP/SSE).
+     * Connect to a transport (e.g., HTTP/SSE).
+     * Stdio transport is not supported — use an HTTP-based transport for web compatibility.
      */
     async connect(transport: any) {
       await server.connect(transport);

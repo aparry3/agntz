@@ -36,7 +36,7 @@ interface MCPConnection {
  * MCPClientManager — manages connections to multiple MCP servers,
  * discovers their tools, and provides a unified interface for tool execution.
  *
- * Supports both stdio and HTTP (Streamable HTTP / SSE) transports.
+ * Supports HTTP (Streamable HTTP / SSE) transport.
  */
 export class MCPClientManager {
   private connections = new Map<string, MCPConnection>();
@@ -91,22 +91,7 @@ export class MCPClientManager {
 
     let transport: any;
 
-    if (config.command) {
-      // stdio transport
-      const { StdioClientTransport } = await import(
-        "@modelcontextprotocol/sdk/client/stdio.js"
-      );
-      const mergedEnv: Record<string, string> = {};
-      for (const [k, v] of Object.entries(process.env)) {
-        if (v !== undefined) mergedEnv[k] = v;
-      }
-      if (config.env) Object.assign(mergedEnv, config.env);
-      transport = new StdioClientTransport({
-        command: config.command,
-        args: config.args,
-        env: mergedEnv,
-      });
-    } else if (config.url) {
+    if (config.url) {
       // HTTP/SSE transport
       const { StreamableHTTPClientTransport } = await import(
         "@modelcontextprotocol/sdk/client/streamableHttp.js"
@@ -118,7 +103,7 @@ export class MCPClientManager {
       });
     } else {
       throw new Error(
-        `MCP server "${name}" must have either 'command' (stdio) or 'url' (HTTP) configured.`
+        `MCP server "${name}" must have a 'url' configured for HTTP transport.`
       );
     }
 

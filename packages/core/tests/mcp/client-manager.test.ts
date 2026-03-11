@@ -24,12 +24,6 @@ vi.mock("@modelcontextprotocol/sdk/client/index.js", () => ({
   },
 }));
 
-vi.mock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
-  StdioClientTransport: function (opts: any) {
-    return { type: "stdio", ...opts };
-  },
-}));
-
 vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
   StreamableHTTPClientTransport: function (url: any, opts: any) {
     return { type: "http", url };
@@ -73,24 +67,7 @@ describe("MCPClientManager", () => {
   });
 
   describe("initialize", () => {
-    it("connects to stdio servers and discovers tools", async () => {
-      const manager = new MCPClientManager({
-        filesystem: {
-          command: "npx",
-          args: ["-y", "@anthropic/mcp-fs"],
-        },
-      });
-
-      await manager.initialize();
-
-      expect(manager.initialized).toBe(true);
-      const tools = manager.getAllTools();
-      expect(tools).toHaveLength(2);
-      expect(tools[0].name).toBe("read_file");
-      expect(tools[1].name).toBe("write_file");
-    });
-
-    it("connects to HTTP servers", async () => {
+    it("connects to HTTP servers and discovers tools", async () => {
       const manager = new MCPClientManager({
         github: {
           url: "http://localhost:3001/mcp",
@@ -123,7 +100,7 @@ describe("MCPClientManager", () => {
 
     it("is idempotent — second call is a no-op", async () => {
       const manager = new MCPClientManager({
-        test: { command: "test" },
+        test: { url: "http://localhost:3001/mcp" },
       });
 
       await manager.initialize();
@@ -137,7 +114,7 @@ describe("MCPClientManager", () => {
   describe("getToolsFromServer", () => {
     it("returns all tools from a specific server", async () => {
       const manager = new MCPClientManager({
-        fs: { command: "node", args: ["server.js"] },
+        fs: { url: "http://localhost:3001/mcp" },
       });
       await manager.initialize();
 
@@ -147,7 +124,7 @@ describe("MCPClientManager", () => {
 
     it("filters tools by name", async () => {
       const manager = new MCPClientManager({
-        fs: { command: "node", args: ["server.js"] },
+        fs: { url: "http://localhost:3001/mcp" },
       });
       await manager.initialize();
 
@@ -171,7 +148,7 @@ describe("MCPClientManager", () => {
       });
 
       const manager = new MCPClientManager({
-        fs: { command: "node", args: ["server.js"] },
+        fs: { url: "http://localhost:3001/mcp" },
       });
       await manager.initialize();
 
@@ -190,7 +167,7 @@ describe("MCPClientManager", () => {
       });
 
       const manager = new MCPClientManager({
-        fs: { command: "node", args: ["server.js"] },
+        fs: { url: "http://localhost:3001/mcp" },
       });
       await manager.initialize();
 
@@ -214,7 +191,7 @@ describe("MCPClientManager", () => {
 
     it("throws for unknown tool", async () => {
       const manager = new MCPClientManager({
-        fs: { command: "node", args: ["server.js"] },
+        fs: { url: "http://localhost:3001/mcp" },
       });
       await manager.initialize();
 
@@ -227,7 +204,7 @@ describe("MCPClientManager", () => {
   describe("getStatus", () => {
     it("returns status for all servers", async () => {
       const manager = new MCPClientManager({
-        fs: { command: "node", args: ["server.js"] },
+        fs: { url: "http://localhost:3001/mcp" },
       });
       await manager.initialize();
 
@@ -241,7 +218,7 @@ describe("MCPClientManager", () => {
   describe("getServerStatus", () => {
     it("returns detailed status for a specific server", async () => {
       const manager = new MCPClientManager({
-        fs: { command: "node", args: ["server.js"] },
+        fs: { url: "http://localhost:3001/mcp" },
       });
       await manager.initialize();
 
@@ -261,7 +238,7 @@ describe("MCPClientManager", () => {
   describe("shutdown", () => {
     it("closes all connections", async () => {
       const manager = new MCPClientManager({
-        fs: { command: "node", args: ["server.js"] },
+        fs: { url: "http://localhost:3001/mcp" },
       });
       await manager.initialize();
 

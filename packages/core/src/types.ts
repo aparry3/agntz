@@ -338,10 +338,9 @@ export interface RunnerConfig {
 }
 
 export interface MCPServerConfig {
-  command?: string;
-  args?: string[];
-  env?: Record<string, string>;
-  url?: string;
+  /** HTTP URL for the MCP server (Streamable HTTP / SSE) */
+  url: string;
+  /** Optional headers for HTTP requests */
   headers?: Record<string, string>;
 }
 
