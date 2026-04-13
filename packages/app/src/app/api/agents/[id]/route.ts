@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRunner } from "@/lib/runner";
+import { validateManifest } from "@agent-runner/manifest";
 
 export async function GET(
   _req: NextRequest,
@@ -34,6 +35,15 @@ export async function PUT(
       return NextResponse.json({ error: "Missing required field: manifest" }, { status: 400 });
     }
 
+    const validation = validateManifest(manifest);
+    const structuralErrors = validation.errors.filter((e) => e.level === "structural");
+    if (structuralErrors.length > 0) {
+      return NextResponse.json(
+        { error: "Invalid manifest", errors: structuralErrors },
+        { status: 400 }
+      );
+    }
+
     await runner.agents.putAgent({
       id,
       name: name ?? id,
@@ -42,7 +52,7 @@ export async function PUT(
       metadata: { manifest, ...rest },
     });
 
-    return NextResponse.json({ id, updated: true });
+    return NextResponse.json({ id, updated: true, warnings: validation.warnings });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }

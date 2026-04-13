@@ -1,0 +1,91 @@
+# AgentBuilder — generates valid agent YAML manifests from natural language descriptions.
+# Ships as a built-in agent. Uses a generate-validate loop to ensure correctness.
+id: agent-builder
+name: Agent Builder
+description: Creates agent YAML manifests from a natural language description
+kind: sequential
+
+inputSchema:
+  description: string
+
+steps:
+  # Step 1: Load the schema reference documentation
+  - agent:
+      id: load-schema
+      kind: tool
+      tool:
+        kind: local
+        name: read_file
+        params:
+          path: "schema-reference.md"
+
+  # Step 2: Generate + validate loop
+  - agent:
+      id: build-loop
+      kind: sequential
+      until: "{{validator.valid}} == true"
+      maxIterations: 3
+      steps:
+        # Generate the YAML manifest
+        - agent:
+            id: generator
+            kind: llm
+            model:
+              provider: openai
+              name: gpt-4o
+              temperature: 0.3
+            instruction: |
+              You are an expert agent builder for the Agent Runner platform. Your job is to create
+              valid YAML agent manifests based on user descriptions.
+
+              IMPORTANT RULES:
+              - Every agent (including inline) MUST have an `id` field
+              - Use `ref` to reference existing agents, `agent` for inline definitions
+              - Use `inputSchema` for structured input, omit for simple string input
+              - Use `outputSchema` on LLM agents for structured output
+              - Use `output` on pipeline agents for state-to-output mapping
+              - Template variables use {{variableName}} syntax
+              - Conditional blocks use {{#if var}}...{{/if}}
+              - All inputSchema properties are required but nullable
+
+              Here is the complete schema reference:
+              ---
+              {{schema}}
+              ---
+
+              User's description of the agent they want:
+              {{description}}
+
+              {{#if errors}}
+              YOUR PREVIOUS YAML HAD VALIDATION ERRORS. Fix all of them:
+              {{errors}}
+
+              Your previous YAML (fix this):
+              {{previousYaml}}
+              {{/if}}
+
+              Generate a complete, valid YAML agent manifest. Return ONLY the YAML in the `yaml` field.
+              In the `explanation` field, briefly explain your design choices.
+            outputSchema:
+              yaml: string
+              explanation: string
+          input:
+            schema: "{{loadSchema}}"
+            description: "{{description}}"
+            errors: "{{validator.errors}}"
+            previousYaml: "{{generator.yaml}}"
+
+        # Validate the generated YAML
+        - agent:
+            id: validator
+            kind: tool
+            tool:
+              kind: local
+              name: validate_manifest
+              params:
+                yaml: "{{generator.yaml}}"
+
+output:
+  yaml: "{{buildLoop.generator.yaml}}"
+  explanation: "{{buildLoop.generator.explanation}}"
+  validation: "{{buildLoop.validator}}"

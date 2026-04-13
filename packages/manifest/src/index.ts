@@ -49,6 +49,10 @@ export { evaluateCondition } from "./conditions.js";
 // Executor
 export { execute, executeWithState } from "./executor.js";
 
+// Validation
+export type { ValidationResult, ValidationError, ValidationWarning, ValidationContext } from "./validate.js";
+export { validateManifest, validateManifestFull } from "./validate.js";
+
 // Tools
 export type { ResolvedTool } from "./tools.js";
 export { resolveToolEntries, buildToolParams, stripPinnedParams } from "./tools.js";
