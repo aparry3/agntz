@@ -34,23 +34,23 @@ export function ConfirmDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/60" onClick={onCancel} />
+      <div className="absolute inset-0 bg-zinc-950/30 backdrop-blur-sm" onClick={onCancel} />
       <div
         ref={dialogRef}
-        className="relative bg-zinc-900 border border-zinc-700 rounded-lg p-6 max-w-sm w-full mx-4 shadow-xl"
+        className="relative mx-4 w-full max-w-sm rounded-2xl border border-stone-200 bg-white p-6 shadow-2xl shadow-zinc-950/10"
       >
-        <h3 className="text-lg font-semibold text-zinc-100 mb-2">{title}</h3>
-        <p className="text-sm text-zinc-400 mb-6">{message}</p>
+        <h3 className="mb-2 text-lg font-semibold text-zinc-950">{title}</h3>
+        <p className="mb-6 text-sm leading-6 text-zinc-600">{message}</p>
         <div className="flex justify-end gap-3">
           <button
             onClick={onCancel}
-            className="px-4 py-2 text-sm rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors"
+            className="rounded-lg border border-stone-200 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:border-stone-300 hover:bg-stone-50"
           >
             Cancel
           </button>
           <button
             onClick={onConfirm}
-            className="px-4 py-2 text-sm rounded bg-red-600 text-white hover:bg-red-500 transition-colors"
+            className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-500"
           >
             {confirmLabel}
           </button>

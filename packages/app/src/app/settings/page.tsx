@@ -59,28 +59,28 @@ export default function SettingsPage() {
   };
 
   if (loading) {
-    return <p className="text-zinc-500">Loading...</p>;
+    return <div className="rounded-[2rem] border border-stone-200 bg-white px-6 py-10 text-sm text-zinc-500 shadow-sm">Loading...</div>;
   }
 
   return (
-    <div className="max-w-2xl">
-      <h1 className="text-2xl font-bold mb-2">Settings</h1>
-      <p className="text-zinc-400 text-sm mb-6">
+    <div className="mx-auto max-w-4xl">
+      <h1 className="text-4xl font-semibold tracking-tight text-zinc-950">Settings</h1>
+      <p className="mt-2 mb-6 text-sm leading-6 text-zinc-600">
         Configure API keys for LLM providers. Keys are stored in the database and used at runtime.
         Environment variables are used as fallback.
       </p>
 
-      <h2 className="text-lg font-semibold mb-3">Providers</h2>
+      <h2 className="mb-3 text-lg font-semibold text-zinc-900">Providers</h2>
 
       <div className="flex flex-col gap-3">
         {providers.map((provider) => (
           <div
             key={provider.id}
-            className="border border-zinc-800 rounded-lg p-4"
+            className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm"
           >
             <div className="flex items-center justify-between">
               <div>
-                <div className="font-medium">{provider.name}</div>
+                <div className="font-medium text-zinc-950">{provider.name}</div>
                 <div className="text-sm text-zinc-500">
                   {provider.models.length > 0
                     ? provider.models.join(", ")
@@ -91,8 +91,8 @@ export default function SettingsPage() {
                 <span
                   className={`text-xs px-2 py-1 rounded ${
                     provider.configured
-                      ? "bg-green-900 text-green-300"
-                      : "bg-zinc-800 text-zinc-500"
+                      ? "bg-emerald-50 text-emerald-700"
+                      : "bg-stone-100 text-zinc-500"
                   }`}
                 >
                   {provider.configured ? "Configured" : "Not configured"}
@@ -100,14 +100,14 @@ export default function SettingsPage() {
                 {provider.configured && (
                   <button
                     onClick={() => handleDelete(provider.id)}
-                    className="text-xs text-red-400 hover:text-red-300"
+                    className="text-xs text-red-600 hover:text-red-500"
                   >
                     Remove
                   </button>
                 )}
                 <button
                   onClick={() => handleEdit(provider)}
-                  className="text-xs text-blue-400 hover:text-blue-300"
+                  className="text-xs text-zinc-800 hover:text-zinc-950"
                 >
                   {provider.configured ? "Update" : "Configure"}
                 </button>
@@ -121,7 +121,7 @@ export default function SettingsPage() {
                   placeholder="API Key"
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
-                  className="bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-zinc-500"
+                  className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-sm outline-none transition focus:border-zinc-400 focus:bg-white"
                   autoFocus
                 />
                 <input
@@ -129,19 +129,19 @@ export default function SettingsPage() {
                   placeholder="Base URL (optional, for custom endpoints)"
                   value={baseUrl}
                   onChange={(e) => setBaseUrl(e.target.value)}
-                  className="bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-zinc-500"
+                  className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-sm outline-none transition focus:border-zinc-400 focus:bg-white"
                 />
                 <div className="flex gap-2">
                   <button
                     onClick={handleSave}
                     disabled={saving || !apiKey.trim()}
-                    className="bg-zinc-100 text-zinc-900 px-4 py-2 rounded text-sm font-medium hover:bg-zinc-200 disabled:opacity-50"
+                    className="rounded-xl bg-zinc-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:opacity-50"
                   >
                     {saving ? "Saving..." : "Save"}
                   </button>
                   <button
                     onClick={() => setEditingId(null)}
-                    className="text-zinc-400 px-4 py-2 text-sm hover:text-zinc-200"
+                    className="px-4 py-2 text-sm text-zinc-500 hover:text-zinc-800"
                   >
                     Cancel
                   </button>

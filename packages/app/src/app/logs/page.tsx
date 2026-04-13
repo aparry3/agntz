@@ -25,35 +25,38 @@ export default function LogsPage() {
   }, []);
 
   return (
-    <div className="max-w-4xl">
-      <h1 className="text-2xl font-bold mb-4">Logs</h1>
+    <div className="mx-auto max-w-5xl">
+      <div className="mb-6">
+        <h1 className="text-4xl font-semibold tracking-tight text-zinc-950">Logs</h1>
+        <p className="mt-2 text-sm text-zinc-600">Inspect invocation history, runtime, and failures.</p>
+      </div>
       {loading ? (
-        <p className="text-zinc-500">Loading...</p>
+        <div className="rounded-[2rem] border border-stone-200 bg-white px-6 py-10 text-sm text-zinc-500 shadow-sm">Loading...</div>
       ) : logs.length === 0 ? (
-        <p className="text-zinc-500">No invocation logs yet.</p>
+        <div className="rounded-[2rem] border border-dashed border-stone-300 bg-white px-6 py-10 text-sm text-zinc-500 shadow-sm">No invocation logs yet.</div>
       ) : (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-3">
           {logs.map((log) => (
             <div
               key={log.id}
-              className="border border-zinc-800 rounded-lg p-4"
+              className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm"
             >
-              <div className="flex justify-between items-start mb-1">
-                <span className="font-medium">{log.agentId}</span>
+              <div className="mb-2 flex justify-between gap-3">
+                <span className="font-medium text-zinc-950">{log.agentId}</span>
                 <span className="text-sm text-zinc-500">
                   {log.duration}ms &middot; {log.model}
                 </span>
               </div>
-              <div className="text-sm text-zinc-400 truncate">
+              <div className="text-sm text-zinc-600 truncate">
                 Input: {log.input}
               </div>
-              <div className="text-sm text-zinc-400 truncate">
+              <div className="mt-1 text-sm text-zinc-600 truncate">
                 Output: {log.output}
               </div>
               {log.error && (
-                <div className="text-sm text-red-400 mt-1">Error: {log.error}</div>
+                <div className="mt-2 text-sm text-red-600">Error: {log.error}</div>
               )}
-              <div className="text-xs text-zinc-600 mt-1">
+              <div className="mt-2 text-xs text-zinc-500">
                 {new Date(log.timestamp).toLocaleString()}
               </div>
             </div>

@@ -15,15 +15,15 @@ const options: { value: PanelMode; label: string }[] = [
 
 export function PanelToggle({ value, onChange }: PanelToggleProps) {
   return (
-    <div className="inline-flex rounded-lg bg-zinc-900 border border-zinc-700 p-0.5">
+    <div className="inline-flex rounded-xl border border-stone-200 bg-stone-100 p-1">
       {options.map((opt) => (
         <button
           key={opt.value}
           onClick={() => onChange(opt.value)}
-          className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+          className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
             value === opt.value
-              ? "bg-zinc-700 text-zinc-100"
-              : "text-zinc-400 hover:text-zinc-200"
+              ? "bg-white text-zinc-950 shadow-sm"
+              : "text-zinc-500 hover:text-zinc-900"
           }`}
         >
           {opt.label}

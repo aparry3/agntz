@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import "./globals.css";
+import { AppSidebar } from "@/components/app-sidebar";
 
 export const metadata: Metadata = {
   title: "Agent Runner",
@@ -14,33 +14,16 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="bg-zinc-950 text-zinc-100 min-h-screen">
-        <div className="flex min-h-screen">
-          <nav className="w-56 border-r border-zinc-800 p-4 flex flex-col gap-1">
-            <Link href="/" className="text-lg font-semibold mb-4 px-2">
-              Agent Runner
-            </Link>
-            <NavLink href="/agents">Agents</NavLink>
-            <NavLink href="/sessions">Sessions</NavLink>
-            <NavLink href="/logs">Logs</NavLink>
-            <NavLink href="/tools">Tools</NavLink>
-            <NavLink href="/settings">Settings</NavLink>
-            <NavLink href="/account">Account</NavLink>
-          </nav>
-          <main className="flex-1 p-6">{children}</main>
+      <body className="min-h-screen bg-stone-100 text-zinc-900 antialiased">
+        <div className="min-h-screen lg:flex">
+          <AppSidebar />
+          <main className="flex-1">
+            <div className="mx-auto min-h-screen max-w-7xl px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
+              {children}
+            </div>
+          </main>
         </div>
       </body>
     </html>
-  );
-}
-
-function NavLink({ href, children }: { href: string; children: React.ReactNode }) {
-  return (
-    <Link
-      href={href}
-      className="px-3 py-2 rounded-md text-sm text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors"
-    >
-      {children}
-    </Link>
   );
 }

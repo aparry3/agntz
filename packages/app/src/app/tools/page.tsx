@@ -21,22 +21,25 @@ export default function ToolsPage() {
   }, []);
 
   return (
-    <div className="max-w-2xl">
-      <h1 className="text-2xl font-bold mb-4">Tools</h1>
+    <div className="mx-auto max-w-4xl">
+      <div className="mb-6">
+        <h1 className="text-4xl font-semibold tracking-tight text-zinc-950">Tools</h1>
+        <p className="mt-2 text-sm text-zinc-600">Review registered tools and where they come from.</p>
+      </div>
       {loading ? (
-        <p className="text-zinc-500">Loading...</p>
+        <div className="rounded-[2rem] border border-stone-200 bg-white px-6 py-10 text-sm text-zinc-500 shadow-sm">Loading...</div>
       ) : tools.length === 0 ? (
-        <p className="text-zinc-500">No tools registered.</p>
+        <div className="rounded-[2rem] border border-dashed border-stone-300 bg-white px-6 py-10 text-sm text-zinc-500 shadow-sm">No tools registered.</div>
       ) : (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-3">
           {tools.map((tool) => (
             <div
               key={tool.name}
-              className="border border-zinc-800 rounded-lg p-4"
+              className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm"
             >
-              <div className="font-medium font-mono text-sm">{tool.name}</div>
-              <div className="text-sm text-zinc-400">{tool.description}</div>
-              <div className="text-xs text-zinc-600 mt-1">Source: {tool.source}</div>
+              <div className="font-mono text-sm font-medium text-zinc-950">{tool.name}</div>
+              <div className="mt-2 text-sm leading-6 text-zinc-600">{tool.description}</div>
+              <div className="mt-2 text-xs text-zinc-500">Source: {tool.source}</div>
             </div>
           ))}
         </div>

@@ -22,24 +22,27 @@ export default function SessionsPage() {
   }, []);
 
   return (
-    <div className="max-w-2xl">
-      <h1 className="text-2xl font-bold mb-4">Sessions</h1>
+    <div className="mx-auto max-w-4xl">
+      <div className="mb-6">
+        <h1 className="text-4xl font-semibold tracking-tight text-zinc-950">Sessions</h1>
+        <p className="mt-2 text-sm text-zinc-600">Browse stored conversation sessions and recent activity.</p>
+      </div>
       {loading ? (
-        <p className="text-zinc-500">Loading...</p>
+        <div className="rounded-[2rem] border border-stone-200 bg-white px-6 py-10 text-sm text-zinc-500 shadow-sm">Loading...</div>
       ) : sessions.length === 0 ? (
-        <p className="text-zinc-500">No sessions yet.</p>
+        <div className="rounded-[2rem] border border-dashed border-stone-300 bg-white px-6 py-10 text-sm text-zinc-500 shadow-sm">No sessions yet.</div>
       ) : (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-3">
           {sessions.map((s) => (
             <div
               key={s.sessionId}
-              className="border border-zinc-800 rounded-lg p-4"
+              className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm"
             >
-              <div className="font-mono text-sm">{s.sessionId}</div>
+              <div className="font-mono text-sm text-zinc-900">{s.sessionId}</div>
               {s.agentId && (
-                <div className="text-sm text-zinc-400">Agent: {s.agentId}</div>
+                <div className="mt-2 text-sm text-zinc-600">Agent: {s.agentId}</div>
               )}
-              <div className="text-sm text-zinc-500">
+              <div className="mt-2 text-sm text-zinc-500">
                 {s.messageCount} messages &middot; {new Date(s.updatedAt).toLocaleString()}
               </div>
             </div>

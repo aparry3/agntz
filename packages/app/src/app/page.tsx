@@ -2,12 +2,19 @@ import Link from "next/link";
 
 export default function Home() {
   return (
-    <div className="max-w-2xl">
-      <h1 className="text-3xl font-bold mb-2">Agent Runner</h1>
-      <p className="text-zinc-400 mb-8">
-        Define, run, and manage AI agents with YAML manifests.
-      </p>
-      <div className="grid grid-cols-2 gap-4">
+    <div className="mx-auto max-w-5xl">
+      <div className="rounded-[2rem] border border-stone-200 bg-white p-8 shadow-sm">
+        <div className="max-w-2xl">
+          <div className="text-xs font-semibold uppercase tracking-[0.24em] text-zinc-500">
+            Overview
+          </div>
+          <h1 className="mt-3 text-4xl font-semibold tracking-tight text-zinc-950">Agent Runner</h1>
+          <p className="mt-4 text-base leading-7 text-zinc-600">
+            Define, iterate on, and manage AI agents with a cleaner workspace and a simpler editing flow.
+          </p>
+        </div>
+
+        <div className="mt-8 grid gap-4 md:grid-cols-2">
         <DashboardCard
           href="/agents"
           title="Agents"
@@ -28,6 +35,7 @@ export default function Home() {
           title="Tools"
           description="Inspect registered tools"
         />
+        </div>
       </div>
     </div>
   );
@@ -45,10 +53,10 @@ function DashboardCard({
   return (
     <Link
       href={href}
-      className="border border-zinc-800 rounded-lg p-4 hover:border-zinc-600 transition-colors"
+      className="rounded-2xl border border-stone-200 bg-stone-50 p-5 transition hover:border-stone-300 hover:bg-white"
     >
-      <h2 className="font-semibold mb-1">{title}</h2>
-      <p className="text-sm text-zinc-400">{description}</p>
+      <h2 className="mb-1 text-lg font-semibold text-zinc-950">{title}</h2>
+      <p className="text-sm leading-6 text-zinc-600">{description}</p>
     </Link>
   );
 }
