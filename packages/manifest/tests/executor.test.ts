@@ -79,9 +79,9 @@ describe("execute - Sequential agent", () => {
       id: "pipeline",
       kind: "sequential",
       steps: [
-        { agent: "agent-a" },
+        { ref: "agent-a" },
         {
-          agent: "agent-b",
+          ref: "agent-b",
           input: { data: "{{agentA}}" },
         },
       ],
@@ -100,9 +100,7 @@ describe("execute - Sequential agent", () => {
     });
 
     const result = await execute(manifest, "go", ctx);
-    // Default output: last step's output
     expect(result.output).toBe("result-b");
-    // State should have both outputs
     expect(result.state.agentA).toBe("result-a");
     expect(result.state.agentB).toBe("result-b");
   });
@@ -120,7 +118,7 @@ describe("execute - Sequential agent", () => {
       kind: "sequential",
       steps: [
         {
-          agent: "agent-a",
+          ref: "agent-a",
           when: "{{shouldRun}}",
         },
       ],
@@ -146,7 +144,7 @@ describe("execute - Sequential agent", () => {
     const manifest: AgentManifest = {
       id: "pipeline",
       kind: "sequential",
-      steps: [{ agent: "agent-a" }],
+      steps: [{ ref: "agent-a" }],
       output: { final: "{{agentA}}" },
     };
 
@@ -183,8 +181,8 @@ describe("execute - Sequential with loop", () => {
       until: "{{reviewer.approved}} == true",
       maxIterations: 10,
       steps: [
-        { agent: "writer" },
-        { agent: "reviewer" },
+        { ref: "writer" },
+        { ref: "reviewer" },
       ],
     };
 
@@ -197,13 +195,12 @@ describe("execute - Sequential with loop", () => {
       invokeLLM: vi.fn().mockImplementation(() => {
         iteration++;
         if (iteration % 2 === 1) return Promise.resolve("draft");
-        // Reviewer approves on 2nd iteration (iteration 4)
         return Promise.resolve({ approved: iteration >= 4, feedback: "try again" });
       }),
     });
 
     const result = await execute(manifest, "topic", ctx);
-    expect(iteration).toBe(4); // 2 iterations * 2 steps
+    expect(iteration).toBe(4);
     expect(result.state.reviewer).toEqual({ approved: true, feedback: "try again" });
   });
 
@@ -220,7 +217,7 @@ describe("execute - Sequential with loop", () => {
       kind: "sequential",
       until: "{{never}} == true",
       maxIterations: 3,
-      steps: [{ agent: "agent" }],
+      steps: [{ ref: "agent" }],
     };
 
     const ctx = createMockCtx({
@@ -252,8 +249,8 @@ describe("execute - Parallel agent", () => {
       id: "parallel",
       kind: "parallel",
       branches: [
-        { agent: "agent-a", input: { text: "{{userQuery}}" } },
-        { agent: "agent-b", input: { text: "{{userQuery}}" } },
+        { ref: "agent-a", input: { text: "{{userQuery}}" } },
+        { ref: "agent-b", input: { text: "{{userQuery}}" } },
       ],
     };
 
@@ -270,7 +267,6 @@ describe("execute - Parallel agent", () => {
     });
 
     const result = await execute(manifest, "input", ctx);
-    // Default output: all branch outputs as object
     expect(result.output).toEqual({
       agentA: "result-a",
       agentB: "result-b",
@@ -288,7 +284,7 @@ describe("execute - Parallel agent", () => {
     const manifest: AgentManifest = {
       id: "parallel",
       kind: "parallel",
-      branches: [{ agent: "agent-a" }],
+      branches: [{ ref: "agent-a" }],
       output: { result: "{{agentA}}" },
     };
 

@@ -127,8 +127,10 @@ export interface ParallelAgentManifest extends AgentManifestBase {
 // ═══════════════════════════════════════════════════════════════════════
 
 export interface StepRef {
-  /** Agent ID (string) or inline agent definition (object) */
-  agent: string | AgentManifest;
+  /** Reference to an existing agent by ID */
+  ref?: string;
+  /** Inline agent definition */
+  agent?: AgentManifest;
   /** State-to-input transform */
   input?: Record<string, string>;
   /** Override output key on parent state */

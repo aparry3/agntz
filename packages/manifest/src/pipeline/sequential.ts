@@ -1,5 +1,5 @@
 import type { SequentialAgentManifest, AgentManifest, AgentState, ExecutionContext, ExecutionResult, StepRef } from "../types.js";
-import { getStateKey, getAgentId, applyInputTransform, createInitialState, applyOutputMapping } from "../state.js";
+import { getStateKey, applyInputTransform, createInitialState, applyOutputMapping } from "../state.js";
 import { evaluateCondition } from "../conditions.js";
 import { executeWithState } from "../executor.js";
 
@@ -67,8 +67,7 @@ export async function executeSequential(
 }
 
 async function resolveStepAgent(step: StepRef, ctx: ExecutionContext): Promise<AgentManifest> {
-  if (typeof step.agent === "string") {
-    return ctx.resolveAgent(step.agent);
-  }
-  return step.agent;
+  if (step.ref) return ctx.resolveAgent(step.ref);
+  if (step.agent) return step.agent;
+  throw new Error("Step must have either 'ref' or 'agent'");
 }

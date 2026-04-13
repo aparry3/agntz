@@ -37,7 +37,7 @@ export { renderTemplate, interpolate, resolvePath, isTruthy } from "./template.j
 export {
   normalizeId,
   getStateKey,
-  getAgentId,
+  isRefStep,
   createInitialState,
   applyInputTransform,
   applyOutputMapping,

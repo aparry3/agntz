@@ -8,7 +8,7 @@ inputSchema:
   text: string
 
 branches:
-  - agent: sentiment-analyzer
+  - ref: sentiment-analyzer
     input:
       text: "{{text}}"
 

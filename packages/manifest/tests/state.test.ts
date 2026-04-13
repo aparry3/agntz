@@ -23,7 +23,7 @@ describe("normalizeId", () => {
 
 describe("getStateKey", () => {
   it("uses explicit stateKey on step", () => {
-    expect(getStateKey({ agent: "some-agent", stateKey: "custom" })).toBe("custom");
+    expect(getStateKey({ ref: "some-agent", stateKey: "custom" })).toBe("custom");
   });
 
   it("uses stateKey from inline agent", () => {
@@ -34,8 +34,8 @@ describe("getStateKey", () => {
     ).toBe("inline-key");
   });
 
-  it("normalizes agent id for references", () => {
-    expect(getStateKey({ agent: "web-researcher" })).toBe("webResearcher");
+  it("normalizes ref id for references", () => {
+    expect(getStateKey({ ref: "web-researcher" })).toBe("webResearcher");
   });
 
   it("normalizes inline agent id", () => {

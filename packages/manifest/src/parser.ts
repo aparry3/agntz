@@ -103,14 +103,22 @@ function normalizeParallel(base: Record<string, unknown>, raw: Record<string, un
 
 function normalizeStep(raw: unknown): StepRef {
   const step = raw as Record<string, unknown>;
-  const agent = step.agent;
 
-  return {
-    agent: typeof agent === "string" ? agent : normalizeManifest(agent as Record<string, unknown>),
+  const result: StepRef = {
     input: step.input as Record<string, string> | undefined,
     stateKey: step.stateKey as string | undefined,
     when: step.when as string | undefined,
   };
+
+  if (typeof step.ref === "string") {
+    result.ref = step.ref;
+  } else if (step.agent != null) {
+    result.agent = normalizeManifest(step.agent as Record<string, unknown>);
+  } else {
+    throw new Error("Step must have either 'ref' (agent ID) or 'agent' (inline definition)");
+  }
+
+  return result;
 }
 
 function normalizeModel(raw: unknown): LLMAgentManifest["model"] {

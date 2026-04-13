@@ -11,24 +11,21 @@ export function normalizeId(id: string): string {
 
 /**
  * Get the state key for a step: explicit stateKey on the step,
- * or explicit stateKey on the inline agent, or normalized agent id.
+ * or explicit stateKey on the inline agent, or normalized agent id/ref.
  */
 export function getStateKey(step: StepRef): string {
   if (step.stateKey) return step.stateKey;
-  if (typeof step.agent === "object" && step.agent.stateKey) return step.agent.stateKey;
-  if (typeof step.agent === "string") return normalizeId(step.agent);
-  // Inline agent with an id
-  if (typeof step.agent === "object" && step.agent.id) return normalizeId(step.agent.id);
-  // Fallback: shouldn't happen with valid manifests
-  return "anonymous";
+  if (step.agent?.stateKey) return step.agent.stateKey;
+  if (step.ref) return normalizeId(step.ref);
+  if (step.agent) return normalizeId(step.agent.id);
+  return "unknown";
 }
 
 /**
- * Get the agent ID for a step (for resolving references).
+ * Returns true if this step is a reference (not inline).
  */
-export function getAgentId(step: StepRef): string | null {
-  if (typeof step.agent === "string") return step.agent;
-  return null;
+export function isRefStep(step: StepRef): step is StepRef & { ref: string } {
+  return typeof step.ref === "string";
 }
 
 /**

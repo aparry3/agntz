@@ -43,8 +43,7 @@ export async function executeParallel(
 }
 
 async function resolveStepAgent(step: StepRef, ctx: ExecutionContext): Promise<AgentManifest> {
-  if (typeof step.agent === "string") {
-    return ctx.resolveAgent(step.agent);
-  }
-  return step.agent;
+  if (step.ref) return ctx.resolveAgent(step.ref);
+  if (step.agent) return step.agent;
+  throw new Error("Step must have either 'ref' or 'agent'");
 }

@@ -18,10 +18,10 @@ There are four agent kinds, split into two categories:
 
 ## Common Fields
 
-Every agent definition supports these fields:
+Every agent definition supports these fields, **including inline agents** in pipeline steps (id is required everywhere for debugging and tracing):
 
 ```yaml
-id: my-agent                        # unique identifier (required)
+id: my-agent                        # unique identifier (required, even inline)
 name: My Agent                      # display name (optional)
 description: Does a thing            # what this agent does (optional)
 kind: llm                           # llm | tool | sequential | parallel (required)
@@ -200,11 +200,12 @@ inputSchema:
     default: en
 
 steps:
-  - agent: researcher
+  - ref: researcher
     input:
       query: "{{userQuery}}"
 
   - agent:
+      id: summarizer
       kind: llm
       model:
         provider: openai
@@ -215,13 +216,13 @@ steps:
         summary: string
       stateKey: summarizer
 
-  - agent: translator
+  - ref: translator
     when: "{{language}} != en"
     input:
       text: "{{summarizer.summary}}"
       targetLanguage: "{{language}}"
 
-  - agent: formatter
+  - ref: formatter
     input:
       content: "{{summarizer.summary}}"
     stateKey: final
@@ -250,12 +251,12 @@ until: "{{reviewer.approved}} == true"
 maxIterations: 5
 
 steps:
-  - agent: writer
+  - ref: writer
     input:
       topic: "{{topic}}"
       feedback: "{{reviewer.feedback}}"   # null on first iteration
 
-  - agent: reviewer
+  - ref: reviewer
     input:
       draft: "{{writer.draft}}"
 
@@ -279,15 +280,16 @@ inputSchema:
   text: string
 
 branches:
-  - agent: sentimentAnalyzer
+  - ref: sentimentAnalyzer
     input:
       text: "{{text}}"
 
-  - agent: entityExtractor
+  - ref: entityExtractor
     input:
       text: "{{text}}"
 
   - agent:
+      id: intent-classifier
       kind: llm
       model:
         provider: anthropic
@@ -309,22 +311,23 @@ output:
 
 ## Composition
 
-Agents compose by nesting. A pipeline step can reference an existing agent by id or define one inline.
+Agents compose by nesting. A pipeline step uses `ref` to reference an existing agent by id, or `agent` to define one inline.
 
-### By reference
+### By reference (`ref`)
 
 ```yaml
-- agent: agent-id
+- ref: agent-id
   input:
     paramX: "{{stateVar}}"
   stateKey: customKey
   when: "{{condition}} == value"
 ```
 
-### Inline
+### Inline (`agent`)
 
 ```yaml
 - agent:
+    id: my-inline-agent
     kind: llm
     model:
       provider: openai
@@ -335,6 +338,8 @@ Agents compose by nesting. A pipeline step can reference an existing agent by id
   stateKey: customKey
   when: "{{condition}} == value"
 ```
+
+Every step must have either `ref` or `agent`, not both. All agents (including inline) require an `id` for debugging and tracing.
 
 Step-level fields:
 - **`input`** -- transform: maps parent state to the child agent's expected input
@@ -357,36 +362,39 @@ inputSchema:
 steps:
   # Step 1: Research in parallel
   - agent:
+      id: research-phase
       kind: parallel
       stateKey: research
       branches:
-        - agent: web-researcher
+        - ref: web-researcher
           input:
             query: "{{topic}}"
-        - agent: academic-researcher
+        - ref: academic-researcher
           input:
             query: "{{topic}}"
 
   # Step 2: Write + review loop
   - agent:
+      id: write-review
       kind: sequential
       stateKey: writing
       until: "{{editor.approved}} == true"
       maxIterations: 3
       steps:
-        - agent: writer
+        - ref: writer
           input:
             topic: "{{topic}}"
             tone: "{{tone}}"
             webResearch: "{{research.web-researcher}}"
             academicResearch: "{{research.academic-researcher}}"
             feedback: "{{editor.feedback}}"
-        - agent: editor
+        - ref: editor
           input:
             draft: "{{writer.draft}}"
 
   # Step 3: Send notification
   - agent:
+      id: notify
       kind: tool
       stateKey: notification
       tool:

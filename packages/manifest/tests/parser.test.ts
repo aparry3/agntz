@@ -82,15 +82,15 @@ tool:
     }
   });
 
-  it("parses a sequential agent with steps", () => {
+  it("parses a sequential agent with ref steps", () => {
     const yaml = `
 id: pipeline
 kind: sequential
 steps:
-  - agent: researcher
+  - ref: researcher
     input:
       query: "{{userQuery}}"
-  - agent: formatter
+  - ref: formatter
     input:
       content: "{{researcher}}"
     stateKey: final
@@ -101,7 +101,7 @@ output:
     expect(manifest.kind).toBe("sequential");
     if (manifest.kind === "sequential") {
       expect(manifest.steps).toHaveLength(2);
-      expect(manifest.steps[0].agent).toBe("researcher");
+      expect(manifest.steps[0].ref).toBe("researcher");
       expect(manifest.steps[1].stateKey).toBe("final");
       expect(manifest.output).toEqual({ result: "{{final}}" });
     }
@@ -114,8 +114,8 @@ kind: sequential
 until: "{{reviewer.approved}} == true"
 maxIterations: 5
 steps:
-  - agent: writer
-  - agent: reviewer
+  - ref: writer
+  - ref: reviewer
 `;
     const manifest = parseManifest(yaml);
     if (manifest.kind === "sequential") {
@@ -124,15 +124,15 @@ steps:
     }
   });
 
-  it("parses a parallel agent", () => {
+  it("parses a parallel agent with ref branches", () => {
     const yaml = `
 id: analyze
 kind: parallel
 branches:
-  - agent: sentiment
+  - ref: sentiment
     input:
       text: "{{text}}"
-  - agent: entities
+  - ref: entities
     input:
       text: "{{text}}"
 `;
@@ -140,6 +140,8 @@ branches:
     expect(manifest.kind).toBe("parallel");
     if (manifest.kind === "parallel") {
       expect(manifest.branches).toHaveLength(2);
+      expect(manifest.branches[0].ref).toBe("sentiment");
+      expect(manifest.branches[1].ref).toBe("entities");
     }
   });
 
@@ -160,11 +162,10 @@ steps:
     const manifest = parseManifest(yaml);
     if (manifest.kind === "sequential") {
       const step = manifest.steps[0];
-      expect(typeof step.agent).toBe("object");
-      if (typeof step.agent === "object") {
-        expect(step.agent.kind).toBe("llm");
-        expect(step.agent.id).toBe("inline-llm");
-      }
+      expect(step.agent).toBeDefined();
+      expect(step.ref).toBeUndefined();
+      expect(step.agent!.kind).toBe("llm");
+      expect(step.agent!.id).toBe("inline-llm");
     }
   });
 
@@ -174,5 +175,16 @@ steps:
 
   it("throws on unknown kind", () => {
     expect(() => parseManifest("id: test\nkind: unknown")).toThrow("Unknown agent kind");
+  });
+
+  it("throws on step with neither ref nor agent", () => {
+    const yaml = `
+id: pipeline
+kind: sequential
+steps:
+  - input:
+      x: "{{y}}"
+`;
+    expect(() => parseManifest(yaml)).toThrow("ref");
   });
 });

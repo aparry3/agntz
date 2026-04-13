@@ -14,6 +14,7 @@ inputSchema:
 steps:
   # Step 1: Research in parallel
   - agent:
+      id: research-phase
       kind: parallel
       stateKey: research
       branches:
@@ -47,6 +48,7 @@ steps:
 
   # Step 2: Write + review loop
   - agent:
+      id: write-review
       kind: sequential
       stateKey: writing
       until: "{{editor.approved}} == true"
@@ -105,6 +107,7 @@ steps:
 
   # Step 3: Send notification
   - agent:
+      id: notify
       kind: tool
       stateKey: notification
       tool:

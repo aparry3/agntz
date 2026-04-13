@@ -12,7 +12,7 @@ inputSchema:
 
 steps:
   # Step 1: Research the topic
-  - agent: chatbot
+  - ref: chatbot
     input:
       userQuery: "Research the following topic thoroughly: {{topic}}"
 
