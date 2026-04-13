@@ -28,9 +28,9 @@
   "devDependencies": {
     "@agent-runner/core": "workspace:*",
     "@types/better-sqlite3": "^7.6.12",
-    "tsup": "^8.0.0",
-    "typescript": "^5.7.0",
-    "vitest": "^2.0.0"
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
   },
   "peerDependencies": {
     "@agent-runner/core": ">=0.1.2"
@@ -54,6 +54,6 @@
   "homepage": "https://github.com/aparry3/agent-runner#readme",
   "author": "Aaron Bidworthy",
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   }
 }

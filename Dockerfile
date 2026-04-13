@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
 # Base
 # ═══════════════════════════════════════════════════════════════
-FROM node:20-slim AS base
+FROM node:22-slim AS base
 RUN corepack enable && corepack prepare pnpm@10 --activate
 WORKDIR /app
 
