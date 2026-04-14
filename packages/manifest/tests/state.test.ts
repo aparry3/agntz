@@ -70,7 +70,7 @@ describe("applyInputTransform", () => {
   it("maps state to child input", () => {
     const state = { userQuery: "hello", lang: "en" };
     const transform = { query: "{{userQuery}}", language: "{{lang}}" };
-    expect(applyInputTransform(transform, state)).toEqual({
+    expect(applyInputTransform(transform, state, null)).toEqual({
       query: "hello",
       language: "en",
     });
@@ -79,7 +79,7 @@ describe("applyInputTransform", () => {
   it("preserves object types for simple refs", () => {
     const state = { data: { a: 1, b: 2 } };
     const transform = { input: "{{data}}" };
-    expect(applyInputTransform(transform, state)).toEqual({
+    expect(applyInputTransform(transform, state, null)).toEqual({
       input: { a: 1, b: 2 },
     });
   });
@@ -87,14 +87,19 @@ describe("applyInputTransform", () => {
   it("resolves null for missing refs", () => {
     const state = {};
     const transform = { feedback: "{{reviewer.feedback}}" };
-    expect(applyInputTransform(transform, state)).toEqual({
+    expect(applyInputTransform(transform, state, null)).toEqual({
       feedback: null,
     });
   });
 
-  it("passes through state when no transform", () => {
+  it("returns the upstream value when no transform", () => {
     const state = { a: 1, b: 2 };
-    expect(applyInputTransform(undefined, state)).toEqual({ a: 1, b: 2 });
+    const upstream = { passed: "through" };
+    expect(applyInputTransform(undefined, state, upstream)).toEqual(upstream);
+  });
+
+  it("passes a string upstream through unchanged", () => {
+    expect(applyInputTransform(undefined, {}, "hello")).toBe("hello");
   });
 });
 

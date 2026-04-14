@@ -8,14 +8,16 @@ import { executeWithState } from "../executor.js";
 export async function executeParallel(
   manifest: ParallelAgentManifest,
   state: AgentState,
-  ctx: ExecutionContext
+  ctx: ExecutionContext,
+  parentInput: unknown
 ): Promise<ExecutionResult> {
-  // Launch all branches concurrently
+  // Launch all branches concurrently. Each branch's default upstream is the
+  // parent's input — branches run independently and never see sibling state.
   const branchPromises = manifest.branches.map(async (step) => {
     const childManifest = await resolveStepAgent(step, ctx);
-    const childInput = applyInputTransform(step.input, state);
+    const childInput = applyInputTransform(step.input, state, parentInput);
     const childState = createInitialState(childInput, childManifest.inputSchema);
-    const result = await executeWithState(childManifest, childState, ctx);
+    const result = await executeWithState(childManifest, childState, ctx, childInput);
     const key = getStateKey(step);
     return { key, output: result.output };
   });

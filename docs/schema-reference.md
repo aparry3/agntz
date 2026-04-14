@@ -47,17 +47,100 @@ inputSchema:
 
 If `inputSchema` is omitted, the agent takes a plain string accessible as `{{userQuery}}`.
 
-## State
+## State and encapsulation
 
-State is scoped per agent. Shape: `{ ...input, [stateKey]: subAgentOutput }`.
+Every agent owns a private state. Parents cannot read child state, and children cannot read parent state. The only ways data crosses a boundary are:
 
-- `{{varName}}` — references an input property
-- `{{agentId.property}}` — references a sub-agent's output
-- Null values: skipped steps and first loop iterations resolve to null
+- **`input:`** on a step — a transform that maps parent state → child input
+- **`outputSchema`** / **`output:`** — what the child exposes back to its parent
+
+### State shape
+
+An agent's state is built from its `input` and grows as steps run:
+
+```
+{ ...input, [stepStateKey]: stepOutput, ... }
+```
+
+`input` is shaped by the agent's `inputSchema`. Each step writes its output back to the parent's state under its `stateKey`.
+
+Templates inside an agent (`instruction`, `tool.params`, `input:` transforms, `output:` mappings, `when`, `until`) are evaluated against **that agent's state only** — never against a child's or parent's.
+
+### Mental model: input is the output of some upstream agent
+
+Every agent's input comes from an upstream producer. The default upstream depends on where the agent sits:
+
+| Position                               | Default upstream                              |
+| -------------------------------------- | --------------------------------------------- |
+| First step of a sequential or parallel | The parent agent's input                      |
+| Subsequent step of a sequential        | The previous step's output                    |
+| First step of a loop, iteration N>1    | The last step's output from iteration N-1     |
+
+If the default isn't what the child needs, add an explicit `input:` transform on the step. Each value in `input:` is a template evaluated against the **parent's** state (so the parent decides what to expose).
+
+### `input:` lives on the step; `inputSchema` lives on the agent
+
+`input:` is a step-level transform — a sibling of `agent:` / `ref:`. `inputSchema` belongs to the child agent itself. The transform's keys must equal the child's `inputSchema` keys exactly.
+
+```yaml
+# Inline child
+- agent:
+    id: summarizer
+    kind: llm
+    inputSchema:
+      text: string                       # child declares what it consumes
+      style: string
+    model: { provider: openai, name: gpt-4o }
+    instruction: "Summarize {{text}} in {{style}} style"
+  input:                                  # step-level: parent → child
+    text: "{{researcher.findings}}"
+    style: "{{userStyle}}"
+
+# Referenced child — same rule, the ref'd agent declares its own inputSchema
+- ref: summarizer
+  input:
+    text: "{{researcher.findings}}"
+    style: "{{userStyle}}"
+```
+
+### Loop semantics
+
+Inside a loop (`until:`), every step's output is part of the loop's state from the very first iteration. References to steps that haven't run yet (or to the loop's own previous-iteration outputs) resolve to `null` until populated. This is what makes the generate-and-validate pattern work:
+
+```yaml
+until: "{{validator.valid}} == true"
+maxIterations: 3
+steps:
+  - agent:
+      id: generator
+      kind: llm
+      inputSchema:
+        topic: string
+        errors: object       # null on iteration 1
+        previousYaml: string # null on iteration 1
+      # ...
+    input:
+      topic: "{{topic}}"
+      errors: "{{validator.errors}}"      # validator hasn't run on iter 1 → null
+      previousYaml: "{{generator.yaml}}"  # self-ref from previous iter → null on iter 1
+  - agent:
+      id: validator
+      # ...
+    input:
+      yaml: "{{generator.yaml}}"
+```
+
+### Strict validation
+
+The validator enforces encapsulation:
+
+- A template ref to a name not in the agent's state is an **error**, not a warning.
+- A step's `input:` keys must equal the child's `inputSchema` keys (extra keys, missing keys → error).
+- A step with no `input:` is only valid if the default upstream's output keys cover the child's `inputSchema`.
 
 ### stateKey
 
-Override where a step's output lands in parent state:
+Override where a step's output lands in the parent's state (and how templates reference it):
 
 ```yaml
 steps:
@@ -204,12 +287,16 @@ steps:
   - agent:
       id: summarizer
       kind: llm
+      inputSchema:
+        text: string
       model:
         provider: openai
         name: gpt-4o
-      instruction: "Summarize: {{researcher}}"
+      instruction: "Summarize: {{text}}"
       outputSchema:
         summary: string
+    input:
+      text: "{{researcher}}"
 
   # Conditional step (skipped if false, output = null)
   - ref: translator
@@ -241,6 +328,9 @@ steps:
   - agent:
       id: writer
       kind: llm
+      inputSchema:
+        topic: string
+        feedback: string
       model:
         provider: openai
         name: gpt-4o
@@ -258,6 +348,8 @@ steps:
   - agent:
       id: reviewer
       kind: llm
+      inputSchema:
+        draft: string
       model:
         provider: openai
         name: gpt-4o
@@ -289,6 +381,8 @@ branches:
   - agent:
       id: entity-extractor
       kind: llm
+      inputSchema:
+        text: string
       model:
         provider: openai
         name: gpt-4o

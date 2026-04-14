@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { validateManifest, validateManifestFull } from "../src/validate.js";
 import type { ValidationContext } from "../src/validate.js";
 
@@ -228,7 +230,7 @@ steps:
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("validateManifest - reference integrity", () => {
-  it("warns on template referencing non-existent state", () => {
+  it("errors on template referencing non-existent state", () => {
     const result = validateManifest(`
 id: test
 kind: llm
@@ -238,10 +240,11 @@ model:
 instruction: "Hello {{nonExistent}}"
 `);
     // No inputSchema, so only userQuery is available
-    expect(result.warnings.some(w => w.message.includes("nonExistent"))).toBe(true);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.level === "reference" && e.message.includes("nonExistent"))).toBe(true);
   });
 
-  it("no warning when referencing userQuery without inputSchema", () => {
+  it("no error when referencing userQuery without inputSchema", () => {
     const result = validateManifest(`
 id: test
 kind: llm
@@ -250,10 +253,10 @@ model:
   name: gpt-4o
 instruction: "Hello {{userQuery}}"
 `);
-    expect(result.warnings).toHaveLength(0);
+    expect(result.errors).toHaveLength(0);
   });
 
-  it("no warning when referencing declared inputSchema property", () => {
+  it("no error when referencing declared inputSchema property", () => {
     const result = validateManifest(`
 id: test
 kind: llm
@@ -264,10 +267,10 @@ instruction: "Hello {{name}}"
 inputSchema:
   name: string
 `);
-    expect(result.warnings).toHaveLength(0);
+    expect(result.errors).toHaveLength(0);
   });
 
-  it("warns on sequential step referencing future state", () => {
+  it("errors on sequential step referencing future state (non-loop)", () => {
     const result = validateManifest(`
 id: pipeline
 kind: sequential
@@ -279,10 +282,32 @@ steps:
       data: "{{agentB}}"
   - ref: agent-b
 `);
-    expect(result.warnings.some(w => w.message.includes("agentB"))).toBe(true);
+    expect(result.errors.some(e => e.message.includes("agentB"))).toBe(true);
   });
 
-  it("no warning when step references previous step output", () => {
+  it("no error when loop step references future or self output", () => {
+    const result = validateManifest(`
+id: loop
+kind: sequential
+until: "{{validator.valid}} == true"
+maxIterations: 3
+inputSchema:
+  topic: string
+steps:
+  - ref: generator
+    input:
+      topic: "{{topic}}"
+      previousErrors: "{{validator.errors}}"
+      previousYaml: "{{generator.yaml}}"
+  - ref: validator
+    input:
+      yaml: "{{generator.yaml}}"
+`);
+    // None of validator/generator self-refs should produce reference errors
+    expect(result.errors.filter(e => e.level === "reference" && (e.message.includes("validator") || e.message.includes("generator")))).toHaveLength(0);
+  });
+
+  it("no error when step references previous step output", () => {
     const result = validateManifest(`
 id: pipeline
 kind: sequential
@@ -294,7 +319,7 @@ steps:
     input:
       data: "{{agentA}}"
 `);
-    expect(result.warnings.filter(w => w.message.includes("agentA"))).toHaveLength(0);
+    expect(result.errors.filter(e => e.message.includes("agentA"))).toHaveLength(0);
   });
 
   it("errors on stateKey colliding with input property", () => {
@@ -333,8 +358,89 @@ output:
   result: "{{agentA}}"
   missing: "{{nonExistent}}"
 `);
-    expect(result.warnings.some(w => w.message.includes("nonExistent"))).toBe(true);
-    expect(result.warnings.filter(w => w.message.includes("agentA"))).toHaveLength(0);
+    expect(result.errors.some(e => e.message.includes("'nonExistent'"))).toBe(true);
+    expect(result.errors.filter(e => e.message.includes("'agentA'"))).toHaveLength(0);
+  });
+
+  it("errors when step.input has a key not declared in child's inputSchema", () => {
+    const result = validateManifest(`
+id: pipeline
+kind: sequential
+inputSchema:
+  topic: string
+steps:
+  - agent:
+      id: child
+      kind: llm
+      inputSchema:
+        topic: string
+      model:
+        provider: openai
+        name: gpt-4o
+      instruction: "Hello {{topic}}"
+    input:
+      topic: "{{topic}}"
+      stranger: "{{topic}}"
+`);
+    expect(result.errors.some(e => e.message.includes("'stranger' is not declared"))).toBe(true);
+  });
+
+  it("errors when step.input is missing a key required by child's inputSchema", () => {
+    const result = validateManifest(`
+id: pipeline
+kind: sequential
+inputSchema:
+  topic: string
+steps:
+  - agent:
+      id: child
+      kind: llm
+      inputSchema:
+        topic: string
+        style: string
+      model:
+        provider: openai
+        name: gpt-4o
+      instruction: "Write {{topic}} in {{style}}"
+    input:
+      topic: "{{topic}}"
+`);
+    expect(result.errors.some(e => e.message.includes("missing key 'style'"))).toBe(true);
+  });
+
+  it("errors when default upstream cannot satisfy child inputSchema", () => {
+    const result = validateManifest(`
+id: pipeline
+kind: sequential
+inputSchema:
+  topic: string
+steps:
+  - agent:
+      id: child
+      kind: llm
+      inputSchema:
+        wrongKey: string
+      model:
+        provider: openai
+        name: gpt-4o
+      instruction: "Hello {{wrongKey}}"
+`);
+    expect(result.errors.some(e => e.message.includes("does not provide key 'wrongKey'"))).toBe(true);
+  });
+
+  it("agent-builder fixture validates clean", () => {
+    const yaml = readFileSync(
+      join(__dirname, "../../worker/src/defaults/agents/agent-builder.yaml"),
+      "utf-8",
+    );
+    const result = validateManifest(yaml);
+    if (result.errors.length > 0) {
+      // Surface details for easy debugging
+      // eslint-disable-next-line no-console
+      console.error("agent-builder errors:", result.errors);
+    }
+    expect(result.errors).toHaveLength(0);
+    expect(result.valid).toBe(true);
   });
 });
 

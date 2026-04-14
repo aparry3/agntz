@@ -10,38 +10,49 @@ import { executeWithState } from "../executor.js";
 export async function executeSequential(
   manifest: SequentialAgentManifest,
   state: AgentState,
-  ctx: ExecutionContext
+  ctx: ExecutionContext,
+  parentInput: unknown
 ): Promise<ExecutionResult> {
   const isLoop = !!manifest.until;
   const maxIterations = manifest.maxIterations ?? 100;
   let iteration = 0;
 
+  // Default upstream for the first step is the parent's input. After each
+  // step it becomes that step's output. Across loop iterations the variable
+  // persists, so iter N+1's first step defaults to iter N's last output.
+  let previousOutput: unknown = parentInput;
+
   do {
     // Run all steps in order
-    for (const step of manifest.steps) {
+    for (let i = 0; i < manifest.steps.length; i++) {
+      const step = manifest.steps[i];
+
       // Check when condition
       if (step.when && !evaluateCondition(step.when, state)) {
         // Skipped — set output to null on state
         const key = getStateKey(step);
         state[key] = null;
+        previousOutput = null;
         continue;
       }
 
       // Resolve the agent manifest
       const childManifest = await resolveStepAgent(step, ctx);
 
-      // Apply input transform: map parent state → child input
-      const childInput = applyInputTransform(step.input, state);
+      // Apply input transform: explicit transform reads from parent state;
+      // otherwise the child receives the upstream value directly.
+      const childInput = applyInputTransform(step.input, state, previousOutput);
 
       // Create child state from the transformed input
       const childState = createInitialState(childInput, childManifest.inputSchema);
 
       // Execute
-      const result = await executeWithState(childManifest, childState, ctx);
+      const result = await executeWithState(childManifest, childState, ctx, childInput);
 
       // Write output to parent state under the step's state key
       const key = getStateKey(step);
       state[key] = result.output;
+      previousOutput = result.output;
     }
 
     iteration++;

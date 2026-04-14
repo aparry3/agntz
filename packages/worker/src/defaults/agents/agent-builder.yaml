@@ -25,11 +25,23 @@ steps:
       kind: sequential
       until: "{{validator.valid}} == true"
       maxIterations: 3
+      inputSchema:
+        description: string
+        schema: string
+      output:
+        yaml: "{{generator.yaml}}"
+        explanation: "{{generator.explanation}}"
+        validation: "{{validator}}"
       steps:
         # Generate the YAML manifest
         - agent:
             id: generator
             kind: llm
+            inputSchema:
+              schema: string
+              description: string
+              errors: object
+              previousYaml: string
             model:
               provider: openai
               name: gpt-4o
@@ -44,9 +56,12 @@ steps:
               - Use `inputSchema` for structured input, omit for simple string input
               - Use `outputSchema` on LLM agents for structured output
               - Use `output` on pipeline agents for state-to-output mapping
-              - Template variables use {{variableName}} syntax
-              - Conditional blocks use {{#if var}}...{{/if}}
+              - Template variables use double-curly syntax (see schema reference for examples)
+              - Conditional blocks use the if/endif form documented in the schema reference
               - All inputSchema properties are required but nullable
+              - State is encapsulated per agent: parents can't read child state and
+                vice versa. To pass values down, use a step-level `input:` transform
+                whose keys exactly match the child agent's `inputSchema`.
 
               Here is the complete schema reference:
               ---
@@ -70,7 +85,7 @@ steps:
               yaml: string
               explanation: string
           input:
-            schema: "{{loadSchema}}"
+            schema: "{{schema}}"
             description: "{{description}}"
             errors: "{{validator.errors}}"
             previousYaml: "{{generator.yaml}}"
@@ -79,13 +94,20 @@ steps:
         - agent:
             id: validator
             kind: tool
+            inputSchema:
+              yaml: string
             tool:
               kind: local
               name: validate_manifest
               params:
-                yaml: "{{generator.yaml}}"
+                yaml: "{{yaml}}"
+          input:
+            yaml: "{{generator.yaml}}"
+    input:
+      description: "{{description}}"
+      schema: "{{loadSchema}}"
 
 output:
-  yaml: "{{buildLoop.generator.yaml}}"
-  explanation: "{{buildLoop.generator.explanation}}"
-  validation: "{{buildLoop.validator}}"
+  yaml: "{{buildLoop.yaml}}"
+  explanation: "{{buildLoop.explanation}}"
+  validation: "{{buildLoop.validation}}"

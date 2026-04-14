@@ -26,17 +26,20 @@ export async function execute(
   ctx: ExecutionContext
 ): Promise<ExecutionResult> {
   const state = createInitialState(input, manifest.inputSchema);
-  return executeWithState(manifest, state, ctx);
+  return executeWithState(manifest, state, ctx, input);
 }
 
 /**
  * Execute an agent manifest with pre-built state.
  * Used internally for pipeline steps where state is already constructed.
+ * `parentInput` is the raw input that produced `state` — pipeline executors
+ * use it as the default upstream for their first step.
  */
 export async function executeWithState(
   manifest: AgentManifest,
   state: AgentState,
-  ctx: ExecutionContext
+  ctx: ExecutionContext,
+  parentInput: unknown
 ): Promise<ExecutionResult> {
   switch (manifest.kind) {
     case "llm":
@@ -44,9 +47,9 @@ export async function executeWithState(
     case "tool":
       return executeTool(manifest as ToolAgentManifest, state, ctx);
     case "sequential":
-      return executeSequential(manifest as SequentialAgentManifest, state, ctx);
+      return executeSequential(manifest as SequentialAgentManifest, state, ctx, parentInput);
     case "parallel":
-      return executeParallel(manifest as ParallelAgentManifest, state, ctx);
+      return executeParallel(manifest as ParallelAgentManifest, state, ctx, parentInput);
     default:
       throw new Error(`Unknown agent kind: ${(manifest as AgentManifest).kind}`);
   }

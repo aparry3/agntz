@@ -473,12 +473,25 @@ function validateSequentialRefs(
   const inputVars = collectInputVars(manifest);
   const availableVars = new Set(inputVars);
 
+  const isLoop = !!manifest.until;
+
+  // In a loop, every step's output is part of state from the start of the
+  // first iteration (resolving to null until that step runs). Pre-populate
+  // so transforms and conditions can legitimately reference forward / self
+  // / loop-tail outputs.
+  if (isLoop) {
+    for (const step of manifest.steps) {
+      availableVars.add(getStepStateKey(step));
+    }
+  }
+
   // Check stateKey collisions with input
   const stateKeys = new Set<string>();
 
   for (let i = 0; i < manifest.steps.length; i++) {
     const step = manifest.steps[i];
     const stepPath = p(path, `steps[${i}]`);
+    const isFirstStep = i === 0;
 
     // Validate input transform references
     if (step.input) {
@@ -490,6 +503,15 @@ function validateSequentialRefs(
     // Validate when condition references
     if (step.when) {
       validateTemplateRefs(step.when, [...availableVars], p(stepPath, "when"), errors, warnings);
+    }
+
+    // Cross-check step.input keys against the inline child's inputSchema.
+    // (ref children are checked in the async external pass.)
+    if (step.agent) {
+      const upstreamKeys = isFirstStep
+        ? inputVars
+        : getStaticOutputKeys(manifest.steps[i - 1]);
+      validateStepInputAgainstChild(step, step.agent, upstreamKeys, stepPath, errors, warnings);
     }
 
     // Add this step's output to available vars
@@ -539,6 +561,11 @@ function validateParallelRefs(
       }
     }
 
+    // Each branch's default upstream is the parent's input.
+    if (step.agent) {
+      validateStepInputAgainstChild(step, step.agent, inputVars, stepPath, errors, warnings);
+    }
+
     if (step.agent) {
       validateReferences(step.agent, p(stepPath, "agent"), errors, warnings);
     }
@@ -559,7 +586,7 @@ function validateTemplateRefs(
   availableVars: string[],
   path: string,
   errors: ValidationError[],
-  warnings: ValidationWarning[]
+  _warnings: ValidationWarning[]
 ): void {
   // Extract {{varName}} references (not #if or /if)
   const varRefs = template.matchAll(/\{\{(?!#if\s|\/if)([^}]+)\}\}/g);
@@ -567,7 +594,11 @@ function validateTemplateRefs(
     const ref = match[1].trim();
     const rootVar = ref.split(".")[0];
     if (!availableVars.includes(rootVar)) {
-      warnings.push({ path, message: `Template variable '{{${ref}}}' references '${rootVar}' which may not be available in state` });
+      errors.push({
+        level: "reference",
+        path,
+        message: `Template variable '{{${ref}}}' references '${rootVar}' which is not in scope. Available: ${availableVars.join(", ") || "(none)"}`,
+      });
     }
   }
 
@@ -580,14 +611,22 @@ function validateTemplateRefs(
     for (const condMatch of condVars) {
       const rootVar = condMatch[1].trim().split(".")[0];
       if (!availableVars.includes(rootVar)) {
-        warnings.push({ path, message: `Condition references '${rootVar}' which may not be available in state` });
+        errors.push({
+          level: "reference",
+          path,
+          message: `Condition references '${rootVar}' which is not in scope. Available: ${availableVars.join(", ") || "(none)"}`,
+        });
       }
     }
     // Also check bare variable names (e.g. {{#if feedback}})
     if (!condition.includes("{{") && !condition.includes("==") && !condition.includes("!=")) {
       const rootVar = condition.split(".")[0];
       if (!availableVars.includes(rootVar)) {
-        warnings.push({ path, message: `Condition references '${rootVar}' which may not be available in state` });
+        errors.push({
+          level: "reference",
+          path,
+          message: `Condition references '${rootVar}' which is not in scope. Available: ${availableVars.join(", ") || "(none)"}`,
+        });
       }
     }
   }
@@ -767,4 +806,105 @@ function getStepStateKey(step: StepRef): string {
   if (step.ref) return normalizeId(step.ref);
   if (step.agent) return normalizeId(step.agent.id);
   return "unknown";
+}
+
+/**
+ * Statically determine the set of keys an agent's output exposes.
+ * Returns null when the shape is opaque (e.g. tool agents, LLMs without
+ * outputSchema, sequentials without an output mapping resolving to a typed
+ * step, ref children whose manifest is not in scope here).
+ */
+function getStaticOutputKeysFromManifest(manifest: AgentManifest | undefined): string[] | null {
+  if (!manifest) return null;
+  switch (manifest.kind) {
+    case "llm":
+      return manifest.outputSchema ? Object.keys(manifest.outputSchema) : null;
+    case "tool":
+      return null;
+    case "sequential":
+      if (manifest.output) return Object.keys(manifest.output);
+      return null;
+    case "parallel":
+      if (manifest.output) return Object.keys(manifest.output);
+      return manifest.branches.map((b) => getStepStateKey(b));
+  }
+}
+
+function getStaticOutputKeys(step: StepRef): string[] | null {
+  return getStaticOutputKeysFromManifest(step.agent);
+}
+
+/**
+ * Cross-check a step's `input:` transform against the inline child agent's
+ * `inputSchema`. The contract:
+ *   - With an explicit `input:` block, its keys must equal the child's
+ *     inputSchema keys (extras → error, missing → error).
+ *   - Without an `input:` block, the child's inputSchema keys must be a
+ *     subset of the upstream's static output keys (when knowable).
+ * Children with no inputSchema declared are treated as `userQuery` and
+ * skip these checks.
+ */
+function validateStepInputAgainstChild(
+  step: StepRef,
+  child: AgentManifest,
+  upstreamKeys: string[] | null,
+  stepPath: string,
+  errors: ValidationError[],
+  warnings: ValidationWarning[]
+): void {
+  const schemaKeys = child.inputSchema ? Object.keys(child.inputSchema) : null;
+
+  if (step.input) {
+    const inputKeys = Object.keys(step.input);
+    if (!schemaKeys) {
+      // Child has no inputSchema; transform values get coerced to a string.
+      // Warn — the user is almost certainly missing an inputSchema.
+      warnings.push({
+        path: p(stepPath, "input"),
+        message: `Step provides input keys [${inputKeys.join(", ")}] but child agent '${child.id}' has no inputSchema. Declare inputSchema to receive these as state.`,
+      });
+      return;
+    }
+    const schemaSet = new Set(schemaKeys);
+    const inputSet = new Set(inputKeys);
+    for (const k of inputKeys) {
+      if (!schemaSet.has(k)) {
+        errors.push({
+          level: "reference",
+          path: p(stepPath, `input.${k}`),
+          message: `Input key '${k}' is not declared in child agent '${child.id}' inputSchema. Declared: ${schemaKeys.join(", ") || "(none)"}`,
+        });
+      }
+    }
+    for (const k of schemaKeys) {
+      if (!inputSet.has(k)) {
+        errors.push({
+          level: "reference",
+          path: p(stepPath, "input"),
+          message: `Input transform is missing key '${k}' required by child agent '${child.id}' inputSchema`,
+        });
+      }
+    }
+    return;
+  }
+
+  // No explicit transform — default upstream feeds the child.
+  if (!schemaKeys) return; // child takes a plain string; default upstream stringifies fine
+  if (upstreamKeys === null) {
+    warnings.push({
+      path: stepPath,
+      message: `No input transform and upstream output shape is unknown; cannot verify it satisfies child agent '${child.id}' inputSchema. Add an explicit 'input:' block.`,
+    });
+    return;
+  }
+  const upstreamSet = new Set(upstreamKeys);
+  for (const k of schemaKeys) {
+    if (!upstreamSet.has(k)) {
+      errors.push({
+        level: "reference",
+        path: stepPath,
+        message: `Default upstream does not provide key '${k}' required by child agent '${child.id}' inputSchema. Upstream provides: ${upstreamKeys.join(", ") || "(none)"}. Add an explicit 'input:' block.`,
+      });
+    }
+  }
 }

@@ -60,13 +60,15 @@ export function createInitialState(input: unknown, inputSchema?: InputSchema): A
 
 /**
  * Apply a step's input transform: maps parent state to child agent's input.
- * If no transform, passes the parent state through.
+ * If no transform is provided, the child's input is the upstream value
+ * (parent's input for the first step, the previous step's output otherwise).
  */
 export function applyInputTransform(
   transform: Record<string, string> | undefined,
-  parentState: AgentState
-): Record<string, unknown> {
-  if (!transform) return { ...parentState };
+  parentState: AgentState,
+  defaultUpstream: unknown
+): unknown {
+  if (!transform) return defaultUpstream;
 
   const result: Record<string, unknown> = {};
   for (const [key, template] of Object.entries(transform)) {
