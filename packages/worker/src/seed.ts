@@ -6,21 +6,25 @@ import { parseManifest } from "@agent-runner/manifest";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-/** Default agents bundled with the worker (always seeded). */
 const DEFAULTS_DIR = resolve(__dirname, "defaults/agents");
-
-/** Optional extra agents directory (e.g. for custom deployments). */
 const EXTRA_DIR = process.env.BUILT_IN_AGENTS_DIR;
 
+const seededWorkspaces = new Set<string>();
+
 /**
- * Seed built-in agents from YAML files into the store.
- * Only inserts agents that don't already exist (won't overwrite user edits).
+ * Seed default agents (e.g. agent-builder) into a workspace if not already
+ * present. Idempotent: tracks seeded workspaces in-process, and double-checks
+ * the store for each agent before inserting (handles process restarts).
  */
-export async function seedBuiltInAgents(runner: Runner): Promise<void> {
+export async function seedDefaultsForWorkspace(runner: Runner, workspaceId: string): Promise<void> {
+  if (seededWorkspaces.has(workspaceId)) return;
+
   await seedFromDirectory(runner, DEFAULTS_DIR);
   if (EXTRA_DIR) {
     await seedFromDirectory(runner, EXTRA_DIR);
   }
+
+  seededWorkspaces.add(workspaceId);
 }
 
 async function seedFromDirectory(runner: Runner, dir: string): Promise<void> {

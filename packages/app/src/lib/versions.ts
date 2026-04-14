@@ -1,26 +1,21 @@
-import type { AgentDefinition, AgentVersionSummary } from "@agent-runner/core";
-import { getStore } from "./store";
+import type { AgentDefinition, AgentVersionSummary, UnifiedStore } from "@agent-runner/core";
 
-/**
- * List all versions for an agent, most recent first.
- */
-export async function listVersions(agentId: string): Promise<AgentVersionSummary[]> {
-  const store = await getStore();
+export async function listVersions(store: UnifiedStore, agentId: string): Promise<AgentVersionSummary[]> {
   return store.listAgentVersions(agentId);
 }
 
-/**
- * Get a specific version's agent definition by agent ID and created_at timestamp.
- */
-export async function getVersion(agentId: string, createdAt: string): Promise<AgentDefinition | null> {
-  const store = await getStore();
+export async function getVersion(
+  store: UnifiedStore,
+  agentId: string,
+  createdAt: string,
+): Promise<AgentDefinition | null> {
   return store.getAgentVersion(agentId, createdAt);
 }
 
-/**
- * Activate a specific version (set its activated_at to now).
- */
-export async function activateVersion(agentId: string, createdAt: string): Promise<void> {
-  const store = await getStore();
+export async function activateVersion(
+  store: UnifiedStore,
+  agentId: string,
+  createdAt: string,
+): Promise<void> {
   await store.activateAgentVersion(agentId, createdAt);
 }

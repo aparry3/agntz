@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { OrganizationSwitcher, UserButton, useAuth } from "@clerk/nextjs";
 
 const primaryLinks = [
   { href: "/agents", label: "Agents" },
@@ -12,11 +13,12 @@ const primaryLinks = [
 
 const secondaryLinks = [
   { href: "/settings", label: "Settings" },
-  { href: "/account", label: "Account" },
+  { href: "/settings/api-keys", label: "API Keys" },
 ];
 
 export function AppSidebar() {
   const pathname = usePathname();
+  const { isSignedIn } = useAuth();
 
   return (
     <aside className="border-b border-stone-200 bg-white/90 backdrop-blur lg:sticky lg:top-0 lg:flex lg:h-screen lg:w-72 lg:flex-col lg:border-b-0 lg:border-r">
@@ -27,6 +29,22 @@ export function AppSidebar() {
           </div>
           <div className="mt-2 text-xl font-semibold text-zinc-950">Agent Runner</div>
         </Link>
+
+        {isSignedIn && (
+          <div className="mb-4 px-3">
+            <OrganizationSwitcher
+              hidePersonal
+              afterCreateOrganizationUrl="/onboarding"
+              afterSelectOrganizationUrl="/agents"
+              appearance={{
+                elements: {
+                  rootBox: "w-full",
+                  organizationSwitcherTrigger: "w-full justify-start",
+                },
+              }}
+            />
+          </div>
+        )}
 
         <nav className="flex flex-col gap-1">
           {primaryLinks.map((link) => (
@@ -42,13 +60,20 @@ export function AppSidebar() {
 
         <div className="my-6 hidden h-px bg-stone-200 lg:block" />
 
-        <nav className="mt-auto flex flex-col gap-1">
+        <nav className="flex flex-col gap-1">
           {secondaryLinks.map((link) => (
             <SidebarLink key={link.href} href={link.href} active={pathname === link.href}>
               {link.label}
             </SidebarLink>
           ))}
         </nav>
+
+        {isSignedIn && (
+          <div className="mt-auto flex items-center gap-3 px-3 pt-6">
+            <UserButton />
+            <span className="text-sm text-zinc-500">Account</span>
+          </div>
+        )}
       </div>
     </aside>
   );

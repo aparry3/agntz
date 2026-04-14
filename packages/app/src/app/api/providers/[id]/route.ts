@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getRunner } from "@/lib/runner";
+import { requireWorkspaceContext, WorkspaceRequiredError } from "@/lib/workspace";
 
 export async function GET(
   _req: NextRequest,
@@ -7,7 +7,7 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const runner = await getRunner();
+    const { runner } = await requireWorkspaceContext();
     if (!runner.providers) {
       return NextResponse.json({ error: "Provider store not available" }, { status: 501 });
     }
@@ -17,7 +17,6 @@ export async function GET(
       return NextResponse.json({ id, configured: false });
     }
 
-    // Never return the full API key — mask it
     return NextResponse.json({
       id: provider.id,
       configured: true,
@@ -26,7 +25,7 @@ export async function GET(
       config: provider.config,
     });
   } catch (error) {
-    return NextResponse.json({ error: String(error) }, { status: 500 });
+    return errorResponse(error);
   }
 }
 
@@ -36,7 +35,7 @@ export async function PUT(
 ) {
   try {
     const { id } = await params;
-    const runner = await getRunner();
+    const { runner } = await requireWorkspaceContext();
     if (!runner.providers) {
       return NextResponse.json({ error: "Provider store not available" }, { status: 501 });
     }
@@ -51,7 +50,7 @@ export async function PUT(
     await runner.providers.putProvider({ id, apiKey, baseUrl, config });
     return NextResponse.json({ id, configured: true });
   } catch (error) {
-    return NextResponse.json({ error: String(error) }, { status: 500 });
+    return errorResponse(error);
   }
 }
 
@@ -61,7 +60,7 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    const runner = await getRunner();
+    const { runner } = await requireWorkspaceContext();
     if (!runner.providers) {
       return NextResponse.json({ error: "Provider store not available" }, { status: 501 });
     }
@@ -69,8 +68,15 @@ export async function DELETE(
     await runner.providers.deleteProvider(id);
     return NextResponse.json({ id, deleted: true });
   } catch (error) {
-    return NextResponse.json({ error: String(error) }, { status: 500 });
+    return errorResponse(error);
   }
+}
+
+function errorResponse(error: unknown) {
+  if (error instanceof WorkspaceRequiredError) {
+    return NextResponse.json({ error: error.message }, { status: error.status });
+  }
+  return NextResponse.json({ error: String(error) }, { status: 500 });
 }
 
 function maskKey(key: string): string {

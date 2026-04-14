@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getRunner } from "@/lib/runner";
+import { requireWorkspaceContext, WorkspaceRequiredError } from "@/lib/workspace";
 import { validateManifest } from "@agent-runner/manifest";
 
 export async function GET(
@@ -8,7 +8,7 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const runner = await getRunner();
+    const { runner } = await requireWorkspaceContext();
     const agent = await runner.agents.getAgent(id);
 
     if (!agent) {
@@ -17,7 +17,7 @@ export async function GET(
 
     return NextResponse.json(agent);
   } catch (error) {
-    return NextResponse.json({ error: String(error) }, { status: 500 });
+    return errorResponse(error);
   }
 }
 
@@ -27,7 +27,7 @@ export async function PUT(
 ) {
   try {
     const { id } = await params;
-    const runner = await getRunner();
+    const { runner } = await requireWorkspaceContext();
     const body = await req.json();
     const { name, manifest, ...rest } = body;
 
@@ -54,7 +54,7 @@ export async function PUT(
 
     return NextResponse.json({ id, updated: true, warnings: validation.warnings });
   } catch (error) {
-    return NextResponse.json({ error: String(error) }, { status: 500 });
+    return errorResponse(error);
   }
 }
 
@@ -64,10 +64,17 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    const runner = await getRunner();
+    const { runner } = await requireWorkspaceContext();
     await runner.agents.deleteAgent(id);
     return NextResponse.json({ id, deleted: true });
   } catch (error) {
-    return NextResponse.json({ error: String(error) }, { status: 500 });
+    return errorResponse(error);
   }
+}
+
+function errorResponse(error: unknown) {
+  if (error instanceof WorkspaceRequiredError) {
+    return NextResponse.json({ error: error.message }, { status: error.status });
+  }
+  return NextResponse.json({ error: String(error) }, { status: 500 });
 }

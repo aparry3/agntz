@@ -1,19 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { workerRun } from "@/lib/worker-client";
 import { requireWorkspaceContext, WorkspaceRequiredError } from "@/lib/workspace";
+import { getStore } from "@/lib/store";
 
-export async function POST(req: NextRequest) {
+export async function DELETE(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
   try {
+    const { id } = await params;
     const { workspace } = await requireWorkspaceContext();
-    const body = await req.json();
-    const { agentId, input, sessionId } = body;
-
-    if (!agentId) {
-      return NextResponse.json({ error: "Missing required field: agentId" }, { status: 400 });
-    }
-
-    const result = await workerRun({ workspaceId: workspace.id, agentId, input, sessionId });
-    return NextResponse.json(result);
+    const adminStore = await getStore();
+    await adminStore.revokeApiKey({ workspaceId: workspace.id, keyId: id });
+    return NextResponse.json({ id, revoked: true });
   } catch (error) {
     if (error instanceof WorkspaceRequiredError) {
       return NextResponse.json({ error: error.message }, { status: error.status });

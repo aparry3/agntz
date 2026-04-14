@@ -1,45 +1,58 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
-import type { Runner } from "@agent-runner/core";
+import { createRunner, type UnifiedStore } from "@agent-runner/core";
 import { execute, parseManifest } from "@agent-runner/manifest";
 import type { AgentManifest } from "@agent-runner/manifest";
 import { createExecutionContext } from "./bridge.js";
+import { workerAuth, getWorkspaceId, getCachedBody } from "./middleware/auth.js";
+import { seedDefaultsForWorkspace } from "./seed.js";
+import { readFileTool } from "./tools/read-file.js";
+import { validateManifestTool } from "./tools/validate-manifest.js";
 
 export interface WorkerAPIOptions {
-  runner: Runner;
+  store: UnifiedStore;
+  internalSecret: string;
 }
 
 /**
- * Create the worker API routes.
+ * Create the worker API. Auth middleware resolves a per-request workspaceId,
+ * then handlers build a workspace-scoped Runner and execute the agent.
  */
-export function createWorkerAPI({ runner }: WorkerAPIOptions): Hono {
+export function createWorkerAPI({ store, internalSecret }: WorkerAPIOptions): Hono {
   const app = new Hono();
-  const ctx = createExecutionContext(runner);
 
   app.use("*", cors());
 
-  // ─── Health ───────────────────────────────────────────────────────
+  // ─── Health (public) ──────────────────────────────────────────────
 
   app.get("/health", (c) => {
     return c.json({ status: "ok", service: "agent-runner-worker" });
   });
 
+  // Auth gate for everything else.
+  app.use("/run", workerAuth({ store, internalSecret }));
+  app.use("/run/stream", workerAuth({ store, internalSecret }));
+
   // ─── Run (request-response) ───────────────────────────────────────
 
   app.post("/run", async (c) => {
     try {
-      const body = await c.req.json();
-      const { agentId, input, sessionId } = body;
+      const workspaceId = getWorkspaceId(c);
+      const body = (getCachedBody(c) ?? (await c.req.json())) as {
+        agentId?: string;
+        input?: unknown;
+        sessionId?: string;
+      };
+      const { agentId, input } = body;
 
       if (!agentId) {
         return c.json({ error: "Missing required field: agentId" }, 400);
       }
 
-      // Resolve the agent manifest
+      const runner = await getRunnerForWorkspace(store, workspaceId);
       const manifest = await resolveManifest(agentId, runner);
-
-      // Execute
+      const ctx = createExecutionContext(runner);
       const result = await execute(manifest, input ?? "", ctx);
 
       return c.json({
@@ -56,19 +69,24 @@ export function createWorkerAPI({ runner }: WorkerAPIOptions): Hono {
 
   app.post("/run/stream", async (c) => {
     try {
-      const body = await c.req.json();
-      const { agentId, input, sessionId } = body;
+      const workspaceId = getWorkspaceId(c);
+      const body = (getCachedBody(c) ?? (await c.req.json())) as {
+        agentId?: string;
+        input?: unknown;
+        sessionId?: string;
+      };
+      const { agentId, input } = body;
 
       if (!agentId) {
         return c.json({ error: "Missing required field: agentId" }, 400);
       }
 
+      const runner = await getRunnerForWorkspace(store, workspaceId);
       const manifest = await resolveManifest(agentId, runner);
+      const ctx = createExecutionContext(runner);
 
       return streamSSE(c, async (stream) => {
         try {
-          // For now, execute and emit events
-          // TODO: integrate with core runner's streaming for LLM agents
           await stream.writeSSE({
             event: "run-start",
             data: JSON.stringify({ agentId, kind: manifest.kind }),
@@ -98,11 +116,23 @@ export function createWorkerAPI({ runner }: WorkerAPIOptions): Hono {
   return app;
 }
 
-/**
- * Resolve an agent ID to its manifest.
- * Agents are stored with their YAML manifest in metadata.
- */
-async function resolveManifest(agentId: string, runner: Runner): Promise<AgentManifest> {
+async function getRunnerForWorkspace(store: UnifiedStore, workspaceId: string) {
+  const scoped = store.forWorkspace(workspaceId);
+  const runner = createRunner({
+    store: scoped,
+    tools: [readFileTool, validateManifestTool],
+    defaults: {
+      model: {
+        provider: process.env.DEFAULT_MODEL_PROVIDER ?? "openai",
+        name: process.env.DEFAULT_MODEL_NAME ?? "gpt-4o",
+      },
+    },
+  });
+  await seedDefaultsForWorkspace(runner, workspaceId);
+  return runner;
+}
+
+async function resolveManifest(agentId: string, runner: ReturnType<typeof createRunner>): Promise<AgentManifest> {
   const agentDef = await runner.agents.getAgent(agentId);
   if (!agentDef) {
     throw Object.assign(new Error(`Agent "${agentId}" not found`), { code: "NOT_FOUND" });

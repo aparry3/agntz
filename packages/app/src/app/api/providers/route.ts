@@ -1,5 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getRunner } from "@/lib/runner";
+import { NextResponse } from "next/server";
+import { requireWorkspaceContext, WorkspaceRequiredError } from "@/lib/workspace";
 
 const SUPPORTED_PROVIDERS = [
   { id: "openai", name: "OpenAI", models: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o4-mini"] },
@@ -16,7 +16,7 @@ const SUPPORTED_PROVIDERS = [
 
 export async function GET() {
   try {
-    const runner = await getRunner();
+    const { runner } = await requireWorkspaceContext();
     const stored = runner.providers ? await runner.providers.listProviders() : [];
     const storedMap = new Map(stored.map((p) => [p.id, p.configured]));
 
@@ -27,6 +27,9 @@ export async function GET() {
 
     return NextResponse.json(providers);
   } catch (error) {
+    if (error instanceof WorkspaceRequiredError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
 }
