@@ -5,7 +5,10 @@ services:
       target: app
     ports:
       - "3000:3000"
+    env_file:
+      - .env.local
     environment:
+      # Overrides for container networking (point at the compose db + worker)
       - STORE=postgres
       - DATABASE_URL=postgres://postgres:postgres@db:5432/agent_runner
       - WORKER_URL=http://worker:4001
@@ -19,6 +22,8 @@ services:
       target: worker
     ports:
       - "4001:4001"
+    env_file:
+      - .env.local
     environment:
       - STORE=postgres
       - DATABASE_URL=postgres://postgres:postgres@db:5432/agent_runner
