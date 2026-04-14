@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { isSuperAdmin } from "@/lib/admin";
 import { getSystemAgent } from "@agent-runner/worker";
+import { YamlViewer } from "@/components/yaml-viewer";
 
 export default async function SystemAgentDetailPage({
   params,
@@ -42,9 +43,7 @@ export default async function SystemAgentDetailPage({
         Source: <span className="font-mono">{info.sourcePath}</span>
       </div>
 
-      <pre className="overflow-x-auto rounded-xl border border-stone-200 bg-zinc-950 p-4 text-xs leading-relaxed text-zinc-100">
-        <code>{info.yaml}</code>
-      </pre>
+      <YamlViewer value={info.yaml} />
 
       <div className="mt-6 rounded-xl border border-stone-200 bg-white p-4 text-sm text-zinc-700">
         <p className="mb-2 font-medium text-zinc-950">Invoking this agent</p>
