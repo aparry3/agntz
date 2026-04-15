@@ -7,8 +7,7 @@ import type { AgentManifest } from "@agntz/manifest";
 import { createExecutionContext } from "./bridge.js";
 import { workerAuth, getUserId, getCachedBody } from "./middleware/auth.js";
 import { isSystemAgentId, loadSystemAgent } from "./system-agents.js";
-import { readFileTool } from "./tools/read-file.js";
-import { validateManifestTool } from "./tools/validate-manifest.js";
+import { LOCAL_TOOLS } from "./tools/registry.js";
 
 export interface WorkerAPIOptions {
   store: UnifiedStore;
@@ -124,7 +123,7 @@ async function resolveRunnerAndManifest(
   userId: string,
   agentId: string,
 ): Promise<{ runner: Runner; manifest: AgentManifest }> {
-  const tools = [readFileTool, validateManifestTool];
+  const tools = [...LOCAL_TOOLS];
   const defaults = {
     model: {
       provider: process.env.DEFAULT_MODEL_PROVIDER ?? "openai",

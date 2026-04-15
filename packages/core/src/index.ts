@@ -19,6 +19,8 @@ export { MCPClientManager } from "./mcp/client-manager.js";
 export type { MCPTool } from "./mcp/client-manager.js";
 export { createMCPServer } from "./mcp/server.js";
 export type { MCPServerOptions } from "./mcp/server.js";
+export { listToolsOnServer } from "./mcp/list-tools.js";
+export type { ListToolsOptions } from "./mcp/list-tools.js";
 
 // Telemetry
 export { Telemetry } from "./telemetry.js";

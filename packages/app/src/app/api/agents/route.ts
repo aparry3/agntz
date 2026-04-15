@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUserContext, AuthRequiredError } from "@/lib/user";
-import { validateManifest } from "@agntz/manifest";
+import { validateManifestFull } from "@agntz/manifest";
+import { buildValidationContext } from "@/lib/validation-context";
 
 export async function GET() {
   try {
@@ -25,11 +26,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing required field: manifest" }, { status: 400 });
     }
 
-    const validation = validateManifest(manifest);
-    const structuralErrors = validation.errors.filter((e) => e.level === "structural");
-    if (structuralErrors.length > 0) {
+    const ctx = buildValidationContext(runner, { strict: true });
+    const validation = await validateManifestFull(manifest, ctx);
+    if (validation.errors.length > 0) {
       return NextResponse.json(
-        { error: "Invalid manifest", errors: structuralErrors },
+        { error: "Invalid manifest", errors: validation.errors, warnings: validation.warnings },
         { status: 400 }
       );
     }

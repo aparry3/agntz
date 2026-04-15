@@ -42,6 +42,13 @@ export interface ValidationContext {
   localTools: string[];
   /** Check if a provider has a configured API key */
   isProviderConfigured?: (provider: string) => Promise<boolean>;
+  /**
+   * When true, MCP server connection failures are reported as errors
+   * instead of warnings. Use for save-time validation where an unreachable
+   * server should block persistence; leave false for live-editor validation
+   * where transient network issues shouldn't flood the editor with errors.
+   */
+  strict?: boolean;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -677,7 +684,7 @@ async function validateExternal(
       }
       break;
     case "tool":
-      await validateToolCallExternal(manifest, path, errors, ctx);
+      await validateToolCallExternal(manifest, path, errors, warnings, ctx);
       break;
     case "sequential":
       for (let i = 0; i < manifest.steps.length; i++) {
@@ -738,7 +745,12 @@ async function validateToolEntriesExternal(
           }
         }
       } catch (e) {
-        warnings.push({ path: epath, message: `Could not connect to MCP server '${entry.server}': ${(e as Error).message}` });
+        const message = `Could not connect to MCP server '${entry.server}': ${(e as Error).message}`;
+        if (ctx.strict) {
+          errors.push({ level: "external", path: epath, message });
+        } else {
+          warnings.push({ path: epath, message });
+        }
       }
     }
 
@@ -763,6 +775,7 @@ async function validateToolCallExternal(
   manifest: ToolAgentManifest,
   path: string,
   errors: ValidationError[],
+  warnings: ValidationWarning[],
   ctx: ValidationContext
 ): Promise<void> {
   if (manifest.tool.kind === "mcp") {
@@ -776,7 +789,12 @@ async function validateToolCallExternal(
         });
       }
     } catch (e) {
-      errors.push({ level: "external", path: p(path, "tool.server"), message: `Could not connect to MCP server: ${(e as Error).message}` });
+      const message = `Could not connect to MCP server: ${(e as Error).message}`;
+      if (ctx.strict) {
+        errors.push({ level: "external", path: p(path, "tool.server"), message });
+      } else {
+        warnings.push({ path: p(path, "tool.server"), message });
+      }
     }
   }
 

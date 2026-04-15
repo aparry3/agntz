@@ -527,6 +527,58 @@ tools:
       resolveTools: vi.fn().mockRejectedValue(new Error("Connection refused")),
     }));
     expect(result.warnings.some(w => w.message.includes("Connection refused"))).toBe(true);
+    expect(result.valid).toBe(true);
+  });
+
+  it("errors on unreachable MCP server when strict", async () => {
+    const result = await validateManifestFull(`
+id: test
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: test
+tools:
+  - kind: mcp
+    server: https://unreachable.example.com
+    tools: [toolA]
+`, mockCtx({
+      strict: true,
+      resolveTools: vi.fn().mockRejectedValue(new Error("Connection refused")),
+    }));
+    expect(result.errors.some(e => e.level === "external" && e.message.includes("Connection refused"))).toBe(true);
+    expect(result.valid).toBe(false);
+  });
+
+  it("warns on unreachable tool-agent MCP server when not strict", async () => {
+    const result = await validateManifestFull(`
+id: test
+kind: tool
+tool:
+  kind: mcp
+  server: https://unreachable.example.com
+  name: toolA
+`, mockCtx({
+      resolveTools: vi.fn().mockRejectedValue(new Error("ENOTFOUND")),
+    }));
+    expect(result.warnings.some(w => w.message.includes("ENOTFOUND"))).toBe(true);
+    expect(result.valid).toBe(true);
+  });
+
+  it("errors on unreachable tool-agent MCP server when strict", async () => {
+    const result = await validateManifestFull(`
+id: test
+kind: tool
+tool:
+  kind: mcp
+  server: https://unreachable.example.com
+  name: toolA
+`, mockCtx({
+      strict: true,
+      resolveTools: vi.fn().mockRejectedValue(new Error("ENOTFOUND")),
+    }));
+    expect(result.errors.some(e => e.level === "external" && e.message.includes("ENOTFOUND"))).toBe(true);
+    expect(result.valid).toBe(false);
   });
 
   it("validates tool agent external references", async () => {
