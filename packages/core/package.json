@@ -19,7 +19,7 @@
     }
   },
   "bin": {
-    "agent-runner": "./dist/cli.js"
+    "agntz": "./dist/cli.js"
   },
   "files": [
     "dist"
@@ -48,10 +48,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/aparry3/agent-runner.git",
+    "url": "https://github.com/aparry3/agntz.git",
     "directory": "packages/core"
   },
-  "homepage": "https://github.com/aparry3/agent-runner#readme",
+  "homepage": "https://github.com/aparry3/agntz#readme",
   "author": "Aaron Bidworthy",
   "dependencies": {
     "ai": "^6.0.0",

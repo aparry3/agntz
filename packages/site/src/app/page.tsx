@@ -122,7 +122,7 @@ export default function Home() {
               Deploy
             </Link>
             <Link
-              href="https://github.com/aparry3/agent-runner"
+              href="https://github.com/aparry3/agntz"
               className="rounded-full border border-white/12 px-4 py-2 text-white transition hover:bg-white/8"
             >
               View on GitHub
@@ -166,7 +166,7 @@ export default function Home() {
 
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <Link
-                href="https://github.com/aparry3/agent-runner"
+                href="https://github.com/aparry3/agntz"
                 className="inline-flex items-center justify-center rounded-full bg-[#f4efe6] px-6 py-3 text-sm font-semibold text-[#08111b] transition hover:bg-white"
               >
                 View Source on GitHub
@@ -300,7 +300,7 @@ export default function Home() {
             </ul>
             <div className="mt-8">
               <Link
-                href="https://github.com/aparry3/agent-runner"
+                href="https://github.com/aparry3/agntz"
                 className="inline-flex rounded-full border border-emerald-100/18 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/8"
               >
                 Explore the GitHub repo
@@ -356,7 +356,7 @@ export default function Home() {
 
             <div className="flex flex-col gap-3 sm:flex-row lg:flex-col">
               <Link
-                href="https://github.com/aparry3/agent-runner"
+                href="https://github.com/aparry3/agntz"
                 className="inline-flex items-center justify-center rounded-full bg-[#f4efe6] px-6 py-3 text-sm font-semibold text-[#08111b] transition hover:bg-white"
               >
                 View Source on GitHub
@@ -496,8 +496,8 @@ function GitHubCard() {
         GitHub / Local Dev
       </div>
       <h3 className="mt-3 text-lg font-semibold text-white">Clone it and run the stack locally</h3>
-      <CodeBlock className="mt-4">{`git clone https://github.com/aparry3/agent-runner
-cd agent-runner
+      <CodeBlock className="mt-4">{`git clone https://github.com/aparry3/agntz
+cd agntz
 pnpm install
 cp .env.example .env.local
 pnpm --filter @agntz/worker dev

@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════
-// agent-runner — TypeScript SDK for AI Agents
+// agntz — TypeScript SDK for AI Agents
 // ═══════════════════════════════════════════════════════════════════════
 
 // Core API
@@ -46,7 +46,7 @@ export type { AssertionResult, EvalRunOptions, CustomAssertionFn } from "./eval.
 
 // Errors
 export {
-  AgentRunnerError,
+  AgntzError,
   AgentNotFoundError,
   ToolNotFoundError,
   ToolExecutionError,

@@ -1,6 +1,6 @@
 # Types
 
-All types are exported from `agent-runner`.
+All types are exported from `agntz`.
 
 ## Core Types
 

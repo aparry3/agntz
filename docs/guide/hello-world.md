@@ -7,7 +7,7 @@ A minimal walkthrough from zero to working agent.
 ```bash
 mkdir my-agent && cd my-agent
 npm init -y
-npm install agent-runner @ai-sdk/openai
+npm install agntz @ai-sdk/openai
 ```
 
 Set your API key:
@@ -20,7 +20,7 @@ export OPENAI_API_KEY=sk-...
 Create `index.ts`:
 
 ```typescript
-import { createRunner, defineAgent } from "agent-runner";
+import { createRunner, defineAgent } from "agntz";
 
 const runner = createRunner();
 
@@ -53,7 +53,7 @@ Tokens: 87 | Time: 412ms
 ## 3. Add Persistence
 
 ```typescript
-import { createRunner, defineAgent, JsonFileStore } from "agent-runner";
+import { createRunner, defineAgent, JsonFileStore } from "agntz";
 
 const runner = createRunner({
   store: new JsonFileStore("./data"),
@@ -72,13 +72,13 @@ runner.registerAgent(defineAgent({
 
 ```bash
 # Initialize a project with config file
-npx agent-runner init
+npx agntz init
 
 # Invoke an agent
-npx agent-runner invoke poet "Write about coffee"
+npx agntz invoke poet "Write about coffee"
 
 # Launch the Studio
-npx agent-runner studio
+npx agntz studio
 ```
 
 ## What's Next?

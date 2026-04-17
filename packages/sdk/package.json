@@ -1,7 +1,7 @@
 {
   "name": "@agntz/sdk",
   "version": "0.1.0",
-  "description": "Official TypeScript client for the agent-runner HTTP API. Universal (Node + browser), SSE streaming, AbortSignal-native.",
+  "description": "Official TypeScript client for the agntz HTTP API. Universal (Node + browser), SSE streaming, AbortSignal-native.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -26,7 +26,6 @@
   },
   "keywords": [
     "agntz",
-    "agent-runner",
     "ai",
     "agents",
     "sdk",
@@ -36,7 +35,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/aparry3/agent-runner.git",
+    "url": "https://github.com/aparry3/agntz.git",
     "directory": "packages/sdk"
   },
   "publishConfig": {

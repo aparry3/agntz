@@ -12,7 +12,7 @@ describe("JsonFileStore", () => {
   const userId = "user_test";
 
   beforeEach(async () => {
-    tempDir = await mkdtemp(join(tmpdir(), "agent-runner-test-"));
+    tempDir = await mkdtemp(join(tmpdir(), "agntz-test-"));
     admin = new JsonFileStore(tempDir);
     store = admin.forUser(userId);
   });

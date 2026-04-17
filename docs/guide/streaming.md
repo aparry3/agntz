@@ -1,6 +1,6 @@
 # Streaming
 
-agent-runner supports streaming responses for real-time output.
+agntz supports streaming responses for real-time output.
 
 ## Basic Streaming
 

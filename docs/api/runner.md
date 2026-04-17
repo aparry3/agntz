@@ -126,7 +126,7 @@ interface InvokeResult {
 ## Example
 
 ```typescript
-import { createRunner, defineAgent, JsonFileStore } from "agent-runner";
+import { createRunner, defineAgent, JsonFileStore } from "agntz";
 
 const runner = createRunner({
   store: new JsonFileStore("./data"),

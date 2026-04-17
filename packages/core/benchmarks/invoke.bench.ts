@@ -1,5 +1,5 @@
 /**
- * Performance benchmarks for agent-runner core operations.
+ * Performance benchmarks for agntz core operations.
  * Run: npx vitest bench packages/core/benchmarks/
  */
 import { bench, describe } from "vitest";
@@ -133,7 +133,7 @@ describe("invoke() — with context, MemoryStore", () => {
 });
 
 describe("invoke() — JsonFileStore", () => {
-  const tempDir = mkdtempSync(join(tmpdir(), "agent-runner-bench-"));
+  const tempDir = mkdtempSync(join(tmpdir(), "agntz-bench-"));
 
   bench(
     "invoke with JsonFileStore",

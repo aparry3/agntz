@@ -47,7 +47,7 @@ export function AppSidebar() {
           <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-zinc-400">
             Workspace
           </div>
-          <div className="mt-2 text-xl font-semibold text-zinc-950">Agent Runner</div>
+          <div className="mt-2 text-xl font-semibold text-zinc-950">agntz</div>
         </Link>
 
         <nav className="flex flex-col gap-1">

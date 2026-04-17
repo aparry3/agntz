@@ -1,6 +1,6 @@
 # @agntz/sdk
 
-Official TypeScript client for the agent-runner HTTP API. Universal — runs in Node 20+ and modern browsers. Zero runtime dependencies.
+Official TypeScript client for the agntz HTTP API. Universal — runs in Node 20+ and modern browsers. Zero runtime dependencies.
 
 ## Install
 
@@ -42,7 +42,7 @@ await client.health();
 
 ## Auth
 
-The SDK authenticates with a Bearer API key (`ar_live_...`). Generate one from the agent-runner app UI.
+The SDK authenticates with a Bearer API key (`ar_live_...`). Generate one from the agntz app UI.
 
 ## Errors
 

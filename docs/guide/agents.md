@@ -1,11 +1,11 @@
 # Agents
 
-An agent is a JSON-serializable configuration that defines AI behavior. This is agent-runner's core differentiator — agents are data, not code.
+An agent is a JSON-serializable configuration that defines AI behavior. This is agntz's core differentiator — agents are data, not code.
 
 ## Defining an Agent
 
 ```typescript
-import { defineAgent } from "agent-runner";
+import { defineAgent } from "agntz";
 
 const agent = defineAgent({
   id: "support",

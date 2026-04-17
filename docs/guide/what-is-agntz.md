@@ -1,6 +1,6 @@
-# What is agent-runner?
+# What is agntz?
 
-**agent-runner** is an open-source TypeScript SDK for defining, running, and evaluating AI agents. It treats agents as portable, self-contained data structures — not code — that can be stored, versioned, shared, and loaded from any backing store.
+**agntz** is an open-source TypeScript SDK for defining, running, and evaluating AI agents. It treats agents as portable, self-contained data structures — not code — that can be stored, versioned, shared, and loaded from any backing store.
 
 ## The Problem
 
@@ -21,7 +21,7 @@ None solve these problems simultaneously:
 
 ## The Solution
 
-agent-runner is organized around three activities:
+agntz is organized around three activities:
 
 | Activity | Code | Studio |
 |----------|------|--------|
@@ -82,17 +82,17 @@ const runner = createRunner({
 
 ### SDK with a Studio
 
-Like Prisma Studio for databases, agent-runner includes a visual development UI:
+Like Prisma Studio for databases, agntz includes a visual development UI:
 
 ```bash
-npx agent-runner studio
+npx agntz studio
 ```
 
 The Studio reads from the same stores as your code — create an agent in the UI, and it's immediately available to `runner.invoke()`.
 
 ## Comparison
 
-| Feature | agent-runner | LangChain | Vercel AI SDK | OpenAI Agents |
+| Feature | agntz | LangChain | Vercel AI SDK | OpenAI Agents |
 |---------|-------------|-----------|---------------|---------------|
 | Agent-as-config | ✅ | ❌ | ❌ | ❌ |
 | Pluggable storage | ✅ | Partial | ❌ | ❌ |

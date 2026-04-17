@@ -1,6 +1,6 @@
 # Agent Chains
 
-agent-runner supports multi-agent collaboration through two mechanisms: **agent-as-tool** references and **tool-driven chains** with dynamic context.
+agntz supports multi-agent collaboration through two mechanisms: **agent-as-tool** references and **tool-driven chains** with dynamic context.
 
 ## Agent-as-Tool
 
@@ -31,7 +31,7 @@ await runner.invoke("writer", "Write about MCP");
 
 ## Recursion Limits
 
-Agent chains can recurse (A calls B calls A). agent-runner tracks depth and enforces limits:
+Agent chains can recurse (A calls B calls A). agntz tracks depth and enforces limits:
 
 ```typescript
 const runner = createRunner({

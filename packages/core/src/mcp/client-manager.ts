@@ -114,7 +114,7 @@ export class MCPClientManager {
     );
 
     const client = new Client({
-      name: "agent-runner",
+      name: "agntz",
       version: "0.1.0",
     });
 

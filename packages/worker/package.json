@@ -12,7 +12,7 @@
     }
   },
   "bin": {
-    "agent-worker": "./dist/server.js"
+    "agntz-worker": "./dist/server.js"
   },
   "files": [
     "dist"
@@ -29,7 +29,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/aparry3/agent-runner.git",
+    "url": "https://github.com/aparry3/agntz.git",
     "directory": "packages/worker"
   },
   "dependencies": {

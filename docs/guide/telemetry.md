@@ -1,6 +1,6 @@
 # OpenTelemetry
 
-agent-runner has built-in OpenTelemetry integration for observability. It's completely opt-in — zero overhead when not configured.
+agntz has built-in OpenTelemetry integration for observability. It's completely opt-in — zero overhead when not configured.
 
 ## Setup
 
@@ -13,7 +13,7 @@ npm install @opentelemetry/api @opentelemetry/sdk-node @opentelemetry/exporter-t
 Pass your tracer to `createRunner()`:
 
 ```typescript
-import { createRunner } from "agent-runner";
+import { createRunner } from "agntz";
 import { trace } from "@opentelemetry/api";
 
 const runner = createRunner({
@@ -23,7 +23,7 @@ const runner = createRunner({
 });
 ```
 
-Or let agent-runner use the global tracer (if you've configured the OTel SDK globally):
+Or let agntz use the global tracer (if you've configured the OTel SDK globally):
 
 ```typescript
 const runner = createRunner({
@@ -39,7 +39,7 @@ const runner = createRunner({
 interface TelemetryConfig {
   /** An OpenTelemetry Tracer instance */
   tracer?: Tracer;
-  /** Tracer name for global lookup (default: "agent-runner") */
+  /** Tracer name for global lookup (default: "agntz") */
   tracerName?: string;
   /** Record input/output in span attributes (default: false for privacy) */
   recordIO?: boolean;
@@ -135,7 +135,7 @@ const sdk = new NodeSDK({
 });
 sdk.start();
 
-// Use with agent-runner
+// Use with agntz
 const runner = createRunner({
   telemetry: {
     tracer: trace.getTracer("my-agent-app"),

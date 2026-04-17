@@ -1,7 +1,7 @@
 ---
 layout: home
 hero:
-  name: agent-runner
+  name: agntz
   text: AI Agents as Data
   tagline: A TypeScript SDK for defining, running, and evaluating AI agents with first-class MCP support, pluggable storage, and a built-in Studio.
   actions:
@@ -10,7 +10,7 @@ hero:
       link: /guide/getting-started
     - theme: alt
       text: View on GitHub
-      link: https://github.com/aparryopenclaw/agent-runner
+      link: https://github.com/aparryopenclaw/agntz
 
 features:
   - icon: 📦
@@ -24,7 +24,7 @@ features:
     details: First-class Model Context Protocol support. Connect to MCP servers for tool discovery, or expose your agents as MCP tools.
   - icon: 🎨
     title: Built-in Studio
-    details: "npx agent-runner studio — a visual dev UI for creating agents, testing in the playground, browsing tools, and running evals."
+    details: "npx agntz studio — a visual dev UI for creating agents, testing in the playground, browsing tools, and running evals."
   - icon: ✅
     title: Evals Built In
     details: Define test cases with assertions (contains, regex, JSON schema, LLM-as-judge, semantic similarity) and run them from code, CLI, or Studio.

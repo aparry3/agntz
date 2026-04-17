@@ -3,7 +3,7 @@
   "changelog": [
     "@changesets/changelog-github",
     {
-      "repo": "aparry3/agent-runner"
+      "repo": "aparry3/agntz"
     }
   ],
   "commit": false,

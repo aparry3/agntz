@@ -1,6 +1,6 @@
-# Migrating to agent-runner (gymtext)
+# Migrating to agntz (gymtext)
 
-This guide shows how to replace a custom AI system with agent-runner, using the gymtext fitness coaching app as a concrete example.
+This guide shows how to replace a custom AI system with agntz, using the gymtext fitness coaching app as a concrete example.
 
 ## Before: Custom AI Code
 
@@ -54,19 +54,19 @@ async function handleMessage(userId: string, message: string, sessionId: string)
 - Switching models requires rewriting tool schemas
 - No shared context between different AI features
 
-## After: agent-runner
+## After: agntz
 
 ### 1. Install
 
 ```bash
-pnpm add agent-runner
+pnpm add agntz
 ```
 
 ### 2. Define Your Agents
 
 ```typescript
 // agents.ts
-import { defineAgent, defineTool } from "agent-runner";
+import { defineAgent, defineTool } from "agntz";
 import { z } from "zod";
 
 // ═══ Tools ═══
@@ -132,7 +132,7 @@ export const workoutGenerator = defineAgent({
 
 ```typescript
 // runner.ts
-import { createRunner } from "agent-runner";
+import { createRunner } from "agntz";
 import { chatAgent, workoutGenerator, getWorkout, logWorkout } from "./agents";
 
 export const runner = createRunner({
@@ -155,7 +155,7 @@ app.post("/api/message", async (req, res) => {
   const { userId, message, sessionId } = req.body;
 
   const result = await runner.invoke("chat", message, {
-    sessionId,                          // agent-runner handles history
+    sessionId,                          // agntz handles history
     contextIds: [`users/${userId}`],    // shared context, auto-injected
     toolContext: {                      // runtime data for tools
       user: await db.users.findUnique({ where: { id: userId } }),
@@ -173,7 +173,7 @@ That's it. **5 files, clean separation, testable agents.**
 
 ## What You Get for Free
 
-| Concern | Before (custom) | After (agent-runner) |
+| Concern | Before (custom) | After (agntz) |
 |---------|-----------------|---------------------|
 | History management | Manual DB queries, manual trimming | Automatic (sliding window or summary) |
 | Tool execution loop | Manual while loop, provider-specific | Built-in, model-agnostic |
@@ -181,7 +181,7 @@ That's it. **5 files, clean separation, testable agents.**
 | Context sharing | Custom global state / DB queries | Named context buckets, auto-injection |
 | Model switching | Rewrite tool schemas + API calls | Change one string (`model.provider`) |
 | Testing | Mock everything manually | `runner.eval()` with assertions |
-| Dev UI | None | `npx agent-runner studio` |
+| Dev UI | None | `npx agntz studio` |
 | Observability | Custom logging | Built-in logs + optional OpenTelemetry |
 
 ## Switching Stores
@@ -190,12 +190,12 @@ Start simple, scale later:
 
 ```typescript
 // Development
-import { JsonFileStore } from "agent-runner";
+import { JsonFileStore } from "agntz";
 const store = new JsonFileStore("./data");
 
 // Production (single server)
 import { SqliteStore } from "@agntz/store-sqlite";
-const store = new SqliteStore("./agent-runner.db");
+const store = new SqliteStore("./agntz.db");
 
 // Production (multi-server)
 import { PostgresStore } from "@agntz/store-postgres";
@@ -210,7 +210,7 @@ During development, add the Studio for a visual UI:
 
 ```bash
 pnpm add -D @agntz/studio
-npx agent-runner studio
+npx agntz studio
 ```
 
 This gives you:
@@ -253,9 +253,9 @@ const chatAgent = defineAgent({
 
 Run evals:
 ```bash
-npx agent-runner eval chat
+npx agntz eval chat
 # Or in CI:
-npx agent-runner eval --all --json --threshold 0.8
+npx agntz eval --all --json --threshold 0.8
 ```
 
 ## Key Differences from Custom Code
@@ -266,6 +266,6 @@ npx agent-runner eval --all --json --threshold 0.8
 
 3. **Context is explicit.** Instead of ad-hoc DB queries scattered through your prompt builder, context is a named system that agents declare and the runtime manages.
 
-4. **Sessions are automatic.** Pass a `sessionId` and agent-runner handles load, append, and trim.
+4. **Sessions are automatic.** Pass a `sessionId` and agntz handles load, append, and trim.
 
 5. **Testing is built in.** No mocking the entire AI stack — `runner.eval()` runs your agent through test cases with real or mock models.

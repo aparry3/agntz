@@ -1,5 +1,5 @@
 {
-  "name": "agent-runner-monorepo",
+  "name": "agntz-monorepo",
   "private": true,
   "packageManager": "pnpm@10.6.2",
   "scripts": {

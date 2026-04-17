@@ -1,5 +1,5 @@
 /**
- * OpenTelemetry integration for agent-runner.
+ * OpenTelemetry integration for agntz.
  *
  * Opt-in: pass `telemetry` config to `createRunner()`.
  * Uses `@opentelemetry/api` — users bring their own SDK/exporter setup.
@@ -61,7 +61,7 @@ function getOTelApi(): any {
 export interface TelemetryConfig {
   /** An OpenTelemetry Tracer instance. If not provided, uses the global tracer. */
   tracer?: OTelTracer;
-  /** Tracer name for global tracer lookup (default: "agent-runner") */
+  /** Tracer name for global tracer lookup (default: "agntz") */
   tracerName?: string;
   /** Whether to record input/output text in span attributes (default: false for privacy) */
   recordIO?: boolean;
@@ -92,7 +92,7 @@ export class Telemetry {
       // Try to get global tracer from @opentelemetry/api
       const api = getOTelApi();
       if (api) {
-        this.tracer = api.trace.getTracer(config.tracerName ?? "agent-runner");
+        this.tracer = api.trace.getTracer(config.tracerName ?? "agntz");
       } else {
         this.tracer = null;
       }

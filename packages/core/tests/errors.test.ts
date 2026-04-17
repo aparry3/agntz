@@ -5,7 +5,7 @@ import { defineTool } from "../src/tool.js";
 import { z } from "zod";
 import {
   AgentNotFoundError,
-  AgentRunnerError,
+  AgntzError,
   InvocationCancelledError,
   MaxStepsExceededError,
 } from "../src/errors.js";
@@ -52,7 +52,7 @@ describe("Typed Errors", () => {
       expect.fail("Should have thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(AgentNotFoundError);
-      expect(err).toBeInstanceOf(AgentRunnerError);
+      expect(err).toBeInstanceOf(AgntzError);
       expect((err as AgentNotFoundError).agentId).toBe("nonexistent");
       expect((err as AgentNotFoundError).code).toBe("AGENT_NOT_FOUND");
     }
@@ -83,9 +83,9 @@ describe("Typed Errors", () => {
     }
   });
 
-  it("all errors extend AgentRunnerError", () => {
+  it("all errors extend AgntzError", () => {
     const err = new AgentNotFoundError("test");
-    expect(err instanceof AgentRunnerError).toBe(true);
+    expect(err instanceof AgntzError).toBe(true);
     expect(err instanceof Error).toBe(true);
     expect(err.code).toBe("AGENT_NOT_FOUND");
     expect(err.name).toBe("AgentNotFoundError");

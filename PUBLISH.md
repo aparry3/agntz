@@ -1,13 +1,13 @@
-# Publishing agent-runner to npm
+# Publishing agntz to npm
 
 ## Current State (as of 2026-03-10)
 
 | Package | Name | Version | Scope | Built? |
 |---------|------|---------|-------|--------|
-| core | `agent-runner` | 0.1.0 | unscoped | ✅ |
-| store-postgres | `@agntz/store-postgres` | 0.1.0 | @agent-runner | ✅ |
-| store-sqlite | `@agntz/store-sqlite` | 0.1.0 | @agent-runner | ✅ |
-| studio | `@agntz/studio` | 0.1.0 | @agent-runner | ✅ |
+| core | `agntz` | 0.1.0 | unscoped | ✅ |
+| store-postgres | `@agntz/store-postgres` | 0.1.0 | @agntz | ✅ |
+| store-sqlite | `@agntz/store-sqlite` | 0.1.0 | @agntz | ✅ |
+| studio | `@agntz/studio` | 0.1.0 | @agntz | ✅ |
 
 **Changesets** is already configured (`access: "public"`, GitHub changelog).
 
@@ -15,28 +15,28 @@
 
 ## ⚠️ Blockers to Fix First
 
-### 1. `agent-runner` package name is TAKEN on npm
+### 1. `agntz` package name is TAKEN on npm
 
-The unscoped name `agent-runner` is owned by `kamrynohly <kamryn@arcada.dev>` (published 3 months ago as a placeholder — "open sourcing soon").
+The unscoped name `agntz` is owned by `kamrynohly <kamryn@arcada.dev>` (published 3 months ago as a placeholder — "open sourcing soon").
 
 **Options (pick one):**
 
 - **Option A (recommended): Scope everything under `@agntz/`**
-  - Rename core from `agent-runner` → `@agntz/core`
+  - Rename core from `agntz` → `@agntz/core`
   - Consistent with the other packages
-  - Requires creating the `@agent-runner` npm organization (free)
+  - Requires creating the `@agntz` npm organization (free)
   - Install: `npm install @agntz/core`
 
 - **Option B: Use your personal scope**
-  - Rename to `@aparry3/agent-runner` (or whatever your npm username is)
+  - Rename to `@aparry3/agntz` (or whatever your npm username is)
   - No org creation needed
   - Less clean branding
 
 - **Option C: Contact the owner**
-  - Reach out to kamryn@arcada.dev about transferring the `agent-runner` name
+  - Reach out to kamryn@arcada.dev about transferring the `agntz` name
   - Risky/slow — they may not respond
 
-### 2. `@agent-runner` npm organization doesn't exist yet
+### 2. `@agntz` npm organization doesn't exist yet
 
 You need to create it at https://www.npmjs.com/org/create — it's free for public packages.
 
@@ -50,7 +50,7 @@ The scoped packages (`store-postgres`, `store-sqlite`, `studio`) don't have `pub
 
 ### 5. Repository URLs reference `aparryopenclaw` not `aparry3`
 
-The package.json files have `aparryopenclaw/agent-runner.git` but the actual git remote is `aparry3/agent-runner.git`. Fix these for npm to link correctly.
+The package.json files have `aparryopenclaw/agntz.git` but the actual git remote is `aparry3/agntz.git`. Fix these for npm to link correctly.
 
 ---
 
@@ -61,10 +61,10 @@ The package.json files have `aparryopenclaw/agent-runner.git` but the actual git
 1. **npm account** — Create one at https://www.npmjs.com/signup if you don't have one
 2. **2FA** — npm requires 2FA for publishing; set it up in account settings
 
-### Step 1: Create the `@agent-runner` npm org
+### Step 1: Create the `@agntz` npm org
 
 1. Go to https://www.npmjs.com/org/create
-2. Create org named `agent-runner`
+2. Create org named `agntz`
 3. Select the **free/unlimited public packages** plan
 
 ### Step 2: Authenticate with npm
@@ -113,7 +113,7 @@ In `packages/core/package.json`:
 ```json
 {
   "repository": {
-    "url": "https://github.com/aparry3/agent-runner.git"
+    "url": "https://github.com/aparry3/agntz.git"
   }
 }
 ```
@@ -122,7 +122,7 @@ In `packages/core/package.json`:
 ```json
 {
   "bin": {
-    "agent-runner": "./dist/cli.js"
+    "agntz": "./dist/cli.js"
   }
 }
 ```
@@ -130,7 +130,7 @@ In `packages/core/package.json`:
 ### Step 4: Verify builds
 
 ```bash
-cd ~/Projects/agent-runner
+cd ~/Projects/agntz
 pnpm build
 ```
 
@@ -153,7 +153,7 @@ Review the file lists — make sure only `dist/` is included (controlled by `"fi
 **Order matters:** core first, then packages that depend on it.
 
 ```bash
-cd ~/Projects/agent-runner
+cd ~/Projects/agntz
 
 # Option A: Using changesets (recommended)
 pnpm changeset        # Create a changeset describing the release
@@ -184,7 +184,7 @@ npm view @agntz/store-sqlite
 npm view @agntz/studio
 
 # Test install in a fresh directory:
-mkdir /tmp/test-agent-runner && cd /tmp/test-agent-runner
+mkdir /tmp/test-agntz && cd /tmp/test-agntz
 npm init -y
 npm install @agntz/core @agntz/store-sqlite
 ```
@@ -209,10 +209,10 @@ Packages 2-4 can be published in parallel after core is live.
 ## Quick Checklist
 
 - [ ] npm account created
-- [ ] `@agent-runner` org created on npm
+- [ ] `@agntz` org created on npm
 - [ ] Logged in (`npm login`)
 - [ ] Core package renamed to `@agntz/core`
-- [ ] Internal dep references updated (`agent-runner` → `@agntz/core`)
+- [ ] Internal dep references updated (`agntz` → `@agntz/core`)
 - [ ] `publishConfig.access: "public"` added to all packages
 - [ ] Repository URLs fixed (`aparry3`)
 - [ ] `pnpm build` passes

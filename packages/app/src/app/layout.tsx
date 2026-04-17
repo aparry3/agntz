@@ -4,7 +4,7 @@ import "./globals.css";
 import { AppSidebar } from "@/components/app-sidebar";
 
 export const metadata: Metadata = {
-  title: "Agent Runner",
+  title: "agntz",
   description: "Define, run, and manage AI agents",
 };
 

@@ -4,7 +4,7 @@ import type { Runner } from "../runner.js";
  * Options for creating an MCP server from a runner.
  */
 export interface MCPServerOptions {
-  /** Server name (default: "agent-runner") */
+  /** Server name (default: "agntz") */
   name?: string;
   /** Server version (default: "0.1.0") */
   version?: string;
@@ -13,7 +13,7 @@ export interface MCPServerOptions {
 }
 
 /**
- * Create an MCP server that exposes agent-runner agents as MCP tools.
+ * Create an MCP server that exposes agntz agents as MCP tools.
  *
  * Each registered agent becomes a callable tool:
  * - Tool name: `invoke_{agentId}`
@@ -22,8 +22,8 @@ export interface MCPServerOptions {
  *
  * Usage with HTTP transport:
  * ```typescript
- * import { createRunner } from "agent-runner";
- * import { createMCPServer } from "agent-runner/mcp-server";
+ * import { createRunner } from "@agntz/core";
+ * import { createMCPServer } from "@agntz/core/mcp-server";
  *
  * const runner = createRunner({ ... });
  * const server = createMCPServer(runner);
@@ -35,7 +35,7 @@ export interface MCPServerOptions {
 export async function createMCPServer(runner: Runner, options: MCPServerOptions = {}) {
   const { Server } = await import("@modelcontextprotocol/sdk/server/index.js");
 
-  const serverName = options.name ?? "agent-runner";
+  const serverName = options.name ?? "agntz";
   const serverVersion = options.version ?? "0.1.0";
 
   const server = new Server(

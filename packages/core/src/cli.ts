@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
 /**
- * agent-runner CLI
+ * agntz CLI
  *
  * Commands:
- *   init     — Scaffold a new agent-runner project
+ *   init     — Scaffold a new agntz project
  *   invoke   — Invoke an agent from the command line
  *   list     — List registered agents
  *   playground — Interactive REPL for an agent
@@ -18,15 +18,15 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const HELP = `
-agent-runner — TypeScript SDK for AI agents
+agntz — TypeScript SDK for AI agents
 
 Usage:
-  agent-runner <command> [options]
+  agntz <command> [options]
 
 Commands:
   init [-y]         Scaffold a new project (interactive, or -y for defaults)
   list              List all registered agents
-  invoke <agentId>  Invoke an agent (requires agent-runner.config.ts)
+  invoke <agentId>  Invoke an agent (requires agntz.config.ts)
   playground <id>   Interactive REPL for testing an agent
   eval <agentId>    Run eval suite for an agent
 
@@ -40,12 +40,12 @@ Eval Options:
   --threshold <n>   Override pass threshold (0-1)
 
 Examples:
-  agent-runner init
-  agent-runner list
-  agent-runner invoke greeter "Hello!"
-  agent-runner playground greeter
-  agent-runner eval support --json
-  agent-runner eval --all --threshold 0.8
+  agntz init
+  agntz list
+  agntz invoke greeter "Hello!"
+  agntz playground greeter
+  agntz eval support --json
+  agntz eval --all --threshold 0.8
 `.trim();
 
 async function main() {
@@ -60,7 +60,7 @@ async function main() {
     const pkg = await import("../package.json", { with: { type: "json" } }).catch(() => ({
       default: { version: "unknown" },
     }));
-    console.log(`agent-runner v${pkg.default.version}`);
+    console.log(`agntz v${pkg.default.version}`);
     process.exit(0);
   }
 
@@ -137,12 +137,12 @@ async function cmdInit() {
   const isQuick = args.includes("--yes") || args.includes("-y");
 
   // Check if already initialized
-  if (existsSync(join(cwd, "agent-runner.config.ts"))) {
-    console.log("⚠️  agent-runner.config.ts already exists. Skipping.");
+  if (existsSync(join(cwd, "agntz.config.ts"))) {
+    console.log("⚠️  agntz.config.ts already exists. Skipping.");
     process.exit(0);
   }
 
-  console.log("\n  ⚡ agent-runner init\n");
+  console.log("\n  ⚡ agntz init\n");
 
   let options: InitOptions;
 
@@ -230,10 +230,10 @@ async function scaffoldProject(cwd: string, opts: InitOptions) {
       private: true,
       type: "module",
       scripts: {
-        dev: "tsx watch agent-runner.config.ts",
-        invoke: "tsx --import ./agent-runner.config.ts node_modules/.bin/agent-runner invoke",
-        eval: "agent-runner eval",
-        playground: "agent-runner playground",
+        dev: "tsx watch agntz.config.ts",
+        invoke: "tsx --import ./agntz.config.ts node_modules/.bin/agntz invoke",
+        eval: "agntz eval",
+        playground: "agntz playground",
       },
       dependencies: {
         "@agntz/core": "^0.1.0",
@@ -300,8 +300,8 @@ data/logs/
 
   // 6. Generate config + agent files based on template
   const configContent = generateConfig(template, provider, model);
-  await writeFile(join(cwd, "agent-runner.config.ts"), configContent);
-  console.log("  ✅ agent-runner.config.ts");
+  await writeFile(join(cwd, "agntz.config.ts"), configContent);
+  console.log("  ✅ agntz.config.ts");
 
   // 7. Generate source files for non-minimal templates
   if (template === "tools" || template === "multi-agent") {
@@ -341,10 +341,10 @@ data/logs/
        cp .env.example .env  # then add your ${envVar}
 
     3. Try it:
-       npx agent-runner invoke ${agentIdForInvoke} "Hello!"
+       npx agntz invoke ${agentIdForInvoke} "Hello!"
 
     4. Interactive playground:
-       npx agent-runner playground ${agentIdForInvoke}
+       npx agntz playground ${agentIdForInvoke}
 `);
 }
 
@@ -546,9 +546,9 @@ export const calculate = defineTool({
 // ═══════════════════════════════════════════════════════════════════
 
 async function cmdList() {
-  const configPath = resolve(process.cwd(), "agent-runner.config.ts");
+  const configPath = resolve(process.cwd(), "agntz.config.ts");
   if (!existsSync(configPath)) {
-    console.error("❌ No agent-runner.config.ts found. Run `agent-runner init` first.");
+    console.error("❌ No agntz.config.ts found. Run `agntz init` first.");
     process.exit(1);
   }
 
@@ -566,7 +566,7 @@ async function cmdList() {
     }
 
     if (agents.length === 0) {
-      console.log("  No agents found. Define agents in agent-runner.config.ts");
+      console.log("  No agents found. Define agents in agntz.config.ts");
       return;
     }
 
@@ -600,7 +600,7 @@ async function cmdList() {
 
 async function cmdInvoke(args: string[]) {
   if (args.length < 2) {
-    console.error('Usage: agent-runner invoke <agentId> "<input>"');
+    console.error('Usage: agntz invoke <agentId> "<input>"');
     process.exit(1);
   }
 
@@ -608,9 +608,9 @@ async function cmdInvoke(args: string[]) {
   const input = args.slice(1).join(" ");
 
   // Load the runner config
-  const configPath = resolve(process.cwd(), "agent-runner.config.ts");
+  const configPath = resolve(process.cwd(), "agntz.config.ts");
   if (!existsSync(configPath)) {
-    console.error("❌ No agent-runner.config.ts found. Run `agent-runner init` first.");
+    console.error("❌ No agntz.config.ts found. Run `agntz init` first.");
     process.exit(1);
   }
 
@@ -620,7 +620,7 @@ async function cmdInvoke(args: string[]) {
     const runner = config.default;
 
     if (!runner?.invoke) {
-      console.error("❌ agent-runner.config.ts must export a Runner as default.");
+      console.error("❌ agntz.config.ts must export a Runner as default.");
       process.exit(1);
     }
 
@@ -667,13 +667,13 @@ async function cmdEval(args: string[]) {
   const agentId = filteredArgs[0];
 
   if (!agentId && !allMode) {
-    console.error("Usage: agent-runner eval <agentId> [--json] [--threshold <0-1>] [--all]");
+    console.error("Usage: agntz eval <agentId> [--json] [--threshold <0-1>] [--all]");
     process.exit(1);
   }
 
-  const configPath = resolve(process.cwd(), "agent-runner.config.ts");
+  const configPath = resolve(process.cwd(), "agntz.config.ts");
   if (!existsSync(configPath)) {
-    console.error("❌ No agent-runner.config.ts found. Run `agent-runner init` first.");
+    console.error("❌ No agntz.config.ts found. Run `agntz init` first.");
     process.exit(1);
   }
 
@@ -682,7 +682,7 @@ async function cmdEval(args: string[]) {
     const runner = config.default;
 
     if (!runner?.eval) {
-      console.error("❌ agent-runner.config.ts must export a Runner as default.");
+      console.error("❌ agntz.config.ts must export a Runner as default.");
       process.exit(1);
     }
 
@@ -778,7 +778,7 @@ async function cmdEval(args: string[]) {
 
 async function cmdPlayground(args: string[]) {
   if (args.length < 1) {
-    console.error("Usage: agent-runner playground <agentId> [--session <id>] [--context <id>...]");
+    console.error("Usage: agntz playground <agentId> [--session <id>] [--context <id>...]");
     process.exit(1);
   }
 
@@ -806,9 +806,9 @@ async function cmdPlayground(args: string[]) {
     sessionId = `playground_${Date.now()}`;
   }
 
-  const configPath = resolve(process.cwd(), "agent-runner.config.ts");
+  const configPath = resolve(process.cwd(), "agntz.config.ts");
   if (!existsSync(configPath)) {
-    console.error("❌ No agent-runner.config.ts found. Run `agent-runner init` first.");
+    console.error("❌ No agntz.config.ts found. Run `agntz init` first.");
     process.exit(1);
   }
 
@@ -817,7 +817,7 @@ async function cmdPlayground(args: string[]) {
     const config = await import(configPath);
     runner = config.default;
     if (!runner?.invoke) {
-      console.error("❌ agent-runner.config.ts must export a Runner as default.");
+      console.error("❌ agntz.config.ts must export a Runner as default.");
       process.exit(1);
     }
   } catch (error) {
@@ -825,7 +825,7 @@ async function cmdPlayground(args: string[]) {
     process.exit(1);
   }
 
-  console.log(`\n  ⚡ agent-runner playground`);
+  console.log(`\n  ⚡ agntz playground`);
   console.log(`  Agent: ${agentId}`);
   console.log(`  Session: ${sessionId}`);
   if (contextIds.length > 0) {

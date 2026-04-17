@@ -1,4 +1,4 @@
-# Agent Runner YAML Schema Reference
+# agntz YAML Schema Reference
 
 This document describes the complete YAML schema for defining agents. Use it to create valid agent manifests.
 

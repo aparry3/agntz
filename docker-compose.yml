@@ -10,7 +10,7 @@ services:
     environment:
       # Overrides for container networking (point at the compose db + worker)
       - STORE=postgres
-      - DATABASE_URL=postgres://postgres:postgres@db:5432/agent_runner
+      - DATABASE_URL=postgres://postgres:postgres@db:5432/agntz
       - WORKER_URL=http://worker:4001
     depends_on:
       db:
@@ -33,7 +33,7 @@ services:
       - .env.local
     environment:
       - STORE=postgres
-      - DATABASE_URL=postgres://postgres:postgres@db:5432/agent_runner
+      - DATABASE_URL=postgres://postgres:postgres@db:5432/agntz
     depends_on:
       db:
         condition: service_healthy
@@ -43,7 +43,7 @@ services:
     ports:
       - "5432:5432"
     environment:
-      - POSTGRES_DB=agent_runner
+      - POSTGRES_DB=agntz
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
     volumes:

@@ -1,6 +1,6 @@
 # MCP Integration
 
-agent-runner has first-class support for the [Model Context Protocol](https://modelcontextprotocol.io/) (MCP). You can connect to MCP servers as tool sources and expose your agents as MCP tools.
+agntz has first-class support for the [Model Context Protocol](https://modelcontextprotocol.io/) (MCP). You can connect to MCP servers as tool sources and expose your agents as MCP tools.
 
 ## Connecting to MCP Servers
 
@@ -68,7 +68,7 @@ In the Studio, the MCP Servers page shows connection status and available tools 
 Make your agents callable by other MCP-compatible systems:
 
 ```typescript
-import { createMCPServer } from "agent-runner/mcp-server";
+import { createMCPServer } from "agntz/mcp-server";
 
 const server = createMCPServer(runner);
 // Each agent becomes a callable tool:

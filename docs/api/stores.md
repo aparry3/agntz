@@ -1,6 +1,6 @@
 # Store Interfaces
 
-All store interfaces are exported from `agent-runner`.
+All store interfaces are exported from `agntz`.
 
 ## AgentStore
 
@@ -49,7 +49,7 @@ interface LogStore {
 ### MemoryStore
 
 ```typescript
-import { MemoryStore } from "agent-runner";
+import { MemoryStore } from "agntz";
 const store = new MemoryStore();
 ```
 
@@ -58,7 +58,7 @@ Implements all four interfaces. Data is lost on process exit.
 ### JsonFileStore
 
 ```typescript
-import { JsonFileStore } from "agent-runner";
+import { JsonFileStore } from "agntz";
 const store = new JsonFileStore("./data");
 ```
 

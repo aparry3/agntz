@@ -1,7 +1,7 @@
 {
   "name": "@agntz/store-sqlite",
   "version": "0.1.1",
-  "description": "SQLite store adapter for agent-runner — single-server production storage",
+  "description": "SQLite store adapter for agntz — single-server production storage",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -36,7 +36,7 @@
     "@agntz/core": ">=0.1.2"
   },
   "keywords": [
-    "agent-runner",
+    "agntz",
     "sqlite",
     "store",
     "ai",
@@ -48,10 +48,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/aparry3/agent-runner.git",
+    "url": "https://github.com/aparry3/agntz.git",
     "directory": "packages/store-sqlite"
   },
-  "homepage": "https://github.com/aparry3/agent-runner#readme",
+  "homepage": "https://github.com/aparry3/agntz#readme",
   "author": "Aaron Bidworthy",
   "engines": {
     "node": ">=22.0.0"

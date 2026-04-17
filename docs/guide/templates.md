@@ -1,12 +1,12 @@
 # Agent Templates
 
-agent-runner ships with **8 starter templates** for common agent patterns. Use them as starting points — customize the system prompt, model, and tools to match your needs.
+agntz ships with **8 starter templates** for common agent patterns. Use them as starting points — customize the system prompt, model, and tools to match your needs.
 
 ## Using Templates
 
 ```typescript
-import { createRunner, defineAgent } from "agent-runner";
-import { templates } from "agent-runner/templates";
+import { createRunner, defineAgent } from "agntz";
+import { templates } from "agntz/templates";
 
 const runner = createRunner();
 
@@ -140,7 +140,7 @@ The **gymtext pattern** — AI fitness coaching with context-aware personalizati
 
 **Best paired with:** `get_workout`, `log_workout`, `update_fitness` tools + user context buckets.
 
-See the [gymtext example](https://github.com/aparryopenclaw/agent-runner/tree/main/examples/gymtext) for a full implementation.
+See the [gymtext example](https://github.com/aparryopenclaw/agntz/tree/main/examples/gymtext) for a full implementation.
 
 ---
 
@@ -164,7 +164,7 @@ Templates are just partial `AgentDefinition` objects. Create your own:
 
 ```typescript
 // my-templates.ts
-import type { AgentDefinition } from "agent-runner";
+import type { AgentDefinition } from "agntz";
 
 type AgentTemplate = Omit<AgentDefinition, "id"> & { id?: string };
 

@@ -28,7 +28,7 @@ export function createWorkerAPI({ store, internalSecret }: WorkerAPIOptions): Ho
   app.use("*", cors());
 
   app.get("/health", (c) => {
-    return c.json({ status: "ok", service: "agent-runner-worker" });
+    return c.json({ status: "ok", service: "agntz-worker" });
   });
 
   app.use("/run", workerAuth({ store, internalSecret }));

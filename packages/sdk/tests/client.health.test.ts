@@ -5,7 +5,7 @@ import { jsonResponse, mockFetch } from "./helpers/mock-fetch.js";
 describe("AgntzClient.health", () => {
   it("GETs /health and returns the body without Authorization header", async () => {
     const mock = mockFetch(() =>
-      jsonResponse(200, { status: "ok", service: "agent-runner-worker" }),
+      jsonResponse(200, { status: "ok", service: "agntz-worker" }),
     );
     const client = new AgntzClient({
       apiKey: "ar_test_k",
@@ -13,7 +13,7 @@ describe("AgntzClient.health", () => {
       fetch: mock.fetch,
     });
     const result = await client.health();
-    expect(result).toEqual({ status: "ok", service: "agent-runner-worker" });
+    expect(result).toEqual({ status: "ok", service: "agntz-worker" });
     expect(mock.calls).toHaveLength(1);
     const call = mock.calls[0]!;
     expect(call.url).toBe("https://worker.example.com/health");

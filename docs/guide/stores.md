@@ -1,13 +1,13 @@
 # Stores
 
-agent-runner uses pluggable storage interfaces. Every persistence concern — agents, sessions, context, logs — has its own interface. Use built-in stores or implement your own.
+agntz uses pluggable storage interfaces. Every persistence concern — agents, sessions, context, logs — has its own interface. Use built-in stores or implement your own.
 
 ## Built-in Stores
 
 | Store | Package | Use Case |
 |-------|---------|----------|
-| `MemoryStore` | `agent-runner` | Testing, ephemeral usage |
-| `JsonFileStore` | `agent-runner` | Local development, prototyping |
+| `MemoryStore` | `agntz` | Testing, ephemeral usage |
+| `JsonFileStore` | `agntz` | Local development, prototyping |
 | `SqliteStore` | `@agntz/store-sqlite` | Single-server production |
 
 ## Quick Setup
@@ -21,7 +21,7 @@ const runner = createRunner(); // Uses MemoryStore
 ### JSON Files
 
 ```typescript
-import { JsonFileStore } from "agent-runner";
+import { JsonFileStore } from "agntz";
 
 const runner = createRunner({
   store: new JsonFileStore("./data"),
@@ -113,7 +113,7 @@ interface LogStore {
 Implement any combination of the interfaces:
 
 ```typescript
-import type { AgentStore, SessionStore } from "agent-runner";
+import type { AgentStore, SessionStore } from "agntz";
 
 class MyPostgresStore implements AgentStore, SessionStore {
   constructor(private pool: Pool) {}

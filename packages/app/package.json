@@ -2,7 +2,7 @@
   "name": "@agntz/app",
   "version": "0.1.0",
   "private": true,
-  "description": "Agent Runner Service — UI and API for defining, running, and managing AI agents",
+  "description": "agntz — UI and API for defining, running, and managing AI agents",
   "scripts": {
     "dev": "next dev --port 3000",
     "build": "next build",

@@ -1,7 +1,7 @@
 {
   "name": "@agntz/store-postgres",
   "version": "0.1.1",
-  "description": "PostgreSQL store adapter for agent-runner — multi-server production storage",
+  "description": "PostgreSQL store adapter for agntz — multi-server production storage",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -36,7 +36,7 @@
     "@agntz/core": ">=0.1.2"
   },
   "keywords": [
-    "agent-runner",
+    "agntz",
     "postgres",
     "postgresql",
     "store",
@@ -49,10 +49,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/aparry3/agent-runner.git",
+    "url": "https://github.com/aparry3/agntz.git",
     "directory": "packages/store-postgres"
   },
-  "homepage": "https://github.com/aparry3/agent-runner#readme",
+  "homepage": "https://github.com/aparry3/agntz#readme",
   "author": "Aaron Bidworthy",
   "engines": {
     "node": ">=22.0.0"

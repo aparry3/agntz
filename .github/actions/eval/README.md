@@ -1,13 +1,13 @@
-# agent-runner Eval Action
+# agntz Eval Action
 
-Run agent-runner eval suites in your CI pipeline. Tests agent behavior with assertions, LLM-as-judge rubrics, and scoring.
+Run agntz eval suites in your CI pipeline. Tests agent behavior with assertions, LLM-as-judge rubrics, and scoring.
 
 ## Usage
 
 ### Basic — eval a specific agent
 
 ```yaml
-- uses: aparryopenclaw/agent-runner/.github/actions/eval@main
+- uses: aparry3/agntz/.github/actions/eval@main
   with:
     agent-id: support
   env:
@@ -17,7 +17,7 @@ Run agent-runner eval suites in your CI pipeline. Tests agent behavior with asse
 ### Eval all agents
 
 ```yaml
-- uses: aparryopenclaw/agent-runner/.github/actions/eval@main
+- uses: aparry3/agntz/.github/actions/eval@main
   with:
     all: true
     threshold: "0.8"
@@ -29,7 +29,7 @@ Run agent-runner eval suites in your CI pipeline. Tests agent behavior with asse
 ### With outputs
 
 ```yaml
-- uses: aparryopenclaw/agent-runner/.github/actions/eval@main
+- uses: aparry3/agntz/.github/actions/eval@main
   id: eval
   with:
     agent-id: support
@@ -46,7 +46,7 @@ Run agent-runner eval suites in your CI pipeline. Tests agent behavior with asse
 ### Save JSON results as artifact
 
 ```yaml
-- uses: aparryopenclaw/agent-runner/.github/actions/eval@main
+- uses: aparry3/agntz/.github/actions/eval@main
   with:
     agent-id: support
     json-output: eval-results.json
@@ -65,7 +65,7 @@ Run agent-runner eval suites in your CI pipeline. Tests agent behavior with asse
 |-------|----------|---------|-------------|
 | `agent-id` | No* | — | Agent ID to evaluate |
 | `all` | No | `false` | Run evals for all agents with eval configs |
-| `config` | No | `agent-runner.config.ts` | Path to config file |
+| `config` | No | `agntz.config.ts` | Path to config file |
 | `threshold` | No | — | Minimum pass score (0-1), overrides agent config |
 | `node-version` | No | `22` | Node.js version |
 | `package-manager` | No | `pnpm` | Package manager (`pnpm`, `npm`, `yarn`) |
@@ -106,7 +106,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: aparryopenclaw/agent-runner/.github/actions/eval@main
+      - uses: aparry3/agntz/.github/actions/eval@main
         id: eval
         with:
           all: true

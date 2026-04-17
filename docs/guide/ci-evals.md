@@ -1,6 +1,6 @@
 # CI Eval Runs
 
-agent-runner includes a GitHub Action and CLI flags for running agent evals in continuous integration. Catch regressions in agent behavior before they ship.
+agntz includes a GitHub Action and CLI flags for running agent evals in continuous integration. Catch regressions in agent behavior before they ship.
 
 ## CLI Flags
 
@@ -9,7 +9,7 @@ agent-runner includes a GitHub Action and CLI flags for running agent evals in c
 Use `--json` for machine-readable output (one JSON line per agent):
 
 ```bash
-agent-runner eval support --json
+agntz eval support --json
 ```
 
 Output:
@@ -22,7 +22,7 @@ Output:
 Override the agent's `passThreshold` from the command line:
 
 ```bash
-agent-runner eval support --threshold 0.9
+agntz eval support --threshold 0.9
 ```
 
 ### Eval All Agents
@@ -30,18 +30,18 @@ agent-runner eval support --threshold 0.9
 Run evals for every agent that has `eval.testCases` defined:
 
 ```bash
-agent-runner eval --all
-agent-runner eval --all --json --threshold 0.8
+agntz eval --all
+agntz eval --all --json --threshold 0.8
 ```
 
 ## GitHub Action
 
-The `agent-runner` repo provides a reusable GitHub Action for CI pipelines.
+The `agntz` repo provides a reusable GitHub Action for CI pipelines.
 
 ### Basic Usage
 
 ```yaml
-- uses: aparryopenclaw/agent-runner/.github/actions/eval@main
+- uses: aparryopenclaw/agntz/.github/actions/eval@main
   with:
     agent-id: support
   env:
@@ -51,7 +51,7 @@ The `agent-runner` repo provides a reusable GitHub Action for CI pipelines.
 ### All Agents with Threshold
 
 ```yaml
-- uses: aparryopenclaw/agent-runner/.github/actions/eval@main
+- uses: aparryopenclaw/agntz/.github/actions/eval@main
   with:
     all: true
     threshold: "0.8"
@@ -64,7 +64,7 @@ The `agent-runner` repo provides a reusable GitHub Action for CI pipelines.
 The action provides outputs you can use in subsequent steps:
 
 ```yaml
-- uses: aparryopenclaw/agent-runner/.github/actions/eval@main
+- uses: aparryopenclaw/agntz/.github/actions/eval@main
   id: eval
   with:
     agent-id: support
@@ -98,7 +98,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: aparryopenclaw/agent-runner/.github/actions/eval@main
+      - uses: aparryopenclaw/agntz/.github/actions/eval@main
         id: eval
         with:
           all: true

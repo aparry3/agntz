@@ -1,11 +1,11 @@
 # Tools
 
-Tools give agents the ability to interact with the outside world. agent-runner supports three tool sources: **inline tools** (defined in code), **MCP tools** (from MCP servers), and **agent tools** (other agents).
+Tools give agents the ability to interact with the outside world. agntz supports three tool sources: **inline tools** (defined in code), **MCP tools** (from MCP servers), and **agent tools** (other agents).
 
 ## Defining Inline Tools
 
 ```typescript
-import { defineTool } from "agent-runner";
+import { defineTool } from "agntz";
 import { z } from "zod";
 
 const lookupOrder = defineTool({
@@ -155,7 +155,7 @@ defineAgent({
 });
 ```
 
-When the writer invokes the researcher tool, agent-runner calls `runner.invoke("researcher", ...)` internally.
+When the writer invokes the researcher tool, agntz calls `runner.invoke("researcher", ...)` internally.
 
 ## Tool-Driven Agent Chains
 

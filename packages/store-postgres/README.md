@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen.svg)](https://nodejs.org)
 
-PostgreSQL storage adapter for [agent-runner](https://github.com/aparry3/agent-runner). Production-ready persistent storage for multi-server deployments with automatic migrations, JSONB storage, connection pooling, and configurable table prefixes.
+PostgreSQL storage adapter for [agntz](https://github.com/aparry3/agntz). Production-ready persistent storage for multi-server deployments with automatic migrations, JSONB storage, connection pooling, and configurable table prefixes.
 
 ## Install
 
@@ -226,7 +226,7 @@ Or with Docker:
 
 ```bash
 docker run -d \
-  --name agent-runner-pg \
+  --name agntz-pg \
   -e POSTGRES_DB=mydb \
   -e POSTGRES_USER=myuser \
   -e POSTGRES_PASSWORD=mypassword \
@@ -273,7 +273,7 @@ const runner = createRunner({
 
 ## Contributing
 
-See the main [CONTRIBUTING.md](https://github.com/aparry3/agent-runner/blob/main/CONTRIBUTING.md) for guidelines.
+See the main [CONTRIBUTING.md](https://github.com/aparry3/agntz/blob/main/CONTRIBUTING.md) for guidelines.
 
 ## License
 

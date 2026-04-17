@@ -1,4 +1,4 @@
-# Contributing to agent-runner
+# Contributing to agntz
 
 Thanks for your interest in contributing! Here's how to get started.
 
@@ -6,8 +6,8 @@ Thanks for your interest in contributing! Here's how to get started.
 
 ```bash
 # Clone the repo
-git clone https://github.com/aparryopenclaw/agent-runner.git
-cd agent-runner
+git clone https://github.com/aparryopenclaw/agntz.git
+cd agntz
 
 # Install dependencies
 pnpm install
@@ -23,7 +23,7 @@ pnpm test
 
 ```
 packages/
-├── core/           # "agent-runner" — the main SDK
+├── core/           # "agntz" — the main SDK
 ├── manifest/       # "@agntz/manifest" — YAML agent executor
 ├── store-sqlite/   # "@agntz/store-sqlite" — SQLite adapter
 ├── store-postgres/ # "@agntz/store-postgres" — Postgres adapter (multi-tenant)
@@ -58,7 +58,7 @@ cd packages/core && pnpm vitest run tests/runner.test.ts
 
 Want to add a new store (Redis, DynamoDB, etc.)? Follow the pattern in `packages/store-sqlite`:
 
-1. Implement the store interfaces from `agent-runner` (AgentStore, SessionStore, ContextStore, LogStore)
+1. Implement the store interfaces from `agntz` (AgentStore, SessionStore, ContextStore, LogStore)
 2. Run the shared contract test suite against your implementation
 3. Publish as `@agntz/store-{name}`
 

@@ -52,7 +52,7 @@ const DEFAULT_MAX_STEPS = 10;
 const DEFAULT_MAX_RECURSION_DEPTH = 3;
 
 /**
- * The Runner. Central orchestrator for agent-runner.
+ * The Runner. Central orchestrator for agntz.
  * Created via createRunner().
  */
 export class Runner {
@@ -1074,7 +1074,7 @@ export class Runner {
 }
 
 /**
- * Create a runner instance. This is the primary entry point for agent-runner.
+ * Create a runner instance. This is the primary entry point for agntz.
  */
 export function createRunner(config: RunnerConfig = {}): Runner {
   return new Runner(config);

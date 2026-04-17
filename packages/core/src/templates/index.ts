@@ -2,7 +2,7 @@
  * Agent templates — starter configurations for common patterns.
  *
  * Usage:
- *   import { templates } from "agent-runner/templates";
+ *   import { templates } from "@agntz/core/templates";
  *   runner.registerAgent(defineAgent({ ...templates.chatbot, id: "my-bot" }));
  */
 

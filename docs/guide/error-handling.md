@@ -2,7 +2,7 @@
 
 ## Typed Errors
 
-agent-runner provides specific error types for common failures:
+agntz provides specific error types for common failures:
 
 ```typescript
 import {
@@ -11,7 +11,7 @@ import {
   ToolExecutionError,
   MaxRecursionError,
   ModelError,
-} from "agent-runner";
+} from "agntz";
 
 try {
   await runner.invoke("nonexistent", "Hello");

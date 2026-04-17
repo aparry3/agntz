@@ -25,5 +25,5 @@ serve({
   hostname,
 });
 
-console.log(`Agent Runner Worker listening on http://${hostname}:${port}`);
+console.log(`agntz worker listening on http://${hostname}:${port}`);
 console.log(`Store: ${process.env.STORE ?? "memory"}`);

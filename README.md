@@ -1,9 +1,9 @@
-# agent-runner
+# agntz
 
 A TypeScript SDK for defining, running, and evaluating AI agents. Agents are portable, JSON-serializable configurations — not code. Plug in any storage backend, any model provider, any tools.
 
 ```typescript
-import { createRunner, defineAgent } from "agent-runner";
+import { createRunner, defineAgent } from "agntz";
 
 const runner = createRunner();
 
@@ -19,9 +19,9 @@ console.log(result.output);
 // → "Hey there! Welcome — great to have you here."
 ```
 
-## Why agent-runner?
+## Why agntz?
 
-| Problem | agent-runner's answer |
+| Problem | agntz's answer |
 |---|---|
 | Agents are code, not portable config | Agent definitions are JSON-serializable data |
 | Locked into one storage backend | Pluggable stores (memory, JSON files, SQLite, Postgres) |
@@ -33,7 +33,7 @@ console.log(result.output);
 ## Install
 
 ```bash
-npm install agent-runner
+npm install agntz
 ```
 
 Set your API key:
@@ -48,7 +48,7 @@ export OPENAI_API_KEY=sk-...
 ### 1. Basic Agent
 
 ```typescript
-import { createRunner, defineAgent } from "agent-runner";
+import { createRunner, defineAgent } from "agntz";
 
 const runner = createRunner();
 
@@ -65,7 +65,7 @@ const { output } = await runner.invoke("writer", "Write a tagline for a coffee s
 ### 2. With Tools
 
 ```typescript
-import { createRunner, defineAgent, defineTool } from "agent-runner";
+import { createRunner, defineAgent, defineTool } from "agntz";
 import { z } from "zod";
 
 const lookupOrder = defineTool({
@@ -222,7 +222,7 @@ const parsed = JSON.parse(output);
 The default store is in-memory (great for testing). For persistence:
 
 ```typescript
-import { createRunner, JsonFileStore } from "agent-runner";
+import { createRunner, JsonFileStore } from "agntz";
 
 // JSON files — good for local dev
 const runner = createRunner({
@@ -272,7 +272,7 @@ interface SessionStore {
 
 ## Model Providers
 
-agent-runner uses the `ai` package internally — a client library that calls providers directly with your API keys. No middleman, no data routing.
+agntz uses the `ai` package internally — a client library that calls providers directly with your API keys. No middleman, no data routing.
 
 ```typescript
 // Set provider in agent definition
@@ -301,7 +301,7 @@ import {
   ToolExecutionError,
   InvocationCancelledError,
   MaxStepsExceededError,
-} from "agent-runner";
+} from "agntz";
 
 try {
   await runner.invoke("nonexistent", "hi");
@@ -385,7 +385,7 @@ runner.registerAgent(defineAgent({
 Expose your agents as an MCP server:
 
 ```typescript
-import { createMCPServer } from "agent-runner/mcp-server";
+import { createMCPServer } from "agntz/mcp-server";
 const server = createMCPServer(runner);
 // Each agent becomes a callable MCP tool
 ```
@@ -474,11 +474,11 @@ process.on("SIGTERM", async () => {
 Test agents interactively in your terminal — conversational REPL with session support:
 
 ```bash
-npx agent-runner playground greeter
+npx agntz playground greeter
 ```
 
 ```
-  ⚡ agent-runner playground
+  ⚡ agntz playground
   Agent: greeter
   Session: playground_1741506000000
   Type .exit or Ctrl+C to quit
@@ -581,20 +581,20 @@ Zero overhead when telemetry is not configured — all span operations become no
 
 ```bash
 # Scaffold a new project
-npx agent-runner init
+npx agntz init
 
 # Invoke an agent
-npx agent-runner invoke greeter "Hello!"
+npx agntz invoke greeter "Hello!"
 
 # Run evals
-npx agent-runner eval classifier
+npx agntz eval classifier
 ```
 
 ## Packages
 
 | Package | Description |
 |---|---|
-| `agent-runner` | Core SDK — createRunner, invoke, agents, tools, stores |
+| `agntz` | Core SDK — createRunner, invoke, agents, tools, stores |
 | `@agntz/manifest` | YAML agent manifest parser + executor |
 | `@agntz/store-sqlite` | SQLite store adapter (single-server) |
 | `@agntz/store-postgres` | PostgreSQL store adapter (production, multi-tenant) |

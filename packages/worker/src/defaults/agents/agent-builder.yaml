@@ -34,7 +34,7 @@ steps:
         name: gpt-5.4
         temperature: 0.2
       instruction: |
-        You are a pipeline architect for the Agent Runner platform. You do NOT write YAML.
+        You are a pipeline architect for the agntz platform. You do NOT write YAML.
         You produce a structural plan that a separate generator will translate into YAML.
 
         Think carefully about the shape of the pipeline before describing it:
@@ -115,7 +115,7 @@ steps:
               name: gpt-5.4
               temperature: 0.3
             instruction: |
-              You are an expert agent builder for the Agent Runner platform. Your job is to
+              You are an expert agent builder for the agntz platform. Your job is to
               translate a structural plan into a valid YAML agent manifest. The plan has
               already decided the pipeline shape, branching, and data flow — follow it.
 

@@ -3,16 +3,16 @@
 ## Installation
 
 ```bash
-npm install agent-runner
+npm install agntz
 # or
-pnpm add agent-runner
+pnpm add agntz
 # or
-yarn add agent-runner
+yarn add agntz
 ```
 
 ### Model Provider Setup
 
-agent-runner uses the `ai` package for model abstraction. Install the provider SDK for your chosen model:
+agntz uses the `ai` package for model abstraction. Install the provider SDK for your chosen model:
 
 ```bash
 # OpenAI
@@ -35,7 +35,7 @@ The `ai` package is just a client library — your API calls go directly to Open
 ## Hello World
 
 ```typescript
-import { createRunner, defineAgent } from "agent-runner";
+import { createRunner, defineAgent } from "agntz";
 
 const runner = createRunner();
 
@@ -56,7 +56,7 @@ That's it. Five lines of setup, one line to invoke.
 ## Adding Tools
 
 ```typescript
-import { createRunner, defineAgent, defineTool } from "agent-runner";
+import { createRunner, defineAgent, defineTool } from "agntz";
 import { z } from "zod";
 
 const getWeather = defineTool({
@@ -88,10 +88,10 @@ console.log(result.toolCalls); // Shows the tool calls made
 
 ## Persistent Storage
 
-By default, agent-runner uses in-memory storage. For persistence:
+By default, agntz uses in-memory storage. For persistence:
 
 ```typescript
-import { createRunner, JsonFileStore } from "agent-runner";
+import { createRunner, JsonFileStore } from "agntz";
 
 const runner = createRunner({
   store: new JsonFileStore("./data"),
@@ -118,7 +118,7 @@ const result = await runner.invoke("assistant", "What's my name?", {
 ## Launch the Studio
 
 ```bash
-npx agent-runner studio
+npx agntz studio
 ```
 
 Opens a visual development UI at `http://localhost:4000` where you can:

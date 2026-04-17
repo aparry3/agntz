@@ -1,7 +1,7 @@
 import { defineConfig } from 'vitepress'
 
 export default defineConfig({
-  title: 'agent-runner',
+  title: 'agntz',
   description: 'TypeScript SDK for defining, running, and evaluating AI agents',
   head: [
     ['link', { rel: 'icon', type: 'image/svg+xml', href: '/logo.svg' }],
@@ -11,14 +11,14 @@ export default defineConfig({
       { text: 'Guide', link: '/guide/getting-started' },
       { text: 'API', link: '/api/runner' },
       { text: 'Studio', link: '/studio/overview' },
-      { text: 'GitHub', link: 'https://github.com/aparryopenclaw/agent-runner' },
+      { text: 'GitHub', link: 'https://github.com/aparry3/agntz' },
     ],
     sidebar: {
       '/guide/': [
         {
           text: 'Introduction',
           items: [
-            { text: 'What is agent-runner?', link: '/guide/what-is-agent-runner' },
+            { text: 'What is agntz?', link: '/guide/what-is-agntz' },
             { text: 'Getting Started', link: '/guide/getting-started' },
             { text: 'Hello World', link: '/guide/hello-world' },
           ],
@@ -74,7 +74,7 @@ export default defineConfig({
       ],
     },
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/aparryopenclaw/agent-runner' },
+      { icon: 'github', link: 'https://github.com/aparry3/agntz' },
     ],
     search: {
       provider: 'local',

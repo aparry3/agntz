@@ -25,7 +25,7 @@ export async function listToolsOnServer(
     "@modelcontextprotocol/sdk/client/streamableHttp.js"
   );
 
-  const client = new Client({ name: "agent-runner-validator", version: "0.1.0" });
+  const client = new Client({ name: "agntz-validator", version: "0.1.0" });
   const transport = new StreamableHTTPClientTransport(new URL(config.url), {
     requestInit: config.headers ? { headers: config.headers } : undefined,
   });

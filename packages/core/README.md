@@ -7,7 +7,7 @@
 
 TypeScript SDK for defining, running, and evaluating AI agents. Agents are portable, JSON-serializable configurations — not code. Plug in any storage backend, any model provider, any tools.
 
-> This is the core package of the [agent-runner](https://github.com/aparry3/agent-runner) monorepo.
+> This is the core package of the [agntz](https://github.com/aparry3/agntz) monorepo.
 
 ## Install
 
@@ -463,21 +463,21 @@ runner.registerAgent(defineAgent({
 
 ```bash
 # Scaffold a new project
-npx agent-runner init
+npx agntz init
 
 # Invoke an agent
-npx agent-runner invoke greeter "Hello!"
+npx agntz invoke greeter "Hello!"
 
 # Run evals
-npx agent-runner eval classifier
+npx agntz eval classifier
 
 # Interactive playground (REPL with session support)
-npx agent-runner playground greeter
+npx agntz playground greeter
 ```
 
 ## Model Providers
 
-agent-runner uses the [Vercel AI SDK](https://sdk.vercel.ai/) internally — calls go directly to providers with your API keys. No middleman.
+agntz uses the [Vercel AI SDK](https://sdk.vercel.ai/) internally — calls go directly to providers with your API keys. No middleman.
 
 ```typescript
 defineAgent({
@@ -527,7 +527,7 @@ Zero overhead when telemetry is not configured.
 
 ## Contributing
 
-See the main [CONTRIBUTING.md](https://github.com/aparry3/agent-runner/blob/main/CONTRIBUTING.md) for guidelines.
+See the main [CONTRIBUTING.md](https://github.com/aparry3/agntz/blob/main/CONTRIBUTING.md) for guidelines.
 
 ## License
 

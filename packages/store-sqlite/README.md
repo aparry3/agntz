@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen.svg)](https://nodejs.org)
 
-SQLite storage adapter for [agent-runner](https://github.com/aparry3/agent-runner). Zero-config persistent storage for single-server deployments with WAL mode, automatic migrations, and full-text search on logs.
+SQLite storage adapter for [agntz](https://github.com/aparry3/agntz). Zero-config persistent storage for single-server deployments with WAL mode, automatic migrations, and full-text search on logs.
 
 Built on [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) for synchronous, high-performance access.
 
@@ -238,7 +238,7 @@ process.on("SIGTERM", async () => {
 
 ## Contributing
 
-See the main [CONTRIBUTING.md](https://github.com/aparry3/agent-runner/blob/main/CONTRIBUTING.md) for guidelines.
+See the main [CONTRIBUTING.md](https://github.com/aparry3/agntz/blob/main/CONTRIBUTING.md) for guidelines.
 
 ## License
 

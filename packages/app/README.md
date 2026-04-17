@@ -1,6 +1,6 @@
 # @agntz/app
 
-Hosted web UI for agent-runner. Next.js 15 App Router + Tailwind + Clerk auth + per-user data scoping. Pairs with `@agntz/worker` for agent execution.
+Hosted web UI for agntz. Next.js 15 App Router + Tailwind + Clerk auth + per-user data scoping. Pairs with `@agntz/worker` for agent execution.
 
 ## Features
 

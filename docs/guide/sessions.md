@@ -19,7 +19,7 @@ const result = await runner.invoke("assistant", "What's my name?", {
 
 ## Session Trimming
 
-Sessions grow over time. agent-runner provides three strategies to manage history size:
+Sessions grow over time. agntz provides three strategies to manage history size:
 
 ### Sliding Window (Default)
 

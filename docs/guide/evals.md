@@ -1,6 +1,6 @@
 # Evals & Testing
 
-agent-runner includes a built-in evaluation system for testing agent behavior. Define test cases, run them from code/CLI/Studio, and track results over time.
+agntz includes a built-in evaluation system for testing agent behavior. Define test cases, run them from code/CLI/Studio, and track results over time.
 
 ## Defining Test Cases
 
@@ -88,8 +88,8 @@ console.log(result.summary);
 ### CLI
 
 ```bash
-npx agent-runner eval classifier
-npx agent-runner eval --all        # Run all agents' evals
+npx agntz eval classifier
+npx agntz eval --all        # Run all agents' evals
 ```
 
 ### Studio

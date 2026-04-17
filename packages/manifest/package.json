@@ -1,7 +1,7 @@
 {
   "name": "@agntz/manifest",
   "version": "0.1.0",
-  "description": "YAML manifest engine for agent-runner: parser, template engine, state management, and pipeline execution",
+  "description": "YAML manifest engine for agntz: parser, template engine, state management, and pipeline execution",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -25,7 +25,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/aparry3/agent-runner.git",
+    "url": "https://github.com/aparry3/agntz.git",
     "directory": "packages/manifest"
   },
   "dependencies": {

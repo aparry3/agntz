@@ -1,4 +1,4 @@
-# Agent Runner YAML Schema
+# agntz YAML Schema
 
 Agent definitions are YAML manifests that describe what an agent does, what it expects, and how it composes with other agents. This document is the complete reference for the schema.
 

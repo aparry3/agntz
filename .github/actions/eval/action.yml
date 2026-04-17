@@ -1,5 +1,5 @@
-name: "agent-runner Eval"
-description: "Run agent-runner eval suites in CI. Tests agent behavior with assertions, LLM-as-judge rubrics, and scoring."
+name: "agntz Eval"
+description: "Run agntz eval suites in CI. Tests agent behavior with assertions, LLM-as-judge rubrics, and scoring."
 branding:
   icon: "check-circle"
   color: "blue"
@@ -13,9 +13,9 @@ inputs:
     required: false
     default: "false"
   config:
-    description: "Path to agent-runner config file (default: agent-runner.config.ts)"
+    description: "Path to agntz config file (default: agntz.config.ts)"
     required: false
-    default: "agent-runner.config.ts"
+    default: "agntz.config.ts"
   threshold:
     description: "Minimum pass score (0-1). Overrides agent's passThreshold."
     required: false
@@ -102,7 +102,7 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       run: |
         # Build the eval command
-        EVAL_CMD="npx agent-runner eval"
+        EVAL_CMD="npx agntz eval"
 
         if [ "${{ inputs.all }}" = "true" ]; then
           EVAL_CMD="$EVAL_CMD --all"
