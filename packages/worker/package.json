@@ -1,6 +1,6 @@
 {
   "name": "@agntz/worker",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Hono server for agent execution — runs YAML-defined agents via the manifest engine",
   "type": "module",

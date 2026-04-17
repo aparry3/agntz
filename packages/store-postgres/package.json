@@ -1,6 +1,6 @@
 {
   "name": "@agntz/store-postgres",
-  "version": "0.1.1",
+  "version": "1.0.0",
   "description": "PostgreSQL store adapter for agntz — multi-server production storage",
   "type": "module",
   "main": "./dist/index.js",
@@ -33,7 +33,7 @@
     "vitest": "^3.2.0"
   },
   "peerDependencies": {
-    "@agntz/core": ">=0.1.2"
+    "@agntz/core": ">=1.0.0"
   },
   "keywords": [
     "agntz",

@@ -1,4 +1,4 @@
-# @agntz/store-postgres
+# @agntz/manifest
 
 ## 1.0.0
 
@@ -18,12 +18,3 @@
 
 - Updated dependencies [[`5a6a2e5`](https://github.com/aparry3/agntz/commit/5a6a2e533246621319462f204f3e023f1458d678)]:
   - @agntz/core@1.0.0
-
-## 0.1.1
-
-### Patch Changes
-
-- [`4c55ae5`](https://github.com/aparry3/agent-runner/commit/4c55ae523f2cc9f3c369017ea7a68a82610741bb) Thanks [@aparry3](https://github.com/aparry3)! - Initial npm release with comprehensive documentation
-
-- Updated dependencies [[`4c55ae5`](https://github.com/aparry3/agent-runner/commit/4c55ae523f2cc9f3c369017ea7a68a82610741bb)]:
-  - @agntz/core@0.1.1

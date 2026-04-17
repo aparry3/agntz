@@ -1,6 +1,6 @@
 {
   "name": "@agntz/app",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "agntz — UI and API for defining, running, and managing AI agents",
   "scripts": {

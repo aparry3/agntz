@@ -1,6 +1,6 @@
 {
   "name": "@agntz/core",
-  "version": "0.1.2",
+  "version": "1.0.0",
   "description": "TypeScript SDK for defining, running, and evaluating AI agents with first-class MCP support and pluggable storage",
   "type": "module",
   "main": "./dist/index.js",
