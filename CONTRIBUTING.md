@@ -6,7 +6,7 @@ Thanks for your interest in contributing! Here's how to get started.
 
 ```bash
 # Clone the repo
-git clone https://github.com/aparryopenclaw/agntz.git
+git clone https://github.com/aparry3/agntz.git
 cd agntz
 
 # Install dependencies
