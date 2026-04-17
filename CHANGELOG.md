@@ -1,14 +1,14 @@
 # Changelog
 
-All notable changes to agent-runner will be documented in this file.
+All notable changes to agntz will be documented in this file.
 
 ## [0.1.0] — 2026-03-09
 
 ### 🎉 Initial Release
 
-First complete release of agent-runner — a TypeScript SDK for defining, running, and evaluating AI agents with first-class MCP support and pluggable storage.
+First complete release of agntz — a TypeScript SDK for defining, running, and evaluating AI agents with first-class MCP support and pluggable storage.
 
-### Core SDK (`agent-runner`)
+### Core SDK (`@agntz/core`)
 
 - **`createRunner()`** — Central orchestrator with pluggable stores, tools, MCP, and model providers
 - **`defineAgent()`** — JSON-serializable agent definitions (system prompt + model + tools + schema)

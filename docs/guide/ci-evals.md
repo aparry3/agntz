@@ -41,7 +41,7 @@ The `agntz` repo provides a reusable GitHub Action for CI pipelines.
 ### Basic Usage
 
 ```yaml
-- uses: aparryopenclaw/agntz/.github/actions/eval@main
+- uses: aparry3/agntz/.github/actions/eval@main
   with:
     agent-id: support
   env:
@@ -51,7 +51,7 @@ The `agntz` repo provides a reusable GitHub Action for CI pipelines.
 ### All Agents with Threshold
 
 ```yaml
-- uses: aparryopenclaw/agntz/.github/actions/eval@main
+- uses: aparry3/agntz/.github/actions/eval@main
   with:
     all: true
     threshold: "0.8"
@@ -64,7 +64,7 @@ The `agntz` repo provides a reusable GitHub Action for CI pipelines.
 The action provides outputs you can use in subsequent steps:
 
 ```yaml
-- uses: aparryopenclaw/agntz/.github/actions/eval@main
+- uses: aparry3/agntz/.github/actions/eval@main
   id: eval
   with:
     agent-id: support
@@ -98,7 +98,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: aparryopenclaw/agntz/.github/actions/eval@main
+      - uses: aparry3/agntz/.github/actions/eval@main
         id: eval
         with:
           all: true

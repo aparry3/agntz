@@ -140,8 +140,6 @@ The **gymtext pattern** — AI fitness coaching with context-aware personalizati
 
 **Best paired with:** `get_workout`, `log_workout`, `update_fitness` tools + user context buckets.
 
-See the [gymtext example](https://github.com/aparryopenclaw/agntz/tree/main/examples/gymtext) for a full implementation.
-
 ---
 
 ### `researcher`
