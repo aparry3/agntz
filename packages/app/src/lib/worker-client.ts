@@ -1,3 +1,5 @@
+import type { AgentManifest, ValidationResult } from "@agntz/manifest";
+
 const WORKER_URL = process.env.WORKER_URL ?? "http://localhost:4001";
 
 function internalSecret(): string {
@@ -68,4 +70,86 @@ export async function workerRunStream(req: RunRequest): Promise<ReadableStream<U
   }
 
   return res.body;
+}
+
+export interface SystemAgentSummary {
+  id: string;
+  name: string;
+  displayName: string;
+  description?: string;
+}
+
+export interface SystemAgentDetail extends SystemAgentSummary {
+  yaml: string;
+  manifest: AgentManifest;
+}
+
+export interface ValidateRequest {
+  userId: string;
+  manifest: string;
+  strict?: boolean;
+  mcpTimeoutMs?: number;
+}
+
+/**
+ * Validate a YAML manifest on the worker. The worker owns the full
+ * validation context — local tools, user-scoped agent lookups, MCP
+ * reachability — so the app just forwards the YAML and user id.
+ */
+export async function workerValidateManifest(req: ValidateRequest): Promise<ValidationResult> {
+  const res = await fetch(`${WORKER_URL}/validate`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Internal-Secret": internalSecret(),
+    },
+    body: JSON.stringify(req),
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? `Worker error: ${res.status}`);
+  }
+
+  return res.json() as Promise<ValidationResult>;
+}
+
+/**
+ * List system agents bundled with the worker. These are global (not
+ * user-scoped), so the endpoint only needs the internal secret.
+ */
+export async function workerListSystemAgents(): Promise<SystemAgentSummary[]> {
+  const res = await fetch(`${WORKER_URL}/system/agents`, {
+    headers: {
+      "X-Internal-Secret": internalSecret(),
+    },
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? `Worker error: ${res.status}`);
+  }
+
+  return res.json() as Promise<SystemAgentSummary[]>;
+}
+
+/**
+ * Fetch a single system agent by id. Accepts either `agent-builder` or
+ * `system:agent-builder`. Returns null when the worker responds 404.
+ */
+export async function workerGetSystemAgent(id: string): Promise<SystemAgentDetail | null> {
+  const res = await fetch(`${WORKER_URL}/system/agents/${encodeURIComponent(id)}`, {
+    headers: {
+      "X-Internal-Secret": internalSecret(),
+    },
+  });
+
+  if (res.status === 404) return null;
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? `Worker error: ${res.status}`);
+  }
+
+  return res.json() as Promise<SystemAgentDetail>;
 }
