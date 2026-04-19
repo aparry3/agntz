@@ -1,30 +1,32 @@
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineTool } from "@agntz/core";
 import { z } from "zod";
 
-const DOCS_DIR = process.env.DOCS_DIR ?? "./docs";
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
-/**
- * Local tool: read_file
- * Reads a file from the configured docs directory and returns its contents.
- */
+// The only caller today is the agent-builder system agent, whose prompt
+// assets (schema-reference.md, etc.) ship next to its manifest.yaml. If a
+// second system agent later needs its own bundled references, generalize
+// this — e.g. resolve relative to the calling agent's YAML directory.
+const DEFAULT_REFS_DIR = resolve(__dirname, "../defaults/agents/agent-builder");
+const REFS_DIR = process.env.DOCS_DIR ?? DEFAULT_REFS_DIR;
+
 export const readFileTool = defineTool({
   name: "read_file",
-  description: "Read a documentation file and return its contents as a string",
+  description: "Read a bundled reference file and return its contents as a string",
   input: z.object({
-    path: z.string().describe("File path relative to the docs directory"),
+    path: z.string().describe("File path relative to the bundled references directory"),
   }),
   async execute(input: { path: string }) {
-    const filePath = resolve(DOCS_DIR, input.path);
+    const filePath = resolve(REFS_DIR, input.path);
 
-    // Prevent directory traversal
-    const resolvedDocs = resolve(DOCS_DIR);
-    if (!filePath.startsWith(resolvedDocs)) {
-      throw new Error(`Access denied: path must be within ${DOCS_DIR}`);
+    const resolvedRoot = resolve(REFS_DIR);
+    if (!filePath.startsWith(resolvedRoot)) {
+      throw new Error(`Access denied: path must be within ${REFS_DIR}`);
     }
 
-    const content = await readFile(filePath, "utf-8");
-    return content;
+    return readFile(filePath, "utf-8");
   },
 });
