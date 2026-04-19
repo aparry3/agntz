@@ -5,8 +5,8 @@ import { createRunner, MemoryStore, type Runner, type UnifiedStore } from "@agnt
 import { execute, parseManifest } from "@agntz/manifest";
 import type { AgentManifest } from "@agntz/manifest";
 import { createExecutionContext } from "./bridge.js";
-import { workerAuth, getUserId, getCachedBody } from "./middleware/auth.js";
-import { isSystemAgentId, loadSystemAgent } from "./system-agents.js";
+import { workerAuth, internalOnlyAuth, getUserId, getCachedBody } from "./middleware/auth.js";
+import { isSystemAgentId, loadSystemAgent, listSystemAgents, getSystemAgent } from "./system-agents.js";
 import { LOCAL_TOOLS } from "./tools/registry.js";
 
 export interface WorkerAPIOptions {
@@ -33,6 +33,36 @@ export function createWorkerAPI({ store, internalSecret }: WorkerAPIOptions): Ho
 
   app.use("/run", workerAuth({ store, internalSecret }));
   app.use("/run/stream", workerAuth({ store, internalSecret }));
+  app.use("/system/agents", internalOnlyAuth({ internalSecret }));
+  app.use("/system/agents/*", internalOnlyAuth({ internalSecret }));
+
+  app.get("/system/agents", async (c) => {
+    const agents = await listSystemAgents();
+    return c.json(
+      agents.map((a) => ({
+        id: a.id,
+        name: a.name,
+        displayName: a.displayName,
+        description: a.description,
+      })),
+    );
+  });
+
+  app.get("/system/agents/:id", async (c) => {
+    const id = decodeURIComponent(c.req.param("id"));
+    const info = await getSystemAgent(id);
+    if (!info) {
+      return c.json({ error: `System agent not found: ${id}` }, 404);
+    }
+    return c.json({
+      id: info.id,
+      name: info.name,
+      displayName: info.displayName,
+      description: info.description,
+      yaml: info.yaml,
+      manifest: info.manifest,
+    });
+  });
 
   app.post("/run", async (c) => {
     const start = Date.now();

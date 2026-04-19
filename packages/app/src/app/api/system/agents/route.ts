@@ -1,23 +1,15 @@
 import { NextResponse } from "next/server";
 import { requireUserContext, AuthRequiredError } from "@/lib/user";
 import { ForbiddenError, requireSuperAdmin } from "@/lib/admin";
-import { listSystemAgents } from "@agntz/worker";
+import { workerListSystemAgents } from "@/lib/worker-client";
 
 export async function GET() {
   try {
     const { userId } = await requireUserContext();
     requireSuperAdmin(userId);
 
-    const agents = await listSystemAgents();
-    return NextResponse.json(
-      agents.map((a) => ({
-        id: a.id,
-        name: a.name,
-        displayName: a.displayName,
-        description: a.description,
-        sourcePath: a.sourcePath,
-      }))
-    );
+    const agents = await workerListSystemAgents();
+    return NextResponse.json(agents);
   } catch (error) {
     return errorResponse(error);
   }

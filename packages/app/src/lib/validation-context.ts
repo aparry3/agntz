@@ -1,5 +1,5 @@
 import { listToolsOnServer, resolveMCPServer, type Runner } from "@agntz/core";
-import { LOCAL_TOOL_NAMES } from "@agntz/worker";
+import { LOCAL_TOOL_NAMES } from "./local-tools";
 import type { ValidationContext } from "@agntz/manifest";
 
 export interface BuildValidationContextOptions {

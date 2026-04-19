@@ -2,14 +2,14 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { isSuperAdmin } from "@/lib/admin";
-import { listSystemAgents } from "@agntz/worker";
+import { workerListSystemAgents } from "@/lib/worker-client";
 
 export default async function SystemAgentsPage() {
   const { userId } = await auth();
   if (!userId) redirect("/sign-in");
   if (!isSuperAdmin(userId)) redirect("/agents");
 
-  const agents = await listSystemAgents();
+  const agents = await workerListSystemAgents();
 
   return (
     <div className="mx-auto max-w-4xl">

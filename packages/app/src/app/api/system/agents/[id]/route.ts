@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUserContext, AuthRequiredError } from "@/lib/user";
 import { ForbiddenError, requireSuperAdmin } from "@/lib/admin";
-import { getSystemAgent } from "@agntz/worker";
+import { workerGetSystemAgent } from "@/lib/worker-client";
 
 export async function GET(
   _req: NextRequest,
@@ -13,20 +13,12 @@ export async function GET(
     requireSuperAdmin(userId);
 
     // Accept both "agent-builder" and "system:agent-builder"; decode URL encoding first.
-    const info = await getSystemAgent(decodeURIComponent(id));
+    const info = await workerGetSystemAgent(decodeURIComponent(id));
     if (!info) {
       return NextResponse.json({ error: `System agent not found: ${id}` }, { status: 404 });
     }
 
-    return NextResponse.json({
-      id: info.id,
-      name: info.name,
-      displayName: info.displayName,
-      description: info.description,
-      sourcePath: info.sourcePath,
-      yaml: info.yaml,
-      manifest: info.manifest,
-    });
+    return NextResponse.json(info);
   } catch (error) {
     return errorResponse(error);
   }

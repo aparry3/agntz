@@ -1,3 +1,5 @@
+import type { AgentManifest } from "@agntz/manifest";
+
 const WORKER_URL = process.env.WORKER_URL ?? "http://localhost:4001";
 
 function internalSecret(): string {
@@ -68,4 +70,56 @@ export async function workerRunStream(req: RunRequest): Promise<ReadableStream<U
   }
 
   return res.body;
+}
+
+export interface SystemAgentSummary {
+  id: string;
+  name: string;
+  displayName: string;
+  description?: string;
+}
+
+export interface SystemAgentDetail extends SystemAgentSummary {
+  yaml: string;
+  manifest: AgentManifest;
+}
+
+/**
+ * List system agents bundled with the worker. These are global (not
+ * user-scoped), so the endpoint only needs the internal secret.
+ */
+export async function workerListSystemAgents(): Promise<SystemAgentSummary[]> {
+  const res = await fetch(`${WORKER_URL}/system/agents`, {
+    headers: {
+      "X-Internal-Secret": internalSecret(),
+    },
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? `Worker error: ${res.status}`);
+  }
+
+  return res.json() as Promise<SystemAgentSummary[]>;
+}
+
+/**
+ * Fetch a single system agent by id. Accepts either `agent-builder` or
+ * `system:agent-builder`. Returns null when the worker responds 404.
+ */
+export async function workerGetSystemAgent(id: string): Promise<SystemAgentDetail | null> {
+  const res = await fetch(`${WORKER_URL}/system/agents/${encodeURIComponent(id)}`, {
+    headers: {
+      "X-Internal-Secret": internalSecret(),
+    },
+  });
+
+  if (res.status === 404) return null;
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? `Worker error: ${res.status}`);
+  }
+
+  return res.json() as Promise<SystemAgentDetail>;
 }
