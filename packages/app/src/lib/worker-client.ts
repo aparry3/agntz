@@ -1,4 +1,4 @@
-import type { AgentManifest } from "@agntz/manifest";
+import type { AgentManifest, ValidationResult } from "@agntz/manifest";
 
 const WORKER_URL = process.env.WORKER_URL ?? "http://localhost:4001";
 
@@ -82,6 +82,36 @@ export interface SystemAgentSummary {
 export interface SystemAgentDetail extends SystemAgentSummary {
   yaml: string;
   manifest: AgentManifest;
+}
+
+export interface ValidateRequest {
+  userId: string;
+  manifest: string;
+  strict?: boolean;
+  mcpTimeoutMs?: number;
+}
+
+/**
+ * Validate a YAML manifest on the worker. The worker owns the full
+ * validation context — local tools, user-scoped agent lookups, MCP
+ * reachability — so the app just forwards the YAML and user id.
+ */
+export async function workerValidateManifest(req: ValidateRequest): Promise<ValidationResult> {
+  const res = await fetch(`${WORKER_URL}/validate`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Internal-Secret": internalSecret(),
+    },
+    body: JSON.stringify(req),
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? `Worker error: ${res.status}`);
+  }
+
+  return res.json() as Promise<ValidationResult>;
 }
 
 /**

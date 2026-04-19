@@ -2,12 +2,13 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { createRunner, MemoryStore, type Runner, type UnifiedStore } from "@agntz/core";
-import { execute, parseManifest } from "@agntz/manifest";
+import { execute, parseManifest, validateManifestFull } from "@agntz/manifest";
 import type { AgentManifest } from "@agntz/manifest";
 import { createExecutionContext } from "./bridge.js";
 import { workerAuth, internalOnlyAuth, getUserId, getCachedBody } from "./middleware/auth.js";
 import { isSystemAgentId, loadSystemAgent, listSystemAgents, getSystemAgent } from "./system-agents.js";
 import { LOCAL_TOOLS } from "./tools/registry.js";
+import { buildValidationContext } from "./validation.js";
 
 export interface WorkerAPIOptions {
   store: UnifiedStore;
@@ -33,8 +34,32 @@ export function createWorkerAPI({ store, internalSecret }: WorkerAPIOptions): Ho
 
   app.use("/run", workerAuth({ store, internalSecret }));
   app.use("/run/stream", workerAuth({ store, internalSecret }));
+  app.use("/validate", workerAuth({ store, internalSecret }));
   app.use("/system/agents", internalOnlyAuth({ internalSecret }));
   app.use("/system/agents/*", internalOnlyAuth({ internalSecret }));
+
+  app.post("/validate", async (c) => {
+    try {
+      const userId = getUserId(c);
+      const body = (getCachedBody(c) ?? (await c.req.json())) as {
+        manifest?: string;
+        strict?: boolean;
+        mcpTimeoutMs?: number;
+      };
+      const { manifest, strict, mcpTimeoutMs } = body;
+
+      if (!manifest || typeof manifest !== "string") {
+        return c.json({ error: "Missing required field: manifest (string)" }, 400);
+      }
+
+      const scoped = store.forUser(userId);
+      const ctx = buildValidationContext(scoped, { strict, mcpTimeoutMs });
+      const result = await validateManifestFull(manifest, ctx);
+      return c.json(result);
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 500);
+    }
+  });
 
   app.get("/system/agents", async (c) => {
     const agents = await listSystemAgents();

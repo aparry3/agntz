@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUserContext, AuthRequiredError } from "@/lib/user";
-import { validateManifestFull } from "@agntz/manifest";
-import { buildValidationContext } from "@/lib/validation-context";
+import { workerValidateManifest } from "@/lib/worker-client";
 
 export async function GET() {
   try {
@@ -15,7 +14,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const { runner } = await requireUserContext();
+    const { userId, runner } = await requireUserContext();
     const body = await req.json();
     const { id, name, manifest, ...rest } = body;
 
@@ -26,8 +25,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing required field: manifest" }, { status: 400 });
     }
 
-    const ctx = buildValidationContext(runner, { strict: true });
-    const validation = await validateManifestFull(manifest, ctx);
+    const validation = await workerValidateManifest({ userId, manifest, strict: true });
     if (validation.errors.length > 0) {
       return NextResponse.json(
         { error: "Invalid manifest", errors: validation.errors, warnings: validation.warnings },

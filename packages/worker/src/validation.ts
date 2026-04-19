@@ -1,6 +1,11 @@
-import { listToolsOnServer, resolveMCPServer, type Runner } from "@agntz/core";
-import { LOCAL_TOOL_NAMES } from "./local-tools";
+import {
+  createRunner,
+  listToolsOnServer,
+  resolveMCPServer,
+  type UnifiedStore,
+} from "@agntz/core";
 import type { ValidationContext } from "@agntz/manifest";
+import { LOCAL_TOOL_NAMES } from "./tools/registry.js";
 
 export interface BuildValidationContextOptions {
   /** When true, MCP connection failures are reported as errors (save-time). */
@@ -10,22 +15,24 @@ export interface BuildValidationContextOptions {
 }
 
 /**
- * Build a ValidationContext for the manifest validator.
+ * Build a ValidationContext for a given user. Looks up agents and MCP
+ * connections in the caller's user-scoped store and pulls the local tool
+ * registry from the worker's own tools/registry.
  *
- * `resolveTools` accepts either a registered MCP connection id (e.g. `gymtext`)
- * or a raw URL. Registered connections win; unknown refs fall back to being
- * treated as URLs. Results are memoized per resolved URL so a manifest that
- * references the same server by different refs only pays one connect cost.
+ * Callers pass their user-scoped UnifiedStore; the function constructs a
+ * lightweight Runner internally just to reuse its agent/connection
+ * accessors — no tools or defaults are required for validation.
  */
 export function buildValidationContext(
-  runner: Runner,
+  store: UnifiedStore,
   options: BuildValidationContextOptions = {},
 ): ValidationContext {
+  const runner = createRunner({ store });
   const toolCache = new Map<string, Promise<string[]>>();
 
   return {
     strict: options.strict,
-    localTools: LOCAL_TOOL_NAMES,
+    localTools: [...LOCAL_TOOL_NAMES],
     resolveAgent: async (id: string) => {
       const agent = await runner.agents.getAgent(id);
       return agent != null;

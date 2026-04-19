@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { validateManifestFull } from "@agntz/manifest";
 import { requireUserContext, AuthRequiredError } from "@/lib/user";
-import { buildValidationContext } from "@/lib/validation-context";
+import { workerValidateManifest } from "@/lib/worker-client";
 
 export async function POST(req: NextRequest) {
   try {
-    const { runner } = await requireUserContext();
+    const { userId } = await requireUserContext();
     const body = await req.json();
     const { manifest } = body;
 
@@ -16,9 +15,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const ctx = buildValidationContext(runner);
-    const result = await validateManifestFull(manifest, ctx);
-
+    const result = await workerValidateManifest({ userId, manifest });
     return NextResponse.json(result);
   } catch (error) {
     if (error instanceof AuthRequiredError) {
