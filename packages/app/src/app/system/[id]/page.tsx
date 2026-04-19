@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { isSuperAdmin } from "@/lib/admin";
-import { getSystemAgent } from "@agntz/worker";
+import { workerGetSystemAgent } from "@/lib/worker-client";
 import { YamlViewer } from "@/components/yaml-viewer";
 
 export default async function SystemAgentDetailPage({
@@ -15,7 +15,7 @@ export default async function SystemAgentDetailPage({
   if (!isSuperAdmin(userId)) redirect("/agents");
 
   const { id } = await params;
-  const info = await getSystemAgent(decodeURIComponent(id));
+  const info = await workerGetSystemAgent(decodeURIComponent(id));
   if (!info) notFound();
 
   return (
@@ -37,10 +37,6 @@ export default async function SystemAgentDetailPage({
         <span className="shrink-0 rounded bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900">
           Read-only
         </span>
-      </div>
-
-      <div className="mb-2 text-xs text-zinc-500">
-        Source: <span className="font-mono">{info.sourcePath}</span>
       </div>
 
       <YamlViewer value={info.yaml} />

@@ -13,7 +13,6 @@
     "@agntz/core": "workspace:*",
     "@agntz/manifest": "workspace:*",
     "@agntz/store-postgres": "workspace:*",
-    "@agntz/worker": "workspace:*",
     "@clerk/nextjs": "^7.1.0",
     "next": "^15.5.0",
     "react": "^19.2.0",

@@ -47,6 +47,22 @@ export function workerAuth(deps: AuthDeps): MiddlewareHandler {
 }
 
 /**
+ * Header-only internal auth for requests without a body (e.g. GETs).
+ * Accepts only the internal secret; external API keys are not allowed
+ * because the routes gated by this middleware return resources that
+ * aren't user-scoped (e.g. system agents bundled with the worker).
+ */
+export function internalOnlyAuth(deps: { internalSecret: string }): MiddlewareHandler {
+  return async (c, next) => {
+    const h = c.req.header("x-internal-secret");
+    if (h !== deps.internalSecret) {
+      return c.json({ error: "missing or invalid internal secret" }, 401);
+    }
+    return next();
+  };
+}
+
+/**
  * Read JSON body once and cache it on the context so subsequent c.req.json()
  * calls in the route handler return the same object.
  */
