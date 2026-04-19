@@ -5,12 +5,8 @@ node_modules/
 
 # build output
 dist/
-build/
 out/
 *.tsbuildinfo
-
-# Next.js app-router segment — not a build artifact
-!packages/app/src/app/api/agents/build/
 
 # Next.js
 .next/
