@@ -59,7 +59,7 @@ BUILT_IN_AGENTS_DIR=...           # optional: extra YAMLs to seed per workspace
 
 ## System agents
 
-Default agents shipped in `src/defaults/agents/` (currently `agent-builder.yaml`) are available as **system agents** — invoke with `agentId: "system:<name>"`. The worker loads the YAML from disk and runs it with an ephemeral `MemoryStore`, bypassing the caller's user-scoped store entirely. To change the behavior, edit the YAML and redeploy.
+Default agents shipped in `src/defaults/agents/` (currently `agent-builder/manifest.yaml`) are available as **system agents** — invoke with `agentId: "system:<name>"`. The worker loads the YAML from disk and runs it with an ephemeral `MemoryStore`, bypassing the caller's user-scoped store entirely. Each system agent gets its own directory so prompt assets (e.g. `schema-reference.md`) ship alongside the manifest. To change the behavior, edit files in the agent's directory and redeploy.
 
 ## Run locally
 
