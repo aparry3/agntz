@@ -1,30 +1,33 @@
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineTool } from "@agntz/core";
 import { z } from "zod";
 
-const DOCS_DIR = process.env.DOCS_DIR ?? "./docs";
+// tsup bundles this into dist/chunk-*.js, so __dirname at runtime is the
+// worker package's dist/ directory. Resolve INTO defaults/ — don't walk
+// up, or you end up outside dist/ (where nothing is copied).
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
-/**
- * Local tool: read_file
- * Reads a file from the configured docs directory and returns its contents.
- */
+// The only caller today is the agent-builder system agent, whose prompt
+// assets (schema-reference.md, etc.) ship next to its manifest.yaml. If a
+// second system agent later needs its own bundled references, generalize
+// this — e.g. resolve relative to the calling agent's YAML directory.
+const REFS_DIR = resolve(__dirname, "defaults/agents/agent-builder");
+
 export const readFileTool = defineTool({
   name: "read_file",
-  description: "Read a documentation file and return its contents as a string",
+  description: "Read a bundled reference file and return its contents as a string",
   input: z.object({
-    path: z.string().describe("File path relative to the docs directory"),
+    path: z.string().describe("File path relative to the bundled references directory"),
   }),
   async execute(input: { path: string }) {
-    const filePath = resolve(DOCS_DIR, input.path);
+    const filePath = resolve(REFS_DIR, input.path);
 
-    // Prevent directory traversal
-    const resolvedDocs = resolve(DOCS_DIR);
-    if (!filePath.startsWith(resolvedDocs)) {
-      throw new Error(`Access denied: path must be within ${DOCS_DIR}`);
+    if (!filePath.startsWith(REFS_DIR)) {
+      throw new Error(`Access denied: path must be within ${REFS_DIR}`);
     }
 
-    const content = await readFile(filePath, "utf-8");
-    return content;
+    return readFile(filePath, "utf-8");
   },
 });

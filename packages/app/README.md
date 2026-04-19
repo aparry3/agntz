@@ -79,7 +79,7 @@ The worker's `workerAuth` middleware accepts two authentication modes:
 
 ## System agents
 
-`agent-builder.yaml` (the agent that powers the "Create from description" UI) ships in the repo at `packages/worker/src/defaults/agents/`. It's invoked via `agentId: "system:agent-builder"` — the worker detects the `system:` prefix, loads the YAML from disk, and runs with an ephemeral in-memory store. It bypasses the user's store entirely. To tweak the prompt, edit the YAML and redeploy.
+The `agent-builder` agent (which powers the "Create from description" UI) ships in the repo at `packages/worker/src/defaults/agents/agent-builder/` — its `manifest.yaml` plus prompt assets like `schema-reference.md`. It's invoked via `agentId: "system:agent-builder"`; the worker detects the `system:` prefix, loads the manifest from disk, and runs with an ephemeral in-memory store. It bypasses the user's store entirely. To tweak the prompt, edit files in that directory and redeploy.
 
 ## Deployment
 

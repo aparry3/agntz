@@ -430,7 +430,7 @@ steps:
 
   it("agent-builder fixture validates clean", () => {
     const yaml = readFileSync(
-      join(__dirname, "../../worker/src/defaults/agents/agent-builder.yaml"),
+      join(__dirname, "../../worker/src/defaults/agents/agent-builder/manifest.yaml"),
       "utf-8",
     );
     const result = validateManifest(yaml);

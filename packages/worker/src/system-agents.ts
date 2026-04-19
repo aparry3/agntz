@@ -15,7 +15,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  * Invoked via `agentId: "system:<name>"`.
  */
 const SYSTEM_AGENT_PATHS: Record<string, string> = {
-  "agent-builder": resolve(__dirname, "defaults/agents/agent-builder.yaml"),
+  "agent-builder": resolve(__dirname, "defaults/agents/agent-builder/manifest.yaml"),
 };
 
 const SYSTEM_PREFIX = "system:";
