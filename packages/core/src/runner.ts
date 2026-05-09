@@ -20,8 +20,17 @@ import type {
   ProviderStore,
   ConnectionStore,
   ModelProvider,
+  RunRegistry,
 } from "./types.js";
 import { ToolRegistry } from "./tool.js";
+import { zodToJsonSchema } from "./utils/schema.js";
+import {
+  createSpawnAgentTool,
+  createCheckAgentsTool,
+  resolveSpawnable,
+  DEFAULT_SPAWN_LIMITS,
+} from "./tools/spawn-agent.js";
+import type { SpawnableEntry } from "./tools/spawn-agent.js";
 import { MemoryStore } from "./stores/memory.js";
 import { AISDKModelProvider } from "./model-provider.js";
 import { buildMessages, trimHistory } from "./message-builder.js";
@@ -606,6 +615,26 @@ export class Runner {
     const invocationId = generateInvocationId();
     const agent = await this.resolveAgent(agentId);
 
+    // ─── Run registry integration ──────────────────────────────────────
+    // If a registry is wired and there is no current Run id, materialize
+    // one for this top-level call. Children always pass runId explicitly via
+    // the spawn_agent tool, so this only fires for top-level invocations.
+    const runRegistry = options.runRegistry;
+    let runId = options.runId;
+    if (runRegistry && !runId) {
+      const root = runRegistry.create({
+        agentId,
+        input,
+        parentRunId: options.parentRunId,
+        userId: options.userId,
+        sessionId: options.sessionId,
+      });
+      runId = root.id;
+    }
+    // Per-invocation ephemeral tools. spawn_agent/check_agents live here,
+    // not in the global registry, because their schemas are agent-specific.
+    const ephemeralTools = new Map<string, ToolDefinition>();
+
     // Resolve model config (agent model or defaults)
     const modelConfig = {
       ...this.config.defaults?.model,
@@ -670,8 +699,12 @@ export class Runner {
         extraContext: options.extraContext,
       });
 
-      // Resolve available tools for this agent
-      const availableTools = await this.resolveToolsForAgent(agent);
+      // Resolve available tools for this agent (incl. spawn_agent/check_agents
+      // when the agent declares `spawnable` and a runRegistry is provided).
+      const availableTools = await this.resolveToolsForAgent(agent, {
+        runRegistry,
+        ephemeralTools,
+      });
 
       // Execute the agent loop (model → tools → repeat)
       const allToolCalls: ToolCallRecord[] = [];
@@ -679,14 +712,33 @@ export class Runner {
       let finalOutput = "";
       let step = 0;
 
-      const maxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS;
+      const baseMaxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS;
+      // Drain phase: when the model wants to terminate but children are still
+      // running, we keep looping until they all settle. Add a fixed bonus
+      // budget so drain iterations don't exhaust maxSteps.
+      const drainBudget = 2 * 8;
+      let inDrainPhase = false;
+      let effectiveMaxSteps = baseMaxSteps;
 
-      while (step < maxSteps) {
+      while (step < effectiveMaxSteps) {
         step++;
 
         // Check for cancellation
         if (options.signal?.aborted) {
           throw new InvocationCancelledError();
+        }
+
+        // Inject any deferred child completions at the top of each iteration.
+        // These look like normal "user" messages tagged so the LLM can correlate
+        // them with its earlier spawn_agent calls.
+        if (runRegistry && runId) {
+          const pending = runRegistry.consumePending(runId);
+          for (const p of pending) {
+            messages.push({
+              role: "user",
+              content: formatChildCompletion(p),
+            });
+          }
         }
 
         // Build output schema if the agent defines one
@@ -728,8 +780,28 @@ export class Runner {
         totalUsage.completionTokens += result.usage.completionTokens;
         totalUsage.totalTokens += result.usage.totalTokens;
 
-        // If no tool calls, we're done
+        // Termination rule. Without a registry: classic "no tool calls → done".
+        // With a registry + outstanding children: enter (or stay in) drain
+        // phase, which forbids finishing until every child has settled.
         if (!result.toolCalls?.length) {
+          if (runRegistry && runId && runRegistry.outstandingChildrenCount(runId) > 0) {
+            if (!inDrainPhase) {
+              inDrainPhase = true;
+              effectiveMaxSteps = step + drainBudget;
+            }
+            // Keep the model's tentative text in the conversation so it can
+            // refine after seeing each settled child.
+            if (result.text) {
+              messages.push({ role: "assistant", content: result.text });
+            }
+            try {
+              await runRegistry.awaitNextSettled(runId, options.signal);
+            } catch (err) {
+              if (err instanceof InvocationCancelledError) throw err;
+              throw err;
+            }
+            continue;
+          }
           finalOutput = result.text;
           break;
         }
@@ -745,6 +817,9 @@ export class Runner {
             sessionId: options.sessionId,
             contextIds: options.contextIds,
             invocationId,
+            runId,
+            userId: options.userId,
+            runRegistry,
             _recursionDepth: currentDepth,
             invoke: (agentId: string, input: string, opts?: InvokeOptions) =>
               this.invoke(agentId, input, {
@@ -758,7 +833,17 @@ export class Runner {
           let error: string | undefined;
 
           try {
-            output = await this.toolRegistry.execute(tc.name, tc.args, toolCtx);
+            // Ephemeral tools (spawn_agent/check_agents) are dispatched
+            // directly because they're synthesized per-invocation with
+            // agent-specific schemas. Everything else goes through the
+            // shared ToolRegistry.
+            const ephemeral = ephemeralTools.get(tc.name);
+            if (ephemeral) {
+              const validatedArgs = ephemeral.input.parse(tc.args);
+              output = await ephemeral.execute(validatedArgs, toolCtx);
+            } else {
+              output = await this.toolRegistry.execute(tc.name, tc.args, toolCtx);
+            }
           } catch (err) {
             // Propagate critical errors instead of swallowing them
             if (err instanceof MaxRecursionDepthError || err instanceof InvocationCancelledError) {
@@ -873,7 +958,7 @@ export class Runner {
 
       span.end();
 
-      return {
+      const invokeResult: InvokeResult = {
         output: finalOutput,
         invocationId,
         toolCalls: allToolCalls,
@@ -881,8 +966,17 @@ export class Runner {
         duration,
         model: modelStr,
       };
+
+      if (runRegistry && runId) {
+        runRegistry.notifyCompleted(runId, invokeResult);
+      }
+
+      return invokeResult;
     } catch (err) {
       span.error(err instanceof Error ? err : new Error(String(err)));
+      if (runRegistry && runId) {
+        runRegistry.notifyFailed(runId, err);
+      }
       throw err;
     }
   }
@@ -891,19 +985,32 @@ export class Runner {
    * Resolve the tools available to an agent based on its tools[] references.
    * Returns tool metadata for the model AND registers ephemeral tools
    * in the registry so they can be executed during the invoke loop.
+   *
+   * If the agent declares `spawnable` and a `runRegistry` is provided,
+   * also synthesizes per-invocation `spawn_agent` and `check_agents` tools.
+   * These live in the supplied `ephemeralTools` map (not the global registry)
+   * because their schemas are agent-specific.
    */
-  private async resolveToolsForAgent(agent: AgentDefinition): Promise<Array<{
+  private async resolveToolsForAgent(
+    agent: AgentDefinition,
+    opts?: {
+      runRegistry?: RunRegistry;
+      ephemeralTools?: Map<string, ToolDefinition>;
+    },
+  ): Promise<Array<{
     name: string;
     description: string;
     parameters: Record<string, unknown>;
   }>> {
-    if (!agent.tools?.length) return [];
+    const hasSpawnable =
+      Boolean(agent.spawnable?.length) && Boolean(opts?.runRegistry) && Boolean(opts?.ephemeralTools);
+    if (!agent.tools?.length && !hasSpawnable) return [];
 
     // Ensure every referenced MCP server is connected (resolving registered
     // connection names to urls/headers) before we ask for its tools.
     const mcpRefs = Array.from(
       new Set(
-        agent.tools
+        (agent.tools ?? [])
           .filter((r): r is Extract<typeof r, { type: "mcp" }> => r.type === "mcp")
           .map((r) => r.server),
       ),
@@ -918,7 +1025,7 @@ export class Runner {
       parameters: Record<string, unknown>;
     }> = [];
 
-    for (const ref of agent.tools) {
+    for (const ref of agent.tools ?? []) {
       if (ref.type === "inline") {
         const info = this.toolRegistry.get(ref.name);
         if (info) {
@@ -936,6 +1043,40 @@ export class Runner {
       } else if (ref.type === "mcp") {
         const mcpTools = this.resolveMCPTools(ref.server, ref.tools);
         resolved.push(...mcpTools);
+      }
+    }
+
+    // Synthesize spawn_agent / check_agents per-invocation. These are NOT
+    // installed into the global ToolRegistry — their schemas (the enum of
+    // allowed agent ids) are specific to this agent and would collide if the
+    // same Runner were used for multiple agents with different spawnable lists.
+    if (hasSpawnable) {
+      const entries: SpawnableEntry[] = await resolveSpawnable(agent.spawnable!, {
+        resolveStored: async (id: string) => {
+          const reg = this.registeredAgents.get(id);
+          if (reg) return reg;
+          return this.agentStore.getAgent(id);
+        },
+        registerInline: (def: AgentDefinition) => this.registerAgent(def),
+      });
+
+      const spawn = createSpawnAgentTool(entries, DEFAULT_SPAWN_LIMITS);
+      if (spawn) {
+        opts!.ephemeralTools!.set(spawn.name, spawn);
+        resolved.push({
+          name: spawn.name,
+          description: spawn.description,
+          parameters: zodToJsonSchema(spawn.input),
+        });
+      }
+      const check = createCheckAgentsTool(entries);
+      if (check) {
+        opts!.ephemeralTools!.set(check.name, check);
+        resolved.push({
+          name: check.name,
+          description: check.description,
+          parameters: zodToJsonSchema(check.input),
+        });
       }
     }
 
@@ -1078,4 +1219,30 @@ export class Runner {
  */
 export function createRunner(config: RunnerConfig = {}): Runner {
   return new Runner(config);
+}
+
+/**
+ * Format a settled child Run as a synthetic message that the parent's LLM
+ * sees on the next iteration. The parent correlates by `run_id`.
+ */
+function formatChildCompletion(p: {
+  childRunId: string;
+  agentId: string;
+  payload:
+    | { ok: true; output: string }
+    | { ok: false; error: string; cancelled?: boolean };
+}): string {
+  if (p.payload.ok) {
+    return (
+      `[Spawned agent completion] run_id=${p.childRunId} agent_id=${p.agentId} status=completed\n` +
+      `output:\n${p.payload.output}`
+    );
+  }
+  if (p.payload.cancelled) {
+    return `[Spawned agent completion] run_id=${p.childRunId} agent_id=${p.agentId} status=cancelled`;
+  }
+  return (
+    `[Spawned agent completion] run_id=${p.childRunId} agent_id=${p.agentId} status=failed\n` +
+    `error: ${p.payload.error}`
+  );
 }

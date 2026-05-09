@@ -6,6 +6,15 @@
 export { createRunner, Runner } from "./runner.js";
 export { defineAgent } from "./agent.js";
 export { defineTool, ToolRegistry } from "./tool.js";
+export { InMemoryRunRegistry } from "./run-registry.js";
+export type { RunExecutor, InMemoryRunRegistryOptions } from "./run-registry.js";
+export {
+  createSpawnAgentTool,
+  createCheckAgentsTool,
+  resolveSpawnable,
+  DEFAULT_SPAWN_LIMITS,
+} from "./tools/spawn-agent.js";
+export type { SpawnLimits, SpawnableEntry } from "./tools/spawn-agent.js";
 
 // Stores
 export { MemoryStore } from "./stores/memory.js";
@@ -63,6 +72,7 @@ export {
 export type {
   // Agent
   AgentDefinition,
+  AgentRef,
   ModelConfig,
 
   // Tools
@@ -117,6 +127,16 @@ export type {
   ApiKeyRecord,
   ScopableStore,
   UnifiedStore,
+
+  // Runs
+  Run,
+  RunStatus,
+  RunHandle,
+  RunStore,
+  RunRegistry,
+  PendingChildResult,
+  MultiplexedEvent,
+  SpawnRunOptions,
 
   // Model Provider
   ModelProvider,
