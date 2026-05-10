@@ -590,6 +590,12 @@ export interface RunRegistry {
   /** Subscribe to multiplexed events from the subtree rooted at `rootId`. */
   subscribe(rootId: string, sinceSeq?: number): AsyncIterable<MultiplexedEvent>;
   /**
+   * Emit a multiplexed event into the root's stream. The runner uses this to
+   * surface text-delta, tool-call, step-complete, and draining events. The
+   * registry stamps each event with a monotonic `seq`.
+   */
+  emit(rootId: string, event: MultiplexedEvent): void;
+  /**
    * Mark a Run as completed. Used by the runner to settle a Run that wasn't
    * started via `start()` (i.e. top-level invocations). Idempotent.
    */

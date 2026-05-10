@@ -20,6 +20,7 @@ import type {
   ProviderStore,
   ConnectionStore,
   ModelProvider,
+  PendingChildResult,
   RunRegistry,
 } from "./types.js";
 import { ToolRegistry } from "./tool.js";
@@ -59,6 +60,12 @@ const DEFAULT_MAX_STEPS = 10;
 
 /** Default maximum recursion depth for agent-as-tool chains */
 const DEFAULT_MAX_RECURSION_DEPTH = 3;
+
+/**
+ * Bonus iterations granted when entering the drain phase, so waiting for
+ * outstanding children doesn't immediately exhaust `maxSteps`.
+ */
+const DRAIN_BUDGET = 16;
 
 /**
  * The Runner. Central orchestrator for agntz.
@@ -314,22 +321,58 @@ export class Runner {
 
   /**
    * Invoke an agent with streaming. Returns an async iterable of stream events.
+   *
+   * Parity with `invoke()`: supports `runRegistry`/`runId`, materializes a
+   * top-level Run, injects child completions between steps, drains
+   * outstanding children before terminating, dispatches ephemeral
+   * `spawn_agent`/`check_agents` tools, and emits multiplexed events
+   * (text-delta, tool-call-start, tool-call-end, step-complete, draining)
+   * to the registry when one is wired.
    */
   stream(agentId: string, input: string, options: Omit<InvokeOptions, "stream"> = {}): InvokeStream {
     const self = this;
     let resolveResult: (r: InvokeResult) => void;
-    const resultPromise = new Promise<InvokeResult>((resolve) => {
+    let rejectResult: (e: unknown) => void;
+    const resultPromise = new Promise<InvokeResult>((resolve, reject) => {
       resolveResult = resolve;
+      rejectResult = reject;
     });
 
     async function* generate(): AsyncGenerator<StreamEvent> {
+      // Recursion depth (rare for stream but symmetric with invoke)
+      const currentDepth = options._recursionDepth ?? 0;
+      const maxDepth = self.config.maxRecursionDepth ?? DEFAULT_MAX_RECURSION_DEPTH;
+      if (currentDepth > maxDepth) {
+        throw new MaxRecursionDepthError(agentId, maxDepth);
+      }
+
       // Ensure MCP servers are connected
       await self.ensureMCPInitialized();
 
       const startTime = Date.now();
       const invocationId = generateInvocationId();
-      const maxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS;
       const agent = await self.resolveAgent(agentId);
+
+      // ─── Run registry integration ──────────────────────────────────────
+      const runRegistry = options.runRegistry;
+      let runId = options.runId;
+      let rootId: string | undefined;
+      if (runRegistry) {
+        if (!runId) {
+          const root = runRegistry.create({
+            agentId,
+            input,
+            parentRunId: options.parentRunId,
+            userId: options.userId,
+            sessionId: options.sessionId,
+          });
+          runId = root.id;
+          rootId = root.rootId;
+        } else {
+          rootId = runRegistry.get(runId)?.rootId ?? runId;
+        }
+      }
+      const ephemeralTools = new Map<string, ToolDefinition>();
 
       const modelConfig = {
         ...self.config.defaults?.model,
@@ -337,260 +380,339 @@ export class Runner {
         temperature: agent.model.temperature ?? self.config.defaults?.temperature,
         maxTokens: agent.model.maxTokens ?? self.config.defaults?.maxTokens,
       };
-
-      // Load session history
-      let sessionHistory: Message[] = [];
-      if (options.sessionId) {
-        sessionHistory = await self.sessionStore.getMessages(options.sessionId);
-        const maxMessages = self.config.session?.maxMessages ?? 50;
-        const strategy = self.config.session?.strategy ?? "sliding";
-
-        if (strategy === "summary" && sessionHistory.length > maxMessages) {
-          sessionHistory = await trimHistoryWithSummary(sessionHistory, {
-            maxMessages,
-            modelProvider: self.modelProvider,
-            modelConfig: modelConfig as import("./types.js").ModelConfig,
-            signal: options.signal,
-          });
-        } else if (strategy !== "none") {
-          sessionHistory = trimHistory(sessionHistory, maxMessages);
-        }
-      }
-
-      // Load context
-      let contextEntries: Map<string, ContextEntry[]> | undefined;
-      if (options.contextIds?.length) {
-        contextEntries = new Map();
-        for (const contextId of options.contextIds) {
-          const entries = await self.contextStore.getContext(contextId);
-          if (entries.length > 0) {
-            const maxEntries = self.config.context?.maxEntries ?? 20;
-            contextEntries.set(contextId, entries.slice(-maxEntries));
-          }
-        }
-      }
-
-      const messages = buildMessages({
-        agent,
-        input,
-        sessionHistory,
-        contextEntries,
-        extraContext: options.extraContext,
-      });
-
-      const availableTools = await self.resolveToolsForAgent(agent);
-      const allToolCalls: ToolCallRecord[] = [];
-      const totalUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
-      let finalOutput = "";
-      let step = 0;
-
-      while (step < maxSteps) {
-        step++;
-
-        if (options.signal?.aborted) {
-          throw new InvocationCancelledError();
-        }
-
-        const outputSchema = agent.outputSchema
-          ? { name: `${agent.id}_output`, schema: agent.outputSchema }
-          : undefined;
-
-        // Use streaming model call if available
-        if (self.modelProvider.streamText) {
-          const streamResult = await self.modelProvider.streamText({
-            model: modelConfig,
-            messages,
-            tools: availableTools.length > 0 ? availableTools : undefined,
-            outputSchema,
-            signal: options.signal,
-          });
-
-          // Yield text deltas
-          let fullText = "";
-          for await (const chunk of streamResult.textStream) {
-            fullText += chunk;
-            yield { type: "text-delta" as const, text: chunk };
-          }
-
-          const toolCalls = await streamResult.toolCalls;
-          const usage = await streamResult.usage;
-
-          totalUsage.promptTokens += usage.promptTokens;
-          totalUsage.completionTokens += usage.completionTokens;
-          totalUsage.totalTokens += usage.totalTokens;
-
-          if (!toolCalls?.length) {
-            finalOutput = fullText;
-            break;
-          }
-
-          // Handle tool calls
-          const stepToolCalls: ToolCallRecord[] = [];
-          for (const tc of toolCalls) {
-            yield { type: "tool-call-start" as const, toolCall: { id: tc.id, name: tc.name } };
-
-            const toolStartTime = Date.now();
-            const toolCtx: ToolContext = {
-              agentId,
-              sessionId: options.sessionId,
-              contextIds: options.contextIds,
-              invocationId,
-              invoke: (aid: string, inp: string, opts?: InvokeOptions) => self.invoke(aid, inp, opts),
-              ...(options.toolContext ?? {}),
-            };
-
-            let output: unknown;
-            let error: string | undefined;
-            try {
-              output = await self.toolRegistry.execute(tc.name, tc.args, toolCtx);
-            } catch (err) {
-              error = err instanceof Error ? err.message : String(err);
-              output = { error };
-            }
-
-            const record: ToolCallRecord = {
-              id: tc.id, name: tc.name, input: tc.args,
-              output, duration: Date.now() - toolStartTime, error,
-            };
-            stepToolCalls.push(record);
-            allToolCalls.push(record);
-
-            yield { type: "tool-call-end" as const, toolCall: record };
-          }
-
-          yield { type: "step-complete" as const, step, toolCalls: stepToolCalls };
-
-          // Add to conversation for next step
-          if (fullText) {
-            messages.push({ role: "assistant", content: fullText });
-          }
-          messages.push({
-            role: "assistant",
-            content: toolCalls.map(tc => `[Tool Call: ${tc.name}(${JSON.stringify(tc.args)})]`).join("\n"),
-          });
-          for (const tc of stepToolCalls) {
-            messages.push({
-              role: "tool" as string,
-              content: typeof tc.output === "string" ? tc.output : JSON.stringify(tc.output),
-            });
-          }
-        } else {
-          // Fallback to non-streaming
-          const result = await self.modelProvider.generateText({
-            model: modelConfig,
-            messages,
-            tools: availableTools.length > 0 ? availableTools : undefined,
-            outputSchema,
-            signal: options.signal,
-          });
-
-          totalUsage.promptTokens += result.usage.promptTokens;
-          totalUsage.completionTokens += result.usage.completionTokens;
-          totalUsage.totalTokens += result.usage.totalTokens;
-
-          if (!result.toolCalls?.length) {
-            finalOutput = result.text;
-            yield { type: "text-delta" as const, text: result.text };
-            break;
-          }
-
-          // Execute tools (same as non-streaming path)
-          const stepToolCalls: ToolCallRecord[] = [];
-          for (const tc of result.toolCalls) {
-            yield { type: "tool-call-start" as const, toolCall: { id: tc.id, name: tc.name } };
-
-            const toolStartTime = Date.now();
-            const toolCtx: ToolContext = {
-              agentId,
-              sessionId: options.sessionId,
-              contextIds: options.contextIds,
-              invocationId,
-              invoke: (aid: string, inp: string, opts?: InvokeOptions) => self.invoke(aid, inp, opts),
-              ...(options.toolContext ?? {}),
-            };
-
-            let output: unknown;
-            let error: string | undefined;
-            try {
-              output = await self.toolRegistry.execute(tc.name, tc.args, toolCtx);
-            } catch (err) {
-              error = err instanceof Error ? err.message : String(err);
-              output = { error };
-            }
-
-            const record: ToolCallRecord = {
-              id: tc.id, name: tc.name, input: tc.args,
-              output, duration: Date.now() - toolStartTime, error,
-            };
-            stepToolCalls.push(record);
-            allToolCalls.push(record);
-
-            yield { type: "tool-call-end" as const, toolCall: record };
-          }
-
-          yield { type: "step-complete" as const, step, toolCalls: stepToolCalls };
-
-          if (result.text) messages.push({ role: "assistant", content: result.text });
-          messages.push({
-            role: "assistant",
-            content: result.toolCalls.map(tc => `[Tool Call: ${tc.name}(${JSON.stringify(tc.args)})]`).join("\n"),
-          });
-          for (const tc of stepToolCalls) {
-            messages.push({
-              role: "tool" as string,
-              content: typeof tc.output === "string" ? tc.output : JSON.stringify(tc.output),
-            });
-          }
-
-          if (result.finishReason === "stop" && result.text) {
-            finalOutput = result.text;
-            break;
-          }
-        }
-      }
-
-      if (step >= maxSteps && !finalOutput) {
-        throw new MaxStepsExceededError(agentId, maxSteps);
-      }
-
-      const duration = Date.now() - startTime;
       const modelStr = `${modelConfig.provider}/${modelConfig.name}`;
 
-      // Persist session
-      if (options.sessionId) {
-        const now = new Date().toISOString();
-        await self.sessionStore.append(options.sessionId, [
-          { role: "user", content: input, timestamp: now },
-          { role: "assistant", content: finalOutput, toolCalls: allToolCalls.length > 0 ? allToolCalls : undefined, timestamp: now },
-        ]);
-      }
+      try {
+        // Load session history
+        let sessionHistory: Message[] = [];
+        if (options.sessionId) {
+          sessionHistory = await self.sessionStore.getMessages(options.sessionId);
+          const maxMessages = self.config.session?.maxMessages ?? 50;
+          const strategy = self.config.session?.strategy ?? "sliding";
 
-      // Context write
-      if (agent.contextWrite && options.contextIds?.length && finalOutput) {
-        for (const contextId of options.contextIds) {
-          await self.contextStore.addContext(contextId, {
-            contextId, agentId, invocationId, content: finalOutput, createdAt: new Date().toISOString(),
-          });
+          if (strategy === "summary" && sessionHistory.length > maxMessages) {
+            sessionHistory = await trimHistoryWithSummary(sessionHistory, {
+              maxMessages,
+              modelProvider: self.modelProvider,
+              modelConfig: modelConfig as import("./types.js").ModelConfig,
+              signal: options.signal,
+            });
+          } else if (strategy !== "none") {
+            sessionHistory = trimHistory(sessionHistory, maxMessages);
+          }
         }
+
+        // Load context
+        let contextEntries: Map<string, ContextEntry[]> | undefined;
+        if (options.contextIds?.length) {
+          contextEntries = new Map();
+          for (const contextId of options.contextIds) {
+            const entries = await self.contextStore.getContext(contextId);
+            if (entries.length > 0) {
+              const maxEntries = self.config.context?.maxEntries ?? 20;
+              contextEntries.set(contextId, entries.slice(-maxEntries));
+            }
+          }
+        }
+
+        const messages = buildMessages({
+          agent,
+          input,
+          sessionHistory,
+          contextEntries,
+          extraContext: options.extraContext,
+        });
+
+        const availableTools = await self.resolveToolsForAgent(agent, {
+          runRegistry,
+          ephemeralTools,
+        });
+
+        const allToolCalls: ToolCallRecord[] = [];
+        const totalUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+        let finalOutput = "";
+        let step = 0;
+
+        const baseMaxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS;
+        let inDrainPhase = false;
+        let effectiveMaxSteps = baseMaxSteps;
+
+        while (step < effectiveMaxSteps) {
+          step++;
+
+          if (options.signal?.aborted) {
+            throw new InvocationCancelledError();
+          }
+
+          // Inject deferred child completions at the top of each iteration.
+          if (runRegistry && runId) {
+            self.injectPendingCompletions(runRegistry, runId, messages);
+          }
+
+          const outputSchema = agent.outputSchema
+            ? { name: `${agent.id}_output`, schema: agent.outputSchema }
+            : undefined;
+
+          let resultText: string;
+          let resultToolCalls: Array<{ id: string; name: string; args: unknown }>;
+          let stepFinishReason: string;
+          let stepUsage: TokenUsage;
+
+          if (self.modelProvider.streamText) {
+            const streamResult = await self.modelProvider.streamText({
+              model: modelConfig,
+              messages,
+              tools: availableTools.length > 0 ? availableTools : undefined,
+              outputSchema,
+              signal: options.signal,
+            });
+
+            // Yield text deltas (both to the local stream and to the registry).
+            let fullText = "";
+            for await (const chunk of streamResult.textStream) {
+              fullText += chunk;
+              yield { type: "text-delta" as const, text: chunk };
+              if (runRegistry && rootId && runId) {
+                runRegistry.emit(rootId, {
+                  type: "text-delta",
+                  runId,
+                  text: chunk,
+                  seq: 0,
+                });
+              }
+            }
+
+            resultText = fullText;
+            resultToolCalls = (await streamResult.toolCalls) ?? [];
+            stepUsage = await streamResult.usage;
+            stepFinishReason = await streamResult.finishReason;
+          } else {
+            // Fallback for providers without streaming
+            const result = await self.modelProvider.generateText({
+              model: modelConfig,
+              messages,
+              tools: availableTools.length > 0 ? availableTools : undefined,
+              outputSchema,
+              signal: options.signal,
+            });
+
+            resultText = result.text;
+            resultToolCalls = result.toolCalls ?? [];
+            stepUsage = result.usage;
+            stepFinishReason = result.finishReason;
+
+            // For symmetry, emit the entire text as a single delta.
+            if (resultText) {
+              yield { type: "text-delta" as const, text: resultText };
+              if (runRegistry && rootId && runId) {
+                runRegistry.emit(rootId, {
+                  type: "text-delta",
+                  runId,
+                  text: resultText,
+                  seq: 0,
+                });
+              }
+            }
+          }
+
+          totalUsage.promptTokens += stepUsage.promptTokens;
+          totalUsage.completionTokens += stepUsage.completionTokens;
+          totalUsage.totalTokens += stepUsage.totalTokens;
+
+          // Termination + drain. See invoke() for the race rationale: a child
+          // may have settled during streaming; its status is terminal but the
+          // completion sits in the pending queue. Re-check both before
+          // deciding whether to break.
+          if (!resultToolCalls.length) {
+            if (runRegistry && runId) {
+              const hasOutstanding = runRegistry.outstandingChildrenCount(runId) > 0;
+              const late = runRegistry.consumePending(runId);
+              if (late.length > 0 || hasOutstanding) {
+                if (resultText) {
+                  messages.push({ role: "assistant", content: resultText });
+                }
+                for (const p of late) {
+                  messages.push({ role: "user", content: formatChildCompletion(p) });
+                }
+                if (hasOutstanding) {
+                  if (!inDrainPhase) {
+                    inDrainPhase = true;
+                    effectiveMaxSteps = step + DRAIN_BUDGET;
+                  }
+                  if (rootId) {
+                    const pendingChildren = runRegistry
+                      .children(runId)
+                      .filter((c) => c.status === "pending" || c.status === "running")
+                      .map((c) => c.id);
+                    runRegistry.emit(rootId, {
+                      type: "draining",
+                      runId,
+                      pendingChildren,
+                      seq: 0,
+                    });
+                  }
+                  await runRegistry.awaitNextSettled(runId, options.signal);
+                }
+                continue;
+              }
+            }
+            finalOutput = resultText;
+            break;
+          }
+
+          // Execute tool calls
+          const stepToolCalls: ToolCallRecord[] = [];
+          for (const tc of resultToolCalls) {
+            yield {
+              type: "tool-call-start" as const,
+              toolCall: { id: tc.id, name: tc.name },
+            };
+            if (runRegistry && rootId && runId) {
+              runRegistry.emit(rootId, {
+                type: "tool-call-start",
+                runId,
+                toolCall: { id: tc.id, name: tc.name },
+                seq: 0,
+              });
+            }
+
+            const record = await self.executeToolCall({
+              tc,
+              agentId,
+              options,
+              invocationId,
+              runId,
+              runRegistry,
+              ephemeralTools,
+              currentDepth,
+            });
+
+            stepToolCalls.push(record);
+            allToolCalls.push(record);
+
+            yield { type: "tool-call-end" as const, toolCall: record };
+            if (runRegistry && rootId && runId) {
+              runRegistry.emit(rootId, {
+                type: "tool-call-end",
+                runId,
+                toolCall: record,
+                seq: 0,
+              });
+            }
+          }
+
+          yield { type: "step-complete" as const, step, toolCalls: stepToolCalls };
+          if (runRegistry && rootId && runId) {
+            runRegistry.emit(rootId, {
+              type: "step-complete",
+              runId,
+              step,
+              toolCalls: stepToolCalls,
+              seq: 0,
+            });
+          }
+
+          // Push tool-call assistant + tool-result messages so the next
+          // model iteration can see them.
+          if (resultText) {
+            messages.push({ role: "assistant", content: resultText });
+          }
+          messages.push({
+            role: "assistant",
+            content: resultToolCalls
+              .map((tc) => `[Tool Call: ${tc.name}(${JSON.stringify(tc.args)})]`)
+              .join("\n"),
+          });
+          for (const r of stepToolCalls) {
+            messages.push({
+              role: "tool" as string,
+              content: typeof r.output === "string" ? r.output : JSON.stringify(r.output),
+            });
+          }
+
+          if (stepFinishReason === "stop" && resultText) {
+            finalOutput = resultText;
+            break;
+          }
+        }
+
+        if (step >= effectiveMaxSteps && !finalOutput) {
+          throw new MaxStepsExceededError(agentId, baseMaxSteps);
+        }
+
+        const duration = Date.now() - startTime;
+
+        // Persist session
+        if (options.sessionId) {
+          const now = new Date().toISOString();
+          await self.sessionStore.append(options.sessionId, [
+            { role: "user", content: input, timestamp: now },
+            {
+              role: "assistant",
+              content: finalOutput,
+              toolCalls: allToolCalls.length > 0 ? allToolCalls : undefined,
+              timestamp: now,
+            },
+          ]);
+        }
+
+        // Context write
+        if (agent.contextWrite && options.contextIds?.length && finalOutput) {
+          for (const contextId of options.contextIds) {
+            await self.contextStore.addContext(contextId, {
+              contextId,
+              agentId,
+              invocationId,
+              content: finalOutput,
+              createdAt: new Date().toISOString(),
+            });
+          }
+        }
+
+        // Log
+        await self.logStore.log({
+          id: invocationId,
+          agentId,
+          sessionId: options.sessionId,
+          input,
+          output: finalOutput,
+          toolCalls: allToolCalls,
+          usage: totalUsage,
+          duration,
+          model: modelStr,
+          timestamp: new Date().toISOString(),
+        });
+
+        const invokeResult: InvokeResult = {
+          output: finalOutput,
+          invocationId,
+          toolCalls: allToolCalls,
+          usage: totalUsage,
+          duration,
+          model: modelStr,
+        };
+
+        if (runRegistry && runId) {
+          runRegistry.notifyCompleted(runId, invokeResult);
+        }
+
+        resolveResult!(invokeResult);
+        yield { type: "done" as const, result: invokeResult };
+      } catch (err) {
+        if (runRegistry && runId) {
+          runRegistry.notifyFailed(runId, err);
+        }
+        rejectResult!(err);
+        throw err;
       }
-
-      // Log
-      await self.logStore.log({
-        id: invocationId, agentId, sessionId: options.sessionId,
-        input, output: finalOutput, toolCalls: allToolCalls,
-        usage: totalUsage, duration, model: modelStr, timestamp: new Date().toISOString(),
-      });
-
-      const invokeResult: InvokeResult = {
-        output: finalOutput, invocationId, toolCalls: allToolCalls,
-        usage: totalUsage, duration, model: modelStr,
-      };
-
-      resolveResult!(invokeResult);
-      yield { type: "done" as const, result: invokeResult };
     }
 
     const iterable = generate();
+    // Suppress "unhandled rejection" warnings for consumers that iterate the
+    // stream (and surface errors via the iterator's throw) without separately
+    // awaiting .result. Consumers can still await .result and catch normally;
+    // attaching a noop here only prevents the *unhandled* classification.
+    resultPromise.catch(() => {});
     return {
       [Symbol.asyncIterator]() { return iterable; },
       result: resultPromise,
@@ -621,15 +743,21 @@ export class Runner {
     // the spawn_agent tool, so this only fires for top-level invocations.
     const runRegistry = options.runRegistry;
     let runId = options.runId;
-    if (runRegistry && !runId) {
-      const root = runRegistry.create({
-        agentId,
-        input,
-        parentRunId: options.parentRunId,
-        userId: options.userId,
-        sessionId: options.sessionId,
-      });
-      runId = root.id;
+    let rootId: string | undefined;
+    if (runRegistry) {
+      if (!runId) {
+        const root = runRegistry.create({
+          agentId,
+          input,
+          parentRunId: options.parentRunId,
+          userId: options.userId,
+          sessionId: options.sessionId,
+        });
+        runId = root.id;
+        rootId = root.rootId;
+      } else {
+        rootId = runRegistry.get(runId)?.rootId ?? runId;
+      }
     }
     // Per-invocation ephemeral tools. spawn_agent/check_agents live here,
     // not in the global registry, because their schemas are agent-specific.
@@ -713,10 +841,6 @@ export class Runner {
       let step = 0;
 
       const baseMaxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS;
-      // Drain phase: when the model wants to terminate but children are still
-      // running, we keep looping until they all settle. Add a fixed bonus
-      // budget so drain iterations don't exhaust maxSteps.
-      const drainBudget = 2 * 8;
       let inDrainPhase = false;
       let effectiveMaxSteps = baseMaxSteps;
 
@@ -732,13 +856,7 @@ export class Runner {
         // These look like normal "user" messages tagged so the LLM can correlate
         // them with its earlier spawn_agent calls.
         if (runRegistry && runId) {
-          const pending = runRegistry.consumePending(runId);
-          for (const p of pending) {
-            messages.push({
-              role: "user",
-              content: formatChildCompletion(p),
-            });
-          }
+          this.injectPendingCompletions(runRegistry, runId, messages);
         }
 
         // Build output schema if the agent defines one
@@ -781,26 +899,41 @@ export class Runner {
         totalUsage.totalTokens += result.usage.totalTokens;
 
         // Termination rule. Without a registry: classic "no tool calls → done".
-        // With a registry + outstanding children: enter (or stay in) drain
-        // phase, which forbids finishing until every child has settled.
+        // With a registry: a child may have settled *during* this model call
+        // — its status flipped to terminal but the completion is still in the
+        // pending queue. Re-check both queue + outstanding before deciding.
         if (!result.toolCalls?.length) {
-          if (runRegistry && runId && runRegistry.outstandingChildrenCount(runId) > 0) {
-            if (!inDrainPhase) {
-              inDrainPhase = true;
-              effectiveMaxSteps = step + drainBudget;
+          if (runRegistry && runId) {
+            const hasOutstanding = runRegistry.outstandingChildrenCount(runId) > 0;
+            const late = runRegistry.consumePending(runId);
+            if (late.length > 0 || hasOutstanding) {
+              if (result.text) {
+                messages.push({ role: "assistant", content: result.text });
+              }
+              for (const p of late) {
+                messages.push({ role: "user", content: formatChildCompletion(p) });
+              }
+              if (hasOutstanding) {
+                if (!inDrainPhase) {
+                  inDrainPhase = true;
+                  effectiveMaxSteps = step + DRAIN_BUDGET;
+                }
+                if (rootId) {
+                  const pendingChildren = runRegistry
+                    .children(runId)
+                    .filter((c) => c.status === "pending" || c.status === "running")
+                    .map((c) => c.id);
+                  runRegistry.emit(rootId, {
+                    type: "draining",
+                    runId,
+                    pendingChildren,
+                    seq: 0,
+                  });
+                }
+                await runRegistry.awaitNextSettled(runId, options.signal);
+              }
+              continue;
             }
-            // Keep the model's tentative text in the conversation so it can
-            // refine after seeing each settled child.
-            if (result.text) {
-              messages.push({ role: "assistant", content: result.text });
-            }
-            try {
-              await runRegistry.awaitNextSettled(runId, options.signal);
-            } catch (err) {
-              if (err instanceof InvocationCancelledError) throw err;
-              throw err;
-            }
-            continue;
           }
           finalOutput = result.text;
           break;
@@ -811,69 +944,60 @@ export class Runner {
 
         for (const tc of result.toolCalls) {
           const toolSpan = span.toolCall({ toolName: tc.name, toolCallId: tc.id });
-          const toolStartTime = Date.now();
-          const toolCtx: ToolContext = {
-            agentId,
-            sessionId: options.sessionId,
-            contextIds: options.contextIds,
-            invocationId,
-            runId,
-            userId: options.userId,
-            runRegistry,
-            _recursionDepth: currentDepth,
-            invoke: (agentId: string, input: string, opts?: InvokeOptions) =>
-              this.invoke(agentId, input, {
-                ...opts,
-                _recursionDepth: (opts?._recursionDepth ?? currentDepth) + 1,
-              }),
-            ...(options.toolContext ?? {}),
-          } as ToolContext;
 
-          let output: unknown;
-          let error: string | undefined;
-
-          try {
-            // Ephemeral tools (spawn_agent/check_agents) are dispatched
-            // directly because they're synthesized per-invocation with
-            // agent-specific schemas. Everything else goes through the
-            // shared ToolRegistry.
-            const ephemeral = ephemeralTools.get(tc.name);
-            if (ephemeral) {
-              const validatedArgs = ephemeral.input.parse(tc.args);
-              output = await ephemeral.execute(validatedArgs, toolCtx);
-            } else {
-              output = await this.toolRegistry.execute(tc.name, tc.args, toolCtx);
-            }
-          } catch (err) {
-            // Propagate critical errors instead of swallowing them
-            if (err instanceof MaxRecursionDepthError || err instanceof InvocationCancelledError) {
-              toolSpan.error(err);
-              throw err;
-            }
-            error = err instanceof Error ? err.message : String(err);
-            output = { error };
+          // Emit tool-call-start to the registry (if wired).
+          if (runRegistry && rootId && runId) {
+            runRegistry.emit(rootId, {
+              type: "tool-call-start",
+              runId,
+              toolCall: { id: tc.id, name: tc.name },
+              seq: 0,
+            });
           }
 
-          const toolCallRecord: ToolCallRecord = {
-            id: tc.id,
-            name: tc.name,
-            input: tc.args,
-            output,
-            duration: Date.now() - toolStartTime,
-            error,
-          };
-          allToolCalls.push(toolCallRecord);
+          const record = await this.executeToolCall({
+            tc,
+            agentId,
+            options,
+            invocationId,
+            runId,
+            runRegistry,
+            ephemeralTools,
+            currentDepth,
+          });
+          allToolCalls.push(record);
 
-          toolSpan.setResult(toolCallRecord);
-          if (error) {
-            toolSpan.error(error);
+          toolSpan.setResult(record);
+          if (record.error) {
+            toolSpan.error(record.error);
           } else {
             toolSpan.end();
           }
 
           toolResults.push({
             id: tc.id,
-            result: typeof output === "string" ? output : JSON.stringify(output),
+            result: typeof record.output === "string" ? record.output : JSON.stringify(record.output),
+          });
+
+          // Emit tool-call-end to the registry.
+          if (runRegistry && rootId && runId) {
+            runRegistry.emit(rootId, {
+              type: "tool-call-end",
+              runId,
+              toolCall: record,
+              seq: 0,
+            });
+          }
+        }
+
+        // step-complete event
+        if (runRegistry && rootId && runId) {
+          runRegistry.emit(rootId, {
+            type: "step-complete",
+            runId,
+            step,
+            toolCalls: allToolCalls.slice(allToolCalls.length - result.toolCalls.length),
+            seq: 0,
           });
         }
 
@@ -979,6 +1103,111 @@ export class Runner {
       }
       throw err;
     }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Shared helpers used by both invoke() and stream()
+  // ═══════════════════════════════════════════════════════════════════
+
+  /**
+   * Take any queued child-Run completions for `runId` and append them as
+   * synthetic "user" messages so the next model iteration can correlate
+   * each `spawn_agent` handle with its result.
+   *
+   * Mutates `messages` in place. No-op if the registry queue is empty.
+   */
+  private injectPendingCompletions(
+    registry: RunRegistry,
+    runId: string,
+    messages: Array<{ role: string; content: string }>,
+  ): number {
+    const pending = registry.consumePending(runId);
+    for (const p of pending) {
+      messages.push({
+        role: "user",
+        content: formatChildCompletion(p),
+      });
+    }
+    return pending.length;
+  }
+
+  /**
+   * Execute a single tool call. Looks up ephemeral tools (per-invocation
+   * `spawn_agent`/`check_agents`) first; falls back to the global registry.
+   * Builds the per-call ToolContext including the recursive invoke binding.
+   * Returns a fully-populated `ToolCallRecord` (with `error` set on failure).
+   *
+   * Critical errors (MaxRecursionDepth, InvocationCancelled) re-throw so the
+   * outer loop can surface them. Non-critical errors are captured as the
+   * record's `error` field with `output = { error }`.
+   */
+  private async executeToolCall(params: {
+    tc: { id: string; name: string; args: unknown };
+    agentId: string;
+    options: InvokeOptions;
+    invocationId: string;
+    runId?: string;
+    runRegistry?: RunRegistry;
+    ephemeralTools: Map<string, ToolDefinition>;
+    currentDepth: number;
+  }): Promise<ToolCallRecord> {
+    const {
+      tc,
+      agentId,
+      options,
+      invocationId,
+      runId,
+      runRegistry,
+      ephemeralTools,
+      currentDepth,
+    } = params;
+
+    const toolStartTime = Date.now();
+    const toolCtx: ToolContext = {
+      agentId,
+      sessionId: options.sessionId,
+      contextIds: options.contextIds,
+      invocationId,
+      runId,
+      userId: options.userId,
+      runRegistry,
+      _recursionDepth: currentDepth,
+      invoke: (innerAgentId: string, innerInput: string, innerOpts?: InvokeOptions) =>
+        this.invoke(innerAgentId, innerInput, {
+          ...innerOpts,
+          _recursionDepth: (innerOpts?._recursionDepth ?? currentDepth) + 1,
+        }),
+      ...(options.toolContext ?? {}),
+    } as ToolContext;
+
+    let output: unknown;
+    let error: string | undefined;
+
+    try {
+      const ephemeral = ephemeralTools.get(tc.name);
+      if (ephemeral) {
+        const validatedArgs = ephemeral.input.parse(tc.args);
+        output = await ephemeral.execute(validatedArgs, toolCtx);
+      } else {
+        output = await this.toolRegistry.execute(tc.name, tc.args, toolCtx);
+      }
+    } catch (err) {
+      // Propagate critical errors so the outer loop can surface them.
+      if (err instanceof MaxRecursionDepthError || err instanceof InvocationCancelledError) {
+        throw err;
+      }
+      error = err instanceof Error ? err.message : String(err);
+      output = { error };
+    }
+
+    return {
+      id: tc.id,
+      name: tc.name,
+      input: tc.args,
+      output,
+      duration: Date.now() - toolStartTime,
+      error,
+    };
   }
 
   /**
