@@ -22,6 +22,7 @@ export type {
   LocalToolEntry,
   AgentToolEntry,
   ToolCallConfig,
+  AgentRef,
   AgentState,
   ExecutionContext,
   ExecutionResult,

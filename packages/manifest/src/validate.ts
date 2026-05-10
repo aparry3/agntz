@@ -188,6 +188,10 @@ function validateLLMStructural(
     validateToolEntries(manifest.tools, p(path, "tools"), errors);
   }
 
+  if (manifest.spawnable) {
+    validateSpawnableStructural(manifest, p(path, "spawnable"), errors, warnings);
+  }
+
   if (manifest.examples) {
     for (let i = 0; i < manifest.examples.length; i++) {
       const ex = manifest.examples[i];
@@ -313,6 +317,57 @@ function validateStep(
 
   if (step.when) {
     validateTemplatesSyntax(step.when, p(path, "when"), errors);
+  }
+}
+
+function validateSpawnableStructural(
+  parent: LLMAgentManifest,
+  path: string,
+  errors: ValidationError[],
+  warnings: ValidationWarning[]
+): void {
+  const seenIds = new Set<string>();
+  for (let i = 0; i < parent.spawnable!.length; i++) {
+    const ref = parent.spawnable![i];
+    const epath = `${path}[${i}]`;
+
+    if (ref.kind !== "ref" && ref.kind !== "inline") {
+      errors.push({ level: "structural", path: epath, message: "spawnable entry must have kind 'ref' or 'inline'" });
+      continue;
+    }
+
+    if (ref.kind === "ref") {
+      if (!ref.agentId || typeof ref.agentId !== "string") {
+        errors.push({ level: "structural", path: p(epath, "agentId"), message: "ref entry must have an agentId string" });
+        continue;
+      }
+      if (ref.agentId === parent.id) {
+        errors.push({ level: "reference", path: p(epath, "agentId"), message: `spawnable cannot reference self ('${parent.id}')` });
+      }
+      if (seenIds.has(ref.agentId)) {
+        warnings.push({ path: p(epath, "agentId"), message: `duplicate spawnable agentId '${ref.agentId}'` });
+      }
+      seenIds.add(ref.agentId);
+    } else {
+      const def = ref.definition;
+      if (!def) {
+        errors.push({ level: "structural", path: p(epath, "definition"), message: "inline entry must have a definition" });
+        continue;
+      }
+      if (def.id === parent.id) {
+        errors.push({ level: "reference", path: p(epath, "definition.id"), message: `inline spawnable cannot reuse parent id ('${parent.id}')` });
+      }
+      // Spawn callbacks pre-register the child's instruction as a static
+      // systemPrompt — Phase 1 doesn't re-render templates per spawn call.
+      if (def.instruction && /\{\{[^}]+\}\}/.test(def.instruction)) {
+        errors.push({
+          level: "structural",
+          path: p(epath, "definition.instruction"),
+          message: "spawnable inline child instruction must not contain template variables ({{...}}) — children are pre-registered with static systemPrompts. Use inputSchema + a static prompt that references the spawn input as the user message.",
+        });
+      }
+      validateStructural(def, p(epath, "definition"), errors, warnings);
+    }
   }
 }
 
@@ -682,6 +737,9 @@ async function validateExternal(
       if (manifest.tools) {
         await validateToolEntriesExternal(manifest.tools, p(path, "tools"), errors, warnings, ctx);
       }
+      if (manifest.spawnable) {
+        await validateSpawnableExternal(manifest.spawnable, p(path, "spawnable"), errors, ctx);
+      }
       break;
     case "tool":
       await validateToolCallExternal(manifest, path, errors, warnings, ctx);
@@ -696,6 +754,26 @@ async function validateExternal(
         await validateStepExternal(manifest.branches[i], p(path, `branches[${i}]`), errors, warnings, ctx);
       }
       break;
+  }
+}
+
+async function validateSpawnableExternal(
+  spawnable: NonNullable<LLMAgentManifest["spawnable"]>,
+  path: string,
+  errors: ValidationError[],
+  ctx: ValidationContext,
+): Promise<void> {
+  for (let i = 0; i < spawnable.length; i++) {
+    const ref = spawnable[i];
+    if (ref.kind !== "ref") continue;
+    const exists = await ctx.resolveAgent(ref.agentId);
+    if (!exists) {
+      errors.push({
+        level: "external",
+        path: p(`${path}[${i}]`, "agentId"),
+        message: `Spawnable agent '${ref.agentId}' not found in store`,
+      });
+    }
   }
 }
 

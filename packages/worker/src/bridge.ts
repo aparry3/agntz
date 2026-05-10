@@ -1,12 +1,24 @@
-import type { Runner, AgentDefinition } from "@agntz/core";
+import type { Runner, AgentDefinition, AgentRef as CoreAgentRef, RunRegistry } from "@agntz/core";
 import type {
   ExecutionContext,
   AgentManifest,
+  AgentRef,
   LLMAgentManifest,
   ToolCallConfig,
   AgentState,
 } from "@agntz/manifest";
 import { parseManifest } from "@agntz/manifest";
+
+export interface CreateExecutionContextOptions {
+  /**
+   * Per-request RunRegistry. When provided, LLM invocations receive it
+   * via `InvokeOptions.runRegistry` so that any `spawnable` agents can
+   * synthesize the `spawn_agent` / `check_agents` tools and create child
+   * Runs. Without a registry, spawn tools are not registered and any
+   * `spawn_agent` call would fail at runtime.
+   */
+  runRegistry?: RunRegistry;
+}
 
 /**
  * Create an ExecutionContext that bridges the manifest engine to the core Runner.
@@ -14,7 +26,11 @@ import { parseManifest } from "@agntz/manifest";
  * This is how YAML-defined agents execute: the manifest engine handles orchestration
  * (pipelines, state, conditions), and delegates actual LLM/tool calls to the Runner.
  */
-export function createExecutionContext(runner: Runner): ExecutionContext {
+export function createExecutionContext(
+  runner: Runner,
+  options: CreateExecutionContextOptions = {},
+): ExecutionContext {
+  const { runRegistry } = options;
   return {
     resolveAgent: async (id: string) => {
       const agentDef = await runner.agents.getAgent(id);
@@ -28,6 +44,16 @@ export function createExecutionContext(runner: Runner): ExecutionContext {
     },
 
     invokeLLM: async (manifest: LLMAgentManifest, renderedInstruction: string, state: AgentState) => {
+      // For ref-kind spawnable children, the agent store only holds a placeholder
+      // AgentDefinition (real config lives in metadata.manifest). Pre-register
+      // each ref child as a real AgentDefinition under its actual id so that
+      // when the LLM calls spawn_agent, runner.invoke(child_id) resolves to a
+      // working definition. Inline children are translated below and registered
+      // by the runner's own resolveSpawnable path.
+      if (manifest.spawnable && runRegistry) {
+        await preregisterSpawnableRefs(runner, manifest.spawnable);
+      }
+
       // Build a temporary agent definition for the core runner
       const agentDef = manifestToAgentDefinition(manifest, renderedInstruction);
 
@@ -41,7 +67,8 @@ export function createExecutionContext(runner: Runner): ExecutionContext {
       console.log(
         `[llm] ${manifest.id} start ` +
         `model=${manifest.model.provider}/${manifest.model.name} ` +
-        `instr=${renderedInstruction.length}ch schema=${hasSchema}`
+        `instr=${renderedInstruction.length}ch schema=${hasSchema} ` +
+        `spawnable=${manifest.spawnable?.length ?? 0}`
       );
 
       try {
@@ -50,7 +77,7 @@ export function createExecutionContext(runner: Runner): ExecutionContext {
           ? String(state.userQuery)
           : JSON.stringify(state);
 
-        const result = await runner.invoke(tempId, userInput);
+        const result = await runner.invoke(tempId, userInput, runRegistry ? { runRegistry } : undefined);
         const duration = Date.now() - start;
 
         // If outputSchema is defined, try to parse structured output
@@ -150,7 +177,74 @@ function manifestToAgentDefinition(manifest: LLMAgentManifest, renderedInstructi
     tools: manifest.tools
       ? manifestToolsToToolRefs(manifest.tools)
       : undefined,
+    spawnable: manifest.spawnable
+      ? manifestSpawnableToCore(manifest.spawnable)
+      : undefined,
   };
+}
+
+/**
+ * Translate manifest-layer AgentRef[] (with inline LLMAgentManifest) into the
+ * core AgentRef[] shape (with inline AgentDefinition). Inline children are
+ * registered by the runner's own resolveSpawnable path; we just give them the
+ * shape it expects. Ref children pass through unchanged.
+ */
+function manifestSpawnableToCore(spawnable: AgentRef[]): CoreAgentRef[] {
+  return spawnable.map((ref) => {
+    if (ref.kind === "ref") return { kind: "ref", agentId: ref.agentId };
+    // Inline LLM children: validator forbids template variables in the
+    // instruction, so we use it verbatim as the systemPrompt.
+    return {
+      kind: "inline",
+      definition: manifestToAgentDefinition(ref.definition, ref.definition.instruction) as AgentDefinition,
+    };
+  });
+}
+
+/**
+ * Pre-register each ref-kind spawnable child as a working AgentDefinition
+ * under its real id, sourcing config from the child's stored YAML manifest.
+ * Required because the app stores agents with a placeholder AgentDefinition
+ * (real config lives in metadata.manifest) — the runner's `resolveAgent`
+ * would otherwise hand spawn_agent an empty systemPrompt.
+ *
+ * Children must be LLM-kind manifests with non-templated instructions (the
+ * validator enforces this for inline children; ref children whose stored
+ * manifest violates it are skipped here with a console warning rather than
+ * surfaced to the parent invocation).
+ */
+async function preregisterSpawnableRefs(
+  runner: Runner,
+  spawnable: AgentRef[],
+): Promise<void> {
+  for (const ref of spawnable) {
+    if (ref.kind !== "ref") continue;
+    const stored = await runner.agents.getAgent(ref.agentId);
+    if (!stored) {
+      console.warn(`[spawn] skip ref '${ref.agentId}': not in agent store`);
+      continue;
+    }
+    let childManifest: AgentManifest;
+    try {
+      childManifest = resolveManifestFromAgent(stored as unknown as Record<string, unknown>);
+    } catch (err) {
+      console.warn(`[spawn] skip ref '${ref.agentId}': ${(err as Error).message}`);
+      continue;
+    }
+    if (childManifest.kind !== "llm") {
+      console.warn(`[spawn] skip ref '${ref.agentId}': only llm-kind children supported (got ${childManifest.kind})`);
+      continue;
+    }
+    if (/\{\{[^}]+\}\}/.test(childManifest.instruction)) {
+      console.warn(
+        `[spawn] skip ref '${ref.agentId}': instruction contains template variables; ` +
+        `spawn callbacks pre-register children with static systemPrompts`,
+      );
+      continue;
+    }
+    const def = manifestToAgentDefinition(childManifest, childManifest.instruction) as AgentDefinition;
+    runner.registerAgent(def);
+  }
 }
 
 /**

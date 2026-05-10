@@ -591,4 +591,124 @@ tool:
 `, mockCtx());
     expect(result.errors.some(e => e.message.includes("nonexistent_tool"))).toBe(true);
   });
+
+  it("errors on spawnable ref agent that does not exist in store", async () => {
+    const result = await validateManifestFull(`
+id: orchestrator
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Coordinate."
+spawnable:
+  - kind: ref
+    agentId: missing-child
+`, mockCtx({ resolveAgent: vi.fn().mockResolvedValue(false) }));
+    expect(result.errors.some(e =>
+      e.level === "external" && e.message.includes("missing-child"),
+    )).toBe(true);
+  });
+
+  it("passes when spawnable ref exists", async () => {
+    const result = await validateManifestFull(`
+id: orchestrator
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Coordinate."
+spawnable:
+  - kind: ref
+    agentId: researcher
+`, mockCtx());
+    expect(result.errors.filter(e => e.message.includes("researcher"))).toHaveLength(0);
+    expect(result.valid).toBe(true);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// spawnable
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("validateManifest - spawnable", () => {
+  it("rejects spawnable ref pointing at self", () => {
+    const result = validateManifest(`
+id: looper
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Loop."
+spawnable:
+  - kind: ref
+    agentId: looper
+`);
+    expect(result.errors.some(e =>
+      e.level === "reference" && e.message.includes("cannot reference self"),
+    )).toBe(true);
+  });
+
+  it("warns on duplicate spawnable agentIds", () => {
+    const result = validateManifest(`
+id: orchestrator
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Coordinate."
+spawnable:
+  - kind: ref
+    agentId: researcher
+  - kind: ref
+    agentId: researcher
+`);
+    expect(result.warnings.some(w => w.message.includes("duplicate spawnable"))).toBe(true);
+  });
+
+  it("rejects inline child whose instruction contains template variables", () => {
+    const result = validateManifest(`
+id: orchestrator
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Coordinate."
+spawnable:
+  - kind: inline
+    definition:
+      id: summarizer
+      kind: llm
+      model:
+        provider: openai
+        name: gpt-5.4-mini
+      instruction: "Summarize {{userQuery}} please."
+`);
+    expect(result.errors.some(e =>
+      e.level === "structural" && e.message.includes("template variables"),
+    )).toBe(true);
+  });
+
+  it("validates a clean spawnable with ref + inline static child", () => {
+    const result = validateManifest(`
+id: orchestrator
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Coordinate work between researcher and summarizer."
+spawnable:
+  - kind: ref
+    agentId: researcher
+  - kind: inline
+    definition:
+      id: summarizer
+      kind: llm
+      model:
+        provider: openai
+        name: gpt-5.4-mini
+      instruction: "Summarize the input."
+`);
+    expect(result.errors).toHaveLength(0);
+    expect(result.valid).toBe(true);
+  });
 });

@@ -187,4 +187,72 @@ steps:
 `;
     expect(() => parseManifest(yaml)).toThrow("ref");
   });
+
+  it("parses spawnable with ref + inline entries", () => {
+    const yaml = `
+id: orchestrator
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Coordinate work."
+spawnable:
+  - kind: ref
+    agentId: researcher
+  - kind: inline
+    definition:
+      id: summarizer
+      kind: llm
+      model:
+        provider: openai
+        name: gpt-5.4-mini
+      instruction: "Summarize the input."
+`;
+    const manifest = parseManifest(yaml);
+    if (manifest.kind === "llm") {
+      expect(manifest.spawnable).toHaveLength(2);
+      const [refEntry, inlineEntry] = manifest.spawnable!;
+      expect(refEntry.kind).toBe("ref");
+      if (refEntry.kind === "ref") expect(refEntry.agentId).toBe("researcher");
+      expect(inlineEntry.kind).toBe("inline");
+      if (inlineEntry.kind === "inline") {
+        expect(inlineEntry.definition.kind).toBe("llm");
+        expect(inlineEntry.definition.id).toBe("summarizer");
+      }
+    }
+  });
+
+  it("throws on spawnable inline definition with non-llm kind", () => {
+    const yaml = `
+id: orchestrator
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Coordinate."
+spawnable:
+  - kind: inline
+    definition:
+      id: pipeline
+      kind: sequential
+      steps:
+        - ref: x
+`;
+    expect(() => parseManifest(yaml)).toThrow("llm-kind");
+  });
+
+  it("throws on spawnable entry with unknown kind", () => {
+    const yaml = `
+id: orchestrator
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Coordinate."
+spawnable:
+  - kind: weird
+    agentId: x
+`;
+    expect(() => parseManifest(yaml)).toThrow("must be 'ref' or 'inline'");
+  });
 });
