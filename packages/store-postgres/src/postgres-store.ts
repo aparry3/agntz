@@ -12,7 +12,10 @@ import type {
   SessionSummary,
   ContextEntry,
   InvocationLog,
+  InvokeResult,
   LogFilter,
+  Run,
+  RunStatus,
 } from "@agntz/core";
 
 const { Pool } = pg;
@@ -183,6 +186,34 @@ const MIGRATIONS: string[] = [
 
   UPDATE ar_schema_version SET version = 5;
   `,
+  // v6: Runs — first-class agent invocations tracked by RunRegistry.
+  // Composite PK on (user_id, id) so Run ids are unique per user, mirroring
+  // the per-user scoping used by providers/connections.
+  `
+  CREATE TABLE IF NOT EXISTS ar_runs (
+    user_id           TEXT NOT NULL,
+    id                TEXT NOT NULL,
+    root_id           TEXT NOT NULL,
+    parent_id         TEXT,
+    agent_id          TEXT NOT NULL,
+    session_id        TEXT,
+    spawn_tool_use_id TEXT,
+    status            TEXT NOT NULL,
+    input             TEXT NOT NULL,
+    output            TEXT,
+    result_json       JSONB,
+    error             TEXT,
+    started_at        BIGINT NOT NULL,
+    ended_at          BIGINT,
+    depth             INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ar_runs_parent ON ar_runs(user_id, parent_id);
+  CREATE INDEX IF NOT EXISTS idx_ar_runs_root ON ar_runs(user_id, root_id);
+  CREATE INDEX IF NOT EXISTS idx_ar_runs_status ON ar_runs(user_id, status);
+
+  UPDATE ar_schema_version SET version = 6;
+  `,
 ];
 
 export interface PostgresStoreOptions {
@@ -238,7 +269,10 @@ export class PostgresStore implements UnifiedStore {
       skipMigration: true,
       userId,
     });
-    scoped.migrated = true;
+    // Share the parent's migration state so scoped calls await any in-flight
+    // migration kicked off by the admin's constructor rather than racing it.
+    scoped.migrated = this.migrated;
+    scoped.migratePromise = this.migratePromise;
     return scoped;
   }
 
@@ -752,6 +786,107 @@ export class PostgresStore implements UnifiedStore {
     );
   }
 
+  // ═══ RunStore ═══
+
+  async putRun(run: Run): Promise<void> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    await this.pool.query(
+      `INSERT INTO ${this.t("runs")} (
+          user_id, id, root_id, parent_id, agent_id, session_id,
+          spawn_tool_use_id, status, input, output, result_json, error,
+          started_at, ended_at, depth
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+       ON CONFLICT (user_id, id) DO UPDATE SET
+         root_id = EXCLUDED.root_id,
+         parent_id = EXCLUDED.parent_id,
+         agent_id = EXCLUDED.agent_id,
+         session_id = EXCLUDED.session_id,
+         spawn_tool_use_id = EXCLUDED.spawn_tool_use_id,
+         status = EXCLUDED.status,
+         input = EXCLUDED.input,
+         output = EXCLUDED.output,
+         result_json = EXCLUDED.result_json,
+         error = EXCLUDED.error,
+         started_at = EXCLUDED.started_at,
+         ended_at = EXCLUDED.ended_at,
+         depth = EXCLUDED.depth`,
+      [
+        u,
+        run.id,
+        run.rootId,
+        run.parentId ?? null,
+        run.agentId,
+        run.sessionId ?? null,
+        run.spawnToolUseId ?? null,
+        run.status,
+        run.input,
+        run.result?.output ?? null,
+        run.result ? JSON.stringify(run.result) : null,
+        run.error ?? null,
+        run.startedAt,
+        run.endedAt ?? null,
+        run.depth,
+      ]
+    );
+  }
+
+  async getRun(runId: string): Promise<Run | null> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const { rows } = await this.pool.query(
+      `SELECT id, user_id, root_id, parent_id, agent_id, session_id,
+              spawn_tool_use_id, status, input, output, result_json, error,
+              started_at, ended_at, depth
+       FROM ${this.t("runs")}
+       WHERE user_id = $1 AND id = $2`,
+      [u, runId]
+    );
+    if (rows.length === 0) return null;
+    return rowToRun(rows[0]);
+  }
+
+  async listChildren(parentRunId: string): Promise<Run[]> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const { rows } = await this.pool.query(
+      `SELECT id, user_id, root_id, parent_id, agent_id, session_id,
+              spawn_tool_use_id, status, input, output, result_json, error,
+              started_at, ended_at, depth
+       FROM ${this.t("runs")}
+       WHERE user_id = $1 AND parent_id = $2
+       ORDER BY started_at, id`,
+      [u, parentRunId]
+    );
+    return rows.map(rowToRun);
+  }
+
+  async listSubtree(rootId: string): Promise<Run[]> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    // Recursive CTE walks the parent_id graph starting at rootId.
+    // Includes the root itself when present.
+    const { rows } = await this.pool.query(
+      `WITH RECURSIVE subtree(id) AS (
+          SELECT id FROM ${this.t("runs")}
+          WHERE user_id = $1 AND id = $2
+          UNION ALL
+          SELECT r.id FROM ${this.t("runs")} r
+          INNER JOIN subtree s ON r.parent_id = s.id
+          WHERE r.user_id = $1
+       )
+       SELECT r.id, r.user_id, r.root_id, r.parent_id, r.agent_id, r.session_id,
+              r.spawn_tool_use_id, r.status, r.input, r.output, r.result_json, r.error,
+              r.started_at, r.ended_at, r.depth
+       FROM ${this.t("runs")} r
+       INNER JOIN subtree s ON s.id = r.id
+       WHERE r.user_id = $1
+       ORDER BY r.depth, r.started_at, r.id`,
+      [u, rootId]
+    );
+    return rows.map(rowToRun);
+  }
+
   // ═══ ApiKeyStore (unscoped admin) ═══
 
   async createApiKey(params: { userId: string; name: string }): Promise<{ record: ApiKeyRecord; rawKey: string }> {
@@ -872,6 +1007,50 @@ function rowToConnection(r: {
     createdAt: toIso(r.created_at),
     updatedAt: toIso(r.updated_at),
   };
+}
+
+function rowToRun(r: {
+  id: string;
+  user_id: string;
+  root_id: string;
+  parent_id: string | null;
+  agent_id: string;
+  session_id: string | null;
+  spawn_tool_use_id: string | null;
+  status: string;
+  input: string;
+  output: string | null;
+  result_json: InvokeResult | string | null;
+  error: string | null;
+  started_at: string | number;
+  ended_at: string | number | null;
+  depth: number;
+}): Run {
+  const run: Run = {
+    id: r.id,
+    rootId: r.root_id,
+    agentId: r.agent_id,
+    status: r.status as RunStatus,
+    input: r.input,
+    // pg returns BIGINT as a string by default; normalize to number.
+    startedAt: typeof r.started_at === "string" ? Number(r.started_at) : r.started_at,
+    depth: r.depth,
+  };
+  if (r.user_id) run.userId = r.user_id;
+  if (r.parent_id !== null) run.parentId = r.parent_id;
+  if (r.session_id !== null) run.sessionId = r.session_id;
+  if (r.spawn_tool_use_id !== null) run.spawnToolUseId = r.spawn_tool_use_id;
+  if (r.error !== null) run.error = r.error;
+  if (r.ended_at !== null) {
+    run.endedAt = typeof r.ended_at === "string" ? Number(r.ended_at) : r.ended_at;
+  }
+  if (r.result_json !== null) {
+    // pg returns JSONB as a parsed object; accept strings defensively.
+    run.result = (typeof r.result_json === "string"
+      ? JSON.parse(r.result_json)
+      : r.result_json) as InvokeResult;
+  }
+  return run;
 }
 
 function rowToApiKey(r: {

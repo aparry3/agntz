@@ -13,7 +13,10 @@ import type {
   SessionSummary,
   ContextEntry,
   InvocationLog,
+  InvokeResult,
   LogFilter,
+  Run,
+  RunStatus,
 } from "@agntz/core";
 
 const MIGRATIONS = [
@@ -148,6 +151,34 @@ const MIGRATIONS = [
   CREATE INDEX IF NOT EXISTS idx_connections_user_kind ON connections(user_id, kind);
 
   UPDATE schema_version SET version = 4;
+  `,
+  // v5: Runs — first-class agent invocations tracked by RunRegistry.
+  // Composite PK on (user_id, id) so Run ids are unique per user, mirroring
+  // the per-user scoping used by providers/connections.
+  `
+  CREATE TABLE IF NOT EXISTS runs (
+    user_id           TEXT NOT NULL,
+    id                TEXT NOT NULL,
+    root_id           TEXT NOT NULL,
+    parent_id         TEXT,
+    agent_id          TEXT NOT NULL,
+    session_id        TEXT,
+    spawn_tool_use_id TEXT,
+    status            TEXT NOT NULL,
+    input             TEXT NOT NULL,
+    output            TEXT,
+    result_json       TEXT,
+    error             TEXT,
+    started_at        INTEGER NOT NULL,
+    ended_at          INTEGER,
+    depth             INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_runs_parent ON runs(user_id, parent_id);
+  CREATE INDEX IF NOT EXISTS idx_runs_root ON runs(user_id, root_id);
+  CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(user_id, status);
+
+  UPDATE schema_version SET version = 5;
   `,
 ];
 
@@ -729,6 +760,105 @@ export class SqliteStore implements UnifiedStore {
       .run(u, kind, id);
   }
 
+  // ═══ RunStore ═══
+
+  async putRun(run: Run): Promise<void> {
+    const u = this.requireUser();
+    this.db
+      .prepare(
+        `INSERT INTO runs (
+            user_id, id, root_id, parent_id, agent_id, session_id,
+            spawn_tool_use_id, status, input, output, result_json, error,
+            started_at, ended_at, depth
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, id) DO UPDATE SET
+           root_id = excluded.root_id,
+           parent_id = excluded.parent_id,
+           agent_id = excluded.agent_id,
+           session_id = excluded.session_id,
+           spawn_tool_use_id = excluded.spawn_tool_use_id,
+           status = excluded.status,
+           input = excluded.input,
+           output = excluded.output,
+           result_json = excluded.result_json,
+           error = excluded.error,
+           started_at = excluded.started_at,
+           ended_at = excluded.ended_at,
+           depth = excluded.depth`
+      )
+      .run(
+        u,
+        run.id,
+        run.rootId,
+        run.parentId ?? null,
+        run.agentId,
+        run.sessionId ?? null,
+        run.spawnToolUseId ?? null,
+        run.status,
+        run.input,
+        run.result?.output ?? null,
+        run.result ? JSON.stringify(run.result) : null,
+        run.error ?? null,
+        run.startedAt,
+        run.endedAt ?? null,
+        run.depth
+      );
+  }
+
+  async getRun(runId: string): Promise<Run | null> {
+    const u = this.requireUser();
+    const row = this.db
+      .prepare(
+        `SELECT id, user_id, root_id, parent_id, agent_id, session_id,
+                spawn_tool_use_id, status, input, output, result_json, error,
+                started_at, ended_at, depth
+         FROM runs
+         WHERE user_id = ? AND id = ?`
+      )
+      .get(u, runId) as RunRow | undefined;
+    return row ? rowToRun(row) : null;
+  }
+
+  async listChildren(parentRunId: string): Promise<Run[]> {
+    const u = this.requireUser();
+    const rows = this.db
+      .prepare(
+        `SELECT id, user_id, root_id, parent_id, agent_id, session_id,
+                spawn_tool_use_id, status, input, output, result_json, error,
+                started_at, ended_at, depth
+         FROM runs
+         WHERE user_id = ? AND parent_id = ?
+         ORDER BY started_at, id`
+      )
+      .all(u, parentRunId) as RunRow[];
+    return rows.map(rowToRun);
+  }
+
+  async listSubtree(rootId: string): Promise<Run[]> {
+    const u = this.requireUser();
+    // Recursive CTE walks the parent_id graph starting at rootId.
+    // Includes the root itself when present.
+    const rows = this.db
+      .prepare(
+        `WITH RECURSIVE subtree(id) AS (
+            SELECT id FROM runs WHERE user_id = ? AND id = ?
+            UNION ALL
+            SELECT r.id FROM runs r
+            INNER JOIN subtree s ON r.parent_id = s.id
+            WHERE r.user_id = ?
+         )
+         SELECT r.id, r.user_id, r.root_id, r.parent_id, r.agent_id, r.session_id,
+                r.spawn_tool_use_id, r.status, r.input, r.output, r.result_json, r.error,
+                r.started_at, r.ended_at, r.depth
+         FROM runs r
+         INNER JOIN subtree s ON s.id = r.id
+         WHERE r.user_id = ?
+         ORDER BY r.depth, r.started_at, r.id`
+      )
+      .all(u, rootId, u, u) as RunRow[];
+    return rows.map(rowToRun);
+  }
+
   // ═══ ApiKeyStore (unscoped) ═══
 
   async createApiKey(params: { userId: string; name: string }): Promise<{ record: ApiKeyRecord; rawKey: string }> {
@@ -829,6 +959,44 @@ interface ApiKeyRow {
   created_at: string;
   last_used_at: string | null;
   revoked_at: string | null;
+}
+
+interface RunRow {
+  id: string;
+  user_id: string;
+  root_id: string;
+  parent_id: string | null;
+  agent_id: string;
+  session_id: string | null;
+  spawn_tool_use_id: string | null;
+  status: string;
+  input: string;
+  output: string | null;
+  result_json: string | null;
+  error: string | null;
+  started_at: number;
+  ended_at: number | null;
+  depth: number;
+}
+
+function rowToRun(r: RunRow): Run {
+  const run: Run = {
+    id: r.id,
+    rootId: r.root_id,
+    agentId: r.agent_id,
+    status: r.status as RunStatus,
+    input: r.input,
+    startedAt: r.started_at,
+    depth: r.depth,
+  };
+  if (r.user_id) run.userId = r.user_id;
+  if (r.parent_id !== null) run.parentId = r.parent_id;
+  if (r.session_id !== null) run.sessionId = r.session_id;
+  if (r.spawn_tool_use_id !== null) run.spawnToolUseId = r.spawn_tool_use_id;
+  if (r.error !== null) run.error = r.error;
+  if (r.ended_at !== null) run.endedAt = r.ended_at;
+  if (r.result_json !== null) run.result = JSON.parse(r.result_json) as InvokeResult;
+  return run;
 }
 
 function rowToLog(r: LogRow): InvocationLog {
