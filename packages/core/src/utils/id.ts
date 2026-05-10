@@ -12,3 +12,7 @@ export function generateInvocationId(): string {
 export function generateSessionId(): string {
   return generateId("sess");
 }
+
+export function generateRunId(): string {
+  return generateId("run");
+}
