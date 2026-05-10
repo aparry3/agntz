@@ -69,7 +69,23 @@ export interface LLMAgentManifest extends AgentManifestBase {
   examples?: Example[];
   tools?: ManifestToolEntry[];
   outputSchema?: OutputSchema;
+  /**
+   * Sub-agents this LLM is allowed to spawn concurrently at runtime via the
+   * `spawn_agent` tool. Predefined per agent — the LLM cannot invent agents
+   * to spawn. Each entry is either a ref to a stored agent, or an inline
+   * definition. Mirror of `AgentDefinition.spawnable` in `@agntz/core`.
+   */
+  spawnable?: AgentRef[];
 }
+
+/**
+ * Reference to an agent the parent is allowed to spawn. Mirrors
+ * `AgentRef` in `@agntz/core` so manifest YAML and `AgentDefinition`
+ * round-trip 1:1.
+ */
+export type AgentRef =
+  | { kind: "ref"; agentId: string }
+  | { kind: "inline"; definition: LLMAgentManifest };
 
 export interface ModelConfig {
   provider: string;

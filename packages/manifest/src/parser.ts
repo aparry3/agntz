@@ -1,6 +1,7 @@
 import { parse as parseYAML } from "yaml";
 import type {
   AgentManifest,
+  AgentRef,
   LLMAgentManifest,
   ToolAgentManifest,
   SequentialAgentManifest,
@@ -56,7 +57,31 @@ function normalizeLLM(base: Record<string, unknown>, raw: Record<string, unknown
     examples: raw.examples as LLMAgentManifest["examples"],
     tools: raw.tools ? normalizeTools(raw.tools as unknown[]) : undefined,
     outputSchema: raw.outputSchema as Record<string, unknown> | undefined,
+    spawnable: raw.spawnable ? normalizeSpawnable(raw.spawnable as unknown[]) : undefined,
   } as LLMAgentManifest;
+}
+
+function normalizeSpawnable(raw: unknown[]): AgentRef[] {
+  return raw.map((entry, i) => {
+    const e = entry as Record<string, unknown>;
+    const kind = e.kind as string;
+
+    if (kind === "ref") {
+      return { kind: "ref" as const, agentId: requireString(e, "agentId") };
+    }
+    if (kind === "inline") {
+      const def = e.definition;
+      if (!def || typeof def !== "object") {
+        throw new Error(`spawnable[${i}].definition is required for inline refs`);
+      }
+      const inlineManifest = normalizeManifest(def as Record<string, unknown>);
+      if (inlineManifest.kind !== "llm") {
+        throw new Error(`spawnable[${i}].definition must be an llm-kind manifest (got ${inlineManifest.kind})`);
+      }
+      return { kind: "inline" as const, definition: inlineManifest };
+    }
+    throw new Error(`spawnable[${i}].kind must be 'ref' or 'inline' (got '${kind}')`);
+  });
 }
 
 function normalizeTool(base: Record<string, unknown>, raw: Record<string, unknown>): ToolAgentManifest {

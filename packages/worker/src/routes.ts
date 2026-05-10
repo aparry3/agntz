@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
-import { createRunner, MemoryStore, type Runner, type UnifiedStore } from "@agntz/core";
+import { createRunner, InMemoryRunRegistry, MemoryStore, type Runner, type UnifiedStore } from "@agntz/core";
 import { execute, parseManifest, validateManifestFull } from "@agntz/manifest";
 import type { AgentManifest } from "@agntz/manifest";
 import { createExecutionContext } from "./bridge.js";
@@ -112,7 +112,8 @@ export function createWorkerAPI({ store, internalSecret }: WorkerAPIOptions): Ho
       );
 
       const { runner, manifest } = await resolveRunnerAndManifest(store, userId, agentId);
-      const ctx = createExecutionContext(runner);
+      const runRegistry = new InMemoryRunRegistry();
+      const ctx = createExecutionContext(runner, { runRegistry });
       const result = await execute(manifest, input ?? "", ctx);
 
       console.log(
@@ -143,7 +144,8 @@ export function createWorkerAPI({ store, internalSecret }: WorkerAPIOptions): Ho
       }
 
       const { runner, manifest } = await resolveRunnerAndManifest(store, userId, agentId);
-      const ctx = createExecutionContext(runner);
+      const runRegistry = new InMemoryRunRegistry();
+      const ctx = createExecutionContext(runner, { runRegistry });
 
       return streamSSE(c, async (stream) => {
         try {
