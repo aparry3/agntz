@@ -1,5 +1,6 @@
 import type { ZodSchema } from "zod";
 import type { TelemetryConfig } from "./telemetry.js";
+import type { SpanEmitter } from "./telemetry.js";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Agent Definition — the core portable data structure
@@ -554,6 +555,9 @@ export interface SpawnRunOptions {
   spawnToolUseId?: string;
   userId?: string;
   sessionId?: string;
+  /** Per-run span emitter for emitting a run-kind span on lifecycle events.
+   *  When omitted, the registry doesn't emit run spans for this Run. */
+  spanEmitter?: SpanEmitter;
 }
 
 /**

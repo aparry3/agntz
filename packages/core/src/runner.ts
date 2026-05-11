@@ -365,6 +365,7 @@ export class Runner {
             parentRunId: options.parentRunId,
             userId: options.userId,
             sessionId: options.sessionId,
+            spanEmitter: options.spanEmitter,
           });
           runId = root.id;
           rootId = root.rootId;
@@ -752,6 +753,7 @@ export class Runner {
           parentRunId: options.parentRunId,
           userId: options.userId,
           sessionId: options.sessionId,
+          spanEmitter: options.spanEmitter,
         });
         runId = root.id;
         rootId = root.rootId;
