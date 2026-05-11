@@ -47,12 +47,22 @@ export async function executeSequential(
       const childState = createInitialState(childInput, childManifest.inputSchema);
 
       // Execute
-      const result = await executeWithState(childManifest, childState, ctx, childInput);
-
-      // Write output to parent state under the step's state key
-      const key = getStateKey(step);
-      state[key] = result.output;
-      previousOutput = result.output;
+      const stepSpan = ctx.spanEmitter?.startStep({
+        name: getStateKey(step),
+        index: i,
+        ownerId: ctx.ownerId ?? "",
+      });
+      try {
+        const result = await executeWithState(childManifest, childState, ctx, childInput);
+        stepSpan?.end();
+        // Write output to parent state under the step's state key
+        const key = getStateKey(step);
+        state[key] = result.output;
+        previousOutput = result.output;
+      } catch (err) {
+        stepSpan?.error(err as Error);
+        throw err;
+      }
     }
 
     iteration++;
