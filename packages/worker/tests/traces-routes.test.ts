@@ -144,6 +144,50 @@ describe("GET /traces/:id/stream", () => {
   });
 });
 
+describe("DELETE /traces/:id", () => {
+  it("204 on owned trace; subsequent GET returns 404", async () => {
+    const { app, store } = makeApp();
+    const scoped = store.forUser("u1");
+    await scoped.upsertSummary(sampleSummary({ traceId: "tr_d" }));
+    await scoped.insertSpan(sampleSpan({ spanId: "sp_root", traceId: "tr_d" }));
+
+    const rawKey = await issueKey(store, "u1");
+    const del = await app.request("/traces/tr_d", {
+      method: "DELETE",
+      headers: bearer(rawKey),
+    });
+    expect(del.status).toBe(204);
+
+    const get = await app.request("/traces/tr_d", { method: "GET", headers: bearer(rawKey) });
+    expect(get.status).toBe(404);
+  });
+
+  it("404 on unknown id", async () => {
+    const { app, store } = makeApp();
+    const rawKey = await issueKey(store, "u1");
+    const res = await app.request("/traces/tr_nope", {
+      method: "DELETE",
+      headers: bearer(rawKey),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("404 when the trace belongs to another user", async () => {
+    const { app, store } = makeApp();
+    await store.forUser("u1").upsertSummary(sampleSummary({ traceId: "tr_x" }));
+    const rawKey = await issueKey(store, "u2");
+    const res = await app.request("/traces/tr_x", {
+      method: "DELETE",
+      headers: bearer(rawKey),
+    });
+    expect(res.status).toBe(404);
+    // Confirm u1's trace is untouched
+    const u1Key = await issueKey(store, "u1");
+    const get = await app.request("/traces/tr_x", { method: "GET", headers: bearer(u1Key) });
+    expect(get.status).toBe(200);
+  });
+});
+
 describe("GET /traces", () => {
   it("401 without auth", async () => {
     const { app } = makeApp();

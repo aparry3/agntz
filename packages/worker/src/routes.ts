@@ -455,6 +455,17 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
     });
   });
 
+  app.delete("/traces/:id", async (c) => {
+    const traceId = c.req.param("id");
+    const userId = getUserId(c);
+    const scoped = store.forUser(userId);
+    // Owner-scoped check first so we can 404 instead of silently no-op'ing.
+    const summary = await scoped.getSummary(traceId, userId);
+    if (!summary) return c.json({ error: "Trace not found" }, 404);
+    await scoped.deleteTrace(traceId, userId);
+    return c.body(null, 204);
+  });
+
   app.get("/traces", async (c) => {
     const userId = getUserId(c);
 
