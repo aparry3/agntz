@@ -52,6 +52,8 @@ export { summarizeMessages, trimHistoryWithSummary } from "./utils/summarize.js"
 // Eval
 export { runEval } from "./eval.js";
 export type { AssertionResult, EvalRunOptions, CustomAssertionFn } from "./eval.js";
+export { runEvalSuite } from "./eval-suite.js";
+export type { EvalSuiteRunOptions } from "./eval-suite.js";
 
 // Errors
 export {
@@ -105,6 +107,15 @@ export type {
   EvalTestCase,
   EvalAssertion,
   EvalResult,
+  EvalSuiteAssertionType,
+  EvalSuiteAssertion,
+  EvalSuiteCase,
+  EvalSuite,
+  EvalSuiteRunStatus,
+  EvalSuiteAssertionResult,
+  EvalSuiteCaseResult,
+  EvalSuiteRunSummary,
+  EvalSuiteRun,
 
   // Configuration
   RunnerConfig,
@@ -116,6 +127,7 @@ export type {
   SessionStore,
   ContextStore,
   LogStore,
+  EvalSuiteStore,
   ProviderStore,
   ProviderConfig,
   ConnectionStore,

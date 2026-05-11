@@ -77,6 +77,30 @@ eval: {
 
 ## Running Evals
 
+## Studio Eval Suites
+
+In Studio, evals are saved as reusable suites on each agent. Open an agent and
+choose **Evals** to create a suite from a plain-language rubric, edit the
+generated cases, save the suite, and run it against the active agent version.
+
+Saved suites support:
+
+- Rubric-based LLM judging
+- Deterministic assertions such as field checks, regex, JSON schema, and latency
+- Run history with case-level results
+- Agent version attribution for each run
+
+For most agents, start with a rubric such as:
+
+```text
+The agent should answer accurately, follow the output schema, keep the response concise,
+and avoid unsupported claims.
+```
+
+Studio uses the rubric, manifest, input schema, output schema, and examples to
+draft eval cases. Deterministic checks are added when they are obvious; LLM
+rubric checks cover judgment calls.
+
 ### Programmatic
 
 ```typescript

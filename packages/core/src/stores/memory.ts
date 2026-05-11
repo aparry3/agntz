@@ -9,6 +9,8 @@ import type {
   Message,
   SessionSummary,
   ContextEntry,
+  EvalSuite,
+  EvalSuiteRun,
   InvocationLog,
   LogFilter,
 } from "../types.js";
@@ -46,6 +48,8 @@ interface MemoryBackend {
   sessions: Map<string, SessionRow>;                        // sessionId -> row (row carries userId)
   contexts: Map<string, { userId: string; entries: ContextEntry[] }>;
   logs: Array<{ userId: string; log: InvocationLog }>;
+  evalSuites: Map<string, Map<string, EvalSuite>>;         // userId -> suiteId -> suite
+  evalRuns: Map<string, Map<string, EvalSuiteRun>>;        // userId -> runId -> run
   providers: Map<string, Map<string, ProviderConfig>>;      // userId -> providerId -> config
   connections: Map<string, Map<string, Connection>>;        // userId -> `${kind}:${id}` -> connection
   apiKeys: Map<string, ApiKeyRow>;                          // id -> row
@@ -58,6 +62,8 @@ function createBackend(): MemoryBackend {
     sessions: new Map(),
     contexts: new Map(),
     logs: [],
+    evalSuites: new Map(),
+    evalRuns: new Map(),
     providers: new Map(),
     connections: new Map(),
     apiKeys: new Map(),
@@ -290,6 +296,70 @@ export class MemoryStore implements UnifiedStore {
     return found?.log ?? null;
   }
 
+  // ═══ EvalSuiteStore ═══
+
+  private evalSuiteMap(): Map<string, EvalSuite> {
+    const u = this.requireUser();
+    let m = this.backend.evalSuites.get(u);
+    if (!m) {
+      m = new Map();
+      this.backend.evalSuites.set(u, m);
+    }
+    return m;
+  }
+
+  private evalRunMap(): Map<string, EvalSuiteRun> {
+    const u = this.requireUser();
+    let m = this.backend.evalRuns.get(u);
+    if (!m) {
+      m = new Map();
+      this.backend.evalRuns.set(u, m);
+    }
+    return m;
+  }
+
+  async putEvalSuite(suite: EvalSuite): Promise<void> {
+    const now = new Date().toISOString();
+    const existing = this.evalSuiteMap().get(suite.id);
+    this.evalSuiteMap().set(suite.id, cloneJson({
+      ...suite,
+      createdAt: existing?.createdAt ?? suite.createdAt ?? now,
+      updatedAt: now,
+    }));
+  }
+
+  async getEvalSuite(id: string): Promise<EvalSuite | null> {
+    const suite = this.evalSuiteMap().get(id);
+    return suite ? cloneJson(suite) : null;
+  }
+
+  async listEvalSuites(agentId?: string): Promise<EvalSuite[]> {
+    return Array.from(this.evalSuiteMap().values())
+      .filter((suite) => !agentId || suite.agentId === agentId)
+      .map(cloneJson)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  async deleteEvalSuite(id: string): Promise<void> {
+    this.evalSuiteMap().delete(id);
+  }
+
+  async putEvalSuiteRun(run: EvalSuiteRun): Promise<void> {
+    this.evalRunMap().set(run.id, cloneJson(run));
+  }
+
+  async getEvalSuiteRun(id: string): Promise<EvalSuiteRun | null> {
+    const run = this.evalRunMap().get(id);
+    return run ? cloneJson(run) : null;
+  }
+
+  async listEvalSuiteRuns(suiteId: string): Promise<EvalSuiteRun[]> {
+    return Array.from(this.evalRunMap().values())
+      .filter((run) => run.suiteId === suiteId)
+      .map(cloneJson)
+      .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  }
+
   // ═══ ProviderStore ═══
 
   private providerMap(): Map<string, ProviderConfig> {
@@ -410,4 +480,8 @@ function rowToRecord(row: ApiKeyRow): ApiKeyRecord {
     lastUsedAt: row.lastUsedAt,
     revokedAt: row.revokedAt,
   };
+}
+
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
 }

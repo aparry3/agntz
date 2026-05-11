@@ -11,6 +11,8 @@ import type {
   Message,
   SessionSummary,
   ContextEntry,
+  EvalSuite,
+  EvalSuiteRun,
   InvocationLog,
   InvokeResult,
   LogFilter,
@@ -213,6 +215,42 @@ const MIGRATIONS: string[] = [
   CREATE INDEX IF NOT EXISTS idx_ar_runs_status ON ar_runs(user_id, status);
 
   UPDATE ar_schema_version SET version = 6;
+  `,
+  // v7: Saved eval suites and historical eval runs.
+  `
+  CREATE TABLE IF NOT EXISTS ar_eval_suites (
+    user_id     TEXT NOT NULL,
+    id          TEXT NOT NULL,
+    agent_id    TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    description TEXT,
+    rubric      TEXT,
+    judge_model JSONB,
+    pass_threshold DOUBLE PRECISION NOT NULL DEFAULT 0.7,
+    cases       JSONB NOT NULL DEFAULT '[]',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ar_eval_suites_agent ON ar_eval_suites(user_id, agent_id);
+
+  CREATE TABLE IF NOT EXISTS ar_eval_runs (
+    user_id       TEXT NOT NULL,
+    id            TEXT NOT NULL,
+    suite_id      TEXT NOT NULL,
+    agent_id      TEXT NOT NULL,
+    agent_version_created_at TIMESTAMPTZ,
+    status        TEXT NOT NULL,
+    summary       JSONB NOT NULL,
+    case_results  JSONB NOT NULL DEFAULT '[]',
+    error         TEXT,
+    started_at    TIMESTAMPTZ NOT NULL,
+    ended_at      TIMESTAMPTZ,
+    PRIMARY KEY (user_id, id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ar_eval_runs_suite ON ar_eval_runs(user_id, suite_id, started_at DESC);
+
+  UPDATE ar_schema_version SET version = 7;
   `,
 ];
 
@@ -662,6 +700,139 @@ export class PostgresStore implements UnifiedStore {
     return rowToInvocationLog(result.rows[0]);
   }
 
+  // ═══ EvalSuiteStore ═══
+
+  async putEvalSuite(suite: EvalSuite): Promise<void> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    await this.pool.query(
+      `INSERT INTO ${this.t("eval_suites")}
+         (user_id, id, agent_id, name, description, rubric, judge_model, pass_threshold, cases, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, NOW()), NOW())
+       ON CONFLICT (user_id, id) DO UPDATE SET
+         agent_id = EXCLUDED.agent_id,
+         name = EXCLUDED.name,
+         description = EXCLUDED.description,
+         rubric = EXCLUDED.rubric,
+         judge_model = EXCLUDED.judge_model,
+         pass_threshold = EXCLUDED.pass_threshold,
+         cases = EXCLUDED.cases,
+         updated_at = NOW()`,
+      [
+        u,
+        suite.id,
+        suite.agentId,
+        suite.name,
+        suite.description ?? null,
+        suite.rubric ?? null,
+        suite.judgeModel ? JSON.stringify(suite.judgeModel) : null,
+        suite.passThreshold,
+        JSON.stringify(suite.cases),
+        suite.createdAt ?? null,
+      ]
+    );
+  }
+
+  async getEvalSuite(id: string): Promise<EvalSuite | null> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const { rows } = await this.pool.query(
+      `SELECT id, agent_id, name, description, rubric, judge_model, pass_threshold, cases, created_at, updated_at
+       FROM ${this.t("eval_suites")}
+       WHERE user_id = $1 AND id = $2`,
+      [u, id]
+    );
+    if (rows.length === 0) return null;
+    return rowToEvalSuite(rows[0]);
+  }
+
+  async listEvalSuites(agentId?: string): Promise<EvalSuite[]> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const params: unknown[] = [u];
+    let where = "WHERE user_id = $1";
+    if (agentId) {
+      params.push(agentId);
+      where += " AND agent_id = $2";
+    }
+    const { rows } = await this.pool.query(
+      `SELECT id, agent_id, name, description, rubric, judge_model, pass_threshold, cases, created_at, updated_at
+       FROM ${this.t("eval_suites")}
+       ${where}
+       ORDER BY updated_at DESC`,
+      params
+    );
+    return rows.map(rowToEvalSuite);
+  }
+
+  async deleteEvalSuite(id: string): Promise<void> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    await this.pool.query(
+      `DELETE FROM ${this.t("eval_suites")} WHERE user_id = $1 AND id = $2`,
+      [u, id]
+    );
+  }
+
+  async putEvalSuiteRun(run: EvalSuiteRun): Promise<void> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    await this.pool.query(
+      `INSERT INTO ${this.t("eval_runs")}
+         (user_id, id, suite_id, agent_id, agent_version_created_at, status, summary, case_results, error, started_at, ended_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       ON CONFLICT (user_id, id) DO UPDATE SET
+         suite_id = EXCLUDED.suite_id,
+         agent_id = EXCLUDED.agent_id,
+         agent_version_created_at = EXCLUDED.agent_version_created_at,
+         status = EXCLUDED.status,
+         summary = EXCLUDED.summary,
+         case_results = EXCLUDED.case_results,
+         error = EXCLUDED.error,
+         started_at = EXCLUDED.started_at,
+         ended_at = EXCLUDED.ended_at`,
+      [
+        u,
+        run.id,
+        run.suiteId,
+        run.agentId,
+        run.agentVersionCreatedAt ?? null,
+        run.status,
+        JSON.stringify(run.summary),
+        JSON.stringify(run.caseResults),
+        run.error ?? null,
+        run.startedAt,
+        run.endedAt ?? null,
+      ]
+    );
+  }
+
+  async getEvalSuiteRun(id: string): Promise<EvalSuiteRun | null> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const { rows } = await this.pool.query(
+      `SELECT id, suite_id, agent_id, agent_version_created_at, status, summary, case_results, error, started_at, ended_at
+       FROM ${this.t("eval_runs")}
+       WHERE user_id = $1 AND id = $2`,
+      [u, id]
+    );
+    if (rows.length === 0) return null;
+    return rowToEvalRun(rows[0]);
+  }
+
+  async listEvalSuiteRuns(suiteId: string): Promise<EvalSuiteRun[]> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const { rows } = await this.pool.query(
+      `SELECT id, suite_id, agent_id, agent_version_created_at, status, summary, case_results, error, started_at, ended_at
+       FROM ${this.t("eval_runs")}
+       WHERE user_id = $1 AND suite_id = $2
+       ORDER BY started_at DESC`,
+      [u, suiteId]
+    );
+    return rows.map(rowToEvalRun);
+  }
+
   // ═══ ProviderStore ═══
 
   async getProvider(id: string): Promise<ProviderConfig | null> {
@@ -982,6 +1153,66 @@ function rowToInvocationLog(r: {
     model: r.model,
     error: r.error ?? undefined,
     timestamp: r.timestamp instanceof Date ? r.timestamp.toISOString() : String(r.timestamp),
+  };
+}
+
+function parseJsonValue(value: unknown): unknown {
+  return typeof value === "string" ? JSON.parse(value) : value;
+}
+
+function dateToIso(value: Date | string): string {
+  return value instanceof Date ? value.toISOString() : String(value);
+}
+
+function rowToEvalSuite(r: {
+  id: string;
+  agent_id: string;
+  name: string;
+  description: string | null;
+  rubric: string | null;
+  judge_model: unknown;
+  pass_threshold: number;
+  cases: unknown;
+  created_at: Date | string;
+  updated_at: Date | string;
+}): EvalSuite {
+  return {
+    id: r.id,
+    agentId: r.agent_id,
+    name: r.name,
+    description: r.description ?? undefined,
+    rubric: r.rubric ?? undefined,
+    judgeModel: r.judge_model ? parseJsonValue(r.judge_model) as EvalSuite["judgeModel"] : undefined,
+    passThreshold: Number(r.pass_threshold),
+    cases: parseJsonValue(r.cases) as EvalSuite["cases"],
+    createdAt: dateToIso(r.created_at),
+    updatedAt: dateToIso(r.updated_at),
+  };
+}
+
+function rowToEvalRun(r: {
+  id: string;
+  suite_id: string;
+  agent_id: string;
+  agent_version_created_at: Date | string | null;
+  status: string;
+  summary: unknown;
+  case_results: unknown;
+  error: string | null;
+  started_at: Date | string;
+  ended_at: Date | string | null;
+}): EvalSuiteRun {
+  return {
+    id: r.id,
+    suiteId: r.suite_id,
+    agentId: r.agent_id,
+    agentVersionCreatedAt: r.agent_version_created_at ? dateToIso(r.agent_version_created_at) : undefined,
+    status: r.status as EvalSuiteRun["status"],
+    summary: parseJsonValue(r.summary) as EvalSuiteRun["summary"],
+    caseResults: parseJsonValue(r.case_results) as EvalSuiteRun["caseResults"],
+    error: r.error ?? undefined,
+    startedAt: dateToIso(r.started_at),
+    endedAt: r.ended_at ? dateToIso(r.ended_at) : undefined,
   };
 }
 

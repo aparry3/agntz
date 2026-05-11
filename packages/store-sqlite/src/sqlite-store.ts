@@ -12,6 +12,8 @@ import type {
   Message,
   SessionSummary,
   ContextEntry,
+  EvalSuite,
+  EvalSuiteRun,
   InvocationLog,
   InvokeResult,
   LogFilter,
@@ -179,6 +181,42 @@ const MIGRATIONS = [
   CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(user_id, status);
 
   UPDATE schema_version SET version = 5;
+  `,
+  // v6: Saved eval suites and historical eval runs.
+  `
+  CREATE TABLE IF NOT EXISTS eval_suites (
+    user_id     TEXT NOT NULL,
+    id          TEXT NOT NULL,
+    agent_id    TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    description TEXT,
+    rubric      TEXT,
+    judge_model TEXT,
+    pass_threshold REAL NOT NULL DEFAULT 0.7,
+    cases       TEXT NOT NULL DEFAULT '[]',
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_eval_suites_agent ON eval_suites(user_id, agent_id);
+
+  CREATE TABLE IF NOT EXISTS eval_runs (
+    user_id       TEXT NOT NULL,
+    id            TEXT NOT NULL,
+    suite_id      TEXT NOT NULL,
+    agent_id      TEXT NOT NULL,
+    agent_version_created_at TEXT,
+    status        TEXT NOT NULL,
+    summary       TEXT NOT NULL,
+    case_results  TEXT NOT NULL DEFAULT '[]',
+    error         TEXT,
+    started_at    TEXT NOT NULL,
+    ended_at      TEXT,
+    PRIMARY KEY (user_id, id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_eval_runs_suite ON eval_runs(user_id, suite_id, started_at DESC);
+
+  UPDATE schema_version SET version = 6;
   `,
 ];
 
@@ -579,6 +617,128 @@ export class SqliteStore implements UnifiedStore {
     return rowToLog(row);
   }
 
+  // ═══ EvalSuiteStore ═══
+
+  async putEvalSuite(suite: EvalSuite): Promise<void> {
+    const u = this.requireUser();
+    this.db
+      .prepare(
+        `INSERT INTO eval_suites
+          (user_id, id, agent_id, name, description, rubric, judge_model, pass_threshold, cases, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')), datetime('now'))
+         ON CONFLICT(user_id, id) DO UPDATE SET
+           agent_id = excluded.agent_id,
+           name = excluded.name,
+           description = excluded.description,
+           rubric = excluded.rubric,
+           judge_model = excluded.judge_model,
+           pass_threshold = excluded.pass_threshold,
+           cases = excluded.cases,
+           updated_at = datetime('now')`
+      )
+      .run(
+        u,
+        suite.id,
+        suite.agentId,
+        suite.name,
+        suite.description ?? null,
+        suite.rubric ?? null,
+        suite.judgeModel ? JSON.stringify(suite.judgeModel) : null,
+        suite.passThreshold,
+        JSON.stringify(suite.cases),
+        suite.createdAt ?? null
+      );
+  }
+
+  async getEvalSuite(id: string): Promise<EvalSuite | null> {
+    const u = this.requireUser();
+    const row = this.db
+      .prepare(
+        `SELECT id, agent_id, name, description, rubric, judge_model, pass_threshold, cases, created_at, updated_at
+         FROM eval_suites WHERE user_id = ? AND id = ?`
+      )
+      .get(u, id) as EvalSuiteRow | undefined;
+    return row ? rowToEvalSuite(row) : null;
+  }
+
+  async listEvalSuites(agentId?: string): Promise<EvalSuite[]> {
+    const u = this.requireUser();
+    const rows = agentId
+      ? this.db
+        .prepare(
+          `SELECT id, agent_id, name, description, rubric, judge_model, pass_threshold, cases, created_at, updated_at
+           FROM eval_suites WHERE user_id = ? AND agent_id = ? ORDER BY updated_at DESC`
+        )
+        .all(u, agentId)
+      : this.db
+        .prepare(
+          `SELECT id, agent_id, name, description, rubric, judge_model, pass_threshold, cases, created_at, updated_at
+           FROM eval_suites WHERE user_id = ? ORDER BY updated_at DESC`
+        )
+        .all(u);
+    return (rows as EvalSuiteRow[]).map(rowToEvalSuite);
+  }
+
+  async deleteEvalSuite(id: string): Promise<void> {
+    const u = this.requireUser();
+    this.db.prepare("DELETE FROM eval_suites WHERE user_id = ? AND id = ?").run(u, id);
+  }
+
+  async putEvalSuiteRun(run: EvalSuiteRun): Promise<void> {
+    const u = this.requireUser();
+    this.db
+      .prepare(
+        `INSERT INTO eval_runs
+          (user_id, id, suite_id, agent_id, agent_version_created_at, status, summary, case_results, error, started_at, ended_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, id) DO UPDATE SET
+           suite_id = excluded.suite_id,
+           agent_id = excluded.agent_id,
+           agent_version_created_at = excluded.agent_version_created_at,
+           status = excluded.status,
+           summary = excluded.summary,
+           case_results = excluded.case_results,
+           error = excluded.error,
+           started_at = excluded.started_at,
+           ended_at = excluded.ended_at`
+      )
+      .run(
+        u,
+        run.id,
+        run.suiteId,
+        run.agentId,
+        run.agentVersionCreatedAt ?? null,
+        run.status,
+        JSON.stringify(run.summary),
+        JSON.stringify(run.caseResults),
+        run.error ?? null,
+        run.startedAt,
+        run.endedAt ?? null
+      );
+  }
+
+  async getEvalSuiteRun(id: string): Promise<EvalSuiteRun | null> {
+    const u = this.requireUser();
+    const row = this.db
+      .prepare(
+        `SELECT id, suite_id, agent_id, agent_version_created_at, status, summary, case_results, error, started_at, ended_at
+         FROM eval_runs WHERE user_id = ? AND id = ?`
+      )
+      .get(u, id) as EvalRunRow | undefined;
+    return row ? rowToEvalRun(row) : null;
+  }
+
+  async listEvalSuiteRuns(suiteId: string): Promise<EvalSuiteRun[]> {
+    const u = this.requireUser();
+    const rows = this.db
+      .prepare(
+        `SELECT id, suite_id, agent_id, agent_version_created_at, status, summary, case_results, error, started_at, ended_at
+         FROM eval_runs WHERE user_id = ? AND suite_id = ? ORDER BY started_at DESC`
+      )
+      .all(u, suiteId) as EvalRunRow[];
+    return rows.map(rowToEvalRun);
+  }
+
   // ═══ ProviderStore ═══
 
   async getProvider(id: string): Promise<ProviderConfig | null> {
@@ -977,6 +1137,62 @@ interface RunRow {
   started_at: number;
   ended_at: number | null;
   depth: number;
+}
+
+interface EvalSuiteRow {
+  id: string;
+  agent_id: string;
+  name: string;
+  description: string | null;
+  rubric: string | null;
+  judge_model: string | null;
+  pass_threshold: number;
+  cases: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface EvalRunRow {
+  id: string;
+  suite_id: string;
+  agent_id: string;
+  agent_version_created_at: string | null;
+  status: string;
+  summary: string;
+  case_results: string;
+  error: string | null;
+  started_at: string;
+  ended_at: string | null;
+}
+
+function rowToEvalSuite(r: EvalSuiteRow): EvalSuite {
+  return {
+    id: r.id,
+    agentId: r.agent_id,
+    name: r.name,
+    description: r.description ?? undefined,
+    rubric: r.rubric ?? undefined,
+    judgeModel: r.judge_model ? JSON.parse(r.judge_model) as EvalSuite["judgeModel"] : undefined,
+    passThreshold: r.pass_threshold,
+    cases: JSON.parse(r.cases) as EvalSuite["cases"],
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+
+function rowToEvalRun(r: EvalRunRow): EvalSuiteRun {
+  return {
+    id: r.id,
+    suiteId: r.suite_id,
+    agentId: r.agent_id,
+    agentVersionCreatedAt: r.agent_version_created_at ?? undefined,
+    status: r.status as EvalSuiteRun["status"],
+    summary: JSON.parse(r.summary) as EvalSuiteRun["summary"],
+    caseResults: JSON.parse(r.case_results) as EvalSuiteRun["caseResults"],
+    error: r.error ?? undefined,
+    startedAt: r.started_at,
+    endedAt: r.ended_at ?? undefined,
+  };
 }
 
 function rowToRun(r: RunRow): Run {

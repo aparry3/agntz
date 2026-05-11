@@ -1,7 +1,17 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
-import { createRunner, InMemoryRunRegistry, MemoryStore, type Runner, type UnifiedStore } from "@agntz/core";
+import { randomUUID } from "node:crypto";
+import {
+  createRunner,
+  InMemoryRunRegistry,
+  MemoryStore,
+  runEvalSuite,
+  type EvalSuiteRun,
+  type EvalSuiteCase,
+  type Runner,
+  type UnifiedStore,
+} from "@agntz/core";
 import { execute, parseManifest, validateManifestFull } from "@agntz/manifest";
 import type { AgentManifest } from "@agntz/manifest";
 import { createExecutionContext } from "./bridge.js";
@@ -34,6 +44,7 @@ export function createWorkerAPI({ store, internalSecret }: WorkerAPIOptions): Ho
 
   app.use("/run", workerAuth({ store, internalSecret }));
   app.use("/run/stream", workerAuth({ store, internalSecret }));
+  app.use("/eval/run", workerAuth({ store, internalSecret }));
   app.use("/validate", workerAuth({ store, internalSecret }));
   app.use("/system/agents", internalOnlyAuth({ internalSecret }));
   app.use("/system/agents/*", internalOnlyAuth({ internalSecret }));
@@ -172,7 +183,86 @@ export function createWorkerAPI({ store, internalSecret }: WorkerAPIOptions): Ho
     }
   });
 
+  app.post("/eval/run", async (c) => {
+    const start = Date.now();
+    let suiteIdForLog: string | undefined;
+    try {
+      const userId = getUserId(c);
+      const body = (getCachedBody(c) ?? (await c.req.json())) as {
+        suiteId?: string;
+      };
+      const { suiteId } = body;
+      suiteIdForLog = suiteId;
+
+      if (!suiteId) {
+        return c.json({ error: "Missing required field: suiteId" }, 400);
+      }
+
+      const scoped = store.forUser(userId);
+      const suite = await scoped.getEvalSuite(suiteId);
+      if (!suite) {
+        return c.json({ error: `Eval suite "${suiteId}" not found` }, 404);
+      }
+
+      const runId = `evalrun_${randomUUID()}`;
+      const initialRun: EvalSuiteRun = {
+        id: runId,
+        suiteId: suite.id,
+        agentId: suite.agentId,
+        status: "running",
+        summary: { total: suite.cases.filter((tc) => tc.enabled !== false).length, passed: 0, failed: 0, score: 0 },
+        caseResults: [],
+        startedAt: new Date().toISOString(),
+      };
+      await scoped.putEvalSuiteRun(initialRun);
+
+      const { runner, manifest } = await resolveRunnerAndManifest(store, userId, suite.agentId);
+      const versions = await runner.agents.listAgentVersions(suite.agentId).catch(() => []);
+      const agentVersionCreatedAt = versions[0]?.createdAt;
+
+      console.log(`[eval] start suite=${suite.id} agent=${suite.agentId} user=${userId}`);
+
+      const evalRun = await runEvalSuite(suite, {
+        runId,
+        agentVersionCreatedAt,
+        modelProvider: runner.model,
+        defaultJudgeModel: {
+          provider: process.env.DEFAULT_MODEL_PROVIDER ?? "openai",
+          name: process.env.DEFAULT_MODEL_NAME ?? "gpt-5.4-mini",
+        },
+        execute: async (testCase) => {
+          const runRegistry = new InMemoryRunRegistry();
+          const ctx = createExecutionContext(runner, { runRegistry });
+          const result = await execute(manifest, inputWithContext(testCase), ctx);
+          return { output: result.output };
+        },
+      });
+
+      await scoped.putEvalSuiteRun(evalRun);
+      console.log(
+        `[eval] done suite=${suite.id} ${Date.now() - start}ms ` +
+        `passed=${evalRun.summary.passed}/${evalRun.summary.total}`
+      );
+      return c.json(evalRun);
+    } catch (error) {
+      const message = errorMessage(error);
+      console.error(`[eval] failed suite=${suiteIdForLog} ${Date.now() - start}ms: ${message}`);
+      return c.json({ error: message }, 500);
+    }
+  });
+
   return app;
+}
+
+function inputWithContext(testCase: EvalSuiteCase): unknown {
+  if (!testCase.context) return testCase.input ?? "";
+  if (typeof testCase.input === "string") {
+    return `Context:\n${testCase.context}\n\nInput:\n${testCase.input}`;
+  }
+  if (testCase.input && typeof testCase.input === "object" && !Array.isArray(testCase.input)) {
+    return { ...(testCase.input as Record<string, unknown>), context: testCase.context };
+  }
+  return { input: testCase.input, context: testCase.context };
 }
 
 async function resolveRunnerAndManifest(

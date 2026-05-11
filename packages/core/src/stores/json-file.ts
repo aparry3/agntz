@@ -12,6 +12,8 @@ import type {
   Message,
   SessionSummary,
   ContextEntry,
+  EvalSuite,
+  EvalSuiteRun,
   InvocationLog,
   LogFilter,
 } from "../types.js";
@@ -76,6 +78,8 @@ export class JsonFileStore implements UnifiedStore {
     await mkdir(join(root, "sessions"), { recursive: true });
     await mkdir(join(root, "context"), { recursive: true });
     await mkdir(join(root, "logs"), { recursive: true });
+    await mkdir(join(root, "eval-suites"), { recursive: true });
+    await mkdir(join(root, "eval-runs"), { recursive: true });
     await mkdir(join(root, "providers"), { recursive: true });
     await mkdir(join(root, "connections"), { recursive: true });
   }
@@ -313,6 +317,73 @@ export class JsonFileStore implements UnifiedStore {
     return this.readJson<InvocationLog>(
       join(this.userRoot(), "logs", `${this.sanitizeFilename(id)}.json`)
     );
+  }
+
+  // ═══ EvalSuiteStore ═══
+
+  private evalSuitePath(id: string): string {
+    return join(this.userRoot(), "eval-suites", `${this.sanitizeFilename(id)}.json`);
+  }
+
+  private evalRunPath(id: string): string {
+    return join(this.userRoot(), "eval-runs", `${this.sanitizeFilename(id)}.json`);
+  }
+
+  async putEvalSuite(suite: EvalSuite): Promise<void> {
+    await this.ensureUserDirs();
+    const existing = await this.readJson<EvalSuite>(this.evalSuitePath(suite.id));
+    const now = new Date().toISOString();
+    await this.writeJson(this.evalSuitePath(suite.id), {
+      ...suite,
+      createdAt: existing?.createdAt ?? suite.createdAt ?? now,
+      updatedAt: now,
+    });
+  }
+
+  async getEvalSuite(id: string): Promise<EvalSuite | null> {
+    await this.ensureUserDirs();
+    return this.readJson<EvalSuite>(this.evalSuitePath(id));
+  }
+
+  async listEvalSuites(agentId?: string): Promise<EvalSuite[]> {
+    await this.ensureUserDirs();
+    const dir = join(this.userRoot(), "eval-suites");
+    const files = await readdir(dir).catch(() => []);
+    const suites: EvalSuite[] = [];
+    for (const file of files) {
+      if (!file.endsWith(".json")) continue;
+      const suite = await this.readJson<EvalSuite>(join(dir, file));
+      if (suite && (!agentId || suite.agentId === agentId)) suites.push(suite);
+    }
+    return suites.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  async deleteEvalSuite(id: string): Promise<void> {
+    await this.ensureUserDirs();
+    await unlink(this.evalSuitePath(id)).catch(() => {});
+  }
+
+  async putEvalSuiteRun(run: EvalSuiteRun): Promise<void> {
+    await this.ensureUserDirs();
+    await this.writeJson(this.evalRunPath(run.id), run);
+  }
+
+  async getEvalSuiteRun(id: string): Promise<EvalSuiteRun | null> {
+    await this.ensureUserDirs();
+    return this.readJson<EvalSuiteRun>(this.evalRunPath(id));
+  }
+
+  async listEvalSuiteRuns(suiteId: string): Promise<EvalSuiteRun[]> {
+    await this.ensureUserDirs();
+    const dir = join(this.userRoot(), "eval-runs");
+    const files = await readdir(dir).catch(() => []);
+    const runs: EvalSuiteRun[] = [];
+    for (const file of files) {
+      if (!file.endsWith(".json")) continue;
+      const run = await this.readJson<EvalSuiteRun>(join(dir, file));
+      if (run && run.suiteId === suiteId) runs.push(run);
+    }
+    return runs.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
   }
 
   // ═══ ProviderStore ═══

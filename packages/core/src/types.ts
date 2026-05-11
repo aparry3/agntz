@@ -314,6 +314,95 @@ export interface EvalResult {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// Saved Eval Suites
+// ═══════════════════════════════════════════════════════════════════════
+
+export type EvalSuiteAssertionType =
+  | "contains"
+  | "not-contains"
+  | "regex"
+  | "json-schema"
+  | "llm-rubric"
+  | "semantic-similar"
+  | "equals"
+  | "field-exists"
+  | "field-equals"
+  | "numeric-range"
+  | "tool-called"
+  | "max-latency";
+
+export interface EvalSuiteAssertion {
+  type: EvalSuiteAssertionType;
+  value?: unknown;
+  path?: string;
+  weight?: number;
+}
+
+export interface EvalSuiteCase {
+  id: string;
+  name: string;
+  input: unknown;
+  context?: string;
+  expectedOutput?: unknown;
+  assertions: EvalSuiteAssertion[];
+  enabled?: boolean;
+}
+
+export interface EvalSuite {
+  id: string;
+  agentId: string;
+  name: string;
+  description?: string;
+  rubric?: string;
+  judgeModel?: ModelConfig;
+  passThreshold: number;
+  cases: EvalSuiteCase[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type EvalSuiteRunStatus = "running" | "completed" | "failed" | "cancelled";
+
+export interface EvalSuiteAssertionResult {
+  type: string;
+  passed: boolean;
+  score: number;
+  reason?: string;
+}
+
+export interface EvalSuiteCaseResult {
+  id: string;
+  name: string;
+  input: unknown;
+  output: unknown;
+  assertions: EvalSuiteAssertionResult[];
+  passed: boolean;
+  score: number;
+  duration: number;
+  error?: string;
+}
+
+export interface EvalSuiteRunSummary {
+  total: number;
+  passed: number;
+  failed: number;
+  score: number;
+}
+
+export interface EvalSuiteRun {
+  id: string;
+  suiteId: string;
+  agentId: string;
+  agentVersionCreatedAt?: string;
+  status: EvalSuiteRunStatus;
+  summary: EvalSuiteRunSummary;
+  caseResults: EvalSuiteCaseResult[];
+  error?: string;
+  startedAt: string;
+  endedAt?: string;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // Runner Configuration
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -424,6 +513,16 @@ export interface LogStore {
   log(entry: InvocationLog): Promise<void>;
   getLogs(filter?: LogFilter): Promise<InvocationLog[]>;
   getLog(id: string): Promise<InvocationLog | null>;
+}
+
+export interface EvalSuiteStore {
+  putEvalSuite(suite: EvalSuite): Promise<void>;
+  getEvalSuite(id: string): Promise<EvalSuite | null>;
+  listEvalSuites(agentId?: string): Promise<EvalSuite[]>;
+  deleteEvalSuite(id: string): Promise<void>;
+  putEvalSuiteRun(run: EvalSuiteRun): Promise<void>;
+  getEvalSuiteRun(id: string): Promise<EvalSuiteRun | null>;
+  listEvalSuiteRuns(suiteId: string): Promise<EvalSuiteRun[]>;
 }
 
 export interface ProviderConfig {
@@ -663,6 +762,7 @@ export type UnifiedStore = AgentStore &
   SessionStore &
   ContextStore &
   LogStore &
+  EvalSuiteStore &
   ProviderStore &
   ConnectionStore &
   ApiKeyStore &

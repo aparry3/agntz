@@ -1,4 +1,5 @@
 import type { AgentManifest, ValidationResult } from "@agntz/manifest";
+import type { EvalSuiteRun } from "@agntz/core";
 
 const WORKER_URL = process.env.WORKER_URL ?? "http://localhost:4001";
 
@@ -70,6 +71,29 @@ export async function workerRunStream(req: RunRequest): Promise<ReadableStream<U
   }
 
   return res.body;
+}
+
+export interface EvalRunRequest {
+  userId: string;
+  suiteId: string;
+}
+
+export async function workerRunEval(req: EvalRunRequest): Promise<EvalSuiteRun> {
+  const res = await fetch(`${WORKER_URL}/eval/run`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Internal-Secret": internalSecret(),
+    },
+    body: JSON.stringify(req),
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? `Worker error: ${res.status}`);
+  }
+
+  return res.json() as Promise<EvalSuiteRun>;
 }
 
 export interface SystemAgentSummary {

@@ -406,6 +406,12 @@ export default function AgentEditorPage() {
             >
               Open playground
             </Link>
+            <Link
+              href={`/agents/${id}/evals`}
+              className="rounded-full border border-stone-200 bg-white px-3 py-1.5 font-medium text-zinc-700 transition hover:border-stone-300 hover:text-zinc-950"
+            >
+              Evals
+            </Link>
             <span>{supportsInstruction ? "LLM agent" : "YAML-only agent"}</span>
             {validating && <span>Validating draft…</span>}
           </div>
