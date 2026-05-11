@@ -1,5 +1,5 @@
 import { StreamError } from "./errors.js";
-import { normalizeEvent, normalizeRunEvent } from "./events.js";
+import { normalizeEvent, normalizeRunEvent, normalizeTraceLiveEvent } from "./events.js";
 import { composeSignal, sendRequest } from "./fetch.js";
 import { parseSSE } from "./sse.js";
 import type {
@@ -12,11 +12,16 @@ import type {
   RunsStartInput,
   RunsStreamInput,
   StreamEvent,
+  TraceDetail,
+  TraceFilter,
+  TraceLiveEvent,
+  TracesListResult,
 } from "./types.js";
 
 export class AgntzClient {
   readonly agents: AgentsResource;
   readonly runs: RunsResource;
+  readonly traces: TracesResource;
   private readonly apiKey: string;
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
@@ -31,6 +36,7 @@ export class AgntzClient {
     this.defaultSignal = opts.defaultSignal;
     this.agents = new AgentsResource(this);
     this.runs = new RunsResource(this);
+    this.traces = new TracesResource(this);
   }
 
   /** @internal */
@@ -148,6 +154,98 @@ export class RunsResource {
       fetchImpl: this.client._fetchImpl,
     });
     return (await res.json()) as Run;
+  }
+}
+
+export class TracesResource {
+  constructor(private readonly client: AgntzClient) {}
+
+  async list(
+    filter: TraceFilter = {},
+    opts: { signal?: AbortSignal } = {},
+  ): Promise<TracesListResult> {
+    const signal = this.client._composeSignal(opts.signal);
+    const qs = encodeTraceFilter(filter);
+    const res = await sendRequest({
+      baseUrl: this.client._baseUrl,
+      path: qs ? `/traces?${qs}` : "/traces",
+      method: "GET",
+      apiKey: this.client._apiKey,
+      signal,
+      fetchImpl: this.client._fetchImpl,
+    });
+    return (await res.json()) as TracesListResult;
+  }
+
+  async get(traceId: string, opts: { signal?: AbortSignal } = {}): Promise<TraceDetail> {
+    const signal = this.client._composeSignal(opts.signal);
+    const res = await sendRequest({
+      baseUrl: this.client._baseUrl,
+      path: `/traces/${encodeURIComponent(traceId)}`,
+      method: "GET",
+      apiKey: this.client._apiKey,
+      signal,
+      fetchImpl: this.client._fetchImpl,
+    });
+    return (await res.json()) as TraceDetail;
+  }
+
+  stream(
+    traceId: string,
+    opts: { signal?: AbortSignal } = {},
+  ): AsyncGenerator<TraceLiveEvent, void, void> {
+    return streamTraceEvents(this.client, traceId, opts.signal);
+  }
+
+  async delete(traceId: string, opts: { signal?: AbortSignal } = {}): Promise<void> {
+    const signal = this.client._composeSignal(opts.signal);
+    await sendRequest({
+      baseUrl: this.client._baseUrl,
+      path: `/traces/${encodeURIComponent(traceId)}`,
+      method: "DELETE",
+      apiKey: this.client._apiKey,
+      signal,
+      fetchImpl: this.client._fetchImpl,
+    });
+  }
+}
+
+function encodeTraceFilter(filter: TraceFilter): string {
+  const params = new URLSearchParams();
+  if (filter.agentId !== undefined) params.set("agentId", filter.agentId);
+  if (filter.status !== undefined) params.set("status", filter.status);
+  if (filter.startedAfter !== undefined) params.set("startedAfter", filter.startedAfter);
+  if (filter.startedBefore !== undefined) params.set("startedBefore", filter.startedBefore);
+  if (filter.limit !== undefined) params.set("limit", String(filter.limit));
+  if (filter.cursor !== undefined) params.set("cursor", filter.cursor);
+  return params.toString();
+}
+
+async function* streamTraceEvents(
+  client: AgntzClient,
+  traceId: string,
+  signalIn?: AbortSignal,
+): AsyncGenerator<TraceLiveEvent, void, void> {
+  const signal = client._composeSignal(signalIn);
+  const res = await sendRequest({
+    baseUrl: client._baseUrl,
+    path: `/traces/${encodeURIComponent(traceId)}/stream`,
+    method: "GET",
+    apiKey: client._apiKey,
+    signal,
+    accept: "text/event-stream",
+    fetchImpl: client._fetchImpl,
+  });
+  if (!res.body) {
+    throw new StreamError("Worker returned no stream body", { status: res.status });
+  }
+
+  for await (const frame of parseSSE(res.body, signal)) {
+    const ev = normalizeTraceLiveEvent(frame);
+    if (!ev) continue;
+    yield ev;
+    // snapshot and trace-done both terminate the stream.
+    if (ev.type === "snapshot" || ev.type === "trace-done") return;
   }
 }
 

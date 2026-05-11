@@ -1,4 +1,4 @@
-export { AgntzClient, AgentsResource, RunsResource } from "./client.js";
+export { AgntzClient, AgentsResource, RunsResource, TracesResource } from "./client.js";
 export {
   AgntzError,
   AuthenticationError,
