@@ -11,6 +11,9 @@ import type {
   ContextEntry,
   InvocationLog,
   LogFilter,
+  Span,
+  TraceSummary,
+  TraceFilter,
 } from "../types.js";
 
 interface AgentVersion {
@@ -50,6 +53,8 @@ interface MemoryBackend {
   connections: Map<string, Map<string, Connection>>;        // userId -> `${kind}:${id}` -> connection
   apiKeys: Map<string, ApiKeyRow>;                          // id -> row
   apiKeyByHash: Map<string, ApiKeyRow>;                     // sha256(rawKey) -> row
+  spans: Map<string, Span>;                                  // spanId -> span
+  summaries: Map<string, TraceSummary>;                      // traceId -> summary
 }
 
 function createBackend(): MemoryBackend {
@@ -62,6 +67,8 @@ function createBackend(): MemoryBackend {
     connections: new Map(),
     apiKeys: new Map(),
     apiKeyByHash: new Map(),
+    spans: new Map(),
+    summaries: new Map(),
   };
 }
 
@@ -398,6 +405,111 @@ export class MemoryStore implements UnifiedStore {
     row.lastUsedAt = new Date().toISOString();
     return { userId: row.userId, keyId: row.id };
   }
+
+  // ═══ TraceStore ═══
+
+  async insertSpan(span: Span): Promise<void> {
+    this.backend.spans.set(span.spanId, { ...span });
+  }
+
+  async insertSpansBatch(spans: Span[]): Promise<void> {
+    for (const s of spans) this.backend.spans.set(s.spanId, { ...s });
+  }
+
+  async updateSpan(spanId: string, ownerId: string, patch: Partial<Span>): Promise<void> {
+    const existing = this.backend.spans.get(spanId);
+    if (!existing || existing.ownerId !== ownerId) return; // owner-scoped silent no-op
+    this.backend.spans.set(spanId, { ...existing, ...patch, spanId, ownerId });
+  }
+
+  async upsertSummary(summary: TraceSummary): Promise<void> {
+    this.backend.summaries.set(summary.traceId, { ...summary });
+  }
+
+  async getTrace(traceId: string, ownerId: string): Promise<Span[]> {
+    const out: Span[] = [];
+    for (const s of this.backend.spans.values()) {
+      if (s.traceId === traceId && s.ownerId === ownerId) out.push({ ...s });
+    }
+    // Order by startedAt then spanId so callers get deterministic tree assembly.
+    return out.sort(
+      (a, b) => a.startedAt.localeCompare(b.startedAt) || a.spanId.localeCompare(b.spanId)
+    );
+  }
+
+  async getSummary(traceId: string, ownerId: string): Promise<TraceSummary | null> {
+    const s = this.backend.summaries.get(traceId);
+    if (!s || s.ownerId !== ownerId) return null;
+    return { ...s };
+  }
+
+  async listTraces(filter: TraceFilter): Promise<{ rows: TraceSummary[]; cursor?: string }> {
+    const limit = Math.min(Math.max(filter.limit ?? 50, 1), 200);
+    const all: TraceSummary[] = [];
+    for (const s of this.backend.summaries.values()) {
+      if (s.ownerId !== filter.ownerId) continue;
+      if (filter.agentId && s.agentId !== filter.agentId) continue;
+      if (filter.status && s.status !== filter.status) continue;
+      if (filter.startedAfter && s.startedAt < filter.startedAfter) continue;
+      if (filter.startedBefore && s.startedAt > filter.startedBefore) continue;
+      all.push({ ...s });
+    }
+    all.sort(
+      (a, b) =>
+        b.startedAt.localeCompare(a.startedAt) || b.traceId.localeCompare(a.traceId)
+    );
+
+    let startIdx = 0;
+    if (filter.cursor) {
+      const decoded = decodeTraceCursor(filter.cursor);
+      if (decoded) {
+        startIdx = all.findIndex(
+          (r) =>
+            r.startedAt < decoded.startedAt ||
+            (r.startedAt === decoded.startedAt && r.traceId < decoded.traceId)
+        );
+        if (startIdx === -1) startIdx = all.length;
+      }
+    }
+
+    const rows = all.slice(startIdx, startIdx + limit);
+    const cursor =
+      rows.length === limit && startIdx + limit < all.length
+        ? encodeTraceCursor({
+            startedAt: rows[rows.length - 1].startedAt,
+            traceId: rows[rows.length - 1].traceId,
+          })
+        : undefined;
+    return { rows, cursor };
+  }
+
+  async deleteTrace(traceId: string, ownerId: string): Promise<void> {
+    const summary = this.backend.summaries.get(traceId);
+    if (summary && summary.ownerId !== ownerId) return;
+    this.backend.summaries.delete(traceId);
+    for (const [spanId, span] of this.backend.spans) {
+      if (span.traceId === traceId && span.ownerId === ownerId) {
+        this.backend.spans.delete(spanId);
+      }
+    }
+  }
+
+  async deleteOlderThan(ownerId: string, before: Date): Promise<number> {
+    const beforeIso = before.toISOString();
+    const traceIdsToDelete: string[] = [];
+    for (const s of this.backend.summaries.values()) {
+      if (s.ownerId === ownerId && s.startedAt < beforeIso) traceIdsToDelete.push(s.traceId);
+    }
+    for (const tid of traceIdsToDelete) {
+      this.backend.summaries.delete(tid);
+      for (const [spanId, span] of this.backend.spans) {
+        if (span.traceId === tid && span.ownerId === ownerId) {
+          this.backend.spans.delete(spanId);
+        }
+      }
+    }
+    return traceIdsToDelete.length;
+  }
 }
 
 function rowToRecord(row: ApiKeyRow): ApiKeyRecord {
@@ -410,4 +522,16 @@ function rowToRecord(row: ApiKeyRow): ApiKeyRecord {
     lastUsedAt: row.lastUsedAt,
     revokedAt: row.revokedAt,
   };
+}
+
+function encodeTraceCursor(c: { startedAt: string; traceId: string }): string {
+  return Buffer.from(JSON.stringify(c)).toString("base64url");
+}
+
+function decodeTraceCursor(s: string): { startedAt: string; traceId: string } | null {
+  try {
+    return JSON.parse(Buffer.from(s, "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
 }
