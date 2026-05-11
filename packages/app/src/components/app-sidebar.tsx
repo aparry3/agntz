@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 const primaryLinks = [
   { href: "/agents", label: "Agents" },
   { href: "/sessions", label: "Sessions" },
+  { href: "/traces", label: "Traces" },
   { href: "/logs", label: "Logs" },
   { href: "/tools", label: "Tools" },
 ];
@@ -55,7 +56,11 @@ export function AppSidebar() {
             <SidebarLink
               key={link.href}
               href={link.href}
-              active={pathname === link.href || (link.href === "/agents" && pathname.startsWith("/agents/"))}
+              active={
+                pathname === link.href ||
+                (link.href === "/agents" && pathname.startsWith("/agents/")) ||
+                (link.href === "/traces" && pathname.startsWith("/traces/"))
+              }
             >
               {link.label}
             </SidebarLink>

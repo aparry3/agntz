@@ -10,22 +10,29 @@ export interface AuthDeps {
  * Resolve the user for an inbound request. Two acceptable auth modes:
  *
  *   1. Internal: header `X-Internal-Secret: <WORKER_INTERNAL_SECRET>` plus
- *      `userId` in the JSON body. Used by the Next.js app, which has already
- *      verified the user's Clerk session.
+ *      `userId` in the JSON body OR an `X-User-Id` header. The body takes
+ *      precedence when both are present. Used by the Next.js app, which has
+ *      already verified the user's Clerk session.
  *
  *   2. External: header `Authorization: Bearer ar_live_...`. The key is
  *      hashed and looked up in `ar_api_keys`; we set userId from the row.
  *
- * On success: c.set("userId", ...). On failure: 401.
+ * On success: c.set("userId", ...). On failure: 401 (missing auth) or 400
+ * (internal auth without a resolvable userId).
  */
 export function workerAuth(deps: AuthDeps): MiddlewareHandler {
   return async (c, next) => {
     const internalHeader = c.req.header("x-internal-secret");
     if (internalHeader && internalHeader === deps.internalSecret) {
       const body = await readJsonOnce(c);
-      const userId = (body as { userId?: string } | undefined)?.userId;
-      if (!userId || typeof userId !== "string") {
-        return c.json({ error: "internal request missing userId in body" }, 400);
+      const bodyUserId = (body as { userId?: string } | undefined)?.userId;
+      const headerUserId = c.req.header("x-user-id");
+      const userId = (typeof bodyUserId === "string" && bodyUserId) || headerUserId;
+      if (!userId) {
+        return c.json(
+          { error: "internal request missing userId in body or X-User-Id header" },
+          400,
+        );
       }
       c.set("userId", userId);
       return next();
