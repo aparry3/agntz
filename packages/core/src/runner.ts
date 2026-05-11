@@ -773,8 +773,11 @@ export class Runner {
 
     const modelStr = `${modelConfig.provider}/${modelConfig.name}`;
 
+    // Use the per-request emitter when provided; fall back to the runner-level one.
+    const spanEmitter = options.spanEmitter ?? this.telemetry;
+
     // Start telemetry span
-    const span = this.telemetry.startInvoke({
+    const span = spanEmitter.startInvoke({
       agentId,
       invocationId,
       model: modelStr,
