@@ -435,6 +435,7 @@ export class JsonFileStore implements UnifiedStore {
   }
 
   async updateSpan(spanId: string, ownerId: string, patch: Partial<Span>): Promise<void> {
+    await this.ensureTraceDirs();
     const existing = await this.readJson<Span>(this.spanPath(spanId));
     if (!existing || existing.ownerId !== ownerId) return;
     await this.writeJson(this.spanPath(spanId), { ...existing, ...patch, spanId, ownerId });
@@ -445,6 +446,8 @@ export class JsonFileStore implements UnifiedStore {
     await this.writeJson(this.summaryPath(summary.traceId), { ...summary });
   }
 
+  // O(total_spans across all traces) — JsonFileStore stores spans in a flat
+  // directory; backends with per-trace indexes (sqlite, postgres) are O(spans in trace).
   async getTrace(traceId: string, ownerId: string): Promise<Span[]> {
     const spansDir = join(this.basePath, "traces", "spans");
     const files = await readdir(spansDir).catch(() => []);
@@ -534,10 +537,10 @@ export class JsonFileStore implements UnifiedStore {
       const s = await this.readJson<TraceSummary>(join(summariesDir, file));
       if (s && s.ownerId === ownerId && s.startedAt < beforeIso) toDelete.push(s.traceId);
     }
+    const spansDir = join(this.basePath, "traces", "spans");
+    const spanFiles = await readdir(spansDir).catch(() => []);
     for (const traceId of toDelete) {
       await unlink(this.summaryPath(traceId)).catch(() => {});
-      const spansDir = join(this.basePath, "traces", "spans");
-      const spanFiles = await readdir(spansDir).catch(() => []);
       for (const file of spanFiles) {
         if (!file.endsWith(".json")) continue;
         const s = await this.readJson<Span>(join(spansDir, file));
