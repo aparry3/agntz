@@ -33,6 +33,10 @@ export type { ListToolsOptions } from "./mcp/list-tools.js";
 export { resolveMCPServer } from "./mcp/resolve-server.js";
 export type { ResolvedMCPServer } from "./mcp/resolve-server.js";
 
+// Pricing
+export { computeCost } from "./model-pricing.js";
+export type { ModelRate } from "./model-pricing.js";
+
 // Telemetry
 export { SpanEmitter, Telemetry } from "./telemetry.js";
 export type {

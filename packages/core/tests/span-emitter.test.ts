@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { SpanEmitter } from "../src/telemetry.js";
 import type { TraceLiveEvent } from "../src/types.js";
+import { computeCost } from "../src/model-pricing.js";
 
 function withEmitter(): { emitter: SpanEmitter; events: TraceLiveEvent[] } {
   const events: TraceLiveEvent[] = [];
@@ -75,5 +76,35 @@ describe("SpanEmitter", () => {
     m.end();
     const starts = events.filter((e) => e.type === "span-start") as Array<{ span: { ownerId: string } }>;
     for (const s of starts) expect(s.span.ownerId).toBe("u_special");
+  });
+});
+
+describe("computeCost", () => {
+  it("returns USD cost for known models", () => {
+    const cost = computeCost(
+      { promptTokens: 1_000_000, completionTokens: 0, totalTokens: 1_000_000 },
+      "anthropic",
+      "claude-sonnet-4-6"
+    );
+    expect(cost).toBe(3.00);
+  });
+
+  it("returns null for unknown models", () => {
+    const cost = computeCost(
+      { promptTokens: 100, completionTokens: 100, totalTokens: 200 },
+      "unknown",
+      "model"
+    );
+    expect(cost).toBeNull();
+  });
+
+  it("computes correctly for mixed token counts", () => {
+    // claude-haiku-4-5: 1.00/M input, 5.00/M output
+    const cost = computeCost(
+      { promptTokens: 500_000, completionTokens: 100_000, totalTokens: 600_000 },
+      "anthropic",
+      "claude-haiku-4-5"
+    );
+    expect(cost).toBe(0.5 + 0.5); // 0.5 input + 0.5 output = 1.0 USD
   });
 });

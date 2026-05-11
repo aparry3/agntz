@@ -54,6 +54,7 @@ import { withRetry } from "./utils/retry.js";
 import type { RetryConfig } from "./utils/retry.js";
 import { Telemetry } from "./telemetry.js";
 import type { InvokeSpan } from "./telemetry.js";
+import { computeCost } from "./model-pricing.js";
 
 /** Maximum tool call iterations to prevent infinite loops */
 const DEFAULT_MAX_STEPS = 10;
@@ -887,10 +888,12 @@ export class Runner {
             options.signal,
           );
 
+          const costUsd = computeCost(result.usage, modelConfig.provider, modelConfig.name);
           modelSpan.setResult({
             usage: result.usage,
             finishReason: result.finishReason,
             toolCallCount: result.toolCalls?.length ?? 0,
+            costUsd: costUsd ?? undefined,
           });
           modelSpan.end();
         } catch (err) {
