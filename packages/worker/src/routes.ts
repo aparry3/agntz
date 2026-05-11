@@ -1,10 +1,11 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
-import { createRunner, InMemoryRunRegistry, MemoryStore, type Runner, type UnifiedStore } from "@agntz/core";
+import { createRunner, InMemoryRunRegistry, MemoryStore, SpanEmitter, type Runner, type UnifiedStore } from "@agntz/core";
 import { execute, parseManifest, validateManifestFull } from "@agntz/manifest";
 import type { AgentManifest } from "@agntz/manifest";
 import { createExecutionContext } from "./bridge.js";
+import { InMemoryTraceRegistry } from "./trace-registry.js";
 import { workerAuth, internalOnlyAuth, getUserId, getCachedBody } from "./middleware/auth.js";
 import { isSystemAgentId, loadSystemAgent, listSystemAgents, getSystemAgent } from "./system-agents.js";
 import { LOCAL_TOOLS } from "./tools/registry.js";
@@ -25,6 +26,10 @@ export interface WorkerAPIOptions {
  */
 export function createWorkerAPI({ store, internalSecret }: WorkerAPIOptions): Hono {
   const app = new Hono();
+
+  // Process-wide trace registry — one per worker instance, shared across requests.
+  // Receives span events from per-request SpanEmitters and batches them to the store.
+  const traceRegistry = new InMemoryTraceRegistry({ store });
 
   app.use("*", cors());
 
@@ -113,7 +118,15 @@ export function createWorkerAPI({ store, internalSecret }: WorkerAPIOptions): Ho
 
       const { runner, manifest } = await resolveRunnerAndManifest(store, userId, agentId);
       const runRegistry = new InMemoryRunRegistry();
-      const ctx = createExecutionContext(runner, { runRegistry });
+      const spanEmitter = new SpanEmitter({
+        traceSink: (event) => {
+          if (event.type === "span-start") traceRegistry.spanStart(event.span);
+          else if (event.type === "span-end") traceRegistry.spanEnd(event.spanId, event.patch);
+          else if (event.type === "trace-done") traceRegistry.traceDone(event.summary.traceId, event.summary.ownerId, event.summary);
+        },
+        recordIO: false,
+      });
+      const ctx = createExecutionContext(runner, { runRegistry, spanEmitter, ownerId: userId });
       const result = await execute(manifest, input ?? "", ctx);
 
       console.log(
@@ -145,7 +158,15 @@ export function createWorkerAPI({ store, internalSecret }: WorkerAPIOptions): Ho
 
       const { runner, manifest } = await resolveRunnerAndManifest(store, userId, agentId);
       const runRegistry = new InMemoryRunRegistry();
-      const ctx = createExecutionContext(runner, { runRegistry });
+      const spanEmitter = new SpanEmitter({
+        traceSink: (event) => {
+          if (event.type === "span-start") traceRegistry.spanStart(event.span);
+          else if (event.type === "span-end") traceRegistry.spanEnd(event.spanId, event.patch);
+          else if (event.type === "trace-done") traceRegistry.traceDone(event.summary.traceId, event.summary.ownerId, event.summary);
+        },
+        recordIO: false,
+      });
+      const ctx = createExecutionContext(runner, { runRegistry, spanEmitter, ownerId: userId });
 
       return streamSSE(c, async (stream) => {
         try {

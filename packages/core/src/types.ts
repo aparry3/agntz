@@ -1,5 +1,6 @@
 import type { ZodSchema } from "zod";
 import type { TelemetryConfig } from "./telemetry.js";
+import type { SpanEmitter } from "./telemetry.js";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Agent Definition — the core portable data structure
@@ -156,6 +157,12 @@ export interface InvokeOptions {
   parentRunId?: string;
   /** The owning user, propagated to ToolContext. */
   userId?: string;
+  /** Per-invocation SpanEmitter. When provided, child spans nest under whatever
+   *  span is at the top of its stack. Bridge constructs one per request. */
+  spanEmitter?: import("./telemetry.js").SpanEmitter;
+  /** Tenant scoping for emitted spans. Threaded from the worker bridge so
+   *  invoke/model/tool spans get the right owner_id. */
+  ownerId?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -551,6 +558,9 @@ export interface SpawnRunOptions {
   spawnToolUseId?: string;
   userId?: string;
   sessionId?: string;
+  /** Per-run span emitter for emitting a run-kind span on lifecycle events.
+   *  When omitted, the registry doesn't emit run spans for this Run. */
+  spanEmitter?: SpanEmitter;
 }
 
 /**
@@ -689,6 +699,12 @@ export type TraceLiveEvent =
   | { type: "span-start"; span: Span }
   | { type: "span-end"; spanId: string; patch: Partial<Span> }
   | { type: "trace-done"; summary: TraceSummary };
+
+/**
+ * Callback the SpanEmitter calls on every span-start / span-end / trace-done.
+ * The TraceRegistry implements this; pass it via `RunnerConfig.telemetry.traceSink`.
+ */
+export type TraceSink = (event: TraceLiveEvent) => void;
 
 /**
  * Persistent record of spans and trace summaries. Implementations are

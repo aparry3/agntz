@@ -1,31 +1,12 @@
-/**
- * OpenTelemetry integration for agntz.
- *
- * Opt-in: pass `telemetry` config to `createRunner()`.
- * Uses `@opentelemetry/api` — users bring their own SDK/exporter setup.
- *
- * Span hierarchy:
- *   agent.invoke (root)
- *   ├── agent.model.call (each LLM call)
- *   ├── agent.tool.execute (each tool call)
- *   │   └── agent.invoke (nested agent-as-tool)
- *   └── agent.context.load (context loading)
- */
+import type { TokenUsage, ToolCallRecord, Span, SpanKind, TraceSink } from "./types.js";
 
-import type { TokenUsage, ToolCallRecord } from "./types.js";
+// ───────────────────────────────────────────────────────────────────────
+// OTel passthrough — unchanged from prior slice
+// ───────────────────────────────────────────────────────────────────────
 
-// ═══════════════════════════════════════════════════════════════════════
-// Types — mirrors @opentelemetry/api to avoid hard dependency
-// ═══════════════════════════════════════════════════════════════════════
-
-/**
- * Minimal Tracer interface matching @opentelemetry/api Tracer.
- * Users pass their real OTel tracer; we only use these methods.
- */
 export interface OTelTracer {
   startSpan(name: string, options?: OTelSpanOptions, context?: unknown): OTelSpan;
 }
-
 export interface OTelSpan {
   setAttribute(key: string, value: string | number | boolean): this;
   setStatus(status: { code: number; message?: string }): this;
@@ -33,15 +14,12 @@ export interface OTelSpan {
   end(): void;
   spanContext(): { traceId: string; spanId: string };
 }
-
 export interface OTelSpanOptions {
   kind?: number;
   attributes?: Record<string, string | number | boolean>;
 }
 
-// OTel API helpers — loaded dynamically to avoid hard dependency
 let otelApi: any = null;
-
 function getOTelApi(): any {
   if (otelApi === undefined) return null;
   if (otelApi !== null) return otelApi;
@@ -54,281 +32,377 @@ function getOTelApi(): any {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// Telemetry Configuration
-// ═══════════════════════════════════════════════════════════════════════
+// ───────────────────────────────────────────────────────────────────────
+// SpanEmitter config
+// ───────────────────────────────────────────────────────────────────────
 
 export interface TelemetryConfig {
-  /** An OpenTelemetry Tracer instance. If not provided, uses the global tracer. */
+  /** Optional OTel tracer for export-only forwarding. */
   tracer?: OTelTracer;
-  /** Tracer name for global tracer lookup (default: "agntz") */
+  /** Tracer name for global tracer lookup. Default "agntz". */
   tracerName?: string;
-  /** Whether to record input/output text in span attributes (default: false for privacy) */
+  /** Whether to include input/output text in span attributes. Default false. */
   recordIO?: boolean;
-  /** Whether to record tool call inputs/outputs (default: false) */
+  /** Whether to include tool call inputs/outputs. Default false. */
   recordToolIO?: boolean;
-  /** Custom attributes to add to every span */
+  /** Static attributes applied to every span. */
   baseAttributes?: Record<string, string | number | boolean>;
+  /** Native sink — invoked on every span-start / span-end / trace-done. */
+  traceSink?: TraceSink;
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// Telemetry Helper — wraps span lifecycle
-// ═══════════════════════════════════════════════════════════════════════
+// ───────────────────────────────────────────────────────────────────────
+// Span handles — same outward shape as the prior Telemetry class
+// ───────────────────────────────────────────────────────────────────────
 
-/**
- * Telemetry helper for instrumenting runner operations.
- * If telemetry is not configured, all methods are no-ops.
- */
-export class Telemetry {
-  private tracer: OTelTracer | null;
-  private config: TelemetryConfig;
-
-  constructor(config?: TelemetryConfig) {
-    this.config = config ?? {};
-
-    if (config?.tracer) {
-      this.tracer = config.tracer;
-    } else if (config) {
-      // Try to get global tracer from @opentelemetry/api
-      const api = getOTelApi();
-      if (api) {
-        this.tracer = api.trace.getTracer(config.tracerName ?? "agntz");
-      } else {
-        this.tracer = null;
-      }
-    } else {
-      this.tracer = null;
-    }
-  }
-
-  /** Whether telemetry is active */
-  get enabled(): boolean {
-    return this.tracer !== null;
-  }
-
-  /**
-   * Start an invocation span.
-   */
-  startInvoke(params: {
-    agentId: string;
-    invocationId: string;
-    model: string;
-    sessionId?: string;
-    contextIds?: string[];
-    input?: string;
-  }): InvokeSpan {
-    if (!this.tracer) return NO_OP_INVOKE_SPAN;
-
-    const attrs: Record<string, string | number | boolean> = {
-      "agent.id": params.agentId,
-      "agent.invocation.id": params.invocationId,
-      "agent.model": params.model,
-      ...this.config.baseAttributes,
-    };
-
-    if (params.sessionId) attrs["agent.session.id"] = params.sessionId;
-    if (params.contextIds?.length) attrs["agent.context.ids"] = params.contextIds.join(",");
-    if (this.config.recordIO && params.input) {
-      attrs["agent.input"] = params.input.slice(0, 4096); // Truncate for safety
-    }
-
-    const span = this.tracer.startSpan("agent.invoke", { attributes: attrs });
-
-    return new ActiveInvokeSpan(span, this.tracer, this.config);
-  }
+export interface RunSpan {
+  end(): void;
+  error(err: Error | string): void;
 }
-
-// ═══════════════════════════════════════════════════════════════════════
-// Span Interfaces
-// ═══════════════════════════════════════════════════════════════════════
-
+export interface ManifestSpan {
+  step(params: { name: string; index: number }): StepSpan;
+  end(): void;
+  error(err: Error | string): void;
+}
+export interface StepSpan {
+  end(): void;
+  error(err: Error | string): void;
+}
 export interface InvokeSpan {
-  /** Record a model (LLM) call */
-  modelCall(params: {
-    model: string;
-    step: number;
-  }): ModelCallSpan;
-
-  /** Record a tool execution */
-  toolCall(params: {
-    toolName: string;
-    toolCallId: string;
-  }): ToolCallSpan;
-
-  /** Set final result attributes */
-  setResult(result: {
-    output?: string;
-    usage: TokenUsage;
-    duration: number;
-    toolCallCount: number;
-    stepCount: number;
-  }): void;
-
-  /** End the span with success */
+  modelCall(params: { model: string; step: number }): ModelCallSpan;
+  toolCall(params: { toolName: string; toolCallId: string }): ToolCallSpan;
+  setResult(result: { output?: string; usage: TokenUsage; duration: number; toolCallCount: number; stepCount: number }): void;
   end(): void;
-
-  /** End the span with an error */
   error(err: Error | string): void;
 }
-
 export interface ModelCallSpan {
-  setResult(result: {
-    usage: TokenUsage;
-    finishReason?: string;
-    toolCallCount: number;
-  }): void;
+  setResult(result: { usage: TokenUsage; finishReason?: string; toolCallCount: number; costUsd?: number }): void;
   end(): void;
   error(err: Error | string): void;
 }
-
 export interface ToolCallSpan {
   setResult(record: ToolCallRecord): void;
   end(): void;
   error(err: Error | string): void;
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// Active Span Implementations
-// ═══════════════════════════════════════════════════════════════════════
+// ───────────────────────────────────────────────────────────────────────
+// SpanEmitter — stack-based parentage + dual sinks
+// ───────────────────────────────────────────────────────────────────────
 
-class ActiveInvokeSpan implements InvokeSpan {
-  constructor(
-    private span: OTelSpan,
-    private tracer: OTelTracer,
-    private config: TelemetryConfig,
-  ) {}
+/**
+ * Threaded per-request through ExecutionContext + InvokeOptions. Maintains
+ * a per-trace stack of active spans so cross-layer parent linkage works
+ * without explicit threading.
+ */
+export class SpanEmitter {
+  private config: TelemetryConfig;
+  private tracer: OTelTracer | null;
+  private stack: Array<{ spanId: string; traceId: string; ownerId: string; runId: string | null; sessionId: string | null }> = [];
 
-  modelCall(params: { model: string; step: number }): ModelCallSpan {
-    const span = this.tracer.startSpan("agent.model.call", {
-      attributes: {
-        "agent.model": params.model,
-        "agent.step": params.step,
-      },
+  constructor(config?: TelemetryConfig) {
+    this.config = config ?? {};
+    if (config?.tracer) {
+      this.tracer = config.tracer;
+    } else if (config) {
+      // Only try global OTel tracer when caller explicitly passed a config object.
+      const api = getOTelApi();
+      this.tracer = api ? api.trace.getTracer(config.tracerName ?? "agntz") : null;
+    } else {
+      // No config at all — no-op mode.
+      this.tracer = null;
+    }
+  }
+
+  /** Returns true iff at least one sink is active (OTel or native). */
+  get enabled(): boolean {
+    return this.tracer !== null || this.config.traceSink !== undefined;
+  }
+
+  startRun(params: { ownerId: string; runId: string; sessionId?: string | null; agentId: string }): RunSpan {
+    const span = this.openSpan("run", "agent.run", {
+      ownerId: params.ownerId,
+      runId: params.runId,
+      sessionId: params.sessionId ?? null,
+      attrs: { "agent.id": params.agentId, "agent.run.id": params.runId },
     });
-    return new ActiveModelCallSpan(span);
+    return {
+      end: () => this.closeSpan(span, "ok"),
+      error: (err) => this.closeSpan(span, "error", err),
+    };
   }
 
-  toolCall(params: { toolName: string; toolCallId: string }): ToolCallSpan {
-    const span = this.tracer.startSpan("agent.tool.execute", {
-      attributes: {
-        "agent.tool.name": params.toolName,
-        "agent.tool.call.id": params.toolCallId,
-      },
+  startManifest(params: { ownerId: string; agentId: string; kind: string; runId?: string | null; sessionId?: string | null }): ManifestSpan {
+    const span = this.openSpan("manifest", "agent.manifest", {
+      ownerId: params.ownerId,
+      runId: params.runId ?? null,
+      sessionId: params.sessionId ?? null,
+      attrs: { "agent.id": params.agentId, "manifest.kind": params.kind },
     });
-    return new ActiveToolCallSpan(span, this.config);
+    return {
+      step: (sp) => this.startStepInternal(sp, span),
+      end: () => this.closeSpan(span, "ok"),
+      error: (err) => this.closeSpan(span, "error", err),
+    };
   }
 
-  setResult(result: {
-    output?: string;
-    usage: TokenUsage;
-    duration: number;
-    toolCallCount: number;
-    stepCount: number;
-  }): void {
-    this.span.setAttribute("agent.usage.prompt_tokens", result.usage.promptTokens);
-    this.span.setAttribute("agent.usage.completion_tokens", result.usage.completionTokens);
-    this.span.setAttribute("agent.usage.total_tokens", result.usage.totalTokens);
-    this.span.setAttribute("agent.duration_ms", result.duration);
-    this.span.setAttribute("agent.tool_call_count", result.toolCallCount);
-    this.span.setAttribute("agent.step_count", result.stepCount);
+  startStep(params: { name: string; index: number; ownerId: string; runId?: string | null }): StepSpan {
+    const span = this.openSpan("step", "agent.step", {
+      ownerId: params.ownerId,
+      runId: params.runId ?? null,
+      sessionId: null,
+      attrs: { "step.name": params.name, "step.index": params.index },
+    });
+    return {
+      end: () => this.closeSpan(span, "ok"),
+      error: (err) => this.closeSpan(span, "error", err),
+    };
+  }
 
-    if (this.config.recordIO && result.output) {
-      this.span.setAttribute("agent.output", result.output.slice(0, 4096));
+  startInvoke(params: {
+    agentId: string;
+    invocationId: string;
+    model: string;
+    ownerId?: string;
+    sessionId?: string | null;
+    runId?: string | null;
+    contextIds?: string[];
+    input?: string;
+  }): InvokeSpan {
+    const ownerId = params.ownerId ?? "unknown";
+    const attrs: Record<string, string | number | boolean> = {
+      "agent.id": params.agentId,
+      "agent.invocation.id": params.invocationId,
+      "agent.model": params.model,
+      ...this.config.baseAttributes,
+    };
+    if (params.sessionId) attrs["agent.session.id"] = params.sessionId;
+    if (params.runId) attrs["agent.run.id"] = params.runId;
+    if (params.contextIds?.length) attrs["agent.context.ids"] = params.contextIds.join(",");
+    if (this.config.recordIO && params.input) attrs["agent.input"] = params.input.slice(0, 4096);
+
+    const span = this.openSpan("invoke", "agent.invoke", {
+      ownerId,
+      runId: params.runId ?? null,
+      sessionId: params.sessionId ?? null,
+      attrs,
+    });
+
+    const handle = this;
+    return {
+      modelCall: (mp) => handle.startModelCallInternal(mp, span),
+      toolCall: (tp) => handle.startToolCallInternal(tp, span),
+      setResult: (result) => handle.setInvokeResultInternal(span, result),
+      end: () => handle.closeSpan(span, "ok"),
+      error: (err) => handle.closeSpan(span, "error", err),
+    };
+  }
+
+  // ─── private helpers ─────
+
+  private startStepInternal(params: { name: string; index: number }, parent: SpanState): StepSpan {
+    const span = this.openSpan("step", "agent.step", {
+      ownerId: parent.ownerId,
+      runId: parent.runId,
+      sessionId: parent.sessionId,
+      attrs: { "step.name": params.name, "step.index": params.index },
+      explicitParent: parent,
+    });
+    return {
+      end: () => this.closeSpan(span, "ok"),
+      error: (err) => this.closeSpan(span, "error", err),
+    };
+  }
+
+  private startModelCallInternal(params: { model: string; step: number }, parent: SpanState): ModelCallSpan {
+    const span = this.openSpan("model", "agent.model.call", {
+      ownerId: parent.ownerId,
+      runId: parent.runId,
+      sessionId: parent.sessionId,
+      attrs: { "agent.model": params.model, "agent.step": params.step },
+      explicitParent: parent,
+    });
+    return {
+      setResult: (r) => this.setModelResult(span, r),
+      end: () => this.closeSpan(span, "ok"),
+      error: (err) => this.closeSpan(span, "error", err),
+    };
+  }
+
+  private startToolCallInternal(params: { toolName: string; toolCallId: string }, parent: SpanState): ToolCallSpan {
+    const span = this.openSpan("tool", "agent.tool.execute", {
+      ownerId: parent.ownerId,
+      runId: parent.runId,
+      sessionId: parent.sessionId,
+      attrs: { "agent.tool.name": params.toolName, "agent.tool.call.id": params.toolCallId },
+      explicitParent: parent,
+    });
+    return {
+      setResult: (record) => this.setToolResult(span, record),
+      end: () => this.closeSpan(span, "ok"),
+      error: (err) => this.closeSpan(span, "error", err),
+    };
+  }
+
+  private openSpan(kind: SpanKind, name: string, opts: OpenOpts): SpanState {
+    const parent = opts.explicitParent ?? (this.stack.length > 0 ? this.stack[this.stack.length - 1] : null);
+    const traceId = parent ? parent.traceId : `tr_${ulid()}`;
+    const spanId = `sp_${ulid()}`;
+    const startedAt = new Date().toISOString();
+
+    const state: SpanState = {
+      spanId,
+      traceId,
+      parentId: parent ? parent.spanId : null,
+      ownerId: opts.ownerId,
+      runId: opts.runId,
+      sessionId: opts.sessionId,
+      kind,
+      name,
+      startedAt,
+      attrs: opts.attrs ?? {},
+      otel: this.tracer ? this.tracer.startSpan(name, { attributes: opts.attrs ?? {} }) : null,
+    };
+
+    // Only push to stack if NOT using an explicit parent — explicit-parent spans
+    // are siblings, not nested children of whatever's currently on top.
+    if (!opts.explicitParent) this.stack.push({ spanId, traceId, ownerId: opts.ownerId, runId: opts.runId, sessionId: opts.sessionId });
+
+    if (this.config.traceSink) {
+      const span: Span = stateToSpan(state, "running");
+      this.config.traceSink({ type: "span-start", span });
+    }
+
+    return state;
+  }
+
+  private closeSpan(state: SpanState, status: "ok" | "error", err?: Error | string): void {
+    const endedAt = new Date().toISOString();
+    const durationMs = new Date(endedAt).getTime() - new Date(state.startedAt).getTime();
+    state.endedAt = endedAt;
+    state.durationMs = durationMs;
+    state.status = status;
+    if (status === "error" && err) {
+      state.error = err instanceof Error ? err.message : err;
+    }
+
+    if (state.otel) {
+      state.otel.setStatus({ code: status === "ok" ? 1 : 2, message: state.error ?? undefined });
+      if (err instanceof Error) state.otel.recordException(err);
+      state.otel.end();
+    }
+
+    if (this.config.traceSink) {
+      this.config.traceSink({
+        type: "span-end",
+        spanId: state.spanId,
+        patch: { endedAt, durationMs, status, error: state.error ?? null, attributes: state.attrs },
+      });
+    }
+
+    // Pop our stack frame if this was a stack-managed span.
+    const top = this.stack[this.stack.length - 1];
+    if (top && top.spanId === state.spanId) this.stack.pop();
+  }
+
+  private setInvokeResultInternal(state: SpanState, result: { output?: string; usage: TokenUsage; duration: number; toolCallCount: number; stepCount: number }): void {
+    state.attrs["agent.usage.prompt_tokens"] = result.usage.promptTokens;
+    state.attrs["agent.usage.completion_tokens"] = result.usage.completionTokens;
+    state.attrs["agent.usage.total_tokens"] = result.usage.totalTokens;
+    state.attrs["agent.duration_ms"] = result.duration;
+    state.attrs["agent.tool_call_count"] = result.toolCallCount;
+    state.attrs["agent.step_count"] = result.stepCount;
+    if (this.config.recordIO && result.output) state.attrs["agent.output"] = result.output.slice(0, 4096);
+    if (state.otel) {
+      for (const [k, v] of Object.entries(state.attrs)) state.otel.setAttribute(k, v as string | number | boolean);
     }
   }
 
-  end(): void {
-    this.span.setStatus({ code: 1 }); // OK
-    this.span.end();
-  }
-
-  error(err: Error | string): void {
-    const message = err instanceof Error ? err.message : err;
-    this.span.setStatus({ code: 2, message }); // ERROR
-    if (err instanceof Error) {
-      this.span.recordException(err);
-    }
-    this.span.end();
-  }
-}
-
-class ActiveModelCallSpan implements ModelCallSpan {
-  constructor(private span: OTelSpan) {}
-
-  setResult(result: {
-    usage: TokenUsage;
-    finishReason?: string;
-    toolCallCount: number;
-  }): void {
-    this.span.setAttribute("agent.usage.prompt_tokens", result.usage.promptTokens);
-    this.span.setAttribute("agent.usage.completion_tokens", result.usage.completionTokens);
-    this.span.setAttribute("agent.usage.total_tokens", result.usage.totalTokens);
-    this.span.setAttribute("agent.tool_call_count", result.toolCallCount);
-    if (result.finishReason) {
-      this.span.setAttribute("agent.finish_reason", result.finishReason);
+  private setModelResult(state: SpanState, r: { usage: TokenUsage; finishReason?: string; toolCallCount: number; costUsd?: number }): void {
+    state.attrs["agent.usage.prompt_tokens"] = r.usage.promptTokens;
+    state.attrs["agent.usage.completion_tokens"] = r.usage.completionTokens;
+    state.attrs["agent.usage.total_tokens"] = r.usage.totalTokens;
+    state.attrs["agent.tool_call_count"] = r.toolCallCount;
+    if (r.finishReason) state.attrs["agent.finish_reason"] = r.finishReason;
+    if (typeof r.costUsd === "number") state.attrs["agent.cost_usd"] = r.costUsd;
+    if (state.otel) {
+      for (const [k, v] of Object.entries(state.attrs)) state.otel.setAttribute(k, v as string | number | boolean);
     }
   }
 
-  end(): void {
-    this.span.setStatus({ code: 1 });
-    this.span.end();
-  }
-
-  error(err: Error | string): void {
-    const message = err instanceof Error ? err.message : err;
-    this.span.setStatus({ code: 2, message });
-    if (err instanceof Error) this.span.recordException(err);
-    this.span.end();
-  }
-}
-
-class ActiveToolCallSpan implements ToolCallSpan {
-  constructor(private span: OTelSpan, private config: TelemetryConfig) {}
-
-  setResult(record: ToolCallRecord): void {
-    this.span.setAttribute("agent.tool.duration_ms", record.duration);
-    if (record.error) {
-      this.span.setAttribute("agent.tool.error", record.error);
-    }
+  private setToolResult(state: SpanState, record: ToolCallRecord): void {
+    state.attrs["agent.tool.duration_ms"] = record.duration;
+    if (record.error) state.attrs["agent.tool.error"] = record.error;
     if (this.config.recordToolIO) {
-      this.span.setAttribute("agent.tool.input", JSON.stringify(record.input).slice(0, 4096));
-      this.span.setAttribute("agent.tool.output", JSON.stringify(record.output).slice(0, 4096));
+      state.attrs["agent.tool.input"] = JSON.stringify(record.input).slice(0, 4096);
+      state.attrs["agent.tool.output"] = JSON.stringify(record.output).slice(0, 4096);
     }
-  }
-
-  end(): void {
-    this.span.setStatus({ code: 1 });
-    this.span.end();
-  }
-
-  error(err: Error | string): void {
-    const message = err instanceof Error ? err.message : err;
-    this.span.setStatus({ code: 2, message });
-    if (err instanceof Error) this.span.recordException(err);
-    this.span.end();
+    if (state.otel) {
+      for (const [k, v] of Object.entries(state.attrs)) state.otel.setAttribute(k, v as string | number | boolean);
+    }
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// No-Op Implementations (zero overhead when telemetry is off)
-// ═══════════════════════════════════════════════════════════════════════
+// ───────────────────────────────────────────────────────────────────────
+// Backward-compat: Telemetry class re-exports SpanEmitter under the old name
+// ───────────────────────────────────────────────────────────────────────
 
-const NO_OP_MODEL_SPAN: ModelCallSpan = {
-  setResult() {},
-  end() {},
-  error() {},
-};
+export class Telemetry extends SpanEmitter {}
 
-const NO_OP_TOOL_SPAN: ToolCallSpan = {
-  setResult() {},
-  end() {},
-  error() {},
-};
+// ───────────────────────────────────────────────────────────────────────
+// Internal types
+// ───────────────────────────────────────────────────────────────────────
 
-const NO_OP_INVOKE_SPAN: InvokeSpan = {
-  modelCall() { return NO_OP_MODEL_SPAN; },
-  toolCall() { return NO_OP_TOOL_SPAN; },
-  setResult() {},
-  end() {},
-  error() {},
-};
+interface SpanState {
+  spanId: string;
+  traceId: string;
+  parentId: string | null;
+  ownerId: string;
+  runId: string | null;
+  sessionId: string | null;
+  kind: SpanKind;
+  name: string;
+  startedAt: string;
+  endedAt?: string;
+  durationMs?: number;
+  status?: "ok" | "error";
+  error?: string | null;
+  attrs: Record<string, string | number | boolean>;
+  otel: OTelSpan | null;
+}
+
+interface OpenOpts {
+  ownerId: string;
+  runId: string | null;
+  sessionId: string | null;
+  attrs?: Record<string, string | number | boolean>;
+  /** If set, parent is this state directly (used by `manifest.step()` and invoke child spans). */
+  explicitParent?: SpanState;
+}
+
+function stateToSpan(s: SpanState, status: "running" | "ok" | "error" | "cancelled"): Span {
+  return {
+    spanId: s.spanId,
+    traceId: s.traceId,
+    parentId: s.parentId,
+    ownerId: s.ownerId,
+    runId: s.runId,
+    sessionId: s.sessionId,
+    name: s.name,
+    kind: s.kind,
+    startedAt: s.startedAt,
+    endedAt: s.endedAt ?? null,
+    durationMs: s.durationMs ?? null,
+    status,
+    error: s.error ?? null,
+    attributes: { ...s.attrs },
+    events: [],
+    scores: {},
+    costUsd: typeof s.attrs["agent.cost_usd"] === "number" ? s.attrs["agent.cost_usd"] as number : null,
+  };
+}
+
+// ULID — short, sortable, URL-safe ID.
+function ulid(): string {
+  return Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
+}

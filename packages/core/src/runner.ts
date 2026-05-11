@@ -54,6 +54,7 @@ import { withRetry } from "./utils/retry.js";
 import type { RetryConfig } from "./utils/retry.js";
 import { Telemetry } from "./telemetry.js";
 import type { InvokeSpan } from "./telemetry.js";
+import { computeCost } from "./model-pricing.js";
 
 /** Maximum tool call iterations to prevent infinite loops */
 const DEFAULT_MAX_STEPS = 10;
@@ -365,6 +366,7 @@ export class Runner {
             parentRunId: options.parentRunId,
             userId: options.userId,
             sessionId: options.sessionId,
+            spanEmitter: options.spanEmitter,
           });
           runId = root.id;
           rootId = root.rootId;
@@ -752,6 +754,7 @@ export class Runner {
           parentRunId: options.parentRunId,
           userId: options.userId,
           sessionId: options.sessionId,
+          spanEmitter: options.spanEmitter,
         });
         runId = root.id;
         rootId = root.rootId;
@@ -773,11 +776,15 @@ export class Runner {
 
     const modelStr = `${modelConfig.provider}/${modelConfig.name}`;
 
+    // Use the per-request emitter when provided; fall back to the runner-level one.
+    const spanEmitter = options.spanEmitter ?? this.telemetry;
+
     // Start telemetry span
-    const span = this.telemetry.startInvoke({
+    const span = spanEmitter.startInvoke({
       agentId,
       invocationId,
       model: modelStr,
+      ownerId: options.ownerId,
       sessionId: options.sessionId,
       contextIds: options.contextIds,
       input,
@@ -882,10 +889,12 @@ export class Runner {
             options.signal,
           );
 
+          const costUsd = computeCost(result.usage, modelConfig.provider, modelConfig.name);
           modelSpan.setResult({
             usage: result.usage,
             finishReason: result.finishReason,
             toolCallCount: result.toolCalls?.length ?? 0,
+            costUsd: costUsd ?? undefined,
           });
           modelSpan.end();
         } catch (err) {

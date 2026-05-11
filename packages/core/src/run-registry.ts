@@ -8,6 +8,7 @@ import type {
   RunStore,
   SpawnRunOptions,
 } from "./types.js";
+import type { SpanEmitter, RunSpan } from "./telemetry.js";
 import { generateRunId } from "./utils/id.js";
 import { InvocationCancelledError } from "./errors.js";
 
@@ -53,6 +54,8 @@ export class InMemoryRunRegistry implements RunRegistry {
   private subscribers = new Map<string, Set<Subscriber>>();
   private seqCounters = new Map<string, number>();
   private replayBufferSize: number;
+  private runEmitters?: Map<string, SpanEmitter>;
+  private runSpans?: Map<string, RunSpan>;
 
   constructor(opts: InMemoryRunRegistryOptions = {}) {
     this.replayBufferSize = opts.replayBufferSize ?? DEFAULT_REPLAY_BUFFER_SIZE;
@@ -112,6 +115,12 @@ export class InMemoryRunRegistry implements RunRegistry {
     });
 
     void this.persist(run);
+
+    if (opts.spanEmitter) {
+      this.runEmitters ??= new Map();
+      this.runEmitters.set(run.id, opts.spanEmitter);
+    }
+
     return toExternal(run);
   }
 
@@ -126,6 +135,17 @@ export class InMemoryRunRegistry implements RunRegistry {
     }
     internal.status = "running";
     void this.persist(internal);
+
+    const emitter = this.runEmitters?.get(run.id);
+    if (emitter) {
+      this.runSpans ??= new Map();
+      this.runSpans.set(run.id, emitter.startRun({
+        ownerId: run.userId ?? "",
+        runId: run.id,
+        sessionId: run.sessionId,
+        agentId: run.agentId,
+      }));
+    }
 
     const promise = (async () => executor(internal.abortController.signal))();
     promise.then(
@@ -310,10 +330,17 @@ export class InMemoryRunRegistry implements RunRegistry {
 
   notifyCompleted(runId: string, result: InvokeResult): void {
     this.completeRun(runId, result);
+    this.runSpans?.get(runId)?.end();
+    this.runSpans?.delete(runId);
+    this.runEmitters?.delete(runId);
   }
 
   notifyFailed(runId: string, err: unknown): void {
     this.failRun(runId, err);
+    const message = err instanceof Error ? err.message : String(err);
+    this.runSpans?.get(runId)?.error(message);
+    this.runSpans?.delete(runId);
+    this.runEmitters?.delete(runId);
   }
 
   // ─── Internals ─────────────────────────────────────────────────────────

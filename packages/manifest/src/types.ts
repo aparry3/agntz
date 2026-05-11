@@ -211,6 +211,13 @@ export interface ExecutionContext {
   invokeLLM: (manifest: LLMAgentManifest, input: string, state: AgentState) => Promise<unknown>;
   /** Execute a tool call */
   invokeTool: (config: ToolCallConfig, state: AgentState) => Promise<unknown>;
+
+  /** Per-request span emitter — used by executor and pipelines to wrap manifest
+   *  and step lifecycles with spans. Null/undefined disables emission. */
+  spanEmitter?: import("@agntz/core").SpanEmitter;
+
+  /** Tenant scoping. Threaded from the worker request through to spans. */
+  ownerId?: string;
 }
 
 export interface ExecutionResult {

@@ -18,6 +18,13 @@ export interface CreateExecutionContextOptions {
    * `spawn_agent` call would fail at runtime.
    */
   runRegistry?: RunRegistry;
+
+  /** Per-request span emitter. Forwarded to runner.invoke so the executor
+   *  and runner share the same trace stack. */
+  spanEmitter?: import("@agntz/core").SpanEmitter;
+
+  /** Tenant scoping. Threaded into ExecutionContext and span metadata. */
+  ownerId?: string;
 }
 
 /**
@@ -30,8 +37,10 @@ export function createExecutionContext(
   runner: Runner,
   options: CreateExecutionContextOptions = {},
 ): ExecutionContext {
-  const { runRegistry } = options;
+  const { runRegistry, spanEmitter, ownerId } = options;
   return {
+    spanEmitter,
+    ownerId,
     resolveAgent: async (id: string) => {
       const agentDef = await runner.agents.getAgent(id);
       if (!agentDef) {
@@ -77,7 +86,11 @@ export function createExecutionContext(
           ? String(state.userQuery)
           : JSON.stringify(state);
 
-        const result = await runner.invoke(tempId, userInput, runRegistry ? { runRegistry } : undefined);
+        const result = await runner.invoke(tempId, userInput, {
+          ...(runRegistry ? { runRegistry } : {}),
+          ...(spanEmitter ? { spanEmitter } : {}),
+          ...(ownerId ? { ownerId } : {}),
+        });
         const duration = Date.now() - start;
 
         // If outputSchema is defined, try to parse structured output

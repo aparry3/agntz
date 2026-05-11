@@ -33,16 +33,24 @@ export type { ListToolsOptions } from "./mcp/list-tools.js";
 export { resolveMCPServer } from "./mcp/resolve-server.js";
 export type { ResolvedMCPServer } from "./mcp/resolve-server.js";
 
+// Pricing
+export { computeCost } from "./model-pricing.js";
+export type { ModelRate } from "./model-pricing.js";
+
 // Telemetry
-export { Telemetry } from "./telemetry.js";
+export { SpanEmitter, Telemetry } from "./telemetry.js";
 export type {
   TelemetryConfig,
   OTelTracer,
   OTelSpan,
+  RunSpan,
+  ManifestSpan,
+  StepSpan,
   InvokeSpan,
   ModelCallSpan,
   ToolCallSpan,
 } from "./telemetry.js";
+export type { TraceSink } from "./types.js";
 
 // Utilities
 export { withRetry } from "./utils/retry.js";
