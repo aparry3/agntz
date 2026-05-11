@@ -5,6 +5,7 @@ export {
   NotFoundError,
   StreamError,
 } from "./errors.js";
+export { normalizeEvent, normalizeRunEvent, normalizeTraceLiveEvent } from "./events.js";
 export type {
   AgentKind,
   AgntzClientOptions,
@@ -16,5 +17,13 @@ export type {
   RunStatus,
   RunsStartInput,
   RunsStreamInput,
+  Span,
+  SpanKind,
+  SpanStatus,
   StreamEvent,
+  TraceDetail,
+  TraceFilter,
+  TraceLiveEvent,
+  TraceSummary,
+  TracesListResult,
 } from "./types.js";
