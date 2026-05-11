@@ -407,6 +407,11 @@ export class MemoryStore implements UnifiedStore {
   }
 
   // ═══ TraceStore ═══
+  // Note: spans are shallow-copied on insert and read. Callers must not
+  // mutate `attributes`, `events`, or `scores` on a span after it crosses
+  // the store boundary. Production backends with serialization (SQLite,
+  // Postgres) get this for free; the in-memory backend trades correctness
+  // for speed and assumes well-behaved callers.
 
   async insertSpan(span: Span): Promise<void> {
     this.backend.spans.set(span.spanId, { ...span });
@@ -487,6 +492,9 @@ export class MemoryStore implements UnifiedStore {
     const summary = this.backend.summaries.get(traceId);
     if (summary && summary.ownerId !== ownerId) return;
     this.backend.summaries.delete(traceId);
+    // Spans are filtered independently by ownerId — a trace can have spans
+    // without a summary if it never finalized, and we don't want to leak
+    // across owners even if the summary disagreed.
     for (const [spanId, span] of this.backend.spans) {
       if (span.traceId === traceId && span.ownerId === ownerId) {
         this.backend.spans.delete(spanId);
@@ -524,11 +532,11 @@ function rowToRecord(row: ApiKeyRow): ApiKeyRecord {
   };
 }
 
-function encodeTraceCursor(c: { startedAt: string; traceId: string }): string {
+export function encodeTraceCursor(c: { startedAt: string; traceId: string }): string {
   return Buffer.from(JSON.stringify(c)).toString("base64url");
 }
 
-function decodeTraceCursor(s: string): { startedAt: string; traceId: string } | null {
+export function decodeTraceCursor(s: string): { startedAt: string; traceId: string } | null {
   try {
     return JSON.parse(Buffer.from(s, "base64url").toString("utf8"));
   } catch {
