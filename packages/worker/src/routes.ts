@@ -416,6 +416,45 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
     return c.json({ summary, spans });
   });
 
+  app.get("/traces/:id/stream", async (c) => {
+    const traceId = c.req.param("id");
+    const userId = getUserId(c);
+
+    // Live path: registry has active spans for this trace.
+    const inProgress = traceRegistry.getInProgress(traceId, userId);
+    if (inProgress !== null) {
+      return streamSSE(c, async (stream) => {
+        try {
+          for await (const ev of traceRegistry.subscribe(traceId, userId)) {
+            await stream.writeSSE({
+              event: ev.type,
+              data: JSON.stringify(ev),
+            });
+          }
+        } catch (err) {
+          await stream
+            .writeSSE({
+              event: "stream-error",
+              data: JSON.stringify({ error: errorMessage(err) }),
+            })
+            .catch(() => {});
+        }
+      });
+    }
+
+    // Terminal path: replay one snapshot from the store.
+    const scoped = store.forUser(userId);
+    const summary = await scoped.getSummary(traceId, userId);
+    if (!summary) return c.json({ error: "Trace not found" }, 404);
+    const spans = await scoped.getTrace(traceId, userId);
+    return streamSSE(c, async (stream) => {
+      await stream.writeSSE({
+        event: "snapshot",
+        data: JSON.stringify({ summary, spans }),
+      });
+    });
+  });
+
   app.get("/traces", async (c) => {
     const userId = getUserId(c);
 

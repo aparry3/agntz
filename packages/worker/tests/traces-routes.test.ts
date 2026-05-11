@@ -101,6 +101,49 @@ describe("GET /traces/:id", () => {
   });
 });
 
+describe("GET /traces/:id/stream", () => {
+  it("404 when the trace is unknown", async () => {
+    const { app, store } = makeApp();
+    const rawKey = await issueKey(store, "u1");
+    const res = await app.request("/traces/tr_nope/stream", {
+      method: "GET",
+      headers: bearer(rawKey),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("emits a single snapshot frame for a terminal trace and closes", async () => {
+    const { app, store } = makeApp();
+    const scoped = store.forUser("u1");
+    await scoped.upsertSummary(sampleSummary({ traceId: "tr_t" }));
+    await scoped.insertSpan(sampleSpan({ spanId: "sp_root", traceId: "tr_t" }));
+
+    const rawKey = await issueKey(store, "u1");
+    const res = await app.request("/traces/tr_t/stream", {
+      method: "GET",
+      headers: bearer(rawKey),
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toMatch(/text\/event-stream/);
+    const text = await res.text();
+    expect(text).toContain("event: snapshot");
+    // Payload contains both summary and spans
+    expect(text).toContain('"traceId":"tr_t"');
+    expect(text).toContain('"spanId":"sp_root"');
+  });
+
+  it("404 when the trace belongs to another user", async () => {
+    const { app, store } = makeApp();
+    await store.forUser("u1").upsertSummary(sampleSummary({ traceId: "tr_t" }));
+    const rawKey = await issueKey(store, "u2");
+    const res = await app.request("/traces/tr_t/stream", {
+      method: "GET",
+      headers: bearer(rawKey),
+    });
+    expect(res.status).toBe(404);
+  });
+});
+
 describe("GET /traces", () => {
   it("401 without auth", async () => {
     const { app } = makeApp();
