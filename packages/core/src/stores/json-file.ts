@@ -682,6 +682,7 @@ export class JsonFileStore implements UnifiedStore {
     await this.writeApiKeys(rows);
     return { userId: row.userId, keyId: row.id };
   }
+
 }
 
 function rowToRecord(row: ApiKeyRow): ApiKeyRecord {

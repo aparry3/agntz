@@ -25,6 +25,21 @@ export interface CreateExecutionContextOptions {
 
   /** Tenant scoping. Threaded into ExecutionContext and span metadata. */
   ownerId?: string;
+
+  /**
+   * When set, each `invokeLLM` call threads this as `parentRunId` on the
+   * inner `runner.invoke()`. The resulting Run becomes a child of the
+   * caller-provided parent, so subscribing to the parent's subtree feed
+   * also surfaces these LLM-step Runs (and their spawned children).
+   *
+   * Used by `POST /runs`, where the outer Run represents the whole
+   * manifest execution and the inner LLM steps should appear under it.
+   */
+  parentRunId?: string;
+  /** Optional userId for ToolContext + Run scoping. */
+  userId?: string;
+  /** Optional sessionId for ToolContext + Run scoping. */
+  sessionId?: string;
 }
 
 /**
@@ -37,7 +52,7 @@ export function createExecutionContext(
   runner: Runner,
   options: CreateExecutionContextOptions = {},
 ): ExecutionContext {
-  const { runRegistry, spanEmitter, ownerId } = options;
+  const { runRegistry, spanEmitter, ownerId, parentRunId, userId, sessionId } = options;
   return {
     spanEmitter,
     ownerId,
@@ -87,7 +102,7 @@ export function createExecutionContext(
           : JSON.stringify(state);
 
         const result = await runner.invoke(tempId, userInput, {
-          ...(runRegistry ? { runRegistry } : {}),
+          ...(runRegistry ? { runRegistry, parentRunId, userId, sessionId } : {}),
           ...(spanEmitter ? { spanEmitter } : {}),
           ...(ownerId ? { ownerId } : {}),
         });
