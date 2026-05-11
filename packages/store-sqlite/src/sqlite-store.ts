@@ -17,6 +17,9 @@ import type {
   LogFilter,
   Run,
   RunStatus,
+  Span,
+  TraceSummary,
+  TraceFilter,
 } from "@agntz/core";
 
 const MIGRATIONS = [
@@ -179,6 +182,49 @@ const MIGRATIONS = [
   CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(user_id, status);
 
   UPDATE schema_version SET version = 5;
+  `,
+  // v6: Distributed tracing — spans + trace summaries.
+  `
+  CREATE TABLE IF NOT EXISTS ar_spans (
+    span_id      TEXT PRIMARY KEY,
+    trace_id     TEXT NOT NULL,
+    parent_id    TEXT,
+    owner_id     TEXT NOT NULL,
+    run_id       TEXT,
+    session_id   TEXT,
+    name         TEXT NOT NULL,
+    kind         TEXT NOT NULL CHECK (kind IN ('run','manifest','step','invoke','model','tool')),
+    started_at   TEXT NOT NULL,
+    ended_at     TEXT,
+    duration_ms  INTEGER,
+    status       TEXT NOT NULL CHECK (status IN ('running','ok','error','cancelled')),
+    error        TEXT,
+    attributes   TEXT NOT NULL DEFAULT '{}',
+    events       TEXT NOT NULL DEFAULT '[]',
+    scores       TEXT NOT NULL DEFAULT '{}',
+    cost_usd     REAL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ar_spans_owner_started ON ar_spans (owner_id, started_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_ar_spans_trace ON ar_spans (trace_id);
+  CREATE INDEX IF NOT EXISTS idx_ar_spans_parent ON ar_spans (parent_id);
+
+  CREATE TABLE IF NOT EXISTS ar_trace_summaries (
+    trace_id        TEXT PRIMARY KEY,
+    owner_id        TEXT NOT NULL,
+    root_name       TEXT NOT NULL,
+    agent_id        TEXT,
+    started_at      TEXT NOT NULL,
+    ended_at        TEXT,
+    duration_ms     INTEGER,
+    span_count      INTEGER NOT NULL,
+    status          TEXT NOT NULL CHECK (status IN ('running','ok','error','cancelled')),
+    total_tokens    INTEGER NOT NULL DEFAULT 0,
+    total_cost_usd  REAL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ar_trace_summaries_owner_started ON ar_trace_summaries (owner_id, started_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_ar_trace_summaries_owner_agent ON ar_trace_summaries (owner_id, agent_id);
+
+  UPDATE schema_version SET version = 6;
   `,
 ];
 
@@ -859,6 +905,200 @@ export class SqliteStore implements UnifiedStore {
     return rows.map(rowToRun);
   }
 
+  // ═══ TraceStore ═══
+
+  async insertSpan(span: Span): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO ar_spans (
+          span_id, trace_id, parent_id, owner_id, run_id, session_id,
+          name, kind, started_at, ended_at, duration_ms, status, error,
+          attributes, events, scores, cost_usd
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        span.spanId,
+        span.traceId,
+        span.parentId,
+        span.ownerId,
+        span.runId,
+        span.sessionId,
+        span.name,
+        span.kind,
+        span.startedAt,
+        span.endedAt,
+        span.durationMs,
+        span.status,
+        span.error,
+        JSON.stringify(span.attributes),
+        JSON.stringify(span.events),
+        JSON.stringify(span.scores),
+        span.costUsd
+      );
+  }
+
+  async insertSpansBatch(spans: Span[]): Promise<void> {
+    const stmt = this.db.prepare(
+      `INSERT OR REPLACE INTO ar_spans (
+        span_id, trace_id, parent_id, owner_id, run_id, session_id,
+        name, kind, started_at, ended_at, duration_ms, status, error,
+        attributes, events, scores, cost_usd
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    const insertMany = this.db.transaction((rows: Span[]) => {
+      for (const s of rows) {
+        stmt.run(
+          s.spanId, s.traceId, s.parentId, s.ownerId, s.runId, s.sessionId,
+          s.name, s.kind, s.startedAt, s.endedAt, s.durationMs, s.status, s.error,
+          JSON.stringify(s.attributes), JSON.stringify(s.events), JSON.stringify(s.scores),
+          s.costUsd
+        );
+      }
+    });
+    insertMany(spans);
+  }
+
+  async updateSpan(spanId: string, ownerId: string, patch: Partial<Span>): Promise<void> {
+    // Owner-scoped: read first, ensure match, then re-insert (PK collision REPLACEs).
+    const existing = this.db
+      .prepare(`SELECT * FROM ar_spans WHERE span_id = ? AND owner_id = ?`)
+      .get(spanId, ownerId) as Record<string, unknown> | undefined;
+    if (!existing) return;
+    const merged: Span = { ...sqliteRowToSpan(existing), ...patch, spanId, ownerId };
+    await this.insertSpan(merged);
+  }
+
+  async upsertSummary(summary: TraceSummary): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO ar_trace_summaries (
+          trace_id, owner_id, root_name, agent_id, started_at, ended_at,
+          duration_ms, span_count, status, total_tokens, total_cost_usd
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        summary.traceId,
+        summary.ownerId,
+        summary.rootName,
+        summary.agentId,
+        summary.startedAt,
+        summary.endedAt,
+        summary.durationMs,
+        summary.spanCount,
+        summary.status,
+        summary.totalTokens,
+        summary.totalCostUsd
+      );
+  }
+
+  async getTrace(traceId: string, ownerId: string): Promise<Span[]> {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM ar_spans
+         WHERE trace_id = ? AND owner_id = ?
+         ORDER BY started_at ASC, span_id ASC`
+      )
+      .all(traceId, ownerId) as Record<string, unknown>[];
+    return rows.map(sqliteRowToSpan);
+  }
+
+  async getSummary(traceId: string, ownerId: string): Promise<TraceSummary | null> {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM ar_trace_summaries
+         WHERE trace_id = ? AND owner_id = ?`
+      )
+      .get(traceId, ownerId) as Record<string, unknown> | undefined;
+    return row ? sqliteRowToSummary(row) : null;
+  }
+
+  async listTraces(filter: TraceFilter): Promise<{ rows: TraceSummary[]; cursor?: string }> {
+    const limit = Math.min(Math.max(filter.limit ?? 50, 1), 200);
+    const clauses = [`owner_id = ?`];
+    const args: unknown[] = [filter.ownerId];
+    if (filter.agentId) {
+      clauses.push(`agent_id = ?`);
+      args.push(filter.agentId);
+    }
+    if (filter.status) {
+      clauses.push(`status = ?`);
+      args.push(filter.status);
+    }
+    if (filter.startedAfter) {
+      clauses.push(`started_at >= ?`);
+      args.push(filter.startedAfter);
+    }
+    if (filter.startedBefore) {
+      clauses.push(`started_at <= ?`);
+      args.push(filter.startedBefore);
+    }
+    if (filter.cursor) {
+      const decoded = decodeSqliteTraceCursor(filter.cursor);
+      if (decoded) {
+        clauses.push(`(started_at < ? OR (started_at = ? AND trace_id < ?))`);
+        args.push(decoded.startedAt, decoded.startedAt, decoded.traceId);
+      }
+    }
+
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM ar_trace_summaries
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY started_at DESC, trace_id DESC
+         LIMIT ?`
+      )
+      .all(...args, limit) as Record<string, unknown>[];
+
+    const summaries = rows.map(sqliteRowToSummary);
+    const cursor =
+      summaries.length === limit
+        ? encodeSqliteTraceCursor({
+            startedAt: summaries[summaries.length - 1].startedAt,
+            traceId: summaries[summaries.length - 1].traceId,
+          })
+        : undefined;
+    return { rows: summaries, cursor };
+  }
+
+  async deleteTrace(traceId: string, ownerId: string): Promise<void> {
+    const tx = this.db.transaction(() => {
+      this.db
+        .prepare(`DELETE FROM ar_spans WHERE trace_id = ? AND owner_id = ?`)
+        .run(traceId, ownerId);
+      this.db
+        .prepare(`DELETE FROM ar_trace_summaries WHERE trace_id = ? AND owner_id = ?`)
+        .run(traceId, ownerId);
+    });
+    tx();
+  }
+
+  async deleteOlderThan(ownerId: string, before: Date): Promise<number> {
+    const beforeIso = before.toISOString();
+    let deletedCount = 0;
+    const tx = this.db.transaction(() => {
+      const summaryRows = this.db
+        .prepare(
+          `SELECT trace_id FROM ar_trace_summaries
+           WHERE owner_id = ? AND started_at < ?`
+        )
+        .all(ownerId, beforeIso) as { trace_id: string }[];
+      deletedCount = summaryRows.length;
+      for (const r of summaryRows) {
+        this.db
+          .prepare(`DELETE FROM ar_spans WHERE trace_id = ? AND owner_id = ?`)
+          .run(r.trace_id, ownerId);
+      }
+      this.db
+        .prepare(
+          `DELETE FROM ar_trace_summaries
+           WHERE owner_id = ? AND started_at < ?`
+        )
+        .run(ownerId, beforeIso);
+    });
+    tx();
+    return deletedCount;
+  }
+
   // ═══ ApiKeyStore (unscoped) ═══
 
   async createApiKey(params: { userId: string; name: string }): Promise<{ record: ApiKeyRecord; rawKey: string }> {
@@ -1049,4 +1289,54 @@ function rowToApiKey(r: ApiKeyRow): ApiKeyRecord {
     lastUsedAt: r.last_used_at,
     revokedAt: r.revoked_at,
   };
+}
+
+function sqliteRowToSpan(r: Record<string, unknown>): Span {
+  return {
+    spanId: r.span_id as string,
+    traceId: r.trace_id as string,
+    parentId: (r.parent_id as string | null) ?? null,
+    ownerId: r.owner_id as string,
+    runId: (r.run_id as string | null) ?? null,
+    sessionId: (r.session_id as string | null) ?? null,
+    name: r.name as string,
+    kind: r.kind as Span["kind"],
+    startedAt: r.started_at as string,
+    endedAt: (r.ended_at as string | null) ?? null,
+    durationMs: (r.duration_ms as number | null) ?? null,
+    status: r.status as Span["status"],
+    error: (r.error as string | null) ?? null,
+    attributes: JSON.parse((r.attributes as string) ?? "{}"),
+    events: JSON.parse((r.events as string) ?? "[]"),
+    scores: JSON.parse((r.scores as string) ?? "{}"),
+    costUsd: (r.cost_usd as number | null) ?? null,
+  };
+}
+
+function sqliteRowToSummary(r: Record<string, unknown>): TraceSummary {
+  return {
+    traceId: r.trace_id as string,
+    ownerId: r.owner_id as string,
+    rootName: r.root_name as string,
+    agentId: (r.agent_id as string | null) ?? null,
+    startedAt: r.started_at as string,
+    endedAt: (r.ended_at as string | null) ?? null,
+    durationMs: (r.duration_ms as number | null) ?? null,
+    spanCount: r.span_count as number,
+    status: r.status as TraceSummary["status"],
+    totalTokens: r.total_tokens as number,
+    totalCostUsd: (r.total_cost_usd as number | null) ?? null,
+  };
+}
+
+function encodeSqliteTraceCursor(c: { startedAt: string; traceId: string }): string {
+  return Buffer.from(JSON.stringify(c)).toString("base64url");
+}
+
+function decodeSqliteTraceCursor(s: string): { startedAt: string; traceId: string } | null {
+  try {
+    return JSON.parse(Buffer.from(s, "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
 }
