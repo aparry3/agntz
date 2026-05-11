@@ -14,7 +14,11 @@ import type {
   ContextEntry,
   InvocationLog,
   LogFilter,
+  Span,
+  TraceSummary,
+  TraceFilter,
 } from "../types.js";
+import { encodeTraceCursor, decodeTraceCursor } from "./memory.js";
 
 interface StoredAgentVersion {
   agent: AgentDefinition;
@@ -399,6 +403,150 @@ export class JsonFileStore implements UnifiedStore {
   async deleteConnection(kind: ConnectionKind, id: string): Promise<void> {
     await this.ensureUserDirs();
     await unlink(this.connectionPath(kind, id)).catch(() => {});
+  }
+
+  // ═══ TraceStore ═══
+  // Spans and summaries live under basePath/traces/{spans,summaries}/.
+  // Methods take explicit ownerId params — no forUser() scoping needed.
+  // Shallow-copy contract: callers must not mutate attributes/events/scores
+  // after the span crosses the store boundary.
+
+  private spanPath(spanId: string): string {
+    return join(this.basePath, "traces", "spans", `${this.sanitizeFilename(spanId)}.json`);
+  }
+
+  private summaryPath(traceId: string): string {
+    return join(this.basePath, "traces", "summaries", `${this.sanitizeFilename(traceId)}.json`);
+  }
+
+  private async ensureTraceDirs(): Promise<void> {
+    await mkdir(join(this.basePath, "traces", "spans"), { recursive: true });
+    await mkdir(join(this.basePath, "traces", "summaries"), { recursive: true });
+  }
+
+  async insertSpan(span: Span): Promise<void> {
+    await this.ensureTraceDirs();
+    await this.writeJson(this.spanPath(span.spanId), { ...span });
+  }
+
+  async insertSpansBatch(spans: Span[]): Promise<void> {
+    await this.ensureTraceDirs();
+    await Promise.all(spans.map((s) => this.writeJson(this.spanPath(s.spanId), { ...s })));
+  }
+
+  async updateSpan(spanId: string, ownerId: string, patch: Partial<Span>): Promise<void> {
+    const existing = await this.readJson<Span>(this.spanPath(spanId));
+    if (!existing || existing.ownerId !== ownerId) return;
+    await this.writeJson(this.spanPath(spanId), { ...existing, ...patch, spanId, ownerId });
+  }
+
+  async upsertSummary(summary: TraceSummary): Promise<void> {
+    await this.ensureTraceDirs();
+    await this.writeJson(this.summaryPath(summary.traceId), { ...summary });
+  }
+
+  async getTrace(traceId: string, ownerId: string): Promise<Span[]> {
+    const spansDir = join(this.basePath, "traces", "spans");
+    const files = await readdir(spansDir).catch(() => []);
+    const out: Span[] = [];
+    for (const file of files) {
+      if (!file.endsWith(".json")) continue;
+      const s = await this.readJson<Span>(join(spansDir, file));
+      if (s && s.traceId === traceId && s.ownerId === ownerId) out.push({ ...s });
+    }
+    return out.sort(
+      (a, b) => a.startedAt.localeCompare(b.startedAt) || a.spanId.localeCompare(b.spanId)
+    );
+  }
+
+  async getSummary(traceId: string, ownerId: string): Promise<TraceSummary | null> {
+    const s = await this.readJson<TraceSummary>(this.summaryPath(traceId));
+    if (!s || s.ownerId !== ownerId) return null;
+    return { ...s };
+  }
+
+  async listTraces(filter: TraceFilter): Promise<{ rows: TraceSummary[]; cursor?: string }> {
+    const limit = Math.min(Math.max(filter.limit ?? 50, 1), 200);
+    const summariesDir = join(this.basePath, "traces", "summaries");
+    const files = await readdir(summariesDir).catch(() => []);
+    const all: TraceSummary[] = [];
+    for (const file of files) {
+      if (!file.endsWith(".json")) continue;
+      const s = await this.readJson<TraceSummary>(join(summariesDir, file));
+      if (!s) continue;
+      if (s.ownerId !== filter.ownerId) continue;
+      if (filter.agentId && s.agentId !== filter.agentId) continue;
+      if (filter.status && s.status !== filter.status) continue;
+      if (filter.startedAfter && s.startedAt < filter.startedAfter) continue;
+      if (filter.startedBefore && s.startedAt > filter.startedBefore) continue;
+      all.push({ ...s });
+    }
+    all.sort(
+      (a, b) => b.startedAt.localeCompare(a.startedAt) || b.traceId.localeCompare(a.traceId)
+    );
+
+    let startIdx = 0;
+    if (filter.cursor) {
+      const decoded = decodeTraceCursor(filter.cursor);
+      if (decoded) {
+        startIdx = all.findIndex(
+          (r) =>
+            r.startedAt < decoded.startedAt ||
+            (r.startedAt === decoded.startedAt && r.traceId < decoded.traceId)
+        );
+        if (startIdx === -1) startIdx = all.length;
+      }
+    }
+
+    const rows = all.slice(startIdx, startIdx + limit);
+    const cursor =
+      rows.length === limit && startIdx + limit < all.length
+        ? encodeTraceCursor({
+            startedAt: rows[rows.length - 1].startedAt,
+            traceId: rows[rows.length - 1].traceId,
+          })
+        : undefined;
+    return { rows, cursor };
+  }
+
+  async deleteTrace(traceId: string, ownerId: string): Promise<void> {
+    const summary = await this.readJson<TraceSummary>(this.summaryPath(traceId));
+    if (summary && summary.ownerId !== ownerId) return;
+    await unlink(this.summaryPath(traceId)).catch(() => {});
+    const spansDir = join(this.basePath, "traces", "spans");
+    const files = await readdir(spansDir).catch(() => []);
+    for (const file of files) {
+      if (!file.endsWith(".json")) continue;
+      const s = await this.readJson<Span>(join(spansDir, file));
+      if (s && s.traceId === traceId && s.ownerId === ownerId) {
+        await unlink(join(spansDir, file)).catch(() => {});
+      }
+    }
+  }
+
+  async deleteOlderThan(ownerId: string, before: Date): Promise<number> {
+    const beforeIso = before.toISOString();
+    const summariesDir = join(this.basePath, "traces", "summaries");
+    const files = await readdir(summariesDir).catch(() => []);
+    const toDelete: string[] = [];
+    for (const file of files) {
+      if (!file.endsWith(".json")) continue;
+      const s = await this.readJson<TraceSummary>(join(summariesDir, file));
+      if (s && s.ownerId === ownerId && s.startedAt < beforeIso) toDelete.push(s.traceId);
+    }
+    for (const traceId of toDelete) {
+      await unlink(this.summaryPath(traceId)).catch(() => {});
+      const spansDir = join(this.basePath, "traces", "spans");
+      const spanFiles = await readdir(spansDir).catch(() => []);
+      for (const file of spanFiles) {
+        if (!file.endsWith(".json")) continue;
+        const s = await this.readJson<Span>(join(spansDir, file));
+        if (s && s.traceId === traceId && s.ownerId === ownerId) {
+          await unlink(join(spansDir, file)).catch(() => {});
+        }
+      }
+    }
+    return toDelete.length;
   }
 
   // ═══ ApiKeyStore (unscoped) ═══
