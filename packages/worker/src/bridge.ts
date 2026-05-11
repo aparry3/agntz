@@ -18,6 +18,20 @@ export interface CreateExecutionContextOptions {
    * `spawn_agent` call would fail at runtime.
    */
   runRegistry?: RunRegistry;
+  /**
+   * When set, each `invokeLLM` call threads this as `parentRunId` on the
+   * inner `runner.invoke()`. The resulting Run becomes a child of the
+   * caller-provided parent, so subscribing to the parent's subtree feed
+   * also surfaces these LLM-step Runs (and their spawned children).
+   *
+   * Used by `POST /runs`, where the outer Run represents the whole
+   * manifest execution and the inner LLM steps should appear under it.
+   */
+  parentRunId?: string;
+  /** Optional userId for ToolContext + Run scoping. */
+  userId?: string;
+  /** Optional sessionId for ToolContext + Run scoping. */
+  sessionId?: string;
 }
 
 /**
@@ -30,7 +44,7 @@ export function createExecutionContext(
   runner: Runner,
   options: CreateExecutionContextOptions = {},
 ): ExecutionContext {
-  const { runRegistry } = options;
+  const { runRegistry, parentRunId, userId, sessionId } = options;
   return {
     resolveAgent: async (id: string) => {
       const agentDef = await runner.agents.getAgent(id);
@@ -77,7 +91,13 @@ export function createExecutionContext(
           ? String(state.userQuery)
           : JSON.stringify(state);
 
-        const result = await runner.invoke(tempId, userInput, runRegistry ? { runRegistry } : undefined);
+        const result = await runner.invoke(
+          tempId,
+          userInput,
+          runRegistry
+            ? { runRegistry, parentRunId, userId, sessionId }
+            : undefined,
+        );
         const duration = Date.now() - start;
 
         // If outputSchema is defined, try to parse structured output

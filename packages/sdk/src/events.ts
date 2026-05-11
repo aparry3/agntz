@@ -1,5 +1,11 @@
 import { StreamError } from "./errors.js";
-import type { AgentKind, SseFrame, StreamEvent } from "./types.js";
+import type {
+  AgentKind,
+  MultiplexedRunEvent,
+  Run,
+  SseFrame,
+  StreamEvent,
+} from "./types.js";
 
 /**
  * Map an SSE wire frame to a public StreamEvent. Unknown events return null
@@ -72,4 +78,35 @@ function asStateRecord(payload: unknown): Record<string, unknown> {
     return state as Record<string, unknown>;
   }
   return {};
+}
+
+/**
+ * Map an SSE wire frame from /runs/:id/stream to a typed MultiplexedRunEvent.
+ * Returns null for unknown event types so the wire format can evolve. Throws
+ * StreamError on invalid JSON or shape violations.
+ */
+export function normalizeRunEvent(frame: SseFrame): MultiplexedRunEvent | null {
+  if (!frame.event) return null;
+  const payload = parseData(frame.data, frame.event);
+  switch (frame.event) {
+    case "run-spawn":
+    case "text-delta":
+    case "tool-call-start":
+    case "tool-call-end":
+    case "step-complete":
+    case "draining":
+    case "run-complete":
+    case "run-error":
+    case "run-cancelled":
+      return payload as MultiplexedRunEvent;
+    case "snapshot": {
+      return { type: "snapshot", run: payload as Run };
+    }
+    case "stream-error": {
+      const error = asString(payload, "error");
+      throw new StreamError(error, { code: "STREAM_ERROR" });
+    }
+    default:
+      return null;
+  }
 }

@@ -1,7 +1,16 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
-import { createRunner, InMemoryRunRegistry, MemoryStore, type Runner, type UnifiedStore } from "@agntz/core";
+import {
+  createRunner,
+  InMemoryRunRegistry,
+  MemoryStore,
+  type InvokeResult,
+  type Run,
+  type Runner,
+  type RunRegistry,
+  type UnifiedStore,
+} from "@agntz/core";
 import { execute, parseManifest, validateManifestFull } from "@agntz/manifest";
 import type { AgentManifest } from "@agntz/manifest";
 import { createExecutionContext } from "./bridge.js";
@@ -13,6 +22,22 @@ import { buildValidationContext } from "./validation.js";
 export interface WorkerAPIOptions {
   store: UnifiedStore;
   internalSecret: string;
+  /**
+   * Process-wide RunRegistry used by the /runs/* endpoints. If omitted, the
+   * worker constructs one with persistRun routed to the user-scoped store
+   * and a 5-minute grace period before evicting terminal runs from memory.
+   *
+   * Exposed for tests that need to inspect registry state (e.g. assert
+   * eviction) and for advanced deployments that want a shared registry
+   * across multiple Hono apps.
+   */
+  runRegistry?: RunRegistry;
+  /**
+   * How long terminal Runs stay resident in memory before eviction. Only
+   * honoured when the worker constructs its own registry (i.e. when
+   * `runRegistry` is not supplied). Default 300_000 (5 min).
+   */
+  runGracePeriodMs?: number;
 }
 
 /**
@@ -23,8 +48,27 @@ export interface WorkerAPIOptions {
  * and executed via an ephemeral in-memory runner. They don't touch the user's
  * store — they're application-level features that ship with the code.
  */
-export function createWorkerAPI({ store, internalSecret }: WorkerAPIOptions): Hono {
+export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
+  const { store, internalSecret } = opts;
   const app = new Hono();
+
+  // Process-wide registry for /runs/*. Runs from all users share this
+  // instance; routes filter on ownership before exposing anything.
+  const runRegistry: RunRegistry =
+    opts.runRegistry ??
+    new InMemoryRunRegistry({
+      gracePeriodMs: opts.runGracePeriodMs,
+      persistRun: async (run) => {
+        if (!run.userId) return;
+        try {
+          await store.forUser(run.userId).putRun(run);
+        } catch (err) {
+          console.error(
+            `[run-store] persist failed run=${run.id} user=${run.userId}: ${(err as Error).message}`,
+          );
+        }
+      },
+    });
 
   app.use("*", cors());
 
@@ -34,6 +78,8 @@ export function createWorkerAPI({ store, internalSecret }: WorkerAPIOptions): Ho
 
   app.use("/run", workerAuth({ store, internalSecret }));
   app.use("/run/stream", workerAuth({ store, internalSecret }));
+  app.use("/runs", workerAuth({ store, internalSecret }));
+  app.use("/runs/*", workerAuth({ store, internalSecret }));
   app.use("/validate", workerAuth({ store, internalSecret }));
   app.use("/system/agents", internalOnlyAuth({ internalSecret }));
   app.use("/system/agents/*", internalOnlyAuth({ internalSecret }));
@@ -172,7 +218,194 @@ export function createWorkerAPI({ store, internalSecret }: WorkerAPIOptions): Ho
     }
   });
 
+  // ───────────────────────────────────────────────────────────────────────
+  // /runs/* — long-lived, observable Runs backed by the process-wide registry
+  // ───────────────────────────────────────────────────────────────────────
+
+  app.post("/runs", async (c) => {
+    const start = Date.now();
+    let agentIdForLog: string | undefined;
+    try {
+      const userId = getUserId(c);
+      const body = (getCachedBody(c) ?? (await c.req.json())) as {
+        agentId?: string;
+        input?: unknown;
+        sessionId?: string;
+      };
+      const { agentId, input, sessionId } = body;
+      agentIdForLog = agentId;
+
+      if (!agentId) {
+        return c.json({ error: "Missing required field: agentId" }, 400);
+      }
+
+      const inputStr =
+        typeof input === "string"
+          ? input
+          : input == null
+            ? ""
+            : JSON.stringify(input);
+
+      const run = runRegistry.create({
+        agentId,
+        input: inputStr,
+        userId,
+        sessionId,
+      });
+
+      console.log(
+        `[runs] start run=${run.id} agent=${agentId} user=${userId} ` +
+        `inputLen=${inputStr.length}`,
+      );
+
+      runRegistry.start(run, async (signal) => {
+        const runStart = Date.now();
+        const { runner, manifest } = await resolveRunnerAndManifest(
+          store,
+          userId,
+          agentId,
+        );
+        const ctx = createExecutionContext(runner, {
+          runRegistry,
+          parentRunId: run.id,
+          userId,
+          sessionId,
+        });
+        const result = await execute(manifest, input ?? "", ctx);
+        if (signal.aborted) {
+          throw signal.reason instanceof Error
+            ? signal.reason
+            : new Error(String(signal.reason ?? "aborted"));
+        }
+        const outputStr =
+          typeof result.output === "string"
+            ? result.output
+            : JSON.stringify(result.output);
+        const invokeResult: InvokeResult = {
+          output: outputStr,
+          invocationId: run.id,
+          toolCalls: [],
+          usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          duration: Date.now() - runStart,
+          model: "manifest",
+        };
+        return invokeResult;
+      });
+
+      const created = runRegistry.get(run.id) ?? run;
+      return c.json(runToJSON(created), 201, {
+        Location: `/runs/${run.id}`,
+      });
+    } catch (error) {
+      console.error(
+        `[runs] start failed agent=${agentIdForLog} ${Date.now() - start}ms: ${errorMessage(error)}`,
+      );
+      const status = isNotFound(error) ? 404 : 500;
+      return c.json({ error: errorMessage(error) }, status);
+    }
+  });
+
+  app.get("/runs/:id", async (c) => {
+    const runId = c.req.param("id");
+    const userId = getUserId(c);
+    const run = await loadOwnedRun(runRegistry, store, userId, runId);
+    if (!run) return c.json({ error: "Run not found" }, 404);
+    return c.json(runToJSON(run));
+  });
+
+  app.get("/runs/:id/stream", async (c) => {
+    const runId = c.req.param("id");
+    const userId = getUserId(c);
+    const sinceParam = c.req.query("since");
+    const sinceSeq = sinceParam ? Number(sinceParam) : undefined;
+    if (sinceParam && !Number.isFinite(sinceSeq)) {
+      return c.json({ error: "Invalid `since` query param" }, 400);
+    }
+
+    const live = runRegistry.get(runId);
+    if (live) {
+      if (live.userId !== userId) {
+        return c.json({ error: "Run not found" }, 404);
+      }
+      // rootId may not equal id for spawned children; use root for subtree feed.
+      const rootId = live.rootId;
+      return streamSSE(c, async (stream) => {
+        try {
+          for await (const ev of runRegistry.subscribe(rootId, sinceSeq)) {
+            await stream.writeSSE({
+              event: ev.type,
+              data: JSON.stringify(ev),
+              id: String(ev.seq),
+            });
+          }
+        } catch (err) {
+          await stream
+            .writeSSE({
+              event: "stream-error",
+              data: JSON.stringify({ error: errorMessage(err) }),
+            })
+            .catch(() => {});
+        }
+      });
+    }
+
+    // Not in memory — fall back to RunStore for a one-shot snapshot.
+    const stored = await store
+      .forUser(userId)
+      .getRun(runId)
+      .catch(() => null);
+    if (!stored) return c.json({ error: "Run not found" }, 404);
+    return streamSSE(c, async (stream) => {
+      await stream.writeSSE({
+        event: "snapshot",
+        data: JSON.stringify(stored),
+      });
+    });
+  });
+
+  app.post("/runs/:id/cancel", async (c) => {
+    const runId = c.req.param("id");
+    const userId = getUserId(c);
+    const run = runRegistry.get(runId);
+    if (!run || run.userId !== userId) {
+      return c.json({ error: "Run not found" }, 404);
+    }
+    runRegistry.cancel(runId, "cancelled by user");
+    // Status flips asynchronously when the executor's promise rejects.
+    // Return the current view so the client can poll for terminal.
+    const after = runRegistry.get(runId) ?? run;
+    return c.json(runToJSON(after));
+  });
+
   return app;
+}
+
+/**
+ * Load a Run owned by the given user. Checks the in-memory registry first;
+ * falls back to the durable RunStore for evicted/historical runs. Returns
+ * null if the run doesn't exist or isn't owned by the user (caller should
+ * 404 in both cases — no distinguishing).
+ */
+async function loadOwnedRun(
+  registry: RunRegistry,
+  store: UnifiedStore,
+  userId: string,
+  runId: string,
+): Promise<Run | null> {
+  const live = registry.get(runId);
+  if (live) return live.userId === userId ? live : null;
+  return store
+    .forUser(userId)
+    .getRun(runId)
+    .catch(() => null);
+}
+
+/**
+ * Wire-format projection of a Run. Drops nothing currently, but keeps the
+ * route handler out of the business of shaping Run records.
+ */
+function runToJSON(run: Run): Run {
+  return run;
 }
 
 async function resolveRunnerAndManifest(

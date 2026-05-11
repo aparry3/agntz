@@ -14,6 +14,7 @@ import type {
   ContextEntry,
   InvocationLog,
   LogFilter,
+  Run,
 } from "../types.js";
 
 interface StoredAgentVersion {
@@ -460,6 +461,73 @@ export class JsonFileStore implements UnifiedStore {
     row.lastUsedAt = new Date().toISOString();
     await this.writeApiKeys(rows);
     return { userId: row.userId, keyId: row.id };
+  }
+
+  // ═══ RunStore ═══
+
+  private runsFile(): string {
+    return join(this.userRoot(), "runs.json");
+  }
+
+  private async readRuns(): Promise<Run[]> {
+    try {
+      const raw = await readFile(this.runsFile(), "utf-8");
+      return JSON.parse(raw) as Run[];
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw err;
+    }
+  }
+
+  private async writeRuns(rows: Run[]): Promise<void> {
+    await this.ensureUserDirs();
+    await writeFile(this.runsFile(), JSON.stringify(rows, null, 2));
+  }
+
+  async putRun(run: Run): Promise<void> {
+    const rows = await this.readRuns();
+    const idx = rows.findIndex((r) => r.id === run.id);
+    if (idx >= 0) rows[idx] = run;
+    else rows.push(run);
+    await this.writeRuns(rows);
+  }
+
+  async getRun(runId: string): Promise<Run | null> {
+    const rows = await this.readRuns();
+    return rows.find((r) => r.id === runId) ?? null;
+  }
+
+  async listChildren(parentRunId: string): Promise<Run[]> {
+    const rows = await this.readRuns();
+    return rows
+      .filter((r) => r.parentId === parentRunId)
+      .sort((a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id));
+  }
+
+  async listSubtree(rootId: string): Promise<Run[]> {
+    const rows = await this.readRuns();
+    const root = rows.find((r) => r.id === rootId);
+    if (!root) return [];
+    const byParent = new Map<string, Run[]>();
+    for (const r of rows) {
+      if (r.parentId) {
+        const list = byParent.get(r.parentId) ?? [];
+        list.push(r);
+        byParent.set(r.parentId, list);
+      }
+    }
+    const out: Run[] = [root];
+    const queue: string[] = [rootId];
+    while (queue.length > 0) {
+      const id = queue.shift() as string;
+      const kids = byParent.get(id);
+      if (!kids) continue;
+      for (const k of kids) {
+        out.push(k);
+        queue.push(k.id);
+      }
+    }
+    return out.sort((a, b) => a.depth - b.depth || a.startedAt - b.startedAt || a.id.localeCompare(b.id));
   }
 }
 

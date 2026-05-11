@@ -1,4 +1,4 @@
-export { AgntzClient, AgentsResource } from "./client.js";
+export { AgntzClient, AgentsResource, RunsResource } from "./client.js";
 export {
   AgntzError,
   AuthenticationError,
@@ -9,7 +9,12 @@ export type {
   AgentKind,
   AgntzClientOptions,
   HealthResult,
+  MultiplexedRunEvent,
+  Run,
   RunInput,
   RunResult,
+  RunStatus,
+  RunsStartInput,
+  RunsStreamInput,
   StreamEvent,
 } from "./types.js";
