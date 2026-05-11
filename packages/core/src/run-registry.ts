@@ -5,7 +5,6 @@ import type {
   Run,
   RunRegistry,
   RunStatus,
-  RunStore,
   SpawnRunOptions,
 } from "./types.js";
 import type { SpanEmitter, RunSpan } from "./telemetry.js";
@@ -13,6 +12,7 @@ import { generateRunId } from "./utils/id.js";
 import { InvocationCancelledError } from "./errors.js";
 
 const DEFAULT_REPLAY_BUFFER_SIZE = 1000;
+const DEFAULT_GRACE_PERIOD_MS = 5 * 60 * 1000;
 
 interface RunInternal extends Run {
   abortController: AbortController;
@@ -34,18 +34,40 @@ export type RunExecutor = (signal: AbortSignal) => Promise<InvokeResult>;
 export interface InMemoryRunRegistryOptions {
   /** Max events buffered per root for replay on late subscribe (default 1000). */
   replayBufferSize?: number;
-  /** Optional persistence layer. */
-  store?: RunStore;
+  /**
+   * Optional persistence callback. Fired on every Run state transition
+   * (create, start, complete, fail, cancel). The callback is responsible
+   * for any user-scoping the underlying store requires — the registry only
+   * provides the `Run` record, not a userId-aware store handle.
+   *
+   * Errors are swallowed to keep in-process execution running. Hook this
+   * up to logging on your end if you want visibility.
+   */
+  persistRun?: (run: Run) => void | Promise<void>;
+  /**
+   * How long to keep a Run resident in memory after it reaches a terminal
+   * state. After this window, the Run's entry, replay buffer, and any
+   * lingering subscribers are evicted. Subsequent `get`/`subscribe` calls
+   * for this id will miss the registry — readers should fall back to the
+   * durable RunStore (or accept a 404).
+   *
+   * Default: 300_000 (5 minutes). Set to 0 to evict synchronously on
+   * terminal (useful for tests). Set to Infinity to never evict (not
+   * recommended for long-running processes).
+   */
+  gracePeriodMs?: number;
 }
 
 /**
  * In-process Run registry. Holds the AbortController tree, replay buffers,
  * and the pending-child-result queue. Designed to be wired into a `Runner`
  * by passing it as `runRegistry` in `InvokeOptions`.
+ *
+ * Process-wide use: one instance per worker, with `persistRun` routing each
+ * Run to the appropriate user-scoped store. The registry doesn't know about
+ * users — callers filter on ownership at the route layer.
  */
 export class InMemoryRunRegistry implements RunRegistry {
-  readonly store?: RunStore;
-
   private runs = new Map<string, RunInternal>();
   private childrenByParent = new Map<string, Set<string>>();
   private pending = new Map<string, PendingChildResult[]>();
@@ -53,13 +75,17 @@ export class InMemoryRunRegistry implements RunRegistry {
   private replayBuffers = new Map<string, MultiplexedEvent[]>();
   private subscribers = new Map<string, Set<Subscriber>>();
   private seqCounters = new Map<string, number>();
+  private evictionTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private replayBufferSize: number;
   private runEmitters?: Map<string, SpanEmitter>;
   private runSpans?: Map<string, RunSpan>;
+  private gracePeriodMs: number;
+  private persistRun?: (run: Run) => void | Promise<void>;
 
   constructor(opts: InMemoryRunRegistryOptions = {}) {
     this.replayBufferSize = opts.replayBufferSize ?? DEFAULT_REPLAY_BUFFER_SIZE;
-    this.store = opts.store;
+    this.gracePeriodMs = opts.gracePeriodMs ?? DEFAULT_GRACE_PERIOD_MS;
+    this.persistRun = opts.persistRun;
   }
 
   // ─── Lifecycle ──────────────────────────────────────────────────────────
@@ -260,7 +286,8 @@ export class InMemoryRunRegistry implements RunRegistry {
       for (const sub of subs) sub.push(stamped);
     }
 
-    // Auto-close subscribers when the root run reaches a terminal event.
+    // Auto-close subscribers when the root run reaches a terminal event,
+    // then schedule eviction of the entire subtree after the grace period.
     if (
       stamped.runId === rootId &&
       (stamped.type === "run-complete" ||
@@ -273,6 +300,7 @@ export class InMemoryRunRegistry implements RunRegistry {
           for (const sub of subs2) sub.close();
         }
       });
+      this.scheduleEviction(rootId);
     }
   }
 
@@ -401,13 +429,81 @@ export class InMemoryRunRegistry implements RunRegistry {
   }
 
   private persist(run: RunInternal): Promise<void> {
-    const store = this.store;
-    if (!store) return Promise.resolve();
+    const cb = this.persistRun;
+    if (!cb) return Promise.resolve();
     return Promise.resolve()
-      .then(() => store.putRun(toExternal(run)))
+      .then(() => cb(toExternal(run)))
       .catch(() => {
-        // RunStore failures should not break in-process execution.
+        // Persistence failures should not break in-process execution.
       });
+  }
+
+  /**
+   * Schedule eviction of an entire terminal subtree after the grace period.
+   * Should only be called with a rootId. Replay buffer + per-run entries +
+   * subscribers are dropped at that point; readers fall back to the durable
+   * store.
+   */
+  private scheduleEviction(rootId: string): void {
+    const grace = this.gracePeriodMs;
+    if (!Number.isFinite(grace)) return;
+    if (this.evictionTimers.has(rootId)) return;
+
+    const sweep = () => this.evictSubtree(rootId);
+    if (grace <= 0) {
+      // Defer one turn so any synchronously-attached subscribers can read
+      // the terminal replay buffer first.
+      queueMicrotask(sweep);
+      return;
+    }
+    const timer = setTimeout(sweep, grace);
+    if (typeof (timer as { unref?: () => void }).unref === "function") {
+      (timer as { unref: () => void }).unref();
+    }
+    this.evictionTimers.set(rootId, timer);
+  }
+
+  /**
+   * Drop all in-memory state for a root's entire subtree. Safe to call
+   * manually (used by tests). No-op if the root isn't terminal — eviction
+   * during execution would orphan still-running children.
+   */
+  private evictSubtree(rootId: string): void {
+    const root = this.runs.get(rootId);
+    if (!root) {
+      // Already gone, but still clean up shared-key state.
+      this.replayBuffers.delete(rootId);
+      this.seqCounters.delete(rootId);
+      this.subscribers.delete(rootId);
+      this.evictionTimers.delete(rootId);
+      return;
+    }
+    if (!isTerminal(root.status)) return;
+
+    // Collect every descendant via BFS over childrenByParent.
+    const toRemove: string[] = [rootId];
+    const queue: string[] = [rootId];
+    while (queue.length > 0) {
+      const id = queue.shift() as string;
+      const kids = this.childrenByParent.get(id);
+      if (!kids) continue;
+      for (const childId of kids) {
+        toRemove.push(childId);
+        queue.push(childId);
+      }
+    }
+
+    for (const id of toRemove) {
+      this.runs.delete(id);
+      this.pending.delete(id);
+      this.waiters.delete(id);
+      this.childrenByParent.delete(id);
+    }
+    // Root-keyed bookkeeping
+    this.replayBuffers.delete(rootId);
+    this.seqCounters.delete(rootId);
+    this.subscribers.delete(rootId);
+    this.evictionTimers.delete(rootId);
   }
 }
 

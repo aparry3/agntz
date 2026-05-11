@@ -1,17 +1,22 @@
 import { StreamError } from "./errors.js";
-import { normalizeEvent } from "./events.js";
+import { normalizeEvent, normalizeRunEvent } from "./events.js";
 import { composeSignal, sendRequest } from "./fetch.js";
 import { parseSSE } from "./sse.js";
 import type {
   AgntzClientOptions,
   HealthResult,
+  MultiplexedRunEvent,
+  Run,
   RunInput,
   RunResult,
+  RunsStartInput,
+  RunsStreamInput,
   StreamEvent,
 } from "./types.js";
 
 export class AgntzClient {
   readonly agents: AgentsResource;
+  readonly runs: RunsResource;
   private readonly apiKey: string;
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
@@ -25,6 +30,18 @@ export class AgntzClient {
     this.fetchImpl = opts.fetch ?? fetch;
     this.defaultSignal = opts.defaultSignal;
     this.agents = new AgentsResource(this);
+    this.runs = new RunsResource(this);
+  }
+
+  /** @internal */
+  get _apiKey(): string { return this.apiKey; }
+  /** @internal */
+  get _baseUrl(): string { return this.baseUrl; }
+  /** @internal */
+  get _fetchImpl(): typeof fetch { return this.fetchImpl; }
+  /** @internal */
+  _composeSignal(signal?: AbortSignal): AbortSignal | undefined {
+    return composeSignal(this.defaultSignal, signal);
   }
 
   async health(): Promise<HealthResult> {
@@ -72,6 +89,99 @@ export class AgentsResource {
 
   stream(input: RunInput): AsyncGenerator<StreamEvent, void, void> {
     return streamAgentEvents(this.client, input);
+  }
+}
+
+export class RunsResource {
+  constructor(private readonly client: AgntzClient) {}
+
+  /** Start a run and return its handle immediately (status: "running"). */
+  async start(input: RunsStartInput): Promise<Run> {
+    const signal = this.client._composeSignal(input.signal);
+    const body: Record<string, unknown> = { agentId: input.agentId };
+    if (input.input !== undefined) body.input = input.input;
+    if (input.sessionId !== undefined) body.sessionId = input.sessionId;
+    const res = await sendRequest({
+      baseUrl: this.client._baseUrl,
+      path: "/runs",
+      method: "POST",
+      apiKey: this.client._apiKey,
+      body,
+      signal,
+      fetchImpl: this.client._fetchImpl,
+    });
+    return (await res.json()) as Run;
+  }
+
+  /** Fetch the current state of a Run (live registry or durable store). */
+  async get(runId: string, opts: { signal?: AbortSignal } = {}): Promise<Run> {
+    const signal = this.client._composeSignal(opts.signal);
+    const res = await sendRequest({
+      baseUrl: this.client._baseUrl,
+      path: `/runs/${encodeURIComponent(runId)}`,
+      method: "GET",
+      apiKey: this.client._apiKey,
+      signal,
+      fetchImpl: this.client._fetchImpl,
+    });
+    return (await res.json()) as Run;
+  }
+
+  /**
+   * Stream multiplexed events for a Run's subtree. Pass `since` to resume
+   * from a specific seq after a reconnect. If the Run has been evicted, the
+   * stream emits a single `snapshot` event and closes.
+   */
+  stream(input: RunsStreamInput): AsyncGenerator<MultiplexedRunEvent, void, void> {
+    return streamRunEvents(this.client, input);
+  }
+
+  /** Cancel a Run and cascade to all descendants. */
+  async cancel(runId: string, opts: { signal?: AbortSignal } = {}): Promise<Run> {
+    const signal = this.client._composeSignal(opts.signal);
+    const res = await sendRequest({
+      baseUrl: this.client._baseUrl,
+      path: `/runs/${encodeURIComponent(runId)}/cancel`,
+      method: "POST",
+      apiKey: this.client._apiKey,
+      signal,
+      fetchImpl: this.client._fetchImpl,
+    });
+    return (await res.json()) as Run;
+  }
+}
+
+async function* streamRunEvents(
+  client: AgntzClient,
+  input: RunsStreamInput,
+): AsyncGenerator<MultiplexedRunEvent, void, void> {
+  const signal = client._composeSignal(input.signal);
+  const path =
+    `/runs/${encodeURIComponent(input.runId)}/stream` +
+    (typeof input.since === "number" ? `?since=${input.since}` : "");
+  const res = await sendRequest({
+    baseUrl: client._baseUrl,
+    path,
+    method: "GET",
+    apiKey: client._apiKey,
+    signal,
+    accept: "text/event-stream",
+    fetchImpl: client._fetchImpl,
+  });
+  if (!res.body) {
+    throw new StreamError("Worker returned no stream body", { status: res.status });
+  }
+
+  for await (const frame of parseSSE(res.body, signal)) {
+    const ev = normalizeRunEvent(frame);
+    if (!ev) continue;
+    yield ev;
+    if (ev.type === "snapshot" || ev.type === "run-complete" || ev.type === "run-error" || ev.type === "run-cancelled") {
+      // For root terminal or snapshot, close the iterator cleanly.
+      if (ev.type === "snapshot" || ev.runId === input.runId) {
+        return;
+      }
+    }
   }
 }
 

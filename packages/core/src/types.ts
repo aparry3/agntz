@@ -615,8 +615,6 @@ export interface RunRegistry {
    * Idempotent.
    */
   notifyFailed(runId: string, err: unknown): void;
-  /** Optional persistence layer. */
-  readonly store?: RunStore;
 }
 
 /**
