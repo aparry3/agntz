@@ -145,3 +145,68 @@ export type MultiplexedRunEvent =
   | { type: "run-cancelled"; runId: string; seq: number }
   /** Emitted when the run has been evicted from memory and only a final snapshot is available. */
   | { type: "snapshot"; run: Run };
+
+// ─── Traces ────────────────────────────────────────────────────────────
+
+export type SpanKind = "run" | "manifest" | "step" | "invoke" | "model" | "tool";
+export type SpanStatus = "running" | "ok" | "error" | "cancelled";
+
+export interface Span {
+  spanId: string;
+  traceId: string;
+  parentId: string | null;
+  ownerId: string;
+  runId: string | null;
+  sessionId: string | null;
+  name: string;
+  kind: SpanKind;
+  startedAt: string;
+  endedAt: string | null;
+  durationMs: number | null;
+  status: SpanStatus;
+  error: string | null;
+  attributes: Record<string, unknown>;
+  events: Array<{ ts: string; name: string; data?: unknown }>;
+  scores: Record<string, { value: number; reason?: string }>;
+  costUsd: number | null;
+}
+
+export interface TraceSummary {
+  traceId: string;
+  ownerId: string;
+  rootName: string;
+  agentId: string | null;
+  startedAt: string;
+  endedAt: string | null;
+  durationMs: number | null;
+  spanCount: number;
+  status: SpanStatus;
+  totalTokens: number;
+  totalCostUsd: number | null;
+}
+
+/** Filter passed to TracesResource.list. `ownerId` is implicit (auth). */
+export interface TraceFilter {
+  agentId?: string;
+  status?: SpanStatus;
+  startedAfter?: string;
+  startedBefore?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+export type TraceLiveEvent =
+  | { type: "span-start"; span: Span }
+  | { type: "span-end"; spanId: string; patch: Partial<Span> }
+  | { type: "trace-done"; summary: TraceSummary }
+  | { type: "snapshot"; summary: TraceSummary; spans: Span[] };
+
+export interface TracesListResult {
+  rows: TraceSummary[];
+  cursor?: string;
+}
+
+export interface TraceDetail {
+  summary: TraceSummary;
+  spans: Span[];
+}

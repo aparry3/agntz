@@ -10,6 +10,7 @@ import {
   type Run,
   type Runner,
   type RunRegistry,
+  type TraceFilter,
   type UnifiedStore,
 } from "@agntz/core";
 import { execute, parseManifest, validateManifestFull } from "@agntz/manifest";
@@ -86,6 +87,8 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
   app.use("/run/stream", workerAuth({ store, internalSecret }));
   app.use("/runs", workerAuth({ store, internalSecret }));
   app.use("/runs/*", workerAuth({ store, internalSecret }));
+  app.use("/traces", workerAuth({ store, internalSecret }));
+  app.use("/traces/*", workerAuth({ store, internalSecret }));
   app.use("/validate", workerAuth({ store, internalSecret }));
   app.use("/system/agents", internalOnlyAuth({ internalSecret }));
   app.use("/system/agents/*", internalOnlyAuth({ internalSecret }));
@@ -397,6 +400,101 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
     // Return the current view so the client can poll for terminal.
     const after = runRegistry.get(runId) ?? run;
     return c.json(runToJSON(after));
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // /traces/* — observability read surface
+  // ───────────────────────────────────────────────────────────────────────
+
+  app.get("/traces/:id", async (c) => {
+    const traceId = c.req.param("id");
+    const userId = getUserId(c);
+    const scoped = store.forUser(userId);
+    const summary = await scoped.getSummary(traceId, userId);
+    if (!summary) return c.json({ error: "Trace not found" }, 404);
+    const spans = await scoped.getTrace(traceId, userId);
+    return c.json({ summary, spans });
+  });
+
+  app.get("/traces/:id/stream", async (c) => {
+    const traceId = c.req.param("id");
+    const userId = getUserId(c);
+
+    // Live path: registry has active spans for this trace.
+    const inProgress = traceRegistry.getInProgress(traceId, userId);
+    if (inProgress !== null) {
+      return streamSSE(c, async (stream) => {
+        try {
+          for await (const ev of traceRegistry.subscribe(traceId, userId)) {
+            await stream.writeSSE({
+              event: ev.type,
+              data: JSON.stringify(ev),
+            });
+          }
+        } catch (err) {
+          await stream
+            .writeSSE({
+              event: "stream-error",
+              data: JSON.stringify({ error: errorMessage(err) }),
+            })
+            .catch(() => {});
+        }
+      });
+    }
+
+    // Terminal path: replay one snapshot from the store.
+    const scoped = store.forUser(userId);
+    const summary = await scoped.getSummary(traceId, userId);
+    if (!summary) return c.json({ error: "Trace not found" }, 404);
+    const spans = await scoped.getTrace(traceId, userId);
+    return streamSSE(c, async (stream) => {
+      await stream.writeSSE({
+        event: "snapshot",
+        data: JSON.stringify({ summary, spans }),
+      });
+    });
+  });
+
+  app.delete("/traces/:id", async (c) => {
+    const traceId = c.req.param("id");
+    const userId = getUserId(c);
+    const scoped = store.forUser(userId);
+    // Owner-scoped check first so we can 404 instead of silently no-op'ing.
+    const summary = await scoped.getSummary(traceId, userId);
+    if (!summary) return c.json({ error: "Trace not found" }, 404);
+    await scoped.deleteTrace(traceId, userId);
+    return c.body(null, 204);
+  });
+
+  app.get("/traces", async (c) => {
+    const userId = getUserId(c);
+
+    let limit: number | undefined;
+    const limitRaw = c.req.query("limit");
+    if (limitRaw !== undefined) {
+      const n = Number(limitRaw);
+      if (!Number.isFinite(n) || n < 1) {
+        return c.json({ error: "Invalid `limit` query param" }, 400);
+      }
+      limit = n;
+    }
+
+    const filter: TraceFilter = {
+      ownerId: userId,
+      agentId: c.req.query("agentId"),
+      status: c.req.query("status") as TraceFilter["status"],
+      startedAfter: c.req.query("startedAfter"),
+      startedBefore: c.req.query("startedBefore"),
+      cursor: c.req.query("cursor"),
+      limit,
+    };
+
+    try {
+      const result = await store.forUser(userId).listTraces(filter);
+      return c.json(result);
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 500);
+    }
   });
 
   return app;
