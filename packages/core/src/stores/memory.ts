@@ -11,6 +11,8 @@ import type {
   ContextEntry,
   InvocationLog,
   LogFilter,
+  Run,
+  RunStatus,
   Span,
   TraceSummary,
   TraceFilter,
@@ -53,6 +55,7 @@ interface MemoryBackend {
   connections: Map<string, Map<string, Connection>>;        // userId -> `${kind}:${id}` -> connection
   apiKeys: Map<string, ApiKeyRow>;                          // id -> row
   apiKeyByHash: Map<string, ApiKeyRow>;                     // sha256(rawKey) -> row
+  runs: Map<string, Run>;                                    // `${userId}:${runId}` -> run
   spans: Map<string, Span>;                                  // spanId -> span
   summaries: Map<string, TraceSummary>;                      // traceId -> summary
 }
@@ -67,6 +70,7 @@ function createBackend(): MemoryBackend {
     connections: new Map(),
     apiKeys: new Map(),
     apiKeyByHash: new Map(),
+    runs: new Map(),
     spans: new Map(),
     summaries: new Map(),
   };
@@ -404,6 +408,59 @@ export class MemoryStore implements UnifiedStore {
     if (!row || row.revokedAt) return null;
     row.lastUsedAt = new Date().toISOString();
     return { userId: row.userId, keyId: row.id };
+  }
+
+  // ═══ RunStore ═══
+
+  private runKey(userId: string, runId: string): string {
+    return `${userId}:${runId}`;
+  }
+
+  async putRun(run: Run): Promise<void> {
+    const u = this.requireUser();
+    this.backend.runs.set(this.runKey(u, run.id), { ...run });
+  }
+
+  async getRun(runId: string): Promise<Run | null> {
+    const u = this.requireUser();
+    return this.backend.runs.get(this.runKey(u, runId)) ?? null;
+  }
+
+  async listChildren(parentRunId: string): Promise<Run[]> {
+    const u = this.requireUser();
+    const results: Run[] = [];
+    for (const [key, run] of this.backend.runs) {
+      if (key.startsWith(`${u}:`) && run.parentId === parentRunId) {
+        results.push({ ...run });
+      }
+    }
+    return results.sort((a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id));
+  }
+
+  async listSubtree(rootId: string): Promise<Run[]> {
+    const u = this.requireUser();
+    // Collect all runs for this user
+    const allRuns: Run[] = [];
+    for (const [key, run] of this.backend.runs) {
+      if (key.startsWith(`${u}:`)) allRuns.push(run);
+    }
+    // BFS from rootId
+    const result: Run[] = [];
+    const visited = new Set<string>();
+    const queue = [rootId];
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      if (visited.has(id)) continue;
+      visited.add(id);
+      const run = this.backend.runs.get(this.runKey(u, id));
+      if (run) {
+        result.push({ ...run });
+        for (const r of allRuns) {
+          if (r.parentId === id && !visited.has(r.id)) queue.push(r.id);
+        }
+      }
+    }
+    return result.sort((a, b) => a.depth - b.depth || a.startedAt - b.startedAt || a.id.localeCompare(b.id));
   }
 
   // ═══ TraceStore ═══

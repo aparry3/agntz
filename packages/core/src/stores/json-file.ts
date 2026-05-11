@@ -14,6 +14,7 @@ import type {
   ContextEntry,
   InvocationLog,
   LogFilter,
+  Run,
   Span,
   TraceSummary,
   TraceFilter,
@@ -82,6 +83,7 @@ export class JsonFileStore implements UnifiedStore {
     await mkdir(join(root, "logs"), { recursive: true });
     await mkdir(join(root, "providers"), { recursive: true });
     await mkdir(join(root, "connections"), { recursive: true });
+    await mkdir(join(root, "runs"), { recursive: true });
   }
 
   private async readJson<T>(path: string): Promise<T | null> {
@@ -403,6 +405,74 @@ export class JsonFileStore implements UnifiedStore {
   async deleteConnection(kind: ConnectionKind, id: string): Promise<void> {
     await this.ensureUserDirs();
     await unlink(this.connectionPath(kind, id)).catch(() => {});
+  }
+
+  // ═══ RunStore ═══
+  // Runs live under basePath/users/<userId>/runs/<runId>.json
+
+  private runPath(runId: string): string {
+    return join(this.userRoot(), "runs", `${this.sanitizeFilename(runId)}.json`);
+  }
+
+  async putRun(run: Run): Promise<void> {
+    await this.ensureUserDirs();
+    await this.writeJson(this.runPath(run.id), run);
+  }
+
+  async getRun(runId: string): Promise<Run | null> {
+    return this.readJson<Run>(this.runPath(runId));
+  }
+
+  async listChildren(parentRunId: string): Promise<Run[]> {
+    this.requireUser();
+    const runsDir = join(this.userRoot(), "runs");
+    let files: string[];
+    try {
+      files = await readdir(runsDir);
+    } catch {
+      return [];
+    }
+    const results: Run[] = [];
+    for (const f of files) {
+      if (!f.endsWith(".json")) continue;
+      const run = await this.readJson<Run>(join(runsDir, f));
+      if (run && run.parentId === parentRunId) results.push(run);
+    }
+    return results.sort((a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id));
+  }
+
+  async listSubtree(rootId: string): Promise<Run[]> {
+    this.requireUser();
+    const runsDir = join(this.userRoot(), "runs");
+    let files: string[];
+    try {
+      files = await readdir(runsDir);
+    } catch {
+      return [];
+    }
+    const allRuns: Run[] = [];
+    for (const f of files) {
+      if (!f.endsWith(".json")) continue;
+      const run = await this.readJson<Run>(join(runsDir, f));
+      if (run) allRuns.push(run);
+    }
+    const byId = new Map(allRuns.map((r) => [r.id, r]));
+    const result: Run[] = [];
+    const visited = new Set<string>();
+    const queue = [rootId];
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      if (visited.has(id)) continue;
+      visited.add(id);
+      const run = byId.get(id);
+      if (run) {
+        result.push(run);
+        for (const r of allRuns) {
+          if (r.parentId === id && !visited.has(r.id)) queue.push(r.id);
+        }
+      }
+    }
+    return result.sort((a, b) => a.depth - b.depth || a.startedAt - b.startedAt || a.id.localeCompare(b.id));
   }
 
   // ═══ TraceStore ═══

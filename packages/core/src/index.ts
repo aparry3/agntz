@@ -138,6 +138,15 @@ export type {
   MultiplexedEvent,
   SpawnRunOptions,
 
+  // Traces
+  SpanKind,
+  SpanStatus,
+  Span,
+  TraceSummary,
+  TraceFilter,
+  TraceLiveEvent,
+  TraceStore,
+
   // Model Provider
   ModelProvider,
   ModelStreamResult,
