@@ -60,6 +60,47 @@ function sampleSpan(overrides: Partial<Span> = {}): Span {
   };
 }
 
+describe("GET /traces/:id", () => {
+  it("404 for unknown id", async () => {
+    const { app, store } = makeApp();
+    const rawKey = await issueKey(store, "u1");
+    const res = await app.request("/traces/tr_nope", { method: "GET", headers: bearer(rawKey) });
+    expect(res.status).toBe(404);
+  });
+
+  it("returns { summary, spans } for an owned terminal trace", async () => {
+    const { app, store } = makeApp();
+    const scoped = store.forUser("u1");
+    await scoped.upsertSummary(sampleSummary({ traceId: "tr_a" }));
+    await scoped.insertSpan(sampleSpan({ spanId: "sp_root", traceId: "tr_a" }));
+    await scoped.insertSpan(
+      sampleSpan({
+        spanId: "sp_child",
+        traceId: "tr_a",
+        parentId: "sp_root",
+        name: "step:fetch",
+        kind: "step",
+      }),
+    );
+
+    const rawKey = await issueKey(store, "u1");
+    const res = await app.request("/traces/tr_a", { method: "GET", headers: bearer(rawKey) });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { summary: TraceSummary; spans: Span[] };
+    expect(body.summary.traceId).toBe("tr_a");
+    expect(body.spans.map((s) => s.spanId).sort()).toEqual(["sp_child", "sp_root"]);
+  });
+
+  it("404 when the trace is owned by another user", async () => {
+    const { app, store } = makeApp();
+    await store.forUser("u1").upsertSummary(sampleSummary({ traceId: "tr_a" }));
+
+    const rawKey = await issueKey(store, "u2");
+    const res = await app.request("/traces/tr_a", { method: "GET", headers: bearer(rawKey) });
+    expect(res.status).toBe(404);
+  });
+});
+
 describe("GET /traces", () => {
   it("401 without auth", async () => {
     const { app } = makeApp();

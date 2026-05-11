@@ -406,6 +406,16 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
   // /traces/* — observability read surface
   // ───────────────────────────────────────────────────────────────────────
 
+  app.get("/traces/:id", async (c) => {
+    const traceId = c.req.param("id");
+    const userId = getUserId(c);
+    const scoped = store.forUser(userId);
+    const summary = await scoped.getSummary(traceId, userId);
+    if (!summary) return c.json({ error: "Trace not found" }, 404);
+    const spans = await scoped.getTrace(traceId, userId);
+    return c.json({ summary, spans });
+  });
+
   app.get("/traces", async (c) => {
     const userId = getUserId(c);
 
