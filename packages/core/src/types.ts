@@ -156,6 +156,9 @@ export interface InvokeOptions {
   parentRunId?: string;
   /** The owning user, propagated to ToolContext. */
   userId?: string;
+  /** Per-invocation SpanEmitter. When provided, child spans nest under whatever
+   *  span is at the top of its stack. Bridge constructs one per request. */
+  spanEmitter?: import("./telemetry.js").SpanEmitter;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -689,6 +692,12 @@ export type TraceLiveEvent =
   | { type: "span-start"; span: Span }
   | { type: "span-end"; spanId: string; patch: Partial<Span> }
   | { type: "trace-done"; summary: TraceSummary };
+
+/**
+ * Callback the SpanEmitter calls on every span-start / span-end / trace-done.
+ * The TraceRegistry implements this; pass it via `RunnerConfig.telemetry.traceSink`.
+ */
+export type TraceSink = (event: TraceLiveEvent) => void;
 
 /**
  * Persistent record of spans and trace summaries. Implementations are
