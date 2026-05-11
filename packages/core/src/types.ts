@@ -605,8 +605,6 @@ export interface RunRegistry {
    * Idempotent.
    */
   notifyFailed(runId: string, err: unknown): void;
-  /** Optional persistence layer. */
-  readonly store?: RunStore;
 }
 
 /**
@@ -666,7 +664,8 @@ export type UnifiedStore = AgentStore &
   ProviderStore &
   ConnectionStore &
   ApiKeyStore &
-  ScopableStore;
+  ScopableStore &
+  RunStore;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Model Provider

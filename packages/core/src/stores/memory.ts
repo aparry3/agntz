@@ -11,6 +11,7 @@ import type {
   ContextEntry,
   InvocationLog,
   LogFilter,
+  Run,
 } from "../types.js";
 
 interface AgentVersion {
@@ -50,6 +51,7 @@ interface MemoryBackend {
   connections: Map<string, Map<string, Connection>>;        // userId -> `${kind}:${id}` -> connection
   apiKeys: Map<string, ApiKeyRow>;                          // id -> row
   apiKeyByHash: Map<string, ApiKeyRow>;                     // sha256(rawKey) -> row
+  runs: Map<string, Map<string, Run>>;                      // userId -> runId -> Run
 }
 
 function createBackend(): MemoryBackend {
@@ -62,6 +64,7 @@ function createBackend(): MemoryBackend {
     connections: new Map(),
     apiKeys: new Map(),
     apiKeyByHash: new Map(),
+    runs: new Map(),
   };
 }
 
@@ -397,6 +400,63 @@ export class MemoryStore implements UnifiedStore {
     if (!row || row.revokedAt) return null;
     row.lastUsedAt = new Date().toISOString();
     return { userId: row.userId, keyId: row.id };
+  }
+
+  // ═══ RunStore ═══
+
+  private runMap(): Map<string, Run> {
+    const u = this.requireUser();
+    let m = this.backend.runs.get(u);
+    if (!m) {
+      m = new Map();
+      this.backend.runs.set(u, m);
+    }
+    return m;
+  }
+
+  async putRun(run: Run): Promise<void> {
+    this.runMap().set(run.id, { ...run });
+  }
+
+  async getRun(runId: string): Promise<Run | null> {
+    const r = this.runMap().get(runId);
+    return r ? { ...r } : null;
+  }
+
+  async listChildren(parentRunId: string): Promise<Run[]> {
+    const out: Run[] = [];
+    for (const r of this.runMap().values()) {
+      if (r.parentId === parentRunId) out.push({ ...r });
+    }
+    return out.sort((a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id));
+  }
+
+  async listSubtree(rootId: string): Promise<Run[]> {
+    const all = this.runMap();
+    const out: Run[] = [];
+    const root = all.get(rootId);
+    if (!root) return out;
+    out.push({ ...root });
+    // BFS via parentId index
+    const queue: string[] = [rootId];
+    const byParent = new Map<string, Run[]>();
+    for (const r of all.values()) {
+      if (r.parentId) {
+        const list = byParent.get(r.parentId) ?? [];
+        list.push(r);
+        byParent.set(r.parentId, list);
+      }
+    }
+    while (queue.length > 0) {
+      const id = queue.shift() as string;
+      const kids = byParent.get(id);
+      if (!kids) continue;
+      for (const k of kids) {
+        out.push({ ...k });
+        queue.push(k.id);
+      }
+    }
+    return out.sort((a, b) => a.depth - b.depth || a.startedAt - b.startedAt || a.id.localeCompare(b.id));
   }
 }
 
