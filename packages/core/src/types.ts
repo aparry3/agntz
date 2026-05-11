@@ -621,6 +621,93 @@ export interface RunStore {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// Traces — persistent span trees for observability
+// ═══════════════════════════════════════════════════════════════════════
+
+export type SpanKind = "run" | "manifest" | "step" | "invoke" | "model" | "tool";
+export type SpanStatus = "running" | "ok" | "error" | "cancelled";
+
+/**
+ * One span in a trace tree. Spans form a tree via `parentId` and share a
+ * `traceId`. A trace is the set of all spans with the same `traceId`.
+ */
+export interface Span {
+  spanId: string;
+  traceId: string;
+  parentId: string | null;
+  /** Tenant scoping. Same value as `userId` elsewhere in this file; called `ownerId` here because it scopes the trace's owner. */
+  ownerId: string;
+  runId: string | null;
+  sessionId: string | null;
+  name: string;
+  kind: SpanKind;
+  startedAt: string; // ISO 8601
+  endedAt: string | null;
+  durationMs: number | null;
+  status: SpanStatus;
+  error: string | null;
+  attributes: Record<string, unknown>;
+  events: Array<{ ts: string; name: string; data?: unknown }>;
+  scores: Record<string, { value: number; reason?: string }>; // reserved for evals; empty in v1
+  costUsd: number | null;
+}
+
+/**
+ * Precomputed roll-up of one trace. Powers list views without scanning all
+ * spans. Written/updated by the registry on trace start, span end, and
+ * trace end.
+ */
+export interface TraceSummary {
+  traceId: string;
+  ownerId: string;
+  rootName: string;
+  agentId: string | null;
+  startedAt: string;
+  endedAt: string | null;
+  durationMs: number | null;
+  spanCount: number;
+  status: SpanStatus;
+  totalTokens: number;
+  totalCostUsd: number | null;
+}
+
+export interface TraceFilter {
+  ownerId: string;
+  agentId?: string;
+  status?: SpanStatus;
+  startedAfter?: string;
+  startedBefore?: string;
+  limit?: number;  // default 50, max 200
+  cursor?: string; // opaque; encodes (startedAt, traceId)
+}
+
+/**
+ * Live event published to subscribers of an in-progress trace. The registry
+ * emits these in real time; the worker forwards them over SSE.
+ */
+export type TraceLiveEvent =
+  | { type: "span-start"; span: Span }
+  | { type: "span-end"; spanId: string; patch: Partial<Span> }
+  | { type: "trace-done"; summary: TraceSummary };
+
+/**
+ * Persistent record of spans and trace summaries. Implementations are
+ * owner-scoped — every read filters on `ownerId`, every write tags it.
+ */
+export interface TraceStore {
+  insertSpan(span: Span): Promise<void>;
+  insertSpansBatch(spans: Span[]): Promise<void>;
+  updateSpan(spanId: string, ownerId: string, patch: Partial<Span>): Promise<void>;
+  upsertSummary(summary: TraceSummary): Promise<void>;
+  getTrace(traceId: string, ownerId: string): Promise<Span[]>;
+  getSummary(traceId: string, ownerId: string): Promise<TraceSummary | null>;
+  listTraces(filter: TraceFilter): Promise<{ rows: TraceSummary[]; cursor?: string }>;
+  deleteTrace(traceId: string, ownerId: string): Promise<void>;
+  /** Returns the number of traces (not spans) deleted. */
+  deleteOlderThan(ownerId: string, before: Date): Promise<number>;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // Multi-tenancy: per-user scoping + API keys
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -666,6 +753,8 @@ export type UnifiedStore = AgentStore &
   ProviderStore &
   ConnectionStore &
   ApiKeyStore &
+  RunStore &
+  TraceStore &
   ScopableStore;
 
 // ═══════════════════════════════════════════════════════════════════════

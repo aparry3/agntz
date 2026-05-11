@@ -16,6 +16,9 @@ import type {
   LogFilter,
   Run,
   RunStatus,
+  Span,
+  TraceSummary,
+  TraceFilter,
 } from "@agntz/core";
 
 const { Pool } = pg;
@@ -213,6 +216,58 @@ const MIGRATIONS: string[] = [
   CREATE INDEX IF NOT EXISTS idx_ar_runs_status ON ar_runs(user_id, status);
 
   UPDATE ar_schema_version SET version = 6;
+  `,
+  // v7: Traces — span trees for observability. Two tables: spans (row per
+  // span, one trace = many rows) and trace_summaries (precomputed roll-up).
+  `
+  CREATE TABLE IF NOT EXISTS ar_spans (
+    span_id      TEXT PRIMARY KEY,
+    trace_id     TEXT NOT NULL,
+    parent_id    TEXT,
+    owner_id     TEXT NOT NULL,
+    run_id       TEXT,
+    session_id   TEXT,
+    name         TEXT NOT NULL,
+    kind         TEXT NOT NULL CHECK (kind IN ('run','manifest','step','invoke','model','tool')),
+    started_at   TIMESTAMPTZ NOT NULL,
+    ended_at     TIMESTAMPTZ,
+    duration_ms  INTEGER,
+    status       TEXT NOT NULL CHECK (status IN ('running','ok','error','cancelled')),
+    error        TEXT,
+    attributes   JSONB NOT NULL DEFAULT '{}'::jsonb,
+    events       JSONB NOT NULL DEFAULT '[]'::jsonb,
+    scores       JSONB NOT NULL DEFAULT '{}'::jsonb,
+    cost_usd     NUMERIC(12,6)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ar_spans_owner_started
+    ON ar_spans (owner_id, started_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_ar_spans_trace ON ar_spans (trace_id);
+  CREATE INDEX IF NOT EXISTS idx_ar_spans_parent
+    ON ar_spans (parent_id) WHERE parent_id IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_ar_spans_owner_name_started
+    ON ar_spans (owner_id, name, started_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_ar_spans_owner_run
+    ON ar_spans (owner_id, run_id) WHERE run_id IS NOT NULL;
+
+  CREATE TABLE IF NOT EXISTS ar_trace_summaries (
+    trace_id       TEXT PRIMARY KEY,
+    owner_id       TEXT NOT NULL,
+    root_name      TEXT NOT NULL,
+    agent_id       TEXT,
+    started_at     TIMESTAMPTZ NOT NULL,
+    ended_at       TIMESTAMPTZ,
+    duration_ms    INTEGER,
+    span_count     INTEGER NOT NULL,
+    status         TEXT NOT NULL CHECK (status IN ('running','ok','error','cancelled')),
+    total_tokens   INTEGER NOT NULL DEFAULT 0,
+    total_cost_usd NUMERIC(12,6)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ar_trace_summaries_owner_started
+    ON ar_trace_summaries (owner_id, started_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_ar_trace_summaries_owner_agent
+    ON ar_trace_summaries (owner_id, agent_id) WHERE agent_id IS NOT NULL;
+
+  UPDATE ar_schema_version SET version = 7;
   `,
 ];
 
@@ -887,6 +942,244 @@ export class PostgresStore implements UnifiedStore {
     return rows.map(rowToRun);
   }
 
+  // ═══ TraceStore ═══
+
+  async insertSpan(span: Span): Promise<void> {
+    await this.ensureMigrated();
+    await this.pool.query(
+      `INSERT INTO ${this.t("spans")} (
+        span_id, trace_id, parent_id, owner_id, run_id, session_id,
+        name, kind, started_at, ended_at, duration_ms, status, error,
+        attributes, events, scores, cost_usd
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+      ON CONFLICT (span_id) DO UPDATE SET
+        trace_id    = EXCLUDED.trace_id,
+        parent_id   = EXCLUDED.parent_id,
+        owner_id    = EXCLUDED.owner_id,
+        run_id      = EXCLUDED.run_id,
+        session_id  = EXCLUDED.session_id,
+        name        = EXCLUDED.name,
+        kind        = EXCLUDED.kind,
+        started_at  = EXCLUDED.started_at,
+        ended_at    = EXCLUDED.ended_at,
+        duration_ms = EXCLUDED.duration_ms,
+        status      = EXCLUDED.status,
+        error       = EXCLUDED.error,
+        attributes  = EXCLUDED.attributes,
+        events      = EXCLUDED.events,
+        scores      = EXCLUDED.scores,
+        cost_usd    = EXCLUDED.cost_usd`,
+      [
+        span.spanId, span.traceId, span.parentId ?? null, span.ownerId, span.runId ?? null, span.sessionId ?? null,
+        span.name, span.kind, span.startedAt, span.endedAt ?? null, span.durationMs ?? null, span.status, span.error ?? null,
+        JSON.stringify(span.attributes), JSON.stringify(span.events), JSON.stringify(span.scores),
+        span.costUsd ?? null,
+      ]
+    );
+  }
+
+  async insertSpansBatch(spans: Span[]): Promise<void> {
+    if (spans.length === 0) return;
+    await this.ensureMigrated();
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      for (const s of spans) {
+        await client.query(
+          `INSERT INTO ${this.t("spans")} (
+            span_id, trace_id, parent_id, owner_id, run_id, session_id,
+            name, kind, started_at, ended_at, duration_ms, status, error,
+            attributes, events, scores, cost_usd
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+          ON CONFLICT (span_id) DO NOTHING`,
+          [
+            s.spanId, s.traceId, s.parentId ?? null, s.ownerId, s.runId ?? null, s.sessionId ?? null,
+            s.name, s.kind, s.startedAt, s.endedAt ?? null, s.durationMs ?? null, s.status, s.error ?? null,
+            JSON.stringify(s.attributes), JSON.stringify(s.events), JSON.stringify(s.scores),
+            s.costUsd ?? null,
+          ]
+        );
+      }
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  async updateSpan(spanId: string, ownerId: string, patch: Partial<Span>): Promise<void> {
+    await this.ensureMigrated();
+    const sets: string[] = [];
+    const args: unknown[] = [];
+    let i = 1;
+    if ("endedAt" in patch) { sets.push(`ended_at = $${i++}`); args.push(patch.endedAt ?? null); }
+    if ("durationMs" in patch) { sets.push(`duration_ms = $${i++}`); args.push(patch.durationMs ?? null); }
+    if ("status" in patch) { sets.push(`status = $${i++}`); args.push(patch.status); }
+    if ("error" in patch) { sets.push(`error = $${i++}`); args.push(patch.error ?? null); }
+    if ("attributes" in patch) { sets.push(`attributes = $${i++}`); args.push(JSON.stringify(patch.attributes)); }
+    if ("events" in patch) { sets.push(`events = $${i++}`); args.push(JSON.stringify(patch.events)); }
+    if ("scores" in patch) { sets.push(`scores = $${i++}`); args.push(JSON.stringify(patch.scores)); }
+    if ("costUsd" in patch) { sets.push(`cost_usd = $${i++}`); args.push(patch.costUsd ?? null); }
+    if (sets.length === 0) return;
+    args.push(spanId, ownerId);
+    await this.pool.query(
+      `UPDATE ${this.t("spans")} SET ${sets.join(", ")}
+       WHERE span_id = $${i++} AND owner_id = $${i++}`,
+      args
+    );
+  }
+
+  async upsertSummary(summary: TraceSummary): Promise<void> {
+    await this.ensureMigrated();
+    await this.pool.query(
+      `INSERT INTO ${this.t("trace_summaries")} (
+        trace_id, owner_id, root_name, agent_id, started_at, ended_at,
+        duration_ms, span_count, status, total_tokens, total_cost_usd
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+      ON CONFLICT (trace_id) DO UPDATE SET
+        owner_id       = EXCLUDED.owner_id,
+        root_name      = EXCLUDED.root_name,
+        agent_id       = EXCLUDED.agent_id,
+        started_at     = EXCLUDED.started_at,
+        ended_at       = EXCLUDED.ended_at,
+        duration_ms    = EXCLUDED.duration_ms,
+        span_count     = EXCLUDED.span_count,
+        status         = EXCLUDED.status,
+        total_tokens   = EXCLUDED.total_tokens,
+        total_cost_usd = EXCLUDED.total_cost_usd`,
+      [
+        summary.traceId, summary.ownerId, summary.rootName, summary.agentId ?? null,
+        summary.startedAt, summary.endedAt ?? null, summary.durationMs ?? null, summary.spanCount,
+        summary.status, summary.totalTokens, summary.totalCostUsd ?? null,
+      ]
+    );
+  }
+
+  async getTrace(traceId: string, ownerId: string): Promise<Span[]> {
+    await this.ensureMigrated();
+    const { rows } = await this.pool.query(
+      `SELECT * FROM ${this.t("spans")}
+       WHERE trace_id = $1 AND owner_id = $2
+       ORDER BY started_at ASC, span_id ASC`,
+      [traceId, ownerId]
+    );
+    return rows.map(pgRowToSpan);
+  }
+
+  async getSummary(traceId: string, ownerId: string): Promise<TraceSummary | null> {
+    await this.ensureMigrated();
+    const { rows } = await this.pool.query(
+      `SELECT * FROM ${this.t("trace_summaries")}
+       WHERE trace_id = $1 AND owner_id = $2`,
+      [traceId, ownerId]
+    );
+    return rows.length === 0 ? null : pgRowToSummary(rows[0]);
+  }
+
+  async listTraces(filter: TraceFilter): Promise<{ rows: TraceSummary[]; cursor?: string }> {
+    await this.ensureMigrated();
+    const limit = Math.min(Math.max(filter.limit ?? 50, 1), 200);
+    const clauses = [`owner_id = $1`];
+    const args: unknown[] = [filter.ownerId];
+    let i = 2;
+    if (filter.agentId) { clauses.push(`agent_id = $${i++}`); args.push(filter.agentId); }
+    if (filter.status) { clauses.push(`status = $${i++}`); args.push(filter.status); }
+    if (filter.startedAfter) { clauses.push(`started_at >= $${i++}`); args.push(filter.startedAfter); }
+    if (filter.startedBefore) { clauses.push(`started_at <= $${i++}`); args.push(filter.startedBefore); }
+    if (filter.cursor) {
+      try {
+        const decoded = JSON.parse(Buffer.from(filter.cursor, "base64url").toString("utf8")) as {
+          startedAt: string;
+          traceId: string;
+        };
+        clauses.push(
+          `(started_at < $${i} OR (started_at = $${i} AND trace_id < $${i + 1}))`
+        );
+        args.push(decoded.startedAt, decoded.traceId);
+        i += 2;
+      } catch {
+        // ignore bad cursor — silent restart from page 1
+      }
+    }
+    args.push(limit);
+    const { rows } = await this.pool.query(
+      `SELECT * FROM ${this.t("trace_summaries")}
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY started_at DESC, trace_id DESC
+       LIMIT $${i}`,
+      args
+    );
+    const summaries = rows.map(pgRowToSummary);
+    const cursor =
+      summaries.length === limit
+        ? Buffer.from(
+            JSON.stringify({
+              startedAt: summaries[summaries.length - 1].startedAt,
+              traceId: summaries[summaries.length - 1].traceId,
+            })
+          ).toString("base64url")
+        : undefined;
+    return { rows: summaries, cursor };
+  }
+
+  async deleteTrace(traceId: string, ownerId: string): Promise<void> {
+    await this.ensureMigrated();
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `DELETE FROM ${this.t("spans")} WHERE trace_id = $1 AND owner_id = $2`,
+        [traceId, ownerId]
+      );
+      await client.query(
+        `DELETE FROM ${this.t("trace_summaries")} WHERE trace_id = $1 AND owner_id = $2`,
+        [traceId, ownerId]
+      );
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  async deleteOlderThan(ownerId: string, before: Date): Promise<number> {
+    await this.ensureMigrated();
+    const beforeIso = before.toISOString();
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const { rows: tids } = await client.query(
+        `SELECT trace_id FROM ${this.t("trace_summaries")}
+         WHERE owner_id = $1 AND started_at < $2`,
+        [ownerId, beforeIso]
+      );
+      const traceIds: string[] = tids.map((r: { trace_id: string }) => r.trace_id);
+      if (traceIds.length > 0) {
+        await client.query(
+          `DELETE FROM ${this.t("spans")}
+           WHERE owner_id = $1 AND trace_id = ANY($2::text[])`,
+          [ownerId, traceIds]
+        );
+        await client.query(
+          `DELETE FROM ${this.t("trace_summaries")}
+           WHERE owner_id = $1 AND trace_id = ANY($2::text[])`,
+          [ownerId, traceIds]
+        );
+      }
+      await client.query("COMMIT");
+      return traceIds.length;
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
   // ═══ ApiKeyStore (unscoped admin) ═══
 
   async createApiKey(params: { userId: string; name: string }): Promise<{ record: ApiKeyRecord; rawKey: string }> {
@@ -1051,6 +1344,60 @@ function rowToRun(r: {
       : r.result_json) as InvokeResult;
   }
   return run;
+}
+
+function pgRowToSpan(r: Record<string, unknown>): Span {
+  return {
+    spanId: r.span_id as string,
+    traceId: r.trace_id as string,
+    parentId: (r.parent_id as string | null) ?? null,
+    ownerId: r.owner_id as string,
+    runId: (r.run_id as string | null) ?? null,
+    sessionId: (r.session_id as string | null) ?? null,
+    name: r.name as string,
+    kind: r.kind as Span["kind"],
+    startedAt:
+      r.started_at instanceof Date
+        ? (r.started_at as Date).toISOString()
+        : (r.started_at as string),
+    endedAt:
+      r.ended_at == null
+        ? null
+        : r.ended_at instanceof Date
+          ? (r.ended_at as Date).toISOString()
+          : (r.ended_at as string),
+    durationMs: (r.duration_ms as number | null) ?? null,
+    status: r.status as Span["status"],
+    error: (r.error as string | null) ?? null,
+    attributes: (r.attributes as Record<string, unknown>) ?? {},
+    events: (r.events as Span["events"]) ?? [],
+    scores: (r.scores as Span["scores"]) ?? {},
+    costUsd: r.cost_usd == null ? null : Number(r.cost_usd),
+  };
+}
+
+function pgRowToSummary(r: Record<string, unknown>): TraceSummary {
+  return {
+    traceId: r.trace_id as string,
+    ownerId: r.owner_id as string,
+    rootName: r.root_name as string,
+    agentId: (r.agent_id as string | null) ?? null,
+    startedAt:
+      r.started_at instanceof Date
+        ? (r.started_at as Date).toISOString()
+        : (r.started_at as string),
+    endedAt:
+      r.ended_at == null
+        ? null
+        : r.ended_at instanceof Date
+          ? (r.ended_at as Date).toISOString()
+          : (r.ended_at as string),
+    durationMs: (r.duration_ms as number | null) ?? null,
+    spanCount: r.span_count as number,
+    status: r.status as TraceSummary["status"],
+    totalTokens: r.total_tokens as number,
+    totalCostUsd: r.total_cost_usd == null ? null : Number(r.total_cost_usd),
+  };
 }
 
 function rowToApiKey(r: {
