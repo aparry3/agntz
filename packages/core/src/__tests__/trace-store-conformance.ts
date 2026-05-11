@@ -157,12 +157,26 @@ export function runTraceStoreConformance(
       }
       const page1 = await store.listTraces({ ownerId: "u1", limit: 2 });
       expect(page1.rows).toHaveLength(2);
+      // Newest first — last inserted has the largest startedAt.
+      expect(page1.rows[0].traceId).toBe("tr_p4");
+      expect(page1.rows[1].traceId).toBe("tr_p3");
       expect(page1.cursor).toBeDefined();
 
       const page2 = await store.listTraces({ ownerId: "u1", limit: 2, cursor: page1.cursor });
       expect(page2.rows).toHaveLength(2);
+      expect(page2.rows[0].traceId).toBe("tr_p2");
+      expect(page2.rows[1].traceId).toBe("tr_p1");
+      // Page 3 still has data → cursor on page 2 must be defined.
+      expect(page2.cursor).toBeDefined();
+      // No overlap between page 1 and page 2.
       const ids1 = new Set(page1.rows.map((r) => r.traceId));
       for (const r of page2.rows) expect(ids1.has(r.traceId)).toBe(false);
+
+      const page3 = await store.listTraces({ ownerId: "u1", limit: 2, cursor: page2.cursor });
+      expect(page3.rows).toHaveLength(1);
+      expect(page3.rows[0].traceId).toBe("tr_p0");
+      // Exhausted — no more pages.
+      expect(page3.cursor).toBeUndefined();
     });
 
     it("deleteTrace removes all spans and summary", async () => {

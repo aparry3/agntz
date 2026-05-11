@@ -3,6 +3,10 @@ import type { Span, TraceSummary } from "../../types.js";
 /**
  * Build a Span with sensible defaults. Override anything that matters to the
  * test. Used by the conformance suite and by later slices' tests.
+ *
+ * Tests running in parallel against a shared backend should always provide
+ * an explicit `traceId` / `spanId` / `ownerId` — the random defaults give
+ * only ~41 bits of entropy and are intended for single-process suites.
  */
 export function makeSpan(overrides: Partial<Span> = {}): Span {
   const spanId = overrides.spanId ?? `sp_${Math.random().toString(36).slice(2, 10)}`;
@@ -27,6 +31,10 @@ export function makeSpan(overrides: Partial<Span> = {}): Span {
   };
 }
 
+/**
+ * Build a TraceSummary with sensible defaults. Same collision caveats as
+ * `makeSpan` — provide explicit IDs in parallel/shared-backend tests.
+ */
 export function makeSummary(overrides: Partial<TraceSummary> = {}): TraceSummary {
   return {
     traceId: overrides.traceId ?? `tr_${Math.random().toString(36).slice(2, 10)}`,

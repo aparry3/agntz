@@ -703,6 +703,7 @@ export interface TraceStore {
   getSummary(traceId: string, ownerId: string): Promise<TraceSummary | null>;
   listTraces(filter: TraceFilter): Promise<{ rows: TraceSummary[]; cursor?: string }>;
   deleteTrace(traceId: string, ownerId: string): Promise<void>;
+  /** Returns the number of traces (not spans) deleted. */
   deleteOlderThan(ownerId: string, before: Date): Promise<number>;
 }
 
