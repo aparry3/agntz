@@ -57,6 +57,65 @@ export default function TraceDetailPage({
     };
   }, [traceId]);
 
+  useEffect(() => {
+    if (!data || data.summary.status !== "running") return;
+    const es = new EventSource(`/api/traces/${encodeURIComponent(traceId)}/stream`);
+
+    es.addEventListener("span-start", (e) => {
+      try {
+        const payload = JSON.parse((e as MessageEvent).data) as { span: Span };
+        setData((prev) =>
+          prev ? { ...prev, spans: [...prev.spans, payload.span] } : prev,
+        );
+      } catch {
+        // Best-effort parsing; skip malformed frames.
+      }
+    });
+
+    es.addEventListener("span-end", (e) => {
+      try {
+        const payload = JSON.parse((e as MessageEvent).data) as {
+          spanId: string;
+          patch: Partial<Span>;
+        };
+        setData((prev) =>
+          prev
+            ? {
+                ...prev,
+                spans: prev.spans.map((s) =>
+                  s.spanId === payload.spanId ? { ...s, ...payload.patch } : s,
+                ),
+              }
+            : prev,
+        );
+      } catch {
+        // skip malformed
+      }
+    });
+
+    es.addEventListener("trace-done", (e) => {
+      try {
+        const payload = JSON.parse((e as MessageEvent).data) as { summary: TraceSummary };
+        setData((prev) => (prev ? { ...prev, summary: payload.summary } : prev));
+      } catch {
+        // skip malformed
+      }
+      es.close();
+    });
+
+    es.addEventListener("snapshot", () => {
+      // Already loaded via /api/traces/:id during initial fetch.
+      es.close();
+    });
+
+    es.onerror = () => {
+      // Network/disconnect — close so we don't hold the connection open.
+      es.close();
+    };
+
+    return () => es.close();
+  }, [data?.summary.status, data?.summary.traceId, traceId]);
+
   if (loading) {
     return <CardMessage>Loading trace...</CardMessage>;
   }
@@ -79,6 +138,12 @@ export default function TraceDetailPage({
         <div className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-2">
           <h1 className="font-mono text-2xl font-semibold text-zinc-950">{summary.traceId}</h1>
           <StatusBadge status={summary.status} />
+          {summary.status === "running" && (
+            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600">
+              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-blue-500" />
+              Live
+            </span>
+          )}
         </div>
         <dl className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-xs text-zinc-600">
           <Meta label="Agent" value={summary.agentId ?? "—"} />
