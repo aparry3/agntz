@@ -635,6 +635,7 @@ export interface Span {
   spanId: string;
   traceId: string;
   parentId: string | null;
+  /** Tenant scoping. Same value as `userId` elsewhere in this file; called `ownerId` here because it scopes the trace's owner. */
   ownerId: string;
   runId: string | null;
   sessionId: string | null;
@@ -647,7 +648,7 @@ export interface Span {
   error: string | null;
   attributes: Record<string, unknown>;
   events: Array<{ ts: string; name: string; data?: unknown }>;
-  scores: Record<string, { value: number; reason?: string }>;
+  scores: Record<string, { value: number; reason?: string }>; // reserved for evals; empty in v1
   costUsd: number | null;
 }
 
@@ -763,7 +764,6 @@ export interface ModelProvider {
   generateText(options: GenerateTextOptions): Promise<GenerateTextResult>;
   streamText?(options: GenerateTextOptions): Promise<ModelStreamResult>;
 }
-
 
 export interface ModelStreamResult {
   textStream: AsyncIterable<string>;
