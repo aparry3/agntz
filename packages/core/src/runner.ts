@@ -784,6 +784,7 @@ export class Runner {
       agentId,
       invocationId,
       model: modelStr,
+      ownerId: options.ownerId,
       sessionId: options.sessionId,
       contextIds: options.contextIds,
       input,

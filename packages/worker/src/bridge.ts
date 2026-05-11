@@ -89,6 +89,7 @@ export function createExecutionContext(
         const result = await runner.invoke(tempId, userInput, {
           ...(runRegistry ? { runRegistry } : {}),
           ...(spanEmitter ? { spanEmitter } : {}),
+          ...(ownerId ? { ownerId } : {}),
         });
         const duration = Date.now() - start;
 

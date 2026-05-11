@@ -4,17 +4,6 @@
  * Spins up a real runner + MemoryStore + InMemoryTraceRegistry with a stub
  * model provider and verifies the full span tree shape produced by a
  * sequential manifest.
- *
- * KNOWN PRODUCTION GAP (surfaced by these tests, not fixed here):
- *   runner.invoke() calls spanEmitter.startInvoke() without forwarding
- *   ownerId — so `invoke` and `model` spans land in the store with
- *   ownerId="unknown" rather than the request's ownerId. This means
- *   traceStore.getTrace(traceId, ownerId) only returns manifest/step spans.
- *   Fix: pass ownerId via InvokeOptions and thread it into startInvoke().
- *
- *   Until that fix lands, these tests assert the tree shape via the
- *   live `seenSpans` array captured by the traceSink (which sees all spans
- *   regardless of ownerId), and verify cost via the span-end patch attrs.
  */
 import { describe, it, expect, beforeEach } from "vitest";
 import { MemoryStore, SpanEmitter, createRunner } from "@agntz/core";
@@ -206,15 +195,22 @@ describe("span emission end-to-end", () => {
       expect(invokeIds.has(modelSpan.parentId ?? "")).toBe(true);
     }
 
-    // NOTE: invoke + model spans have ownerId="unknown" (production gap — runner
-    // does not forward ownerId to startInvoke). Only manifest + step spans have
-    // ownerId=OWNER and persist to the store under OWNER's namespace.
+    // All spans — including invoke and model — should now be persisted under
+    // the correct owner now that ownerId is threaded through InvokeOptions
+    // into spanEmitter.startInvoke().
     const traceStore = store as unknown as TraceStore;
     const traceId = seqManifestSpan!.traceId;
     const storedSpans = await traceStore.getTrace(traceId, OWNER);
-    // manifest(sequential) + step×2 + manifest(llm)×2 = 5 owner-scoped spans
-    expect(storedSpans.length).toBe(5);
+    // manifest(sequential) + step×2 + manifest(llm)×2 + invoke×2 + model×2 = 9 owner-scoped spans
+    expect(storedSpans.length).toBe(9);
     expect(storedSpans.every((s) => s.ownerId === OWNER)).toBe(true);
+
+    // After the fix: invoke + model spans should also land in the persisted
+    // trace under the right owner. (Pre-fix: only manifest+step spans appeared.)
+    const persistedSpans = await traceStore.getTrace(traceId, OWNER);
+    const persistedKinds = new Set(persistedSpans.map((s) => s.kind));
+    expect(persistedKinds.has("invoke")).toBe(true);
+    expect(persistedKinds.has("model")).toBe(true);
   });
 
   it("model.call span carries agent.cost_usd attribute when the model has a known rate", async () => {
@@ -240,8 +236,7 @@ describe("span emission end-to-end", () => {
     await execute(manifest, "in", ctx);
     await finalise(COST_OWNER);
 
-    // Find the model span from live seenSpans (not from store — store won't have
-    // it because ownerId="unknown" due to the production gap noted above).
+    // Find the model span from live seenSpans.
     const modelSpan = seenSpans.find((s) => s.kind === "model");
     expect(modelSpan).toBeDefined();
 

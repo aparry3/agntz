@@ -160,6 +160,9 @@ export interface InvokeOptions {
   /** Per-invocation SpanEmitter. When provided, child spans nest under whatever
    *  span is at the top of its stack. Bridge constructs one per request. */
   spanEmitter?: import("./telemetry.js").SpanEmitter;
+  /** Tenant scoping for emitted spans. Threaded from the worker bridge so
+   *  invoke/model/tool spans get the right owner_id. */
+  ownerId?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
