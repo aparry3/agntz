@@ -4,12 +4,14 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { parse as parseYAML, stringify as stringifyYAML } from "yaml";
+import { AgentBuilder } from "@/components/agent-builder";
 import { Breadcrumb } from "@/components/breadcrumb";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { CopyButton } from "@/components/copy-button";
-import { PanelToggle } from "@/components/panel-toggle";
+import { PanelToggle, type PanelMode } from "@/components/panel-toggle";
 import { ValidationBanner } from "@/components/validation-banner";
 import { YamlEditor } from "@/components/yaml-editor";
+import { useCatalog } from "@/lib/use-catalog";
 
 interface ValidationError {
   level: string;
@@ -38,7 +40,7 @@ interface ExampleEntry {
   output: string;
 }
 
-type EditorMode = "yaml" | "instruction" | "both";
+type EditorMode = PanelMode;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -66,7 +68,8 @@ export default function AgentEditorPage() {
   const [validating, setValidating] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
-  const [editorMode, setEditorMode] = useState<EditorMode>("both");
+  const [editorMode, setEditorMode] = useState<EditorMode>("build");
+  const catalog = useCatalog();
 
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
@@ -104,7 +107,7 @@ export default function AgentEditorPage() {
         }
 
         if (parsed.kind !== "llm") {
-          setEditorMode("yaml");
+          setEditorMode((mode) => (mode === "instruction" || mode === "both" ? "build" : mode));
         }
       } catch {
         // Keep the current derived state if the draft YAML is temporarily invalid.
@@ -378,7 +381,10 @@ export default function AgentEditorPage() {
   const warnings = validation?.warnings ?? [];
   const hasErrors = errors.length > 0;
   const hasWarnings = warnings.length > 0;
-  const currentMode = supportsInstruction ? editorMode : "yaml";
+  const currentMode: EditorMode =
+    !supportsInstruction && (editorMode === "instruction" || editorMode === "both")
+      ? "build"
+      : editorMode;
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -488,25 +494,33 @@ export default function AgentEditorPage() {
             <div>
               <h2 className="text-sm font-semibold uppercase tracking-[0.24em] text-zinc-500">Agent Definition</h2>
               <p className="mt-2 text-sm text-zinc-600">
-                Edit raw YAML directly, use the instruction editor for LLM agents, or keep both open side by side.
+                Use the form-based builder, edit YAML directly, or keep both open side by side.
               </p>
             </div>
-            {supportsInstruction ? (
-              <PanelToggle value={currentMode} onChange={(mode) => setEditorMode(mode)} />
-            ) : (
-              <span className="rounded-full bg-stone-100 px-3 py-1.5 text-xs font-medium text-zinc-500">
-                Instruction panel is available for `kind: llm` agents only
-              </span>
-            )}
+            <PanelToggle
+              value={currentMode}
+              onChange={(mode) => setEditorMode(mode)}
+              hideInstruction={!supportsInstruction}
+            />
           </div>
 
           <div className={currentMode === "both" ? "grid gap-4 xl:grid-cols-2" : "grid gap-4"}>
+            {currentMode === "build" && (
+              <AgentBuilder
+                manifest={manifest}
+                onChange={(nextValue) => updateManifest(nextValue, "yaml")}
+                catalog={catalog}
+                idLocked
+              />
+            )}
+
             {(currentMode === "yaml" || currentMode === "both") && (
               <div className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
                 <YamlEditor
                   value={manifest}
                   onChange={(nextValue) => updateManifest(nextValue, "yaml")}
                   onSaveShortcut={handleSave}
+                  catalog={catalog}
                   placeholder="# Write your agent manifest here..."
                   className={`${
                     hasErrors

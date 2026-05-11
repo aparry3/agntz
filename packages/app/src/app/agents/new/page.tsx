@@ -3,10 +3,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { parse as parseYAML, stringify as stringifyYAML } from "yaml";
+import { AgentBuilder } from "@/components/agent-builder";
 import { Breadcrumb } from "@/components/breadcrumb";
-import { PanelToggle } from "@/components/panel-toggle";
+import { PanelToggle, type PanelMode } from "@/components/panel-toggle";
 import { ValidationBanner } from "@/components/validation-banner";
 import { YamlEditor } from "@/components/yaml-editor";
+import { useCatalog } from "@/lib/use-catalog";
 
 interface ValidationError {
   level: string;
@@ -24,7 +26,7 @@ interface ExampleEntry {
   output: string;
 }
 
-type EditorMode = "yaml" | "instruction" | "both";
+type EditorMode = PanelMode;
 
 const DEFAULT_MANIFEST = `id: my-agent
 name: My Agent
@@ -50,7 +52,8 @@ export default function NewAgentPage() {
   const [agentId, setAgentId] = useState("");
   const [agentName, setAgentName] = useState("New Agent");
   const [supportsInstruction, setSupportsInstruction] = useState(false);
-  const [editorMode, setEditorMode] = useState<EditorMode>("both");
+  const [editorMode, setEditorMode] = useState<EditorMode>("build");
+  const catalog = useCatalog();
 
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
@@ -90,7 +93,7 @@ export default function NewAgentPage() {
       }
 
       if (parsed.kind !== "llm") {
-        setEditorMode("yaml");
+        setEditorMode((mode) => (mode === "instruction" || mode === "both" ? "build" : mode));
       }
     } catch {
       // Ignore partial drafts while the YAML is being edited.
@@ -254,7 +257,10 @@ export default function NewAgentPage() {
   };
 
   const hasErrors = errors.length > 0;
-  const currentMode = supportsInstruction ? editorMode : "yaml";
+  const currentMode: EditorMode =
+    !supportsInstruction && (editorMode === "instruction" || editorMode === "both")
+      ? "build"
+      : editorMode;
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -365,19 +371,30 @@ export default function NewAgentPage() {
             <div>
               <h2 className="text-sm font-semibold uppercase tracking-[0.24em] text-zinc-500">Agent Definition</h2>
               <p className="mt-2 text-sm text-zinc-600">
-                Edit the manifest directly, or use the instruction panel when the draft is an LLM agent.
+                Use the form-based builder, edit YAML directly, or work in the instruction panel for LLM agents.
               </p>
             </div>
-            {supportsInstruction ? (
-              <PanelToggle value={currentMode} onChange={(mode) => setEditorMode(mode)} />
-            ) : (
-              <span className="rounded-full bg-stone-100 px-3 py-1.5 text-xs font-medium text-zinc-500">
-                Instruction panel is available for `kind: llm` agents only
-              </span>
-            )}
+            <PanelToggle
+              value={currentMode}
+              onChange={(mode) => setEditorMode(mode)}
+              hideInstruction={!supportsInstruction}
+            />
           </div>
 
           <div className={currentMode === "both" ? "grid gap-4 xl:grid-cols-2" : "grid gap-4"}>
+            {currentMode === "build" && (
+              <AgentBuilder
+                manifest={manifest}
+                onChange={(nextValue) => {
+                  setManifest(nextValue);
+                  applyParsedManifest(nextValue);
+                  setStatus(null);
+                }}
+                catalog={catalog}
+                idLocked={false}
+              />
+            )}
+
             {(currentMode === "yaml" || currentMode === "both") && (
               <div className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
                 <YamlEditor
@@ -387,6 +404,7 @@ export default function NewAgentPage() {
                     applyParsedManifest(nextValue);
                     setStatus(null);
                   }}
+                  catalog={catalog}
                   placeholder="# Write your agent manifest here..."
                   className={`${
                     hasErrors

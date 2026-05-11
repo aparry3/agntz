@@ -1,7 +1,16 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { parse as parseYAML } from "yaml";
 import { highlightYaml } from "@/lib/yaml-highlight";
+import {
+  mcpServerInScope,
+  parseYamlContext,
+  suggestionsFor,
+  type Suggestion,
+} from "@/lib/yaml-context";
+import type { Catalog } from "@/lib/use-catalog";
+import { CompletionPopover } from "./yaml-editor/completion-popover";
 
 interface YamlEditorProps {
   value: string;
@@ -9,6 +18,7 @@ interface YamlEditorProps {
   onSaveShortcut?: () => void;
   placeholder?: string;
   className?: string;
+  catalog?: Catalog;
 }
 
 interface FoldableLine {
@@ -23,6 +33,12 @@ interface VisibleLine {
 }
 
 const highlightYamlLine = highlightYaml;
+
+// Approximate metrics for our text-sm + font-mono + leading-6 styling.
+const LINE_HEIGHT = 24;
+const CHAR_WIDTH = 8.4;
+const EDITOR_PADDING_X = 16;
+const EDITOR_PADDING_Y = 12;
 
 function getIndent(line: string) {
   return line.match(/^\s*/)?.[0].length ?? 0;
@@ -126,12 +142,37 @@ function getVisibleLines(lines: string[], collapsed: Set<number>) {
   return visible;
 }
 
+function tryParseManifest(yaml: string): Record<string, unknown> | null {
+  try {
+    const parsed = parseYAML(yaml);
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function caretLineCol(value: string, caret: number) {
+  const before = value.slice(0, caret);
+  const lines = before.split("\n");
+  return {
+    line: lines.length - 1,
+    col: lines[lines.length - 1].length,
+  };
+}
+
+function isCaretAtLineEnd(value: string, caret: number): boolean {
+  const nextNewline = value.indexOf("\n", caret);
+  const lineEnd = nextNewline === -1 ? value.length : nextNewline;
+  return value.slice(caret, lineEnd).trim() === "";
+}
+
 export function YamlEditor({
   value,
   onChange,
   onSaveShortcut,
   placeholder,
   className = "",
+  catalog,
 }: YamlEditorProps) {
   const editorId = useId();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -139,6 +180,11 @@ export function YamlEditor({
   const highlightRef = useRef<HTMLPreElement>(null);
   const foldedViewRef = useRef<HTMLDivElement>(null);
   const [collapsedBlocks, setCollapsedBlocks] = useState<Set<number>>(new Set());
+
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null);
+  const [valuePrefixLen, setValuePrefixLen] = useState(0);
 
   const lines = useMemo(() => {
     const entries = value.split("\n");
@@ -170,6 +216,87 @@ export function YamlEditor({
     [lines]
   );
 
+  const closePopover = useCallback(() => {
+    setSuggestions([]);
+    setPopoverPos(null);
+    setActiveIndex(0);
+    setValuePrefixLen(0);
+  }, []);
+
+  const refreshSuggestions = useCallback(
+    (nextValue: string, caret: number) => {
+      if (!catalog) {
+        closePopover();
+        return;
+      }
+
+      if (!isCaretAtLineEnd(nextValue, caret)) {
+        closePopover();
+        return;
+      }
+
+      const ctx = parseYamlContext(nextValue, caret);
+      if (!ctx) {
+        closePopover();
+        return;
+      }
+
+      const parsed = tryParseManifest(nextValue);
+      const matches = suggestionsFor(ctx, catalog, parsed);
+
+      // Trigger MCP tools fetch if needed (catalog will populate, next keystroke
+      // will pick it up).
+      const serverId = mcpServerInScope(ctx);
+      if (serverId && !catalog.mcpToolsByServer[serverId]) {
+        catalog.loadMcpTools(serverId);
+      }
+
+      if (matches.length === 0) {
+        closePopover();
+        return;
+      }
+
+      const { line, col } = caretLineCol(nextValue, caret);
+      const textarea = textareaRef.current;
+      const scrollTop = textarea ? textarea.scrollTop : 0;
+      const scrollLeft = textarea ? textarea.scrollLeft : 0;
+
+      const top = EDITOR_PADDING_Y + (line + 1) * LINE_HEIGHT - scrollTop + 2;
+      const left = EDITOR_PADDING_X + col * CHAR_WIDTH - scrollLeft;
+
+      setSuggestions(matches);
+      setActiveIndex(0);
+      setPopoverPos({ top, left });
+      setValuePrefixLen(ctx.valuePrefix.length);
+    },
+    [catalog, closePopover],
+  );
+
+  const handleSelectSuggestion = useCallback(
+    (suggestion: Suggestion) => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+
+      const caret = textarea.selectionStart;
+      const start = caret - valuePrefixLen;
+      const before = value.slice(0, start);
+      const after = value.slice(caret);
+      const nextValue = `${before}${suggestion.value}${after}`;
+      onChange(nextValue);
+
+      requestAnimationFrame(() => {
+        const ref = textareaRef.current;
+        if (!ref) return;
+        const nextCaret = start + suggestion.value.length;
+        ref.selectionStart = nextCaret;
+        ref.selectionEnd = nextCaret;
+        ref.focus();
+      });
+      closePopover();
+    },
+    [closePopover, onChange, value, valuePrefixLen],
+  );
+
   const syncEditScroll = () => {
     if (!textareaRef.current) return;
     const top = textareaRef.current.scrollTop;
@@ -182,6 +309,11 @@ export function YamlEditor({
     if (highlightRef.current) {
       highlightRef.current.scrollTop = top;
       highlightRef.current.scrollLeft = left;
+    }
+
+    if (popoverPos) {
+      // Reposition popover relative to scroll.
+      closePopover();
     }
   };
 
@@ -204,6 +336,8 @@ export function YamlEditor({
     });
   };
 
+  const popoverOpen = suggestions.length > 0 && popoverPos !== null;
+
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const textarea = event.currentTarget;
 
@@ -211,6 +345,29 @@ export function YamlEditor({
       event.preventDefault();
       onSaveShortcut?.();
       return;
+    }
+
+    if (popoverOpen) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setActiveIndex((current) => (current + 1) % suggestions.length);
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setActiveIndex((current) => (current - 1 + suggestions.length) % suggestions.length);
+        return;
+      }
+      if (event.key === "Enter" || event.key === "Tab") {
+        event.preventDefault();
+        handleSelectSuggestion(suggestions[activeIndex]);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closePopover();
+        return;
+      }
     }
 
     if (event.key === "Tab") {
@@ -248,6 +405,33 @@ export function YamlEditor({
         textareaRef.current.selectionEnd = cursor;
       });
     }
+  };
+
+  const handleChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const nextValue = event.target.value;
+    onChange(nextValue);
+
+    requestAnimationFrame(() => {
+      const ref = textareaRef.current;
+      if (!ref) return;
+      refreshSuggestions(nextValue, ref.selectionStart);
+    });
+  };
+
+  const handleKeyUp = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Escape" || event.key === "Enter" || event.key === "Tab") return;
+    const textarea = event.currentTarget;
+    refreshSuggestions(value, textarea.selectionStart);
+  };
+
+  const handleClick = (event: React.MouseEvent<HTMLTextAreaElement>) => {
+    const textarea = event.currentTarget;
+    refreshSuggestions(value, textarea.selectionStart);
+  };
+
+  const handleBlur = () => {
+    // Defer so click-on-popover registers before we close.
+    setTimeout(() => closePopover(), 150);
   };
 
   return (
@@ -350,13 +534,25 @@ export function YamlEditor({
             <textarea
               ref={textareaRef}
               value={value}
-              onChange={(event) => onChange(event.target.value)}
+              onChange={handleChange}
               onKeyDown={handleKeyDown}
+              onKeyUp={handleKeyUp}
+              onClick={handleClick}
+              onBlur={handleBlur}
               onScroll={syncEditScroll}
               spellCheck={false}
               placeholder={placeholder}
               className="absolute inset-0 max-h-[32rem] w-full resize-none overflow-auto bg-transparent px-4 py-3 font-mono text-sm leading-6 text-transparent caret-zinc-900 outline-none selection:bg-zinc-200 placeholder:text-zinc-300"
             />
+            {popoverOpen && popoverPos && (
+              <CompletionPopover
+                suggestions={suggestions}
+                activeIndex={activeIndex}
+                top={popoverPos.top}
+                left={popoverPos.left}
+                onSelect={handleSelectSuggestion}
+              />
+            )}
           </div>
         )}
       </div>
