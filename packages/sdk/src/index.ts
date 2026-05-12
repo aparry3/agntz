@@ -13,6 +13,8 @@ export type {
   MultiplexedRunEvent,
   Run,
   RunInput,
+  RunListFilter,
+  RunListResult,
   RunResult,
   RunStatus,
   RunsStartInput,
