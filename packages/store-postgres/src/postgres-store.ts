@@ -338,6 +338,10 @@ export class PostgresStore implements UnifiedStore {
 
     if (!opts.skipMigration) {
       this.migratePromise = this.migrate();
+      // Mark the promise as handled so a migration failure doesn't crash the
+      // process as an unhandled rejection. ensureMigrated() awaits the same
+      // promise and will surface the error on the first real operation.
+      this.migratePromise.catch(() => {});
     }
   }
 
@@ -387,6 +391,16 @@ export class PostgresStore implements UnifiedStore {
       await client.query("SELECT pg_advisory_lock($1)", [lockKey]);
       try {
         const currentVersion = await this.getSchemaVersion(client);
+        // Heal stale rows from prior failed/racing migrations: schema_version
+        // is meant to hold exactly one row, but if v1's INSERT ever ran twice
+        // (pre-fix code) the table can have multiple rows, which then breaks
+        // every "UPDATE ar_schema_version SET version = N" (PK conflict).
+        if (currentVersion > 0) {
+          await client.query(
+            `DELETE FROM ${this.t("schema_version")} WHERE version < $1`,
+            [currentVersion]
+          );
+        }
         for (let i = currentVersion; i < MIGRATIONS.length; i++) {
           const sql = MIGRATIONS[i].replace(/ar_/g, this.prefix);
           await client.query(sql);
