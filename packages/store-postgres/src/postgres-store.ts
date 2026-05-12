@@ -1455,7 +1455,7 @@ function pgRowToSummary(r: Record<string, unknown>): TraceSummary {
 }
 
 function encodeRunCursor(c: { startedAt: number; id: string }): string {
-  return Buffer.from(JSON.stringify(c)).toString("base64url");
+  return Buffer.from(JSON.stringify(c), "utf8").toString("base64url");
 }
 
 function decodeRunCursor(s: string): { startedAt: number; id: string } | null {

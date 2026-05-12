@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { use, useEffect, useMemo, useState } from "react";
 import type { Run } from "@agntz/core";
 import { RunHeader } from "@/components/runs/run-header";
 import { RunTranscript } from "@/components/runs/run-transcript";
@@ -20,7 +20,6 @@ export default function RunDetailPage({
 }) {
   const { runId } = use(params);
   const [initial, setInitial] = useState<Run | null>(null);
-  const [children, setChildren] = useState<ChildSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -40,31 +39,17 @@ export default function RunDetailPage({
     };
   }, [runId]);
 
-  // Children are derived from the spawn_agent tool calls in the parent's
-  // result.toolCalls — no extra round-trip needed for v1.
-  useEffect(() => {
-    if (!initial) return;
-    const fromToolCalls: ChildSummary[] = [];
-    for (const tc of initial.result?.toolCalls ?? []) {
-      if (tc.name !== "spawn_agent") continue;
-      const o = tc.output as Record<string, unknown> | null;
-      if (!o) continue;
-      const childId = typeof o.runId === "string" ? o.runId : null;
-      const childAgent = typeof o.agentId === "string" ? o.agentId : "(agent)";
-      if (!childId) continue;
-      fromToolCalls.push({ id: childId, agentId: childAgent, status: "completed" });
-    }
-    setChildren(fromToolCalls);
-  }, [initial]);
-
   if (error) return <DetailMessage>Failed to load run: {error}</DetailMessage>;
   if (!initial) return <DetailMessage>Loading run...</DetailMessage>;
 
-  return <DetailBody initial={initial} spawned={children} />;
+  return <DetailBody initial={initial} />;
 }
 
-function DetailBody({ initial, spawned }: { initial: Run; spawned: ChildSummary[] }) {
+function DetailBody({ initial }: { initial: Run }) {
   const { run, error } = useRunPolling(initial);
+  // Derive children from the live polled run so new spawn_agent completions
+  // are reflected without a page reload.
+  const spawned = useMemo(() => deriveChildren(run), [run]);
   return (
     <div className="mx-auto max-w-7xl">
       {error && (
@@ -79,6 +64,22 @@ function DetailBody({ initial, spawned }: { initial: Run; spawned: ChildSummary[
       </div>
     </div>
   );
+}
+
+// Children are derived from the spawn_agent tool calls in the parent's
+// result.toolCalls — no extra round-trip needed for v1.
+function deriveChildren(run: Run): ChildSummary[] {
+  const out: ChildSummary[] = [];
+  for (const tc of run.result?.toolCalls ?? []) {
+    if (tc.name !== "spawn_agent") continue;
+    const o = tc.output as Record<string, unknown> | null;
+    if (!o) continue;
+    const childId = typeof o.runId === "string" ? o.runId : null;
+    const childAgent = typeof o.agentId === "string" ? o.agentId : "(agent)";
+    if (!childId) continue;
+    out.push({ id: childId, agentId: childAgent, status: "completed" });
+  }
+  return out;
 }
 
 function DetailMessage({ children }: { children: React.ReactNode }) {
