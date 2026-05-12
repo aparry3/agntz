@@ -8,6 +8,7 @@ import {
   SpanEmitter,
   type InvokeResult,
   type Run,
+  type RunListFilters,
   type Runner,
   type RunRegistry,
   type TraceFilter,
@@ -246,6 +247,40 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
   // ───────────────────────────────────────────────────────────────────────
   // /runs/* — long-lived, observable Runs backed by the process-wide registry
   // ───────────────────────────────────────────────────────────────────────
+
+  app.get("/runs", async (c) => {
+    const userId = getUserId(c);
+
+    let limit: number | undefined;
+    const limitRaw = c.req.query("limit");
+    if (limitRaw !== undefined) {
+      const n = Number(limitRaw);
+      if (!Number.isFinite(n) || n < 1) {
+        return c.json({ error: "Invalid `limit` query param" }, 400);
+      }
+      limit = n;
+    }
+
+    const rootsOnlyRaw = c.req.query("rootsOnly");
+    const rootsOnly = rootsOnlyRaw === undefined ? undefined : rootsOnlyRaw !== "false";
+
+    const filters: RunListFilters = {
+      rootsOnly,
+      agentId: c.req.query("agentId"),
+      status: c.req.query("status") as RunListFilters["status"],
+      startedAfter: c.req.query("startedAfter"),
+      startedBefore: c.req.query("startedBefore"),
+      cursor: c.req.query("cursor"),
+      limit,
+    };
+
+    try {
+      const result = await store.forUser(userId).listRuns(filters);
+      return c.json(result);
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 500);
+    }
+  });
 
   app.post("/runs", async (c) => {
     const start = Date.now();

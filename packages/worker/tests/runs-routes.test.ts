@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { InMemoryRunRegistry, MemoryStore } from "@agntz/core";
+import { InMemoryRunRegistry, MemoryStore, type Run } from "@agntz/core";
 import { createWorkerAPI } from "../src/routes.js";
 
 const SECRET = "test-secret";
@@ -184,6 +184,36 @@ describe("POST /runs/:id/cancel", () => {
   });
 });
 
+/** Build a minimal valid Run for seeding the store directly. */
+function makeRun(overrides: Partial<Run> & Pick<Run, "id" | "startedAt" | "userId">): Run {
+  return {
+    id: overrides.id,
+    rootId: overrides.rootId ?? overrides.id,
+    parentId: overrides.parentId,
+    agentId: overrides.agentId ?? "test-agent",
+    userId: overrides.userId,
+    status: overrides.status ?? "completed",
+    input: overrides.input ?? "",
+    startedAt: overrides.startedAt,
+    endedAt: overrides.endedAt,
+    depth: overrides.depth ?? 0,
+  };
+}
+
+/**
+ * Issue a real API key for the given userId and return an Authorization header
+ * object suitable for passing to `app.request`.
+ */
+async function authHeaders(
+  store: MemoryStore,
+  userId: string,
+): Promise<{ Authorization: string }> {
+  const { rawKey } = await store
+    .forUser(userId)
+    .createApiKey({ userId, name: "test" });
+  return { Authorization: `Bearer ${rawKey}` };
+}
+
 describe("GET /runs/:id/stream", () => {
   it("400 on non-numeric since param", async () => {
     const { app, store } = makeApp();
@@ -214,5 +244,51 @@ describe("GET /runs/:id/stream", () => {
       headers: { Authorization: `Bearer ${rawKey}` },
     });
     expect(res.status).toBe(404);
+  });
+});
+
+describe("GET /runs", () => {
+  it("returns 401 without auth", async () => {
+    const { app } = makeApp();
+    const res = await app.request("/runs");
+    expect(res.status).toBe(401);
+  });
+
+  it("returns the user's runs ordered by startedAt DESC", async () => {
+    const { app, store } = makeApp();
+    await store.forUser("u1").putRun(makeRun({ id: "a", startedAt: 100, userId: "u1" }));
+    await store.forUser("u1").putRun(makeRun({ id: "b", startedAt: 200, userId: "u1" }));
+    const res = await app.request("/runs", { headers: await authHeaders(store, "u1") });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { rows: Run[]; cursor?: string };
+    expect(body.rows.map((r) => r.id)).toEqual(["b", "a"]);
+  });
+
+  it("respects rootsOnly filter via query string", async () => {
+    const { app, store } = makeApp();
+    await store.forUser("u1").putRun(makeRun({ id: "root", startedAt: 100, userId: "u1" }));
+    await store
+      .forUser("u1")
+      .putRun(
+        makeRun({ id: "child", startedAt: 200, userId: "u1", parentId: "root", rootId: "root", depth: 1 }),
+      );
+    const res = await app.request("/runs?rootsOnly=false", { headers: await authHeaders(store, "u1") });
+    const body = (await res.json()) as { rows: Run[] };
+    expect(body.rows.map((r) => r.id).sort()).toEqual(["child", "root"]);
+  });
+
+  it("returns 400 on invalid limit", async () => {
+    const { app, store } = makeApp();
+    const res = await app.request("/runs?limit=abc", { headers: await authHeaders(store, "u1") });
+    expect(res.status).toBe(400);
+  });
+
+  it("scopes results to the authenticated user", async () => {
+    const { app, store } = makeApp();
+    await store.forUser("u1").putRun(makeRun({ id: "mine", startedAt: 100, userId: "u1" }));
+    await store.forUser("u2").putRun(makeRun({ id: "yours", startedAt: 200, userId: "u2" }));
+    const res = await app.request("/runs", { headers: await authHeaders(store, "u1") });
+    const body = (await res.json()) as { rows: Run[] };
+    expect(body.rows.map((r) => r.id)).toEqual(["mine"]);
   });
 });
