@@ -224,4 +224,76 @@ describe("SqliteStore RunStore", () => {
     await expect(admin.listChildren("x")).rejects.toThrow(/user not set/);
     await expect(admin.listSubtree("x")).rejects.toThrow(/user not set/);
   });
+
+  describe("listRuns", () => {
+    it("returns empty + no cursor when no runs", async () => {
+      const result = await store.listRuns({});
+      expect(result.rows).toEqual([]);
+      expect(result.cursor).toBeUndefined();
+    });
+
+    it("orders by startedAt DESC then id DESC", async () => {
+      await store.putRun(makeRun({ id: "a", startedAt: 100 }));
+      await store.putRun(makeRun({ id: "b", startedAt: 200 }));
+      await store.putRun(makeRun({ id: "c", startedAt: 200 }));
+      const { rows } = await store.listRuns({});
+      expect(rows.map((r) => r.id)).toEqual(["c", "b", "a"]);
+    });
+
+    it("excludes children by default (rootsOnly)", async () => {
+      await store.putRun(makeRun({ id: "root", startedAt: 100 }));
+      await store.putRun(
+        makeRun({ id: "child", startedAt: 200, parentId: "root", rootId: "root", depth: 1 }),
+      );
+      const { rows } = await store.listRuns({});
+      expect(rows.map((r) => r.id)).toEqual(["root"]);
+    });
+
+    it("rootsOnly=false returns all runs", async () => {
+      await store.putRun(makeRun({ id: "root", startedAt: 100 }));
+      await store.putRun(
+        makeRun({ id: "child", startedAt: 200, parentId: "root", rootId: "root", depth: 1 }),
+      );
+      const { rows } = await store.listRuns({ rootsOnly: false });
+      expect(rows.map((r) => r.id).sort()).toEqual(["child", "root"]);
+    });
+
+    it("filters by agentId, status, startedAfter, startedBefore", async () => {
+      await store.putRun(makeRun({ id: "a", startedAt: 1_700_000_000_000, agentId: "alpha", status: "completed" }));
+      await store.putRun(makeRun({ id: "b", startedAt: 1_800_000_000_000, agentId: "beta", status: "failed" }));
+      const { rows } = await store.listRuns({
+        agentId: "beta",
+        status: "failed",
+        startedAfter: "2025-01-01T00:00:00.000Z",
+        startedBefore: "2030-01-01T00:00:00.000Z",
+      });
+      expect(rows.map((r) => r.id)).toEqual(["b"]);
+    });
+
+    it("paginates with cursor", async () => {
+      await store.putRun(makeRun({ id: "a", startedAt: 100 }));
+      await store.putRun(makeRun({ id: "b", startedAt: 200 }));
+      await store.putRun(makeRun({ id: "c", startedAt: 300 }));
+      const p1 = await store.listRuns({ limit: 2 });
+      expect(p1.rows.map((r) => r.id)).toEqual(["c", "b"]);
+      expect(p1.cursor).toBeDefined();
+      const p2 = await store.listRuns({ limit: 2, cursor: p1.cursor });
+      expect(p2.rows.map((r) => r.id)).toEqual(["a"]);
+      expect(p2.cursor).toBeUndefined();
+    });
+
+    it("ignores malformed cursor", async () => {
+      await store.putRun(makeRun({ id: "a", startedAt: 100 }));
+      const { rows } = await store.listRuns({ cursor: "garbage" });
+      expect(rows.map((r) => r.id)).toEqual(["a"]);
+    });
+
+    it("isolates runs by user across scoped instances", async () => {
+      const u2 = admin.forUser("user_other");
+      await store.putRun(makeRun({ id: "a-mine", startedAt: 100 }));
+      await u2.putRun(makeRun({ id: "a-other", startedAt: 200 }));
+      const mine = await store.listRuns({});
+      expect(mine.rows.map((r) => r.id)).toEqual(["a-mine"]);
+    });
+  });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AgntzClient, type MultiplexedRunEvent, type Run } from "../src/index.js";
+import type { RunListFilter } from "../src/index.js";
 import { jsonResponse, mockFetch, sseResponse } from "./helpers/mock-fetch.js";
 
 const BASE = "https://worker.example.com";
@@ -131,5 +132,52 @@ describe("AgntzClient.runs.stream", () => {
       collected.push(ev);
     }
     expect(collected).toEqual([{ type: "snapshot", run }]);
+  });
+});
+
+describe("AgntzClient.runs.list", () => {
+  it("calls GET /runs with no query params when filter is empty", async () => {
+    const mock = mockFetch(() => jsonResponse(200, { rows: [], cursor: undefined }));
+    const client = new AgntzClient({ apiKey: "k", baseUrl: BASE, fetch: mock.fetch });
+    const result = await client.runs.list({});
+    expect(result.rows).toEqual([]);
+    expect(mock.calls).toHaveLength(1);
+    const call = mock.calls[0]!;
+    expect(call.url).toBe(`${BASE}/runs`);
+    expect(call.init.method).toBe("GET");
+    expect((call.init.headers as Record<string, string>).Authorization).toBe("Bearer k");
+  });
+
+  it("URL-encodes filter params", async () => {
+    const mock = mockFetch(() => jsonResponse(200, { rows: [] }));
+    const client = new AgntzClient({ apiKey: "k", baseUrl: BASE, fetch: mock.fetch });
+    const filter: RunListFilter = {
+      agentId: "alpha/beta",
+      status: "completed",
+      startedAfter: "2026-01-01T00:00:00.000Z",
+      limit: 25,
+      rootsOnly: false,
+    };
+    await client.runs.list(filter);
+    const call = mock.calls[0]!;
+    const u = new URL(call.url);
+    expect(u.pathname).toBe("/runs");
+    expect(u.searchParams.get("agentId")).toBe("alpha/beta");
+    expect(u.searchParams.get("status")).toBe("completed");
+    expect(u.searchParams.get("startedAfter")).toBe("2026-01-01T00:00:00.000Z");
+    expect(u.searchParams.get("limit")).toBe("25");
+    expect(u.searchParams.get("rootsOnly")).toBe("false");
+  });
+
+  it("returns rows and cursor", async () => {
+    const sample = {
+      rows: [{ id: "r1", rootId: "r1", agentId: "a", status: "completed", input: "x", startedAt: 1, depth: 0 }],
+      cursor: "abc",
+    };
+    const mock = mockFetch(() => jsonResponse(200, sample));
+    const client = new AgntzClient({ apiKey: "k", baseUrl: BASE, fetch: mock.fetch });
+    const result = await client.runs.list({});
+    expect(result.cursor).toBe("abc");
+    expect(result.rows[0]!.id).toBe("r1");
   });
 });

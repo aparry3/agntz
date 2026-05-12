@@ -8,6 +8,8 @@ import type {
   MultiplexedRunEvent,
   Run,
   RunInput,
+  RunListFilter,
+  RunListResult,
   RunResult,
   RunsStartInput,
   RunsStreamInput,
@@ -154,6 +156,33 @@ export class RunsResource {
       fetchImpl: this.client._fetchImpl,
     });
     return (await res.json()) as Run;
+  }
+
+  /** List runs for the authenticated user, with optional filters and cursor-based pagination. */
+  async list(
+    filter: RunListFilter = {},
+    opts: { signal?: AbortSignal } = {},
+  ): Promise<RunListResult> {
+    const signal = this.client._composeSignal(opts.signal);
+    const qs = new URLSearchParams();
+    if (filter.rootsOnly !== undefined) qs.set("rootsOnly", String(filter.rootsOnly));
+    if (filter.agentId) qs.set("agentId", filter.agentId);
+    if (filter.status) qs.set("status", filter.status);
+    if (filter.startedAfter) qs.set("startedAfter", filter.startedAfter);
+    if (filter.startedBefore) qs.set("startedBefore", filter.startedBefore);
+    if (filter.limit !== undefined) qs.set("limit", String(filter.limit));
+    if (filter.cursor) qs.set("cursor", filter.cursor);
+
+    const path = qs.toString() ? `/runs?${qs.toString()}` : "/runs";
+    const res = await sendRequest({
+      baseUrl: this.client._baseUrl,
+      path,
+      method: "GET",
+      apiKey: this.client._apiKey,
+      signal,
+      fetchImpl: this.client._fetchImpl,
+    });
+    return (await res.json()) as RunListResult;
   }
 }
 

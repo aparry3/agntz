@@ -103,6 +103,22 @@ export interface RunsStreamInput {
   signal?: AbortSignal;
 }
 
+/** Filter passed to RunsResource.list. `userId` is implicit (auth). */
+export interface RunListFilter {
+  rootsOnly?: boolean;
+  agentId?: string;
+  status?: RunStatus;
+  startedAfter?: string;
+  startedBefore?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+export interface RunListResult {
+  rows: Run[];
+  cursor?: string;
+}
+
 /**
  * Multiplexed event from a Run subtree, as exposed via GET /runs/:id/stream.
  * Mirrors @agntz/core's `MultiplexedEvent` — duplicated to keep the SDK free

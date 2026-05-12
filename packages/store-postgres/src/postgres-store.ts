@@ -16,6 +16,8 @@ import type {
   LogFilter,
   Run,
   RunStatus,
+  RunListFilters,
+  RunListResult,
   Span,
   TraceSummary,
   TraceFilter,
@@ -214,6 +216,7 @@ const MIGRATIONS: string[] = [
   CREATE INDEX IF NOT EXISTS idx_ar_runs_parent ON ar_runs(user_id, parent_id);
   CREATE INDEX IF NOT EXISTS idx_ar_runs_root ON ar_runs(user_id, root_id);
   CREATE INDEX IF NOT EXISTS idx_ar_runs_status ON ar_runs(user_id, status);
+  CREATE INDEX IF NOT EXISTS idx_ar_runs_started ON ar_runs(user_id, started_at DESC);
 
   UPDATE ar_schema_version SET version = 6;
   `,
@@ -942,6 +945,57 @@ export class PostgresStore implements UnifiedStore {
     return rows.map(rowToRun);
   }
 
+  async listRuns(filters: RunListFilters): Promise<RunListResult> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+
+    const limit = Math.min(Math.max(filters.limit ?? 50, 1), 200);
+    const rootsOnly = filters.rootsOnly ?? true;
+    const clauses: string[] = ["user_id = $1"];
+    const args: unknown[] = [u];
+    let i = 2;
+
+    if (rootsOnly) clauses.push("parent_id IS NULL");
+    if (filters.agentId) { clauses.push(`agent_id = $${i++}`); args.push(filters.agentId); }
+    if (filters.status) { clauses.push(`status = $${i++}`); args.push(filters.status); }
+    if (filters.startedAfter) {
+      const t = Date.parse(filters.startedAfter);
+      if (Number.isFinite(t)) { clauses.push(`started_at >= $${i++}`); args.push(t); }
+    }
+    if (filters.startedBefore) {
+      const t = Date.parse(filters.startedBefore);
+      if (Number.isFinite(t)) { clauses.push(`started_at <= $${i++}`); args.push(t); }
+    }
+    if (filters.cursor) {
+      const c = decodeRunCursor(filters.cursor);
+      if (c) {
+        clauses.push(`(started_at < $${i} OR (started_at = $${i} AND id < $${i + 1}))`);
+        args.push(c.startedAt, c.id);
+        i += 2;
+      }
+    }
+
+    args.push(limit + 1);
+    const sql = `SELECT * FROM ${this.t("runs")}
+                 WHERE ${clauses.join(" AND ")}
+                 ORDER BY started_at DESC, id DESC
+                 LIMIT $${i}`;
+    const { rows: raw } = await this.pool.query<Record<string, unknown>>(sql, args);
+    const hasMore = raw.length > limit;
+    const page = hasMore ? raw.slice(0, limit) : raw;
+    const rows = page.map((r) => rowToRun(r as Parameters<typeof rowToRun>[0]));
+
+    return {
+      rows,
+      cursor: hasMore
+        ? encodeRunCursor({
+            startedAt: rows[rows.length - 1].startedAt,
+            id: rows[rows.length - 1].id,
+          })
+        : undefined,
+    };
+  }
+
   // ═══ TraceStore ═══
 
   async insertSpan(span: Span): Promise<void> {
@@ -1398,6 +1452,29 @@ function pgRowToSummary(r: Record<string, unknown>): TraceSummary {
     totalTokens: r.total_tokens as number,
     totalCostUsd: r.total_cost_usd == null ? null : Number(r.total_cost_usd),
   };
+}
+
+function encodeRunCursor(c: { startedAt: number; id: string }): string {
+  return Buffer.from(JSON.stringify(c), "utf8").toString("base64url");
+}
+
+function decodeRunCursor(s: string): { startedAt: number; id: string } | null {
+  try {
+    const parsed = JSON.parse(Buffer.from(s, "base64url").toString("utf8")) as unknown;
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "startedAt" in parsed &&
+      "id" in parsed &&
+      typeof (parsed as { startedAt: unknown }).startedAt === "number" &&
+      typeof (parsed as { id: unknown }).id === "string"
+    ) {
+      return parsed as { startedAt: number; id: string };
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 function rowToApiKey(r: {

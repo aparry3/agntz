@@ -618,6 +618,31 @@ export interface RunRegistry {
 }
 
 /**
+ * Filters for RunStore.listRuns. `userId` is implicit (the store is accessed
+ * via `store.forUser(userId)`). `cursor` is opaque; backends encode/decode
+ * it as base64url JSON `{ startedAt: number, id: string }`.
+ */
+export interface RunListFilters {
+  /** When true (default), only depth=0 runs are returned. */
+  rootsOnly?: boolean;
+  agentId?: string;
+  status?: RunStatus;
+  /** ISO 8601. Compared to startedAt converted via Date.parse. */
+  startedAfter?: string;
+  /** ISO 8601. */
+  startedBefore?: string;
+  /** Default 50, max 200. */
+  limit?: number;
+  cursor?: string;
+}
+
+export interface RunListResult {
+  rows: Run[];
+  /** Present iff there is a next page. Pass back as `filters.cursor`. */
+  cursor?: string;
+}
+
+/**
  * Persistent record of Runs. Optional — RunRegistry works without one
  * (in-memory only). Mirrors the Run interface fields.
  */
@@ -626,6 +651,12 @@ export interface RunStore {
   getRun(runId: string): Promise<Run | null>;
   listChildren(parentRunId: string): Promise<Run[]>;
   listSubtree(rootId: string): Promise<Run[]>;
+  /**
+   * List runs owned by the scoped user, ordered by `startedAt DESC, id DESC`.
+   * Returns up to `filters.limit` rows (default 50, max 200) plus an opaque
+   * cursor when more pages exist.
+   */
+  listRuns(filters: RunListFilters): Promise<RunListResult>;
 }
 
 // ═══════════════════════════════════════════════════════════════════════

@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { listRunsInProcess } from "./list-runs.js";
 import type {
   AgentDefinition,
   ProviderConfig,
@@ -13,6 +14,8 @@ import type {
   LogFilter,
   Run,
   RunStatus,
+  RunListFilters,
+  RunListResult,
   Span,
   TraceSummary,
   TraceFilter,
@@ -461,6 +464,20 @@ export class MemoryStore implements UnifiedStore {
       }
     }
     return result.sort((a, b) => a.depth - b.depth || a.startedAt - b.startedAt || a.id.localeCompare(b.id));
+  }
+
+  private scopedRunsArray(): Run[] {
+    const u = this.requireUser();
+    const prefix = `${u}:`;
+    const results: Run[] = [];
+    for (const [key, run] of this.backend.runs) {
+      if (key.startsWith(prefix)) results.push({ ...run });
+    }
+    return results;
+  }
+
+  async listRuns(filters: RunListFilters): Promise<RunListResult> {
+    return listRunsInProcess(this.scopedRunsArray(), filters);
   }
 
   // ═══ TraceStore ═══

@@ -16,6 +16,8 @@ import type {
   InvokeResult,
   LogFilter,
   Run,
+  RunListFilters,
+  RunListResult,
   RunStatus,
   Span,
   TraceSummary,
@@ -180,6 +182,7 @@ const MIGRATIONS = [
   CREATE INDEX IF NOT EXISTS idx_runs_parent ON runs(user_id, parent_id);
   CREATE INDEX IF NOT EXISTS idx_runs_root ON runs(user_id, root_id);
   CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(user_id, status);
+  CREATE INDEX IF NOT EXISTS idx_runs_started ON runs(user_id, started_at DESC);
 
   UPDATE schema_version SET version = 5;
   `,
@@ -905,6 +908,55 @@ export class SqliteStore implements UnifiedStore {
     return rows.map(rowToRun);
   }
 
+  async listRuns(filters: RunListFilters): Promise<RunListResult> {
+    const u = this.requireUser();
+    const limit = Math.min(Math.max(filters.limit ?? 50, 1), 200);
+    const rootsOnly = filters.rootsOnly ?? true;
+
+    const clauses: string[] = ["user_id = ?"];
+    const args: unknown[] = [u];
+
+    if (rootsOnly) clauses.push("parent_id IS NULL");
+    if (filters.agentId) { clauses.push("agent_id = ?"); args.push(filters.agentId); }
+    if (filters.status) { clauses.push("status = ?"); args.push(filters.status); }
+    if (filters.startedAfter) {
+      const t = Date.parse(filters.startedAfter);
+      if (Number.isFinite(t)) { clauses.push("started_at >= ?"); args.push(t); }
+    }
+    if (filters.startedBefore) {
+      const t = Date.parse(filters.startedBefore);
+      if (Number.isFinite(t)) { clauses.push("started_at <= ?"); args.push(t); }
+    }
+    if (filters.cursor) {
+      const c = decodeRunCursor(filters.cursor);
+      if (c) {
+        // strict less-than on (started_at DESC, id DESC)
+        clauses.push("(started_at < ? OR (started_at = ? AND id < ?))");
+        args.push(c.startedAt, c.startedAt, c.id);
+      }
+    }
+
+    args.push(limit + 1); // fetch one extra to detect a next page
+
+    const stmt = this.db.prepare(
+      `SELECT * FROM runs
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY started_at DESC, id DESC
+       LIMIT ?`,
+    );
+    const rawRows = stmt.all(...args) as RunRow[];
+    const hasMore = rawRows.length > limit;
+    const page = hasMore ? rawRows.slice(0, limit) : rawRows;
+    const rows = page.map((r) => rowToRun(r));
+
+    let cursor: string | undefined;
+    if (hasMore) {
+      const last = rows[rows.length - 1];
+      cursor = encodeRunCursor({ startedAt: last.startedAt, id: last.id });
+    }
+    return { rows, cursor };
+  }
+
   // ═══ TraceStore ═══
 
   async insertSpan(span: Span): Promise<void> {
@@ -1327,6 +1379,18 @@ function sqliteRowToSummary(r: Record<string, unknown>): TraceSummary {
     totalTokens: r.total_tokens as number,
     totalCostUsd: (r.total_cost_usd as number | null) ?? null,
   };
+}
+
+function encodeRunCursor(c: { startedAt: number; id: string }): string {
+  return Buffer.from(JSON.stringify(c), "utf8").toString("base64url");
+}
+
+function decodeRunCursor(s: string): { startedAt: number; id: string } | null {
+  try {
+    const c = JSON.parse(Buffer.from(s, "base64url").toString("utf8"));
+    if (typeof c.startedAt !== "number" || typeof c.id !== "string") return null;
+    return c;
+  } catch { return null; }
 }
 
 function encodeSqliteTraceCursor(c: { startedAt: string; traceId: string }): string {
