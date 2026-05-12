@@ -1,0 +1,14 @@
+# Skill — web research with citation; loaded mid-run via use_skill
+name: researcher
+description: Web research with citation. Use when the agent needs to verify facts, gather sources, or summarize external information.
+
+tools:
+  - kind: local
+    tools: [web_search, fetch_url]
+
+instructions: |
+  You are now in research mode. When asked to research a topic:
+  1. Search broadly first with web_search (3+ queries with varied phrasing).
+  2. Read promising results with fetch_url.
+  3. Verify each claim against at least 2 independent sources.
+  4. Cite sources inline as [domain.com](full-url).

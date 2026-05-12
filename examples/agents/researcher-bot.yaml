@@ -1,0 +1,18 @@
+# LLM agent that opts into reusable skills via the synthetic use_skill tool
+id: researcher-bot
+name: Researcher Bot
+description: Researches topics with citations and produces a clean summary.
+kind: llm
+
+model:
+  provider: anthropic
+  name: claude-sonnet-4-6
+
+instruction: |
+  You are a helpful research assistant. For any task that needs external
+  research, load the `researcher` skill before answering. For long results,
+  load the `summarizer` skill before producing your final response.
+
+skills:
+  - researcher
+  - summarizer

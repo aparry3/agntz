@@ -58,6 +58,7 @@ function normalizeLLM(base: Record<string, unknown>, raw: Record<string, unknown
     tools: raw.tools ? normalizeTools(raw.tools as unknown[]) : undefined,
     outputSchema: raw.outputSchema as Record<string, unknown> | undefined,
     spawnable: raw.spawnable ? normalizeSpawnable(raw.spawnable as unknown[]) : undefined,
+    skills: raw.skills ? normalizeSkills(raw.skills as unknown[]) : undefined,
   } as LLMAgentManifest;
 }
 
@@ -81,6 +82,24 @@ function normalizeSpawnable(raw: unknown[]): AgentRef[] {
       return { kind: "inline" as const, definition: inlineManifest };
     }
     throw new Error(`spawnable[${i}].kind must be 'ref' or 'inline' (got '${kind}')`);
+  });
+}
+
+const SKILL_NAME_RE = /^[a-z][a-z0-9-]*$/;
+
+// Normalize the `skills:` array on an LLM manifest into a string[] of names.
+function normalizeSkills(raw: unknown[]): string[] {
+  if (!Array.isArray(raw)) {
+    throw new Error("'skills' must be an array of strings");
+  }
+  return raw.map((entry, i) => {
+    if (typeof entry !== "string") {
+      throw new Error(`skills[${i}] must be a string (got ${typeof entry})`);
+    }
+    if (!SKILL_NAME_RE.test(entry)) {
+      throw new Error(`skills[${i}] '${entry}' must match ${SKILL_NAME_RE.source}`);
+    }
+    return entry;
   });
 }
 

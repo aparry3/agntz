@@ -1,4 +1,4 @@
-import type { ToolDefinition, ToolInfo, ToolContext } from "./types.js";
+import type { ToolDefinition, ToolInfo, ToolContext, ToolReference } from "./types.js";
 import { zodToJsonSchema } from "./utils/schema.js";
 import type { ZodSchema } from "zod";
 
@@ -133,5 +133,48 @@ export class ToolRegistry {
    */
   get size(): number {
     return this.tools.size;
+  }
+
+  /**
+   * Resolve a list of ToolReferences into model-facing tool descriptors,
+   * connecting MCP servers and looking up agent-as-tool refs via the host
+   * runner's helpers. Idempotent: tools already present are reused (no
+   * "already registered" error). Used for mid-run skill tool loading.
+   */
+  async registerToolReferences(
+    refs: ToolReference[],
+    helpers: {
+      resolveAgentAsTool: (agentId: string) => { name: string; description: string; parameters: Record<string, unknown> } | null;
+      resolveMCPTools: (server: string, tools?: string[]) => Array<{ name: string; description: string; parameters: Record<string, unknown> }>;
+      ensureMCPServerRegistered: (server: string) => Promise<void>;
+    },
+  ): Promise<Array<{ name: string; description: string; parameters: Record<string, unknown> }>> {
+    const mcpServers = Array.from(
+      new Set(
+        refs
+          .filter((r): r is Extract<ToolReference, { type: "mcp" }> => r.type === "mcp")
+          .map((r) => r.server),
+      ),
+    );
+    for (const server of mcpServers) {
+      await helpers.ensureMCPServerRegistered(server);
+    }
+
+    const resolved: Array<{ name: string; description: string; parameters: Record<string, unknown> }> = [];
+    for (const ref of refs) {
+      if (ref.type === "inline") {
+        const info = this.get(ref.name);
+        if (info) {
+          resolved.push({ name: info.name, description: info.description, parameters: info.inputSchema });
+        }
+      } else if (ref.type === "agent") {
+        const info = helpers.resolveAgentAsTool(ref.agentId);
+        if (info) resolved.push(info);
+      } else if (ref.type === "mcp") {
+        const mcpTools = helpers.resolveMCPTools(ref.server, ref.tools);
+        resolved.push(...mcpTools);
+      }
+    }
+    return resolved;
   }
 }

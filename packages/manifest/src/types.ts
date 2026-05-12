@@ -76,6 +76,12 @@ export interface LLMAgentManifest extends AgentManifestBase {
    * definition. Mirror of `AgentDefinition.spawnable` in `@agntz/core`.
    */
   spawnable?: AgentRef[];
+  /**
+   * Names of skills this agent may load mid-run via the synthetic
+   * `use_skill` tool. Each name is resolved against the user's SkillStore;
+   * names must match `^[a-z][a-z0-9-]*$`.
+   */
+  skills?: string[];
 }
 
 /**

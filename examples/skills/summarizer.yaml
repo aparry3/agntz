@@ -1,0 +1,11 @@
+# Skill — condense long passages; instructions-only, no tools
+name: summarizer
+description: Condense long passages into faithful short summaries. Use when the agent has gathered lots of information and needs to compress it for the user.
+
+instructions: |
+  You are now in summarization mode. When the agent loads this skill:
+  1. Read every source in full before writing.
+  2. Aim for 30% of the original length unless the user specifies otherwise.
+  3. Preserve key numbers, names, and qualifiers exactly.
+  4. Lead with the single most important takeaway, then supporting detail.
+  5. Cut hedging, filler, and second-order context.

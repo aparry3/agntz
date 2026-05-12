@@ -1,8 +1,10 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { listRunsInProcess } from "./list-runs.js";
+import { defineSkill } from "../skill.js";
 import type {
   AgentDefinition,
   ProviderConfig,
+  SkillDefinition,
   UnifiedStore,
   ApiKeyRecord,
   Connection,
@@ -61,6 +63,7 @@ interface MemoryBackend {
   runs: Map<string, Run>;                                    // `${userId}:${runId}` -> run
   spans: Map<string, Span>;                                  // spanId -> span
   summaries: Map<string, TraceSummary>;                      // traceId -> summary
+  skills: Map<string, Map<string, SkillDefinition>>;         // userId -> name -> skill
 }
 
 function createBackend(): MemoryBackend {
@@ -76,6 +79,7 @@ function createBackend(): MemoryBackend {
     runs: new Map(),
     spans: new Map(),
     summaries: new Map(),
+    skills: new Map(),
   };
 }
 
@@ -369,6 +373,44 @@ export class MemoryStore implements UnifiedStore {
 
   async deleteConnection(kind: ConnectionKind, id: string): Promise<void> {
     this.connectionMap().delete(`${kind}:${id}`);
+  }
+
+  // ═══ SkillStore ═══
+
+  private skillMap(): Map<string, SkillDefinition> {
+    const u = this.requireUser();
+    let m = this.backend.skills.get(u);
+    if (!m) {
+      m = new Map();
+      this.backend.skills.set(u, m);
+    }
+    return m;
+  }
+
+  async getSkill(name: string): Promise<SkillDefinition | null> {
+    return this.skillMap().get(name) ?? null;
+  }
+
+  async listSkills(): Promise<Array<{ name: string; description: string }>> {
+    return Array.from(this.skillMap().values())
+      .map((s) => ({ name: s.name, description: s.description }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async putSkill(skill: SkillDefinition): Promise<void> {
+    const validated = defineSkill(skill);
+    const map = this.skillMap();
+    const now = this.nextTimestamp();
+    const existing = map.get(validated.name);
+    map.set(validated.name, {
+      ...validated,
+      createdAt: existing?.createdAt ?? validated.createdAt ?? now,
+      updatedAt: now,
+    });
+  }
+
+  async deleteSkill(name: string): Promise<void> {
+    this.skillMap().delete(name);
   }
 
   // ═══ ApiKeyStore (unscoped admin) ═══

@@ -21,6 +21,7 @@ import { InMemoryTraceRegistry } from "./trace-registry.js";
 import { workerAuth, internalOnlyAuth, getUserId, getCachedBody } from "./middleware/auth.js";
 import { isSystemAgentId, loadSystemAgent, listSystemAgents, getSystemAgent } from "./system-agents.js";
 import { LOCAL_TOOLS } from "./tools/registry.js";
+import { wrapWithSkillRedaction } from "./session-redact.js";
 import { buildValidationContext } from "./validation.js";
 
 export interface WorkerAPIOptions {
@@ -585,7 +586,7 @@ async function resolveRunnerAndManifest(
     return { runner, manifest };
   }
 
-  const scoped = store.forUser(userId);
+  const scoped = wrapWithSkillRedaction(store.forUser(userId));
   const runner = createRunner({ store: scoped, tools, defaults });
   const manifest = await resolveStoredManifest(agentId, runner);
   return { runner, manifest };

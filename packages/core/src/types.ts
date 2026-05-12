@@ -37,6 +37,9 @@ export interface AgentDefinition {
    */
   spawnable?: AgentRef[];
 
+  /** Skills the agent may load mid-run via the synthetic `use_skill` tool. Names resolve in `SkillStore`. */
+  skills?: string[];
+
   /** Structured output constraint (JSON Schema) */
   outputSchema?: Record<string, unknown>;
 
@@ -110,6 +113,18 @@ export interface ToolContext {
    * uses this to create child Runs without blocking the current loop.
    */
   runRegistry?: RunRegistry;
+  /** Skills already loaded in this run (use_skill tool reads/writes this). */
+  loadedSkills?: Set<string>;
+  /** SkillStore used by the use_skill tool to fetch definitions on demand. */
+  skillStore?: SkillStore;
+  /**
+   * Callback the use_skill tool invokes to wire a loaded skill's tools into
+   * the live tool registry and report descriptors back to the model. The
+   * runner supplies this in the per-call ToolContext.
+   */
+  registerSkillTools?: (
+    refs: ToolReference[],
+  ) => Promise<Array<{ name: string; description: string; parameters: Record<string, unknown> }>>;
   /** Spread toolContext values */
   [key: string]: unknown;
 }
@@ -412,6 +427,33 @@ export interface AgentStore {
   getAgentVersion(agentId: string, createdAt: string): Promise<AgentDefinition | null>;
   /** Mark a specific version as the active one. */
   activateAgentVersion(agentId: string, createdAt: string): Promise<void>;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Skills — reusable (instruction + tools) bundles an LLM agent can opt into
+// mid-run. See packages/core/src/tools/use-skill.ts for the synthetic tool
+// the runner registers when an agent declares skills.
+// ═══════════════════════════════════════════════════════════════════════
+
+export interface SkillDefinition {
+  /** lowercase-kebab-case; unique per user; identifier */
+  name: string;
+  /** Surfaced to the LLM via the system prompt's "Available skills" section. */
+  description: string;
+  /** Returned as the use_skill tool result when the LLM loads the skill. */
+  instructions: string;
+  /** Tools registered into the live tool registry when the skill is loaded. */
+  tools?: ToolReference[];
+  metadata?: Record<string, unknown>;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface SkillStore {
+  getSkill(name: string): Promise<SkillDefinition | null>;
+  listSkills(): Promise<Array<{ name: string; description: string }>>;
+  putSkill(skill: SkillDefinition): Promise<void>;
+  deleteSkill(name: string): Promise<void>;
 }
 
 export interface SessionStore {
@@ -800,6 +842,7 @@ export type UnifiedStore = AgentStore &
   ApiKeyStore &
   RunStore &
   TraceStore &
+  SkillStore &
   ScopableStore;
 
 // ═══════════════════════════════════════════════════════════════════════
