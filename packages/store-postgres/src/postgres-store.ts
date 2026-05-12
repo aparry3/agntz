@@ -28,6 +28,7 @@ import type {
 const { Pool } = pg;
 type PoolType = InstanceType<typeof pg.Pool>;
 type PoolConfig = pg.PoolConfig;
+type PoolClientType = pg.PoolClient;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Schema Migrations
@@ -96,7 +97,7 @@ const MIGRATIONS: string[] = [
   CREATE TABLE IF NOT EXISTS ar_schema_version (
     version INTEGER PRIMARY KEY
   );
-  INSERT INTO ar_schema_version (version) VALUES (1);
+  INSERT INTO ar_schema_version (version) VALUES (1) ON CONFLICT DO NOTHING;
   `,
   // v2: Provider configuration
   `
@@ -376,17 +377,41 @@ export class PostgresStore implements UnifiedStore {
   }
 
   private async migrate(): Promise<void> {
-    const currentVersion = await this.getSchemaVersion();
-    for (let i = currentVersion; i < MIGRATIONS.length; i++) {
-      const sql = MIGRATIONS[i].replace(/ar_/g, this.prefix);
-      await this.pool.query(sql);
+    // Hold a single connection so the advisory lock and migration queries
+    // run on the same session — pg_advisory_lock is session-scoped.
+    const client = await this.pool.connect();
+    try {
+      const lockKey = this.migrationLockKey();
+      // Serializes migrations across all processes sharing this database
+      // (e.g., app + worker booting concurrently on Railway).
+      await client.query("SELECT pg_advisory_lock($1)", [lockKey]);
+      try {
+        const currentVersion = await this.getSchemaVersion(client);
+        for (let i = currentVersion; i < MIGRATIONS.length; i++) {
+          const sql = MIGRATIONS[i].replace(/ar_/g, this.prefix);
+          await client.query(sql);
+        }
+        this.migrated = true;
+      } finally {
+        await client.query("SELECT pg_advisory_unlock($1)", [lockKey]);
+      }
+    } finally {
+      client.release();
     }
-    this.migrated = true;
   }
 
-  private async getSchemaVersion(): Promise<number> {
+  private migrationLockKey(): string {
+    const hash = createHash("sha256")
+      .update(`agntz-migration:${this.prefix}`)
+      .digest();
+    return hash.readBigInt64BE(0).toString();
+  }
+
+  private async getSchemaVersion(
+    executor: PoolType | PoolClientType = this.pool
+  ): Promise<number> {
     try {
-      const result = await this.pool.query(
+      const result = await executor.query(
         `SELECT version FROM ${this.t("schema_version")} ORDER BY version DESC LIMIT 1`
       );
       return result.rows[0]?.version ?? 0;
