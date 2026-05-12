@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import type { Run, RunListFilters, RunStatus } from "../types.js";
-import { MemoryStore } from "../stores/memory.js";
-import { JsonFileStore } from "../stores/json-file.js";
+import type { Run, RunListFilters, RunStatus } from "../../src/types.js";
+import { MemoryStore } from "../../src/stores/memory.js";
+import { JsonFileStore } from "../../src/stores/json-file.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
