@@ -19,9 +19,17 @@ function decodeCursor(s: string): Cursor | null {
   }
 }
 
+function parseISO(s: string | undefined): number | null {
+  if (!s) return null;
+  const t = Date.parse(s);
+  return Number.isNaN(t) ? null : t;
+}
+
 /**
- * Pure in-process implementation of listRuns. Used by MemoryStore and
- * JsonFileStore which both keep an in-memory collection of Run values.
+ * Pure, in-process filter+sort+paginate over a Run array. Used by both
+ * MemoryStore (in-memory map) and JsonFileStore (per-call directory scan)
+ * to share filter/sort/cursor logic. SQL backends compute these in the DB
+ * and do not use this helper.
  */
 export function listRunsInProcess(
   allRuns: Run[],
@@ -29,8 +37,8 @@ export function listRunsInProcess(
 ): RunListResult {
   const limit = Math.min(Math.max(filters.limit ?? 50, 1), 200);
   const rootsOnly = filters.rootsOnly ?? true;
-  const startedAfter = filters.startedAfter ? Date.parse(filters.startedAfter) : null;
-  const startedBefore = filters.startedBefore ? Date.parse(filters.startedBefore) : null;
+  const startedAfter = parseISO(filters.startedAfter);
+  const startedBefore = parseISO(filters.startedBefore);
   const cursor = filters.cursor ? decodeCursor(filters.cursor) : null;
 
   const filtered = allRuns.filter((r) => {
@@ -54,11 +62,8 @@ export function listRunsInProcess(
 
   const page = filtered.slice(0, limit);
   const hasMore = filtered.length > limit;
-  const lastInPage = page[page.length - 1];
   return {
     rows: page,
-    cursor: hasMore && lastInPage
-      ? encodeCursor({ startedAt: lastInPage.startedAt, id: lastInPage.id })
-      : undefined,
+    cursor: hasMore ? encodeCursor({ startedAt: page[page.length - 1].startedAt, id: page[page.length - 1].id }) : undefined,
   };
 }

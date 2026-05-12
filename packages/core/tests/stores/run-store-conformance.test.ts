@@ -116,9 +116,12 @@ function runRunStoreListConformance(
       expect(page2.cursor).toBeUndefined();
     });
 
-    it("clamps limit to [1, 200]", async () => {
+    it("clamps limit upper bound to 200", async () => {
+      for (let i = 0; i < 201; i++) {
+        await store.putRun(makeRun({ id: `r${i.toString().padStart(3, "0")}`, startedAt: 100 + i }));
+      }
       const result = await store.listRuns({ limit: 9999 });
-      expect(result.rows.length).toBeLessThanOrEqual(200);
+      expect(result.rows.length).toBe(200);
     });
 
     it("ignores malformed cursor (silent restart from page 1)", async () => {
