@@ -15,6 +15,8 @@ import type {
   InvocationLog,
   LogFilter,
   Run,
+  RunListFilters,
+  RunListResult,
   Span,
   TraceSummary,
   TraceFilter,
@@ -473,6 +475,11 @@ export class JsonFileStore implements UnifiedStore {
       }
     }
     return result.sort((a, b) => a.depth - b.depth || a.startedAt - b.startedAt || a.id.localeCompare(b.id));
+  }
+
+  async listRuns(_filters: RunListFilters): Promise<RunListResult> {
+    // TODO(slice-8 Task 2): implement file-based pagination
+    throw new Error("JsonFileStore.listRuns: not yet implemented");
   }
 
   // ═══ TraceStore ═══
