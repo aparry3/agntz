@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import Database from "better-sqlite3";
 import type { Database as DatabaseType } from "better-sqlite3";
+import { defineSkill } from "@agntz/core";
 import type {
   AgentDefinition,
   ProviderConfig,
@@ -19,6 +20,7 @@ import type {
   RunListFilters,
   RunListResult,
   RunStatus,
+  SkillDefinition,
   Span,
   TraceSummary,
   TraceFilter,
@@ -228,6 +230,24 @@ const MIGRATIONS = [
   CREATE INDEX IF NOT EXISTS idx_ar_trace_summaries_owner_agent ON ar_trace_summaries (owner_id, agent_id);
 
   UPDATE schema_version SET version = 6;
+  `,
+  // v7: Skills — reusable (instruction + tools) bundles per user.
+  // Composite PK on (user_id, name); same skill name may exist for different users.
+  `
+  CREATE TABLE IF NOT EXISTS skills (
+    user_id      TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    description  TEXT NOT NULL,
+    instructions TEXT NOT NULL,
+    tools        TEXT,
+    metadata     TEXT,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL,
+    PRIMARY KEY (user_id, name)
+  );
+  CREATE INDEX IF NOT EXISTS idx_skills_user ON skills(user_id);
+
+  UPDATE schema_version SET version = 7;
   `,
 ];
 
@@ -1151,6 +1171,60 @@ export class SqliteStore implements UnifiedStore {
     return deletedCount;
   }
 
+  // ═══ SkillStore ═══
+
+  async getSkill(name: string): Promise<SkillDefinition | null> {
+    const u = this.requireUser();
+    const row = this.db
+      .prepare(
+        `SELECT name, description, instructions, tools, metadata, created_at, updated_at
+         FROM skills WHERE user_id = ? AND name = ?`
+      )
+      .get(u, name) as SkillRow | undefined;
+    return row ? rowToSkill(row) : null;
+  }
+
+  async listSkills(): Promise<Array<{ name: string; description: string }>> {
+    const u = this.requireUser();
+    return this.db
+      .prepare(`SELECT name, description FROM skills WHERE user_id = ? ORDER BY name`)
+      .all(u) as Array<{ name: string; description: string }>;
+  }
+
+  async putSkill(skill: SkillDefinition): Promise<void> {
+    // Structural validation before persisting; throws on malformed input.
+    const validated = defineSkill(skill);
+    const u = this.requireUser();
+    const now = this.nextTimestamp();
+    const createdAt = validated.createdAt ?? now;
+    this.db
+      .prepare(
+        `INSERT INTO skills (user_id, name, description, instructions, tools, metadata, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, name) DO UPDATE SET
+           description = excluded.description,
+           instructions = excluded.instructions,
+           tools = excluded.tools,
+           metadata = excluded.metadata,
+           updated_at = excluded.updated_at`
+      )
+      .run(
+        u,
+        validated.name,
+        validated.description,
+        validated.instructions,
+        validated.tools ? JSON.stringify(validated.tools) : null,
+        validated.metadata ? JSON.stringify(validated.metadata) : null,
+        createdAt,
+        now
+      );
+  }
+
+  async deleteSkill(name: string): Promise<void> {
+    const u = this.requireUser();
+    this.db.prepare("DELETE FROM skills WHERE user_id = ? AND name = ?").run(u, name);
+  }
+
   // ═══ ApiKeyStore (unscoped) ═══
 
   async createApiKey(params: { userId: string; name: string }): Promise<{ record: ApiKeyRecord; rawKey: string }> {
@@ -1269,6 +1343,29 @@ interface RunRow {
   started_at: number;
   ended_at: number | null;
   depth: number;
+}
+
+interface SkillRow {
+  name: string;
+  description: string;
+  instructions: string;
+  tools: string | null;
+  metadata: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function rowToSkill(r: SkillRow): SkillDefinition {
+  const skill: SkillDefinition = {
+    name: r.name,
+    description: r.description,
+    instructions: r.instructions,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+  if (r.tools) skill.tools = JSON.parse(r.tools) as SkillDefinition["tools"];
+  if (r.metadata) skill.metadata = JSON.parse(r.metadata) as Record<string, unknown>;
+  return skill;
 }
 
 function rowToRun(r: RunRow): Run {

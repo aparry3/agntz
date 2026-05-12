@@ -42,6 +42,8 @@ export interface ValidationContext {
   localTools: string[];
   /** Check if a provider has a configured API key */
   isProviderConfigured?: (provider: string) => Promise<boolean>;
+  /** Check whether a skill name exists in the user's SkillStore. */
+  resolveSkill?: (name: string) => Promise<boolean>;
   /**
    * When true, MCP server connection failures are reported as errors
    * instead of warnings. Use for save-time validation where an unreachable
@@ -190,6 +192,10 @@ function validateLLMStructural(
 
   if (manifest.spawnable) {
     validateSpawnableStructural(manifest, p(path, "spawnable"), errors, warnings);
+  }
+
+  if (manifest.skills) {
+    validateSkillsStructural(manifest.skills, p(path, "skills"), errors);
   }
 
   if (manifest.examples) {
@@ -371,7 +377,37 @@ function validateSpawnableStructural(
   }
 }
 
-function validateToolEntries(
+const SKILL_NAME_RE = /^[a-z][a-z0-9-]*$/;
+
+// Structural check for an agent's `skills:` array — string entries with kebab-case names.
+function validateSkillsStructural(
+  skills: unknown,
+  path: string,
+  errors: ValidationError[]
+): void {
+  if (!Array.isArray(skills)) {
+    errors.push({ level: "structural", path, message: "skills must be an array of strings" });
+    return;
+  }
+  for (let i = 0; i < skills.length; i++) {
+    const name = skills[i];
+    const epath = `${path}[${i}]`;
+    if (typeof name !== "string") {
+      errors.push({ level: "structural", path: epath, message: `skill name must be a string (got ${typeof name})` });
+      continue;
+    }
+    if (!SKILL_NAME_RE.test(name)) {
+      errors.push({
+        level: "structural",
+        path: epath,
+        message: `skill name '${name}' must match ${SKILL_NAME_RE.source}`,
+      });
+    }
+  }
+}
+
+// Structural check for a manifest `tools:` array (LLM agent or skill).
+export function validateToolEntries(
   tools: ManifestToolEntry[],
   path: string,
   errors: ValidationError[]
@@ -740,6 +776,19 @@ async function validateExternal(
       if (manifest.spawnable) {
         await validateSpawnableExternal(manifest.spawnable, p(path, "spawnable"), errors, ctx);
       }
+      if (manifest.skills && ctx.resolveSkill) {
+        for (let i = 0; i < manifest.skills.length; i++) {
+          const name = manifest.skills[i];
+          const exists = await ctx.resolveSkill(name);
+          if (!exists) {
+            errors.push({
+              level: "external",
+              path: `${p(path, "skills")}[${i}]`,
+              message: `Skill '${name}' not found in store`,
+            });
+          }
+        }
+      }
       break;
     case "tool":
       await validateToolCallExternal(manifest, path, errors, warnings, ctx);
@@ -795,7 +844,8 @@ async function validateStepExternal(
   }
 }
 
-async function validateToolEntriesExternal(
+// External / reference-integrity check for a manifest `tools:` array.
+export async function validateToolEntriesExternal(
   tools: ManifestToolEntry[],
   path: string,
   errors: ValidationError[],

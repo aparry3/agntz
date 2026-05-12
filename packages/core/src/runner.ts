@@ -19,6 +19,7 @@ import type {
   LogStore,
   ProviderStore,
   ConnectionStore,
+  SkillStore,
   ModelProvider,
   PendingChildResult,
   RunRegistry,
@@ -32,6 +33,7 @@ import {
   DEFAULT_SPAWN_LIMITS,
 } from "./tools/spawn-agent.js";
 import type { SpawnableEntry } from "./tools/spawn-agent.js";
+import { createUseSkillTool } from "./tools/use-skill.js";
 import { MemoryStore } from "./stores/memory.js";
 import { AISDKModelProvider } from "./model-provider.js";
 import { buildMessages, trimHistory } from "./message-builder.js";
@@ -79,6 +81,7 @@ export class Runner {
   private logStore: LogStore;
   private _providerStore: ProviderStore | undefined;
   private _connectionStore: ConnectionStore | undefined;
+  private _skillStore: SkillStore | undefined;
   private modelProvider: ModelProvider;
   private toolRegistry: ToolRegistry;
   private mcpManager: MCPClientManager | null = null;
@@ -113,6 +116,9 @@ export class Runner {
       : undefined;
     this._connectionStore = unifiedStore && "getConnection" in unifiedStore
       ? unifiedStore as ConnectionStore
+      : undefined;
+    this._skillStore = unifiedStore && "getSkill" in unifiedStore
+      ? unifiedStore as SkillStore
       : undefined;
     this.modelProvider = config.modelProvider ?? new AISDKModelProvider({
       providerStore: this._providerStore,
@@ -375,6 +381,10 @@ export class Runner {
         }
       }
       const ephemeralTools = new Map<string, ToolDefinition>();
+      // Per-invocation set of loaded skills, shared across tool calls so the
+      // use_skill tool sees a consistent view across turns.
+      const loadedSkills = new Set<string>();
+      const loadedSkillToolDescriptors: Array<{ name: string; description: string; parameters: Record<string, unknown> }> = [];
 
       const modelConfig = {
         ...self.config.defaults?.model,
@@ -425,7 +435,11 @@ export class Runner {
           extraContext: options.extraContext,
         });
 
-        const availableTools = await self.resolveToolsForAgent(agent, {
+        // Append "Available skills" section to the system prompt. Missing skills
+        // are silently skipped — running with an unknown skill name is allowed.
+        await self.augmentSystemPromptWithSkills(agent, messages);
+
+        let availableTools = await self.resolveToolsForAgent(agent, {
           runRegistry,
           ephemeralTools,
         });
@@ -564,6 +578,7 @@ export class Runner {
 
           // Execute tool calls
           const stepToolCalls: ToolCallRecord[] = [];
+          let useSkillSucceeded = false;
           for (const tc of resultToolCalls) {
             yield {
               type: "tool-call-start" as const,
@@ -586,8 +601,19 @@ export class Runner {
               runId,
               runRegistry,
               ephemeralTools,
+              loadedSkills,
+              loadedSkillToolDescriptors,
               currentDepth,
             });
+
+            // Detect a successful use_skill call (returns name+instructions) so
+            // we know to re-resolve availableTools before the next model call.
+            if (tc.name === "use_skill" && record.output && typeof record.output === "object") {
+              const out = record.output as Record<string, unknown>;
+              if (typeof out.instructions === "string" && typeof out.name === "string") {
+                useSkillSucceeded = true;
+              }
+            }
 
             stepToolCalls.push(record);
             allToolCalls.push(record);
@@ -635,6 +661,19 @@ export class Runner {
           if (stepFinishReason === "stop" && resultText) {
             finalOutput = resultText;
             break;
+          }
+
+          // If any use_skill call succeeded this step, refresh the tool list
+          // so the newly-registered skill tools show up on the next model turn.
+          if (useSkillSucceeded) {
+            const base = await self.resolveToolsForAgent(agent, {
+              runRegistry,
+              ephemeralTools,
+            });
+            const seen = new Set(base.map((t) => t.name));
+            availableTools = base.concat(
+              loadedSkillToolDescriptors.filter((d) => !seen.has(d.name)),
+            );
           }
         }
 
@@ -765,6 +804,10 @@ export class Runner {
     // Per-invocation ephemeral tools. spawn_agent/check_agents live here,
     // not in the global registry, because their schemas are agent-specific.
     const ephemeralTools = new Map<string, ToolDefinition>();
+    // Per-invocation set of loaded skills, shared across tool calls so the
+    // use_skill tool sees a consistent view across turns.
+    const loadedSkills = new Set<string>();
+    const loadedSkillToolDescriptors: Array<{ name: string; description: string; parameters: Record<string, unknown> }> = [];
 
     // Resolve model config (agent model or defaults)
     const modelConfig = {
@@ -834,9 +877,13 @@ export class Runner {
         extraContext: options.extraContext,
       });
 
+      // Append "Available skills" section to the system prompt. Missing skills
+      // are silently skipped — running with an unknown skill name is allowed.
+      await this.augmentSystemPromptWithSkills(agent, messages);
+
       // Resolve available tools for this agent (incl. spawn_agent/check_agents
       // when the agent declares `spawnable` and a runRegistry is provided).
-      const availableTools = await this.resolveToolsForAgent(agent, {
+      let availableTools = await this.resolveToolsForAgent(agent, {
         runRegistry,
         ephemeralTools,
       });
@@ -950,6 +997,7 @@ export class Runner {
 
         // Execute tool calls
         const toolResults: Array<{ id: string; result: string }> = [];
+        let useSkillSucceeded = false;
 
         for (const tc of result.toolCalls) {
           const toolSpan = span.toolCall({ toolName: tc.name, toolCallId: tc.id });
@@ -972,9 +1020,20 @@ export class Runner {
             runId,
             runRegistry,
             ephemeralTools,
+            loadedSkills,
+            loadedSkillToolDescriptors,
             currentDepth,
           });
           allToolCalls.push(record);
+
+          // Detect a successful use_skill call (returns name+instructions) so
+          // we know to re-resolve availableTools before the next model call.
+          if (tc.name === "use_skill" && record.output && typeof record.output === "object") {
+            const out = record.output as Record<string, unknown>;
+            if (typeof out.instructions === "string" && typeof out.name === "string") {
+              useSkillSucceeded = true;
+            }
+          }
 
           toolSpan.setResult(record);
           if (record.error) {
@@ -1032,6 +1091,19 @@ export class Runner {
         if (result.finishReason === "stop" && result.text) {
           finalOutput = result.text;
           break;
+        }
+
+        // If any use_skill call succeeded this step, refresh the tool list
+        // so the newly-registered skill tools show up on the next model turn.
+        if (useSkillSucceeded) {
+          const base = await this.resolveToolsForAgent(agent, {
+            runRegistry,
+            ephemeralTools,
+          });
+          const seen = new Set(base.map((t) => t.name));
+          availableTools = base.concat(
+            loadedSkillToolDescriptors.filter((d) => !seen.has(d.name)),
+          );
         }
       }
 
@@ -1119,6 +1191,34 @@ export class Runner {
   // ═══════════════════════════════════════════════════════════════════
 
   /**
+   * Append an "Available skills" section to the system message describing each
+   * skill the agent declares. Missing skills are silently skipped — deferred
+   * resolution is allowed by the spec. No-op if the agent has no skills, no
+   * skill store is wired, or the first message is not a system message.
+   */
+  private async augmentSystemPromptWithSkills(
+    agent: AgentDefinition,
+    messages: Array<{ role: string; content: string }>,
+  ): Promise<void> {
+    if (!agent.skills?.length || !this._skillStore) return;
+    const sys = messages[0];
+    if (!sys || sys.role !== "system") return;
+
+    const lines: string[] = [];
+    for (const name of agent.skills) {
+      const def = await this._skillStore.getSkill(name);
+      if (!def) continue;
+      lines.push(`  - ${def.name}: ${def.description}`);
+    }
+    if (lines.length === 0) return;
+
+    sys.content +=
+      `\n\n## Available skills\n` +
+      `Call use_skill("<name>") to load a skill's instructions and tools mid-run.\n\n` +
+      lines.join("\n");
+  }
+
+  /**
    * Take any queued child-Run completions for `runId` and append them as
    * synthetic "user" messages so the next model iteration can correlate
    * each `spawn_agent` handle with its result.
@@ -1158,6 +1258,8 @@ export class Runner {
     runId?: string;
     runRegistry?: RunRegistry;
     ephemeralTools: Map<string, ToolDefinition>;
+    loadedSkills: Set<string>;
+    loadedSkillToolDescriptors: Array<{ name: string; description: string; parameters: Record<string, unknown> }>;
     currentDepth: number;
   }): Promise<ToolCallRecord> {
     const {
@@ -1168,6 +1270,8 @@ export class Runner {
       runId,
       runRegistry,
       ephemeralTools,
+      loadedSkills,
+      loadedSkillToolDescriptors,
       currentDepth,
     } = params;
 
@@ -1180,6 +1284,21 @@ export class Runner {
       runId,
       userId: options.userId,
       runRegistry,
+      loadedSkills,
+      skillStore: this._skillStore,
+      registerSkillTools: async (refs) => {
+        const descriptors = await this.toolRegistry.registerToolReferences(refs, {
+          resolveAgentAsTool: (id) => this.resolveAgentAsTool(id),
+          resolveMCPTools: (server, tools) => this.resolveMCPTools(server, tools),
+          ensureMCPServerRegistered: (s) => this.ensureMCPServerRegistered(s),
+        });
+        for (const d of descriptors) {
+          if (!loadedSkillToolDescriptors.some((existing) => existing.name === d.name)) {
+            loadedSkillToolDescriptors.push(d);
+          }
+        }
+        return descriptors;
+      },
       _recursionDepth: currentDepth,
       invoke: (innerAgentId: string, innerInput: string, innerOpts?: InvokeOptions) =>
         this.invoke(innerAgentId, innerInput, {
@@ -1242,7 +1361,9 @@ export class Runner {
   }>> {
     const hasSpawnable =
       Boolean(agent.spawnable?.length) && Boolean(opts?.runRegistry) && Boolean(opts?.ephemeralTools);
-    if (!agent.tools?.length && !hasSpawnable) return [];
+    const hasSkills =
+      Boolean(agent.skills?.length) && Boolean(this._skillStore) && Boolean(opts?.ephemeralTools);
+    if (!agent.tools?.length && !hasSpawnable && !hasSkills) return [];
 
     // Ensure every referenced MCP server is connected (resolving registered
     // connection names to urls/headers) before we ask for its tools.
@@ -1314,6 +1435,20 @@ export class Runner {
           name: check.name,
           description: check.description,
           parameters: zodToJsonSchema(check.input),
+        });
+      }
+    }
+
+    // Synthesize use_skill per-invocation. The enum of allowed skill names is
+    // specific to this agent, so this tool lives in the ephemeral map.
+    if (hasSkills) {
+      const useSkill = createUseSkillTool(agent.skills!);
+      if (useSkill) {
+        opts!.ephemeralTools!.set(useSkill.name, useSkill);
+        resolved.push({
+          name: useSkill.name,
+          description: useSkill.description,
+          parameters: zodToJsonSchema(useSkill.input),
         });
       }
     }

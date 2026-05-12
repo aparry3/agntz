@@ -5,6 +5,7 @@
 // Core API
 export { createRunner, Runner } from "./runner.js";
 export { defineAgent } from "./agent.js";
+export { defineSkill } from "./skill.js";
 export { defineTool, ToolRegistry } from "./tool.js";
 export { InMemoryRunRegistry } from "./run-registry.js";
 export type { RunExecutor, InMemoryRunRegistryOptions } from "./run-registry.js";
@@ -15,6 +16,7 @@ export {
   DEFAULT_SPAWN_LIMITS,
 } from "./tools/spawn-agent.js";
 export type { SpawnLimits, SpawnableEntry } from "./tools/spawn-agent.js";
+export { createUseSkillTool } from "./tools/use-skill.js";
 
 // Stores
 export { MemoryStore } from "./stores/memory.js";
@@ -74,6 +76,7 @@ export {
   MaxRecursionDepthError,
   RetryExhaustedError,
   ValidationError,
+  SkillNotFoundError,
 } from "./errors.js";
 
 // Types
@@ -135,6 +138,10 @@ export type {
   ApiKeyRecord,
   ScopableStore,
   UnifiedStore,
+
+  // Skills
+  SkillDefinition,
+  SkillStore,
 
   // Runs
   Run,

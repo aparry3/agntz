@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import pg from "pg";
+import { defineSkill } from "@agntz/core";
 import type {
   AgentDefinition,
   ProviderConfig,
@@ -18,6 +19,7 @@ import type {
   RunStatus,
   RunListFilters,
   RunListResult,
+  SkillDefinition,
   Span,
   TraceSummary,
   TraceFilter,
@@ -271,6 +273,24 @@ const MIGRATIONS: string[] = [
     ON ar_trace_summaries (owner_id, agent_id) WHERE agent_id IS NOT NULL;
 
   UPDATE ar_schema_version SET version = 7;
+  `,
+  // v8: Skills — reusable (instruction + tools) bundles per user.
+  // Composite PK on (user_id, name); same skill name may exist for different users.
+  `
+  CREATE TABLE IF NOT EXISTS ar_skills (
+    user_id      TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    description  TEXT NOT NULL,
+    instructions TEXT NOT NULL,
+    tools        JSONB,
+    metadata     JSONB,
+    created_at   TIMESTAMPTZ NOT NULL,
+    updated_at   TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (user_id, name)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ar_skills_user ON ar_skills(user_id);
+
+  UPDATE ar_schema_version SET version = 8;
   `,
 ];
 
@@ -1234,6 +1254,73 @@ export class PostgresStore implements UnifiedStore {
     }
   }
 
+  // ═══ SkillStore ═══
+
+  async getSkill(name: string): Promise<SkillDefinition | null> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const { rows } = await this.pool.query(
+      `SELECT name, description, instructions, tools, metadata, created_at, updated_at
+       FROM ${this.t("skills")}
+       WHERE user_id = $1 AND name = $2`,
+      [u, name]
+    );
+    return rows.length === 0 ? null : pgRowToSkill(rows[0]);
+  }
+
+  async listSkills(): Promise<Array<{ name: string; description: string }>> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const { rows } = await this.pool.query(
+      `SELECT name, description FROM ${this.t("skills")}
+       WHERE user_id = $1 ORDER BY name`,
+      [u]
+    );
+    return rows.map((r: { name: string; description: string }) => ({
+      name: r.name,
+      description: r.description,
+    }));
+  }
+
+  async putSkill(skill: SkillDefinition): Promise<void> {
+    // Structural validation before persisting; throws on malformed input.
+    const validated = defineSkill(skill);
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const now = this.nextTimestamp();
+    const createdAt = validated.createdAt ?? now;
+    await this.pool.query(
+      `INSERT INTO ${this.t("skills")}
+         (user_id, name, description, instructions, tools, metadata, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (user_id, name) DO UPDATE SET
+         description = EXCLUDED.description,
+         instructions = EXCLUDED.instructions,
+         tools = EXCLUDED.tools,
+         metadata = EXCLUDED.metadata,
+         updated_at = EXCLUDED.updated_at`,
+      [
+        u,
+        validated.name,
+        validated.description,
+        validated.instructions,
+        validated.tools ? JSON.stringify(validated.tools) : null,
+        validated.metadata ? JSON.stringify(validated.metadata) : null,
+        createdAt,
+        now,
+      ]
+    );
+  }
+
+  async deleteSkill(name: string): Promise<void> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    await this.pool.query(
+      `DELETE FROM ${this.t("skills")} WHERE user_id = $1 AND name = $2`,
+      [u, name]
+    );
+  }
+
   // ═══ ApiKeyStore (unscoped admin) ═══
 
   async createApiKey(params: { userId: string; name: string }): Promise<{ record: ApiKeyRecord; rawKey: string }> {
@@ -1428,6 +1515,38 @@ function pgRowToSpan(r: Record<string, unknown>): Span {
     scores: (r.scores as Span["scores"]) ?? {},
     costUsd: r.cost_usd == null ? null : Number(r.cost_usd),
   };
+}
+
+function pgRowToSkill(r: {
+  name: string;
+  description: string;
+  instructions: string;
+  tools: unknown;
+  metadata: unknown;
+  created_at: Date | string;
+  updated_at: Date | string;
+}): SkillDefinition {
+  const toIso = (v: Date | string) =>
+    v instanceof Date ? v.toISOString() : String(v);
+  const skill: SkillDefinition = {
+    name: r.name,
+    description: r.description,
+    instructions: r.instructions,
+    createdAt: toIso(r.created_at),
+    updatedAt: toIso(r.updated_at),
+  };
+  // pg returns JSONB pre-parsed; accept strings defensively.
+  if (r.tools != null) {
+    skill.tools = (typeof r.tools === "string"
+      ? JSON.parse(r.tools)
+      : r.tools) as SkillDefinition["tools"];
+  }
+  if (r.metadata != null) {
+    skill.metadata = (typeof r.metadata === "string"
+      ? JSON.parse(r.metadata)
+      : r.metadata) as Record<string, unknown>;
+  }
+  return skill;
 }
 
 function pgRowToSummary(r: Record<string, unknown>): TraceSummary {

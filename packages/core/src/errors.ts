@@ -175,3 +175,19 @@ export class ValidationError extends AgntzError {
     this.details = details;
   }
 }
+
+/**
+ * Thrown when a skill is referenced but not found in the SkillStore.
+ */
+export class SkillNotFoundError extends AgntzError {
+  readonly skillName: string;
+
+  constructor(skillName: string) {
+    super(
+      "SKILL_NOT_FOUND",
+      `Skill "${skillName}" not found. Save it via SkillStore.putSkill() before referencing it from an agent.`,
+    );
+    this.name = "SkillNotFoundError";
+    this.skillName = skillName;
+  }
+}

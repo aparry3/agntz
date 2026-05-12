@@ -16,3 +16,4 @@ The **Agent Builder** (`agent-builder`) is a built-in default agent that ships w
 | [text-analysis.yaml](text-analysis.yaml) | `parallel` | Concurrent branches, inline agents, merged output |
 | [write-review-loop.yaml](write-review-loop.yaml) | `sequential` (loop) | `until` condition, `maxIterations`, `{{#if}}` template conditionals |
 | [article-pipeline.yaml](article-pipeline.yaml) | `sequential` (composed) | Full composition: parallel research → looped write/review → tool notification |
+| [researcher-bot.yaml](researcher-bot.yaml) | `llm` | Declares `skills: [...]`; loads instructions and tools mid-run via `use_skill` (see [../skills/](../skills/)) |

@@ -2,10 +2,12 @@ import { readFile, writeFile, mkdir, readdir, unlink, rm } from "node:fs/promise
 import { join } from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { listRunsInProcess } from "./list-runs.js";
+import { defineSkill } from "../skill.js";
 import type {
   AgentDefinition,
   AgentVersionSummary,
   ProviderConfig,
+  SkillDefinition,
   UnifiedStore,
   ApiKeyRecord,
   Connection,
@@ -87,6 +89,7 @@ export class JsonFileStore implements UnifiedStore {
     await mkdir(join(root, "providers"), { recursive: true });
     await mkdir(join(root, "connections"), { recursive: true });
     await mkdir(join(root, "runs"), { recursive: true });
+    await mkdir(join(root, "skills"), { recursive: true });
   }
 
   private async readJson<T>(path: string): Promise<T | null> {
@@ -408,6 +411,48 @@ export class JsonFileStore implements UnifiedStore {
   async deleteConnection(kind: ConnectionKind, id: string): Promise<void> {
     await this.ensureUserDirs();
     await unlink(this.connectionPath(kind, id)).catch(() => {});
+  }
+
+  // ═══ SkillStore ═══
+
+  private skillPath(name: string): string {
+    return join(this.userRoot(), "skills", `${this.sanitizeFilename(name)}.json`);
+  }
+
+  async getSkill(name: string): Promise<SkillDefinition | null> {
+    await this.ensureUserDirs();
+    return this.readJson<SkillDefinition>(this.skillPath(name));
+  }
+
+  async listSkills(): Promise<Array<{ name: string; description: string }>> {
+    await this.ensureUserDirs();
+    const dir = join(this.userRoot(), "skills");
+    const files = await readdir(dir).catch(() => []);
+    const result: Array<{ name: string; description: string }> = [];
+    for (const file of files) {
+      if (!file.endsWith(".json")) continue;
+      const s = await this.readJson<SkillDefinition>(join(dir, file));
+      if (s) result.push({ name: s.name, description: s.description });
+    }
+    return result.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async putSkill(skill: SkillDefinition): Promise<void> {
+    const validated = defineSkill(skill);
+    await this.ensureUserDirs();
+    const path = this.skillPath(validated.name);
+    const existing = await this.readJson<SkillDefinition>(path);
+    const now = this.nextTimestamp();
+    await this.writeJson(path, {
+      ...validated,
+      createdAt: existing?.createdAt ?? validated.createdAt ?? now,
+      updatedAt: now,
+    });
+  }
+
+  async deleteSkill(name: string): Promise<void> {
+    await this.ensureUserDirs();
+    await unlink(this.skillPath(name)).catch(() => {});
   }
 
   // ═══ RunStore ═══

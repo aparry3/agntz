@@ -37,6 +37,10 @@ export function buildValidationContext(
       const agent = await runner.agents.getAgent(id);
       return agent != null;
     },
+    resolveSkill: async (name: string) => {
+      const skill = await store.getSkill(name);
+      return skill != null;
+    },
     resolveTools: async (ref: string) => {
       const connections = runner.connections;
       const resolved = connections

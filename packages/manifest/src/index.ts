@@ -54,6 +54,11 @@ export { execute, executeWithState } from "./executor.js";
 export type { ValidationResult, ValidationError, ValidationWarning, ValidationContext } from "./validate.js";
 export { validateManifest, validateManifestFull } from "./validate.js";
 
+// Skill parsing & validation
+export { parseSkill, normalizeSkill, manifestEntryToToolReferences } from "./skill-parser.js";
+export { validateSkill, validateSkillFull } from "./skill-validate.js";
+export type { SkillValidationContext } from "./skill-validate.js";
+
 // Tools
 export type { ResolvedTool } from "./tools.js";
 export { resolveToolEntries, buildToolParams, stripPinnedParams } from "./tools.js";
