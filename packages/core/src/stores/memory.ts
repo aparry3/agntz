@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { listRunsInProcess } from "./list-runs.js";
 import type {
   AgentDefinition,
   ProviderConfig,
@@ -465,9 +466,18 @@ export class MemoryStore implements UnifiedStore {
     return result.sort((a, b) => a.depth - b.depth || a.startedAt - b.startedAt || a.id.localeCompare(b.id));
   }
 
-  async listRuns(_filters: RunListFilters): Promise<RunListResult> {
-    // TODO(slice-8 Task 2): implement in-memory pagination
-    throw new Error("MemoryStore.listRuns: not yet implemented");
+  private scopedRunsArray(): Run[] {
+    const u = this.requireUser();
+    const prefix = `${u}:`;
+    const results: Run[] = [];
+    for (const [key, run] of this.backend.runs) {
+      if (key.startsWith(prefix)) results.push({ ...run });
+    }
+    return results;
+  }
+
+  async listRuns(filters: RunListFilters): Promise<RunListResult> {
+    return listRunsInProcess(this.scopedRunsArray(), filters);
   }
 
   // ═══ TraceStore ═══

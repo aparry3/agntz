@@ -1,6 +1,7 @@
 import { readFile, writeFile, mkdir, readdir, unlink, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { listRunsInProcess } from "./list-runs.js";
 import type {
   AgentDefinition,
   AgentVersionSummary,
@@ -477,9 +478,22 @@ export class JsonFileStore implements UnifiedStore {
     return result.sort((a, b) => a.depth - b.depth || a.startedAt - b.startedAt || a.id.localeCompare(b.id));
   }
 
-  async listRuns(_filters: RunListFilters): Promise<RunListResult> {
-    // TODO(slice-8 Task 2): implement file-based pagination
-    throw new Error("JsonFileStore.listRuns: not yet implemented");
+  async listRuns(filters: RunListFilters): Promise<RunListResult> {
+    this.requireUser();
+    const runsDir = join(this.userRoot(), "runs");
+    let files: string[];
+    try {
+      files = await readdir(runsDir);
+    } catch {
+      return { rows: [] };
+    }
+    const allRuns: Run[] = [];
+    for (const f of files) {
+      if (!f.endsWith(".json")) continue;
+      const run = await this.readJson<Run>(join(runsDir, f));
+      if (run) allRuns.push(run);
+    }
+    return listRunsInProcess(allRuns, filters);
   }
 
   // ═══ TraceStore ═══
