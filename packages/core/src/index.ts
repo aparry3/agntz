@@ -138,6 +138,8 @@ export type {
 
   // Runs
   Run,
+  RunListFilters,
+  RunListResult,
   RunStatus,
   RunHandle,
   RunStore,
