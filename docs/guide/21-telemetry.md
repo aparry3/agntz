@@ -2,6 +2,8 @@
 
 agntz has built-in OpenTelemetry integration for observability. It's completely opt-in — zero overhead when not configured.
 
+> **In-app traces vs OTel.** This chapter covers the OpenTelemetry export path. agntz also has an independent **in-app trace store** that is on by default and powers the App's `/traces` UI — see [the Traces chapter](/guide/09-traces) for that. You can use both simultaneously; they're separate sinks fed by the same `SpanEmitter`. OTel is for shipping traces to external systems (Jaeger, Honeycomb, Datadog, etc.); the in-app store is for the agntz product UI.
+
 ## Setup
 
 Install `@opentelemetry/api` (and your preferred exporter):

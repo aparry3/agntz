@@ -7,7 +7,10 @@ hero:
   actions:
     - theme: brand
       text: Get Started
-      link: /guide/getting-started
+      link: /guide/02-getting-started
+    - theme: alt
+      text: What is agntz?
+      link: /guide/01-what-is-agntz
     - theme: alt
       text: View on GitHub
       link: https://github.com/aparry3/agntz

@@ -98,6 +98,26 @@ The Studio reads from the same stores as your code — create an agent in the UI
 | Pluggable storage | ✅ | Partial | ❌ | ❌ |
 | MCP native | ✅ | Bolt-on | ❌ | ❌ |
 | Built-in evals | ✅ | ❌ | ❌ | ❌ |
+| Skills (mid-run instruction loading) | ✅ | ❌ | ❌ | ❌ |
+| Concurrent sub-agent spawning | ✅ | Partial | ❌ | ❌ |
+| Tracked Runs + replay | ✅ | ❌ | ❌ | ❌ |
+| In-app distributed tracing | ✅ | Bolt-on | ❌ | ❌ |
+| Hosted multi-tenant app | ✅ | ❌ | ❌ | ❌ |
 | Studio UI | ✅ | ❌ | ❌ | ❌ |
 | Provider agnostic | ✅ | ✅ | ✅ | ❌ |
 | Lightweight | ✅ | ❌ | ✅ | ✅ |
+
+## The pieces of the system
+
+agntz isn't only an SDK. The hosted product is built from several packages that compose into a multi-tenant platform:
+
+| Package | Role |
+|---|---|
+| `agntz` / `@agntz/core` | The SDK — agent loop, tool registry, MCP, stores. Embeddable in your own service. See [chapter 14](/guide/14-runner-architecture) |
+| `@agntz/manifest` | YAML-driven agent specs and a four-kind executor. See [chapter 15](/guide/15-manifest) |
+| `@agntz/store-sqlite`, `@agntz/store-postgres` | Production store adapters. See [chapter 10](/guide/10-stores) |
+| `@agntz/worker` | HTTP service that owns all execution in the hosted stack. See [chapter 16](/guide/16-worker) |
+| `@agntz/app` | Next.js UI with Clerk auth and multi-tenant scoping. See [chapter 17](/guide/17-app) |
+| `@agntz/sdk` | HTTP client for calling the worker from your own apps. See [chapter 18](/guide/18-sdk-client) |
+
+If you're embedding agents in your own backend, you only need `agntz` (plus a store). If you're building on top of the hosted product, you only need `@agntz/sdk`. The chapters that follow cover both paths.

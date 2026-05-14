@@ -178,3 +178,53 @@ const updateFitness = defineTool({
 ::: warning toolContext Does Not Auto-Propagate
 When a tool calls `ctx.invoke()`, the child agent does NOT inherit the parent's `toolContext`. You must explicitly pass what the child needs. This is intentional — it prevents accidental data leakage across agent boundaries.
 :::
+
+## Synthetic Tools
+
+In addition to the three tool sources above, the runner auto-registers **synthetic tools** for agents that declare certain fields. The LLM sees them like any other tool, but they exist only for the lifetime of one invocation and are constrained at runtime to the agent's allowlists.
+
+### `use_skill` — load a skill mid-run
+
+Registered automatically when `AgentDefinition.skills: string[]` is non-empty. Lets the LLM load a named skill's instructions + tools on demand. The Zod input enum constrains the `skill` argument to exactly the names the agent declared:
+
+```typescript
+input: z.object({
+  skill: z.enum(["citation-style", "summarization"]),
+})
+```
+
+When called, it (a) returns the skill's `instructions` to the model, and (b) registers the skill's `tools` into the live registry for the rest of the run. Idempotent — a second call for the same skill returns `{ alreadyLoaded: true }`. See [the Skills chapter](/guide/05-skills).
+
+### `spawn_agent` — kick off a concurrent sub-agent
+
+Registered when `AgentDefinition.spawnable: AgentRef[]` is non-empty. Lets the LLM spawn a child Run that executes concurrently with the parent. Returns a `RunHandle` immediately — the child's output is delivered to the parent's next turn via the run registry.
+
+```typescript
+input: z.object({
+  agent_id: z.enum(["researcher", "fact-checker"]),  // allowlist
+  input: z.string(),
+})
+```
+
+Limits (`packages/core/src/tools/spawn-agent.ts:23-27`): `maxConcurrentChildren = 8`, `maxDepth = 5`, `maxDescendants = 50`. See [the Runs chapter](/guide/08-runs) for the lifecycle.
+
+### `check_agents` — poll status of spawned children
+
+Registered alongside `spawn_agent`. Returns the current status of the parent's spawned children. Useful for polling mid-thought; not strictly necessary, since completed children are delivered automatically as notifications between turns.
+
+```typescript
+input: z.object({
+  run_ids: z.array(z.string()).optional(),  // omit to query all children
+})
+```
+
+### Why synthetic vs ordinary tools?
+
+The Zod enum approach ensures the LLM **cannot call these tools for off-list names** — wrong skill or agent names fail validation before `execute` runs. This is defense-in-depth on top of the agent definition's allowlist.
+
+| Field on `AgentDefinition` | Synthetic tools added |
+|---|---|
+| `skills: [...]` | `use_skill` |
+| `spawnable: [...]` | `spawn_agent`, `check_agents` |
+
+See `packages/core/src/tools/use-skill.ts` and `packages/core/src/tools/spawn-agent.ts` for the implementations.

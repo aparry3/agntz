@@ -2,6 +2,18 @@
 
 Sessions provide conversational continuity across multiple invocations. When you pass a `sessionId`, the runner automatically loads and appends to the message history.
 
+## Session vs Context vs Run
+
+Three different state primitives, often confused:
+
+| Primitive | What it tracks | Scope |
+|---|---|---|
+| **Session** (this chapter) | Conversation thread — `Message[]` between user and agent | One agent, multi-turn |
+| **[Context](/guide/07-context)** | Shared scratchpad agents read from / write to | Many agents, named bucket |
+| **[Run](/guide/08-runs)** | One agent invocation — input, output, status, events | One invocation, possibly with children |
+
+Sessions are about *what was said*. Context is about *what we know*. Runs are about *what we did*.
+
 ## Basic Usage
 
 ```typescript

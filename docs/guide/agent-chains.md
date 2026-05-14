@@ -41,7 +41,7 @@ const runner = createRunner({
 });
 ```
 
-If the limit is exceeded, the invocation throws a `MaxRecursionError`.
+If the limit is exceeded, the invocation throws a `MaxRecursionDepthError`.
 
 ## Tool-Driven Chains
 

@@ -4,7 +4,7 @@ agntz has first-class support for the [Model Context Protocol](https://modelcont
 
 ## Connecting to MCP Servers
 
-### HTTP/SSE Transport
+agntz supports **HTTP/SSE transport only** — stdio is intentionally unsupported (see `packages/core/src/mcp/server.ts`). MCP servers must be reachable over HTTP/HTTPS. If a server you want to use only speaks stdio, run it behind a thin HTTP shim.
 
 ```typescript
 const runner = createRunner({
@@ -19,21 +19,7 @@ const runner = createRunner({
 });
 ```
 
-### Stdio Transport
-
-```typescript
-const runner = createRunner({
-  mcp: {
-    servers: {
-      filesystem: {
-        command: "npx",
-        args: ["-y", "@anthropic/mcp-fs"],
-        env: { ROOT: "/data" },
-      },
-    },
-  },
-});
-```
+`MCPServerConfig` is `{ url: string; headers?: Record<string, string> }` (`packages/core/src/types.ts:402-407`).
 
 ## Using MCP Tools
 

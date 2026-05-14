@@ -2,6 +2,18 @@
 
 Context is shared state across agents. A `contextId` is a named scratchpad that agents can read from and optionally write to, enabling multi-agent collaboration without tight coupling.
 
+## Session vs Context vs Run
+
+Three different state primitives, often confused:
+
+| Primitive | What it tracks | Scope |
+|---|---|---|
+| **[Session](/guide/06-sessions)** | Conversation thread — `Message[]` between user and agent | One agent, multi-turn |
+| **Context** (this chapter) | Shared scratchpad agents read from / write to | Many agents, named bucket |
+| **[Run](/guide/08-runs)** | One agent invocation — input, output, status, events | One invocation, possibly with children |
+
+Sessions are about *what was said*. Context is about *what we know*. Runs are about *what we did*.
+
 ## Basic Usage
 
 ```typescript

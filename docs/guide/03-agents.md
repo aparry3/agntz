@@ -37,12 +37,36 @@ const agent = defineAgent({
 | `description` | `string` | | What this agent does |
 | `version` | `string` | | Semantic version |
 | `tools` | `ToolReference[]` | | Tools the agent can use |
-| `examples` | `Example[]` | | Few-shot examples |
+| `skills` | `string[]` | | Skill names the agent may load mid-run via `use_skill`. See [Skills](/guide/05-skills) |
+| `spawnable` | `AgentRef[]` | | Sub-agents this agent may spawn concurrently via `spawn_agent`. See [Runs](/guide/08-runs) |
+| `examples` | `Example[]` | | Few-shot examples — `Array<{ input: string; output: string }>` |
+| `userPromptTemplate` | `string` | | Template with `{{input}}` placeholder; wraps user input |
 | `outputSchema` | `JsonSchema` | | Structured output constraint |
 | `contextWrite` | `boolean` | | Auto-write output to context |
 | `eval` | `EvalConfig` | | Evaluation configuration |
 | `tags` | `string[]` | | Categorization tags |
 | `metadata` | `Record<string, unknown>` | | Custom metadata |
+
+Full type at `packages/core/src/types.ts:9-58`.
+
+### Skills + spawnable example
+
+```typescript
+defineAgent({
+  id: "orchestrator",
+  name: "Research Orchestrator",
+  systemPrompt: "You coordinate research tasks across sub-agents.",
+  model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+  skills: ["citation-style", "summarization"],
+  spawnable: [
+    { kind: "ref", agentId: "researcher" },
+    { kind: "ref", agentId: "fact-checker" },
+  ],
+  tools: [{ type: "inline", name: "save_note" }],
+});
+```
+
+The runner auto-registers `use_skill` (if `skills` is non-empty) and `spawn_agent` + `check_agents` (if `spawnable` is non-empty) alongside the agent's other tools. See [Tools](/guide/04-tools#synthetic-tools) for how these work.
 
 ## Model Configuration
 
