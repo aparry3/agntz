@@ -259,32 +259,31 @@ const MIGRATIONS = [
 
   UPDATE schema_version SET version = 7;
   `,
-  // v8: invocation_logs.status — records terminal state ("completed" |
-  // "cancelled" | "failed") for billing/audit when a run is superseded.
+  // v8: GymText integration + HTTP tool + unified secrets.
+  // Four schema changes that ship together as one PR:
+  //   1. invocation_logs.status — terminal state ("completed" | "cancelled"
+  //      | "failed") for billing/audit when a run is superseded by
+  //      cancel-and-replace.
+  //   2. messages.content_blocks — multimodal payload (JSON ContentBlock[])
+  //      alongside the legacy text-only `content` column. Writes are dual:
+  //      `content` always holds a flattened text view, `content_blocks` is
+  //      non-null only when the original message was multimodal. Sqlite
+  //      has no native JSONB; TEXT storing JSON is fine.
+  //   3. `secrets` table — user-scoped encrypted credentials used for both
+  //      HTTP-tool auth tokens and webhook HMAC signing keys. `value` is
+  //      AES-256-GCM ciphertext (`base64(iv):base64(tag):base64(ct)`),
+  //      `last_four` is the last 4 chars of plaintext for masked-UI
+  //      display. Rotation is in-place via SecretStore.putSecret upsert
+  //      on (user_id, name).
+  //   4. `webhook_deliveries` outbox. `secret_name` references the active
+  //      HMAC signing key by name — the dispatcher resolves it at each
+  //      delivery attempt so an out-of-band rotation flows through
+  //      naturally.
   `
   ALTER TABLE invocation_logs ADD COLUMN status TEXT;
 
-  UPDATE schema_version SET version = 8;
-  `,
-  // v9: multimodal — messages.content_blocks stores a JSON ContentBlock[]
-  // payload alongside the legacy text-only `content` column. Writes are
-  // dual: `content` always holds a flattened text view (so old readers still
-  // work), `content_blocks` is non-null only when the original message was
-  // multimodal. Sqlite has no native JSONB; TEXT storing JSON is fine.
-  `
   ALTER TABLE messages ADD COLUMN content_blocks TEXT;
 
-  UPDATE schema_version SET version = 9;
-  `,
-  // v10: User-scoped encrypted secrets (used for both HTTP-tool auth tokens
-  // and webhook HMAC signing keys). `value` stores AES-256-GCM ciphertext
-  // as `base64(iv):base64(tag):base64(ct)`. `last_four` is the last 4 chars
-  // of plaintext for masked-UI display only. Webhook secrets are encrypted
-  // at rest just like any other secret; the dispatcher decrypts at sign
-  // time. Rotation is in-place: SecretStore.putSecret upserts on
-  // (user_id, name), so out-of-band rotation is picked up on the next
-  // delivery attempt without per-row rotation lifecycle bookkeeping.
-  `
   CREATE TABLE IF NOT EXISTS secrets (
     user_id      TEXT NOT NULL,
     name         TEXT NOT NULL,
@@ -297,13 +296,6 @@ const MIGRATIONS = [
   );
   CREATE INDEX IF NOT EXISTS idx_secrets_user ON secrets(user_id);
 
-  UPDATE schema_version SET version = 10;
-  `,
-  // v11: Webhook delivery outbox. `secret_name` references `secrets.name`
-  // for the active HMAC signing key at delivery time — the dispatcher
-  // resolves the row at each attempt so an out-of-band rotation flows
-  // through naturally.
-  `
   CREATE TABLE IF NOT EXISTS webhook_deliveries (
     id              TEXT NOT NULL PRIMARY KEY,
     user_id         TEXT NOT NULL,
@@ -321,7 +313,7 @@ const MIGRATIONS = [
   CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_status ON webhook_deliveries(status);
   CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_run ON webhook_deliveries(user_id, run_id);
 
-  UPDATE schema_version SET version = 11;
+  UPDATE schema_version SET version = 8;
   `,
 ];
 
