@@ -436,3 +436,222 @@ describe("Runner", () => {
     expect(entries[0].agentId).toBe("researcher");
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+// HTTP tools — fetch is mocked via vi.spyOn so no real network access.
+// Every test sets a deterministic AGNTZ_SECRET_KEY first so the SecretStore
+// can encrypt/decrypt values written by `putSecret`. The MemoryStore
+// implements `SecretStore`, so we route the runner through it scoped to a
+// test user.
+// ═══════════════════════════════════════════════════════════════════════
+
+import { MemoryStore } from "../src/stores/memory.js";
+import { _resetCryptoKeyCache } from "../src/utils/crypto.js";
+import { beforeEach, afterEach } from "vitest";
+
+const HTTP_TEST_KEY =
+  "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+describe("Runner — HTTP tools", () => {
+  let restoreKey: string | undefined;
+
+  beforeEach(() => {
+    restoreKey = process.env.AGNTZ_SECRET_KEY;
+    process.env.AGNTZ_SECRET_KEY = HTTP_TEST_KEY;
+    _resetCryptoKeyCache();
+  });
+
+  afterEach(() => {
+    if (restoreKey === undefined) {
+      delete process.env.AGNTZ_SECRET_KEY;
+    } else {
+      process.env.AGNTZ_SECRET_KEY = restoreKey;
+    }
+    _resetCryptoKeyCache();
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * One-shot HTTP entry that prompts the LLM for `{value}` and pins
+   * `Authorization` to a secret. Used by several tests below.
+   */
+  const httpEntry = {
+    kind: "http" as const,
+    name: "echo",
+    url: "https://api.example.com/echo?param={value}",
+    method: "GET" as const,
+    description: "Echo the value back from the test API.",
+    headers: { Authorization: "{{secrets.test_token}}" },
+  };
+
+  it("issues a fetch with interpolated headers and returns parsed JSON to the model", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ user: { id: 1, name: "Ada" } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const adminStore = new MemoryStore();
+    const userStore = adminStore.forUser("u1");
+    await userStore.putSecret({ name: "test_token", value: "Bearer xyz-123" });
+
+    const provider = new MockModelProvider([
+      {
+        text: "",
+        toolCalls: [{ id: "tc_1", name: "http__echo", args: { value: "hello" } }],
+        usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        finishReason: "tool-calls",
+      },
+      mockResponse("Got the user."),
+    ]);
+
+    const runner = createRunner({ modelProvider: provider, store: userStore });
+    runner.registerAgent(
+      defineAgent({
+        id: "http-agent",
+        name: "HTTP",
+        systemPrompt: "Use the echo tool.",
+        model: { provider: "openai", name: "gpt-5.4" },
+        tools: [{ type: "http", entry: httpEntry }],
+      }),
+    );
+
+    const result = await runner.invoke("http-agent", "fetch it");
+
+    expect(result.output).toBe("Got the user.");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://api.example.com/echo?param=hello");
+    const headers = init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer xyz-123");
+
+    // The tool result reached the model on the second call as a stringified
+    // JSON payload (the runner serializes object outputs for the tool
+    // message). Verify the parsed body made it through.
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0].name).toBe("http__echo");
+    expect(result.toolCalls[0].output).toEqual({ user: { id: 1, name: "Ada" } });
+  });
+
+  it("returns a structured error for HTTP 4xx responses", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("Not Found", {
+        status: 404,
+        headers: { "content-type": "text/plain" },
+      }),
+    );
+
+    const adminStore = new MemoryStore();
+    const userStore = adminStore.forUser("u1");
+    await userStore.putSecret({ name: "test_token", value: "Bearer xyz" });
+
+    const provider = new MockModelProvider([
+      {
+        text: "",
+        toolCalls: [{ id: "tc_1", name: "http__echo", args: { value: "x" } }],
+        usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        finishReason: "tool-calls",
+      },
+      mockResponse("Done."),
+    ]);
+
+    const runner = createRunner({ modelProvider: provider, store: userStore });
+    runner.registerAgent(
+      defineAgent({
+        id: "http-agent",
+        name: "HTTP",
+        systemPrompt: "Use the echo tool.",
+        model: { provider: "openai", name: "gpt-5.4" },
+        tools: [{ type: "http", entry: httpEntry }],
+      }),
+    );
+
+    const result = await runner.invoke("http-agent", "go");
+
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0].output).toMatchObject({
+      error: "HTTP 404",
+      body: "Not Found",
+    });
+  });
+
+  it("throws when an HTTP tool references a secret that does not exist", async () => {
+    const adminStore = new MemoryStore();
+    const userStore = adminStore.forUser("u1");
+    // intentionally NOT calling putSecret — `test_token` is missing.
+
+    const provider = new MockModelProvider([mockResponse("never reached")]);
+
+    const runner = createRunner({ modelProvider: provider, store: userStore });
+    runner.registerAgent(
+      defineAgent({
+        id: "http-agent",
+        name: "HTTP",
+        systemPrompt: "Use the echo tool.",
+        model: { provider: "openai", name: "gpt-5.4" },
+        tools: [{ type: "http", entry: httpEntry }],
+      }),
+    );
+
+    await expect(runner.invoke("http-agent", "go")).rejects.toThrow(
+      /Secret 'test_token' referenced by agent 'http-agent' does not exist/,
+    );
+  });
+
+  it("uses the pinned param value from `params:` even if the LLM tries to supply one", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("{}", {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    // `userId` is pinned to a state value; placeholder `value` remains in
+    // the LLM-facing schema. State carries `account.id` which the pin
+    // resolves against.
+    const pinnedEntry = {
+      kind: "http" as const,
+      name: "lookup",
+      url: "https://api.example.com/users/{userId}/items?q={value}",
+      method: "GET" as const,
+      description: "Lookup items.",
+      params: { userId: "acct_42" },
+    };
+
+    const provider = new MockModelProvider([
+      {
+        text: "",
+        toolCalls: [
+          {
+            id: "tc_1",
+            name: "http__lookup",
+            // The LLM tries to pass userId = "evil"; it should be ignored.
+            args: { userId: "evil", value: "milk" },
+          },
+        ],
+        usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        finishReason: "tool-calls",
+      },
+      mockResponse("Done."),
+    ]);
+
+    const runner = createRunner({ modelProvider: provider });
+    runner.registerAgent(
+      defineAgent({
+        id: "http-agent",
+        name: "HTTP",
+        systemPrompt: "Use lookup.",
+        model: { provider: "openai", name: "gpt-5.4" },
+        tools: [{ type: "http", entry: pinnedEntry }],
+      }),
+    );
+
+    await runner.invoke("http-agent", "find milk");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    // The pinned value wins; LLM's "evil" must not appear in the URL.
+    expect(url).toBe("https://api.example.com/users/acct_42/items?q=milk");
+  });
+});

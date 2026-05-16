@@ -56,6 +56,23 @@ export function resolveToolEntries(entries: ManifestToolEntry[]): ResolvedTool[]
           agentId: entry.agent,
         });
         break;
+      case "http":
+        // HTTP tools surface to the LLM as `http__<name>`. The pinned `params:`
+        // and templated `headers:` are passed through on the resolved tool so
+        // the runtime can interpolate them against `state` (incl. secrets)
+        // at execute time. The actual `fetch` call lives in
+        // `@agntz/core`'s `buildHttpToolDefinition`.
+        resolved.push({
+          name: `http__${entry.name}`,
+          originalName: entry.name,
+          description: entry.description,
+          source: "http",
+          httpUrl: entry.url,
+          httpMethod: entry.method ?? "GET",
+          httpHeaders: entry.headers,
+          pinnedParams: entry.params,
+        });
+        break;
     }
   }
 

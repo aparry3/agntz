@@ -17,6 +17,8 @@ export {
 } from "./tools/spawn-agent.js";
 export type { SpawnLimits, SpawnableEntry } from "./tools/spawn-agent.js";
 export { createUseSkillTool } from "./tools/use-skill.js";
+export { buildHttpToolDefinition } from "./http-tool.js";
+export type { HTTPToolEntry as HTTPToolEntryRuntime, AgentState as RuntimeState } from "./http-tool.js";
 
 // Stores
 export { MemoryStore } from "./stores/memory.js";

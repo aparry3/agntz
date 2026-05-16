@@ -349,6 +349,12 @@ function manifestToolsToToolRefs(tools: LLMAgentManifest["tools"]) {
       case "agent":
         refs.push({ type: "agent", agentId: entry.agent });
         break;
+      case "http":
+        // HTTP entries pass the full entry through to the core runner so
+        // `buildHttpToolDefinition` can build the per-invocation
+        // `ToolDefinition` with `state.secrets` baked in.
+        refs.push({ type: "http", entry });
+        break;
     }
   }
   return refs;

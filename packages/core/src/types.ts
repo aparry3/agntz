@@ -1,6 +1,7 @@
 import type { ZodSchema } from "zod";
 import type { TelemetryConfig } from "./telemetry.js";
 import type { SpanEmitter } from "./telemetry.js";
+import type { HTTPToolEntry } from "./http-tool.js";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Agent Definition — the core portable data structure
@@ -75,7 +76,8 @@ export interface ModelConfig {
 export type ToolReference =
   | { type: "inline"; name: string }
   | { type: "mcp"; server: string; tools?: string[] }
-  | { type: "agent"; agentId: string };
+  | { type: "agent"; agentId: string }
+  | { type: "http"; entry: HTTPToolEntry };
 
 /**
  * Reference to an agent that can be spawned as a child Run.
