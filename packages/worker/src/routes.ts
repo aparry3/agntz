@@ -45,6 +45,19 @@ export interface WorkerAPIOptions {
    * `runRegistry` is not supplied). Default 300_000 (5 min).
    */
   runGracePeriodMs?: number;
+  /**
+   * Test-only override: replaces `resolveRunnerAndManifest` so tests can
+   * inject a runner with a stub model provider plus an inline manifest.
+   * Production code does NOT supply this — the route default builds a
+   * user-scoped runner from `store` and reads the manifest from the user's
+   * agent store. When set, the override is invoked for every request that
+   * reaches `/run`, `/run/stream`, or `/runs`.
+   */
+  resolveRunnerAndManifest?: (
+    store: UnifiedStore,
+    userId: string,
+    agentId: string,
+  ) => Promise<{ runner: Runner; manifest: AgentManifest }>;
 }
 
 /**
@@ -58,6 +71,11 @@ export interface WorkerAPIOptions {
 export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
   const { store, internalSecret } = opts;
   const app = new Hono();
+
+  // Test override for the runner+manifest resolver, falling back to the
+  // production lookup against the user store + the system-agent registry.
+  const resolveRunnerAndManifestImpl =
+    opts.resolveRunnerAndManifest ?? resolveRunnerAndManifest;
 
   // Process-wide trace registry — one per worker instance, shared across requests.
   // Receives span events from per-request SpanEmitters and batches them to the store.
@@ -177,7 +195,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
         `inputKeys=${input && typeof input === "object" ? Object.keys(input).join(",") : typeof input}`
       );
 
-      const { runner, manifest } = await resolveRunnerAndManifest(store, userId, agentId);
+      const { runner, manifest } = await resolveRunnerAndManifestImpl(store, userId, agentId);
       const runRegistry = new InMemoryRunRegistry();
       const spanEmitter = new SpanEmitter({
         traceSink: (event) => {
@@ -234,8 +252,8 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
       // Pre-allocate sessionId so the run-start SSE frame is authoritative.
       const sessionId = body.sessionId ?? generateSessionId();
 
-      const { runner, manifest } = await resolveRunnerAndManifest(store, userId, agentId);
-      const runRegistry = new InMemoryRunRegistry();
+      const { runner, manifest } = await resolveRunnerAndManifestImpl(store, userId, agentId);
+      const baseRegistry = new InMemoryRunRegistry();
       const spanEmitter = new SpanEmitter({
         traceSink: (event) => {
           if (event.type === "span-start") traceRegistry.spanStart(event.span);
@@ -244,10 +262,55 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
         },
         recordIO: false,
       });
-      // Replies are aggregated and included in the final `run-complete`
-      // payload. Phase 4 will add streaming `reply` events; for Phase 3 the
-      // batch surfaces them at the end.
+      // Replies are aggregated into a per-request collector AND, when
+      // `agent.reply` is set, broadcast as `reply` multiplexed events on the
+      // per-request registry. We tap the registry's `emit` so reply events
+      // flow onto the SSE wire as they happen; the same replies are still
+      // included on the final `run-complete` payload for batch readers.
       const replyCollector: Reply[] = [];
+      type QueuedReply = {
+        runId: string;
+        sessionId: string;
+        text: string;
+        ts: string;
+        seq: number;
+      };
+      const pendingReplies: QueuedReply[] = [];
+      let replyResolver: (() => void) | null = null;
+      let runComplete = false;
+
+      // Wrap the per-request registry's `emit` so we can intercept reply
+      // events without polling for the rootId. The wrapper preserves all
+      // other registry behavior (replay buffers, subscribers, seq stamping,
+      // terminal eviction) — we only fork on `reply`. We read the canonical
+      // seq from the seq counter map BEFORE stamping happens; since emit()
+      // is the only writer and we wrap it, the order matches.
+      const seqForChannel = new Map<string, number>();
+      const runRegistry: RunRegistry = new Proxy(baseRegistry, {
+        get(target, prop, receiver) {
+          if (prop === "emit") {
+            return (rootId: string, event: Parameters<RunRegistry["emit"]>[1]) => {
+              const next = (seqForChannel.get(rootId) ?? 0) + 1;
+              seqForChannel.set(rootId, next);
+              target.emit(rootId, event);
+              if (event.type === "reply") {
+                pendingReplies.push({
+                  runId: event.runId,
+                  sessionId: event.sessionId,
+                  text: event.text,
+                  ts: event.ts,
+                  seq: next,
+                });
+                const r = replyResolver;
+                replyResolver = null;
+                r?.();
+              }
+            };
+          }
+          return Reflect.get(target, prop, receiver);
+        },
+      }) as unknown as RunRegistry;
+
       const ctx = createExecutionContext(runner, {
         runRegistry,
         spanEmitter,
@@ -258,6 +321,32 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
       });
 
       return streamSSE(c, async (stream) => {
+        // Drain reply events as they arrive. Runs concurrently with the
+        // manifest execution; closes when the main path flips `runComplete`.
+        const forwarder = (async () => {
+          while (true) {
+            while (pendingReplies.length > 0) {
+              const ev = pendingReplies.shift()!;
+              await stream.writeSSE({
+                event: "reply",
+                data: JSON.stringify({
+                  type: "reply",
+                  runId: ev.runId,
+                  sessionId: ev.sessionId,
+                  text: ev.text,
+                  ts: ev.ts,
+                  seq: ev.seq,
+                }),
+                id: String(ev.seq),
+              });
+            }
+            if (runComplete) return;
+            await new Promise<void>((r) => {
+              replyResolver = r;
+            });
+          }
+        })();
+
         try {
           await stream.writeSSE({
             event: "run-start",
@@ -272,11 +361,25 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
             sessionId,
           };
           if (replyCollector.length > 0) completePayload.replies = replyCollector;
+
+          // Drain any tail reply events emitted in the same tick as the
+          // final tool execution before we close with run-complete.
+          runComplete = true;
+          const r = replyResolver;
+          replyResolver = null;
+          r?.();
+          await forwarder;
+
           await stream.writeSSE({
             event: "run-complete",
             data: JSON.stringify(completePayload),
           });
         } catch (error) {
+          runComplete = true;
+          const r = replyResolver;
+          replyResolver = null;
+          r?.();
+          await forwarder.catch(() => {});
           await stream.writeSSE({
             event: "run-error",
             data: JSON.stringify({ error: errorMessage(error) }),
@@ -369,7 +472,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 
       runRegistry.start(run, async (signal) => {
         const runStart = Date.now();
-        const { runner, manifest } = await resolveRunnerAndManifest(
+        const { runner, manifest } = await resolveRunnerAndManifestImpl(
           store,
           userId,
           agentId,

@@ -51,6 +51,15 @@ export interface ReplyToolDeps {
    * loops without blocking legitimate repetition.
    */
   dedupeWindowMs?: number;
+  /**
+   * Optional callback fired after a reply is accepted (persisted, collected,
+   * and broadcast to the registry). `Runner.stream` uses this as a side
+   * channel to forward reply events to its async generator output in real
+   * time — the registry path is for out-of-process subscribers, this is for
+   * the in-process stream consumer. Rejections (rate-limited / duplicate)
+   * are NOT delivered to this callback.
+   */
+  onAccepted?: (reply: Reply) => void;
 }
 
 /**
@@ -131,6 +140,11 @@ export function createReplyTool(deps: ReplyToolDeps): ToolDefinition {
           seq: 0,
         });
       }
+
+      // In-process side channel for the stream consumer (Runner.stream).
+      // Fired after persistence + collector + registry emit so a stream
+      // subscriber sees the same totally-ordered view as the registry.
+      deps.onAccepted?.(reply);
 
       return { delivered: true as const };
     },

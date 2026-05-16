@@ -121,4 +121,55 @@ describe("AgntzClient.agents.stream", () => {
     const iter = client.agents.stream({ agentId: "a1" });
     await expect(iter.next()).rejects.toBeInstanceOf(AuthenticationError);
   });
+
+  it("deserializes `reply` SSE events into typed StreamEvent.reply", async () => {
+    const chunks = [
+      'event: run-start\ndata: {"agentId":"a1","kind":"llm","sessionId":"s1"}\n\n',
+      `event: reply\ndata: ${JSON.stringify({
+        type: "reply",
+        text: "still thinking...",
+        ts: "2026-05-16T12:00:00.000Z",
+        sessionId: "s1",
+        runId: "r1",
+        seq: 2,
+      })}\nid: 2\n\n`,
+      `event: reply\ndata: ${JSON.stringify({
+        type: "reply",
+        text: "almost there",
+        ts: "2026-05-16T12:00:01.000Z",
+        sessionId: "s1",
+        runId: "r1",
+        seq: 5,
+      })}\nid: 5\n\n`,
+      'event: run-complete\ndata: {"output":"done","state":{},"sessionId":"s1"}\n\n',
+    ];
+    const mock = mockFetch(() => sseResponse(chunks));
+    const client = makeClient(mock.fetch);
+
+    const events: StreamEvent[] = [];
+    for await (const ev of client.agents.stream({ agentId: "a1" })) {
+      events.push(ev);
+    }
+
+    const replyEvents = events.filter((e) => e.type === "reply");
+    expect(replyEvents).toHaveLength(2);
+    expect(replyEvents[0]).toEqual({
+      type: "reply",
+      text: "still thinking...",
+      ts: "2026-05-16T12:00:00.000Z",
+      sessionId: "s1",
+      runId: "r1",
+      seq: 2,
+    });
+    expect(replyEvents[1]).toMatchObject({
+      type: "reply",
+      text: "almost there",
+      seq: 5,
+    });
+
+    // Reply events sit between `start` and `complete` and don't terminate
+    // the iterator.
+    expect(events[0].type).toBe("start");
+    expect(events[events.length - 1].type).toBe("complete");
+  });
 });

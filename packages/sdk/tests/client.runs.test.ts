@@ -134,6 +134,58 @@ describe("AgntzClient.runs.stream", () => {
     }
     expect(collected).toEqual([{ type: "snapshot", run }]);
   });
+
+  it("deserializes `reply` events into typed MultiplexedRunEvent.reply", async () => {
+    const events: MultiplexedRunEvent[] = [
+      { type: "run-spawn", runId: "run_abc", agentId: "a1", seq: 1 },
+      {
+        type: "reply",
+        runId: "run_abc",
+        sessionId: "s1",
+        text: "still thinking...",
+        ts: "2026-05-16T12:00:00.000Z",
+        seq: 2,
+      },
+      {
+        type: "reply",
+        runId: "run_abc",
+        sessionId: "s1",
+        text: "almost there",
+        ts: "2026-05-16T12:00:01.000Z",
+        seq: 3,
+      },
+      {
+        type: "run-complete",
+        runId: "run_abc",
+        result: {
+          output: "done",
+          invocationId: "run_abc",
+          sessionId: "s1",
+          toolCalls: [],
+          usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          duration: 0,
+          model: "manifest",
+        },
+        seq: 4,
+      },
+    ];
+    const chunks = events.map(
+      (ev) => `event: ${ev.type}\ndata: ${JSON.stringify(ev)}\nid: ${ev.seq}\n\n`,
+    );
+    const mock = mockFetch(() => sseResponse(chunks));
+    const client = new AgntzClient({ apiKey: "k", baseUrl: BASE, fetch: mock.fetch });
+    const collected: MultiplexedRunEvent[] = [];
+    for await (const ev of client.runs.stream({ runId: "run_abc" })) {
+      collected.push(ev);
+    }
+    expect(collected).toEqual(events);
+
+    const replyEvents = collected.filter((e) => e.type === "reply");
+    expect(replyEvents).toHaveLength(2);
+    expect((replyEvents[0] as Extract<MultiplexedRunEvent, { type: "reply" }>).text).toBe(
+      "still thinking...",
+    );
+  });
 });
 
 describe("AgntzClient.runs.list", () => {

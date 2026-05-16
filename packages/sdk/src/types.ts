@@ -81,6 +81,22 @@ export type AgentKind = "llm" | "tool" | "sequential" | "parallel";
 export type StreamEvent =
   | { type: "start"; agentId: string; kind: AgentKind; sessionId: string }
   | { type: "complete"; output: unknown; state: Record<string, unknown>; sessionId: string }
+  /**
+   * Intermediate reply delivered via the agent's `reply` tool. Emitted in
+   * real time as the model invokes the tool — the final `complete` event
+   * still carries any `replies` aggregated server-side. `seq` is present on
+   * the multiplexed `/runs/:id/stream` variant; on `/run/stream` it's the
+   * registry-stamped sequence number when one is wired, or undefined when
+   * the worker drives the stream directly.
+   */
+  | {
+      type: "reply";
+      text: string;
+      ts: string;
+      sessionId: string;
+      runId: string;
+      seq?: number;
+    }
   | { type: "error"; error: string };
 
 export interface HealthResult {
@@ -216,6 +232,20 @@ export type MultiplexedRunEvent =
       seq: number;
     }
   | { type: "draining"; runId: string; pendingChildren: string[]; seq: number }
+  /**
+   * Intermediate reply delivered via the agent's `reply` tool. Surfaced on
+   * the multiplexed subtree feed in real time; same record (text + ts +
+   * sessionId + runId) is also aggregated onto the final `run-complete`
+   * result.replies for clients that prefer batch delivery.
+   */
+  | {
+      type: "reply";
+      runId: string;
+      sessionId: string;
+      text: string;
+      ts: string;
+      seq: number;
+    }
   | { type: "run-complete"; runId: string; result: Run["result"]; seq: number }
   | { type: "run-error"; runId: string; error: string; seq: number }
   | { type: "run-cancelled"; runId: string; seq: number }

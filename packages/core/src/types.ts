@@ -198,6 +198,14 @@ export type StreamEvent =
   | { type: "tool-call-start"; toolCall: { id: string; name: string } }
   | { type: "tool-call-end"; toolCall: ToolCallRecord }
   | { type: "step-complete"; step: number; toolCalls: ToolCallRecord[] }
+  /**
+   * Intermediate reply delivered via the synthetic `reply` tool. Yielded by
+   * `Runner.stream` in real time as the model invokes the reply tool, so SSE
+   * consumers see partial output mid-loop instead of waiting for `done`. The
+   * same reply is still aggregated onto `InvokeResult.replies` for the final
+   * `done` payload — adding this event is purely additive.
+   */
+  | { type: "reply"; text: string; ts: string; sessionId: string; runId: string }
   | { type: "done"; result: InvokeResult };
 
 export interface InvokeStream extends AsyncIterable<StreamEvent> {

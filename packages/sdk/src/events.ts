@@ -35,6 +35,17 @@ export function normalizeEvent(frame: SseFrame): StreamEvent | null {
       const error = asString(payload, "error");
       return { type: "error", error };
     }
+    case "reply": {
+      const text = asString(payload, "text");
+      const ts = asString(payload, "ts");
+      const sessionId = asString(payload, "sessionId");
+      const runId = asString(payload, "runId");
+      const seqVal = (payload as { seq?: unknown }).seq;
+      const seq = typeof seqVal === "number" ? seqVal : undefined;
+      return seq === undefined
+        ? { type: "reply", text, ts, sessionId, runId }
+        : { type: "reply", text, ts, sessionId, runId, seq };
+    }
     default:
       return null;
   }
@@ -100,6 +111,7 @@ export function normalizeRunEvent(frame: SseFrame): MultiplexedRunEvent | null {
     case "tool-call-end":
     case "step-complete":
     case "draining":
+    case "reply":
     case "run-complete":
     case "run-error":
     case "run-cancelled":

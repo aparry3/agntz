@@ -61,4 +61,48 @@ describe("normalizeEvent", () => {
       }),
     ).toEqual({ type: "complete", output: 1, state: {}, sessionId: "sess_1" });
   });
+
+  it("maps reply with seq", () => {
+    expect(
+      normalizeEvent({
+        event: "reply",
+        data: JSON.stringify({
+          type: "reply",
+          text: "still thinking...",
+          ts: "2026-05-16T12:00:00.000Z",
+          sessionId: "sess_1",
+          runId: "run_1",
+          seq: 3,
+        }),
+      }),
+    ).toEqual({
+      type: "reply",
+      text: "still thinking...",
+      ts: "2026-05-16T12:00:00.000Z",
+      sessionId: "sess_1",
+      runId: "run_1",
+      seq: 3,
+    });
+  });
+
+  it("maps reply without seq", () => {
+    expect(
+      normalizeEvent({
+        event: "reply",
+        data: JSON.stringify({
+          type: "reply",
+          text: "hi",
+          ts: "2026-05-16T12:00:00.000Z",
+          sessionId: "sess_1",
+          runId: "run_1",
+        }),
+      }),
+    ).toEqual({
+      type: "reply",
+      text: "hi",
+      ts: "2026-05-16T12:00:00.000Z",
+      sessionId: "sess_1",
+      runId: "run_1",
+    });
+  });
 });

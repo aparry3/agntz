@@ -438,6 +438,17 @@ export class Runner {
       const effectiveRunId = runId ?? invocationId;
       const effectiveRootId = rootId ?? effectiveRunId;
 
+      // In-process pipe from the synthetic `reply` tool to this generator.
+      // The tool's `onAccepted` callback pushes Reply records here as they
+      // are accepted; the generator drains the queue at safe yield points
+      // (between text-delta chunks, after each tool call, between steps) so
+      // SSE consumers see reply events in real time instead of only on the
+      // final `done` payload.
+      const pendingStreamReplies: Reply[] = [];
+      const onReplyAccepted = (reply: Reply) => {
+        pendingStreamReplies.push(reply);
+      };
+
       const modelConfig = {
         ...self.config.defaults?.model,
         ...agent.model,
@@ -519,6 +530,7 @@ export class Runner {
           effectiveSessionId,
           runId: effectiveRunId,
           rootId: effectiveRootId,
+          onReplyAccepted,
         });
 
         // See invoke() for the rationale. Persist the user turn up-front when
@@ -720,6 +732,22 @@ export class Runner {
                 seq: 0,
               });
             }
+
+            // Drain any replies queued during this tool call (the synthetic
+            // `reply` tool's onAccepted callback pushes into the queue from
+            // inside executeToolCall). Yielding here keeps reply events
+            // chronologically attached to the tool call that produced them
+            // and ahead of the next tool's tool-call-start.
+            while (pendingStreamReplies.length > 0) {
+              const r = pendingStreamReplies.shift()!;
+              yield {
+                type: "reply" as const,
+                text: r.text,
+                ts: r.ts,
+                sessionId: r.sessionId,
+                runId: r.runId,
+              };
+            }
           }
 
           yield { type: "step-complete" as const, step, toolCalls: stepToolCalls };
@@ -766,6 +794,7 @@ export class Runner {
               effectiveSessionId,
               runId: effectiveRunId,
               rootId: effectiveRootId,
+              onReplyAccepted,
             });
             const seen = new Set(base.map((t) => t.name));
             availableTools = base.concat(
@@ -1654,6 +1683,12 @@ export class Runner {
       runId?: string;
       /** Root run id; defaults to `runId` for top-level runs. */
       rootId?: string;
+      /**
+       * Optional callback the synthetic `reply` tool fires after each
+       * accepted reply. Used by `Runner.stream` to forward replies to its
+       * async iterator output without re-subscribing to the registry.
+       */
+      onReplyAccepted?: (reply: Reply) => void;
     },
   ): Promise<Array<{
     name: string;
@@ -1776,6 +1811,7 @@ export class Runner {
         sessionStore: this.sessionStore,
         runRegistry: opts!.runRegistry,
         maxPerRun,
+        onAccepted: opts!.onReplyAccepted,
       });
       opts!.ephemeralTools!.set(replyTool.name, replyTool);
       resolved.push({
