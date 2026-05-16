@@ -41,6 +41,10 @@ export function buildValidationContext(
       const skill = await store.getSkill(name);
       return skill != null;
     },
+    resolveSecret: async (name: string) => {
+      const meta = await store.getSecretMetadata(name);
+      return meta != null;
+    },
     resolveTools: async (ref: string) => {
       const connections = runner.connections;
       const resolved = connections

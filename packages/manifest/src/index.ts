@@ -21,6 +21,7 @@ export type {
   WrappedToolRef,
   LocalToolEntry,
   AgentToolEntry,
+  HTTPToolEntry,
   ToolCallConfig,
   AgentRef,
   AgentState,
@@ -62,3 +63,7 @@ export type { SkillValidationContext } from "./skill-validate.js";
 // Tools
 export type { ResolvedTool } from "./tools.js";
 export { resolveToolEntries, buildToolParams, stripPinnedParams } from "./tools.js";
+
+// HTTP tool URL parser + builder
+export type { Placeholder } from "./http-url.js";
+export { parseUrlPlaceholders, buildHttpUrl } from "./http-url.js";

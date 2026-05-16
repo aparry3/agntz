@@ -1,6 +1,7 @@
 import { parse as parseYAML } from "yaml";
 import { normalizeManifest } from "./parser.js";
 import { normalizeId } from "./state.js";
+import { parseUrlPlaceholders } from "./http-url.js";
 import type {
   AgentManifest,
   LLMAgentManifest,
@@ -13,6 +14,9 @@ import type {
   OutputMapping,
   ManifestToolEntry,
 } from "./types.js";
+
+const HTTP_TOOL_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+const SECRET_REF_RE = /\{\{\s*secrets\.([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Types
@@ -44,6 +48,13 @@ export interface ValidationContext {
   isProviderConfigured?: (provider: string) => Promise<boolean>;
   /** Check whether a skill name exists in the user's SkillStore. */
   resolveSkill?: (name: string) => Promise<boolean>;
+  /**
+   * Check whether a secret exists for the current user. Used by the HTTP tool
+   * validator to emit warnings for `{{secrets.<name>}}` references that
+   * cannot be resolved at save time. Always a warning — users may add the
+   * secret later before invoking.
+   */
+  resolveSecret?: (name: string) => Promise<boolean>;
   /**
    * When true, MCP server connection failures are reported as errors
    * instead of warnings. Use for save-time validation where an unreachable
@@ -416,8 +427,8 @@ export function validateToolEntries(
     const entry = tools[i];
     const epath = `${path}[${i}]`;
 
-    if (!entry.kind || !["mcp", "local", "agent"].includes(entry.kind)) {
-      errors.push({ level: "structural", path: epath, message: "Tool entry must have kind: mcp, local, or agent" });
+    if (!entry.kind || !["mcp", "local", "agent", "http"].includes(entry.kind)) {
+      errors.push({ level: "structural", path: epath, message: "Tool entry must have kind: mcp, local, agent, or http" });
       continue;
     }
 
@@ -453,7 +464,130 @@ export function validateToolEntries(
         errors.push({ level: "structural", path: p(epath, "agent"), message: "Agent tool entry must reference an agent ID" });
       }
     }
+
+    if (entry.kind === "http") {
+      // Name — programming-identifier style; becomes http__<name> for the LLM.
+      if (!entry.name || typeof entry.name !== "string") {
+        errors.push({ level: "structural", path: p(epath, "name"), message: "HTTP tool entry must have a name string" });
+      } else if (!HTTP_TOOL_NAME_RE.test(entry.name)) {
+        errors.push({
+          level: "structural",
+          path: p(epath, "name"),
+          message: `HTTP tool name '${entry.name}' must match ${HTTP_TOOL_NAME_RE.source}`,
+        });
+      }
+
+      // URL — required, must parse once placeholders are stubbed.
+      if (!entry.url || typeof entry.url !== "string") {
+        errors.push({ level: "structural", path: p(epath, "url"), message: "HTTP tool entry must have a url string" });
+      } else {
+        const stub = entry.url.replace(/\{[^}]+\}/g, "_");
+        try {
+          new URL(stub);
+        } catch {
+          errors.push({
+            level: "structural",
+            path: p(epath, "url"),
+            message: `HTTP tool url is not a valid URL: '${entry.url}'`,
+          });
+        }
+      }
+
+      // Method — only GET is supported in MVP. Type kept permissive for future
+      // verbs but validation hard-rejects anything else.
+      const method = entry.method ?? "GET";
+      if (method !== "GET") {
+        errors.push({
+          level: "structural",
+          path: p(epath, "method"),
+          message: `HTTP tool method must be 'GET' — only GET is supported in this release.`,
+        });
+      }
+
+      // Placeholders — `{X?}` only legal in query string.
+      let placeholderNames: Set<string> = new Set();
+      if (entry.url && typeof entry.url === "string") {
+        const placeholders = parseUrlPlaceholders(entry.url);
+        for (const ph of placeholders) {
+          placeholderNames.add(ph.name);
+          if (ph.position === "path" && ph.optional) {
+            errors.push({
+              level: "structural",
+              path: p(epath, "url"),
+              message: `Optional placeholders ({${ph.name}?}) are only allowed in the query string.`,
+            });
+          }
+        }
+      }
+
+      // params — keys must correspond to URL placeholders; values must have
+      // syntactically valid templates.
+      if (entry.params) {
+        for (const [key, val] of Object.entries(entry.params)) {
+          if (!placeholderNames.has(key)) {
+            errors.push({
+              level: "structural",
+              path: p(epath, `params.${key}`),
+              message: `params.${key} does not correspond to a URL placeholder.`,
+            });
+          }
+          if (typeof val !== "string") {
+            errors.push({
+              level: "structural",
+              path: p(epath, `params.${key}`),
+              message: "HTTP tool param values must be strings (template expressions).",
+            });
+          } else {
+            validateTemplatesSyntax(val, p(epath, `params.${key}`), errors);
+          }
+        }
+      }
+
+      // headers — values must have syntactically valid templates.
+      if (entry.headers) {
+        for (const [key, val] of Object.entries(entry.headers)) {
+          if (typeof val !== "string") {
+            errors.push({
+              level: "structural",
+              path: p(epath, `headers.${key}`),
+              message: "HTTP tool header values must be strings (template expressions).",
+            });
+          } else {
+            validateTemplatesSyntax(val, p(epath, `headers.${key}`), errors);
+          }
+        }
+      }
+    }
   }
+}
+
+/**
+ * Collect `{{secrets.<name>}}` references from the params/headers of an HTTP
+ * tool entry. Used by the external validator to warn on missing secrets.
+ */
+function collectHttpSecretRefs(entry: {
+  params?: Record<string, string>;
+  headers?: Record<string, string>;
+}): Set<string> {
+  const names = new Set<string>();
+  const scan = (val: string) => {
+    SECRET_REF_RE.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = SECRET_REF_RE.exec(val)) !== null) {
+      names.add(m[1]);
+    }
+  };
+  if (entry.params) {
+    for (const val of Object.values(entry.params)) {
+      if (typeof val === "string") scan(val);
+    }
+  }
+  if (entry.headers) {
+    for (const val of Object.values(entry.headers)) {
+      if (typeof val === "string") scan(val);
+    }
+  }
+  return names;
 }
 
 function validatePropertySchema(
@@ -894,6 +1028,54 @@ export async function validateToolEntriesExternal(
       const exists = await ctx.resolveAgent(entry.agent);
       if (!exists) {
         errors.push({ level: "external", path: p(epath, "agent"), message: `Referenced agent '${entry.agent}' not found` });
+      }
+    }
+
+    if (entry.kind === "http") {
+      // Liveness probe — stub placeholders to make the URL syntactically valid,
+      // never substitute real values (avoids leaking through logs).
+      if (entry.url && typeof entry.url === "string") {
+        const stubUrl = entry.url.replace(/\{[^}]+\}/g, "_");
+        let probeError: Error | null = null;
+        try {
+          let probe = await fetch(stubUrl, {
+            method: "HEAD",
+            signal: AbortSignal.timeout(5000),
+          });
+          // Some servers refuse HEAD outright with 405 — try OPTIONS as a fallback.
+          if (probe.status === 405) {
+            probe = await fetch(stubUrl, {
+              method: "OPTIONS",
+              signal: AbortSignal.timeout(5000),
+            });
+          }
+          // Any HTTP response — including 401/403/404 — means "alive". No-op.
+          void probe;
+        } catch (e) {
+          probeError = e as Error;
+        }
+        if (probeError) {
+          const message = `Could not reach HTTP endpoint '${entry.url}': ${probeError.message}`;
+          if (ctx.strict) {
+            errors.push({ level: "external", path: p(epath, "url"), message });
+          } else {
+            warnings.push({ path: p(epath, "url"), message });
+          }
+        }
+      }
+
+      // Secret references — warn (never error) on missing secrets.
+      if (ctx.resolveSecret) {
+        const refs = collectHttpSecretRefs(entry);
+        for (const name of refs) {
+          const exists = await ctx.resolveSecret(name);
+          if (!exists) {
+            warnings.push({
+              path: epath,
+              message: `Secret '${name}' referenced by '{{secrets.${name}}}' does not exist yet. Add it under Settings > Secrets before invoking this agent.`,
+            });
+          }
+        }
       }
     }
   }

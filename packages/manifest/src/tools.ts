@@ -14,11 +14,17 @@ export interface ResolvedTool {
   /** MCP server URL (if MCP tool) */
   server?: string;
   /** Source kind */
-  source: "mcp" | "local" | "agent";
+  source: "mcp" | "local" | "agent" | "http";
   /** Agent ID (if agent tool) */
   agentId?: string;
   /** Parameters pinned from state (hidden from LLM) */
   pinnedParams?: Record<string, string>;
+  /** HTTP endpoint URL (if HTTP tool). May contain `{X}`/`{X?}` placeholders. */
+  httpUrl?: string;
+  /** HTTP method (if HTTP tool). Defaults to "GET". */
+  httpMethod?: string;
+  /** HTTP headers (if HTTP tool). Values are state-templated. */
+  httpHeaders?: Record<string, string>;
 }
 
 /**

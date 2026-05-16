@@ -50,6 +50,13 @@ export function manifestEntryToToolReferences(entry: ManifestToolEntry): ToolRef
     }
     case "agent":
       return [{ type: "agent", agentId: entry.agent }];
+    case "http":
+      // HTTP tools are wired into the runner directly from manifest entries
+      // (see Phase 4) — they are not exposed via the legacy ToolReference
+      // shape, and skills currently do not support `kind: http`. Skipping
+      // here keeps the exhaustiveness check honest and lets skills tolerate
+      // unsupported entries without crashing.
+      return [];
   }
 }
 
