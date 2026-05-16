@@ -14,11 +14,17 @@ export interface ResolvedTool {
   /** MCP server URL (if MCP tool) */
   server?: string;
   /** Source kind */
-  source: "mcp" | "local" | "agent";
+  source: "mcp" | "local" | "agent" | "http";
   /** Agent ID (if agent tool) */
   agentId?: string;
   /** Parameters pinned from state (hidden from LLM) */
   pinnedParams?: Record<string, string>;
+  /** HTTP endpoint URL (if HTTP tool). May contain `{X}`/`{X?}` placeholders. */
+  httpUrl?: string;
+  /** HTTP method (if HTTP tool). Defaults to "GET". */
+  httpMethod?: string;
+  /** HTTP headers (if HTTP tool). Values are state-templated. */
+  httpHeaders?: Record<string, string>;
 }
 
 /**
@@ -48,6 +54,23 @@ export function resolveToolEntries(entries: ManifestToolEntry[]): ResolvedTool[]
           originalName: entry.agent,
           source: "agent",
           agentId: entry.agent,
+        });
+        break;
+      case "http":
+        // HTTP tools surface to the LLM as `http__<name>`. The pinned `params:`
+        // and templated `headers:` are passed through on the resolved tool so
+        // the runtime can interpolate them against `state` (incl. secrets)
+        // at execute time. The actual `fetch` call lives in
+        // `@agntz/core`'s `buildHttpToolDefinition`.
+        resolved.push({
+          name: `http__${entry.name}`,
+          originalName: entry.name,
+          description: entry.description,
+          source: "http",
+          httpUrl: entry.url,
+          httpMethod: entry.method ?? "GET",
+          httpHeaders: entry.headers,
+          pinnedParams: entry.params,
         });
         break;
     }

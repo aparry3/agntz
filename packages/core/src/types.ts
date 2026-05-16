@@ -1,6 +1,7 @@
 import type { ZodSchema } from "zod";
 import type { TelemetryConfig } from "./telemetry.js";
 import type { SpanEmitter } from "./telemetry.js";
+import type { HTTPToolEntry } from "./http-tool.js";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Agent Definition — the core portable data structure
@@ -84,7 +85,8 @@ export interface ModelConfig {
 export type ToolReference =
   | { type: "inline"; name: string }
   | { type: "mcp"; server: string; tools?: string[] }
-  | { type: "agent"; agentId: string };
+  | { type: "agent"; agentId: string }
+  | { type: "http"; entry: HTTPToolEntry };
 
 /**
  * Reference to an agent that can be spawned as a child Run.
@@ -575,6 +577,47 @@ export interface SkillStore {
   deleteSkill(name: string): Promise<void>;
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// Secrets — per-user encrypted credentials referenced by HTTP tools (and
+// other future template consumers) as `{{secrets.<name>}}`. Values are
+// AES-256-GCM encrypted at rest; only the runtime fetches plaintext.
+// ═══════════════════════════════════════════════════════════════════════
+
+export interface SecretDefinition {
+  /** Referenced as `{{secrets.<name>}}` in agent manifests. */
+  name: string;
+  /** Plaintext at the API boundary; encrypted at rest by the store. */
+  value: string;
+  description?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface SecretMetadata {
+  name: string;
+  description?: string;
+  /** Last 4 chars of plaintext for masked-UI display (e.g. `••••5678`). */
+  lastFour: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SecretStore {
+  listSecrets(): Promise<SecretMetadata[]>;
+  getSecretMetadata(name: string): Promise<SecretMetadata | null>;
+  /** Decrypted value — runtime only; never expose via an HTTP API route. */
+  getSecretValue(name: string): Promise<string | null>;
+  putSecret(secret: SecretDefinition): Promise<void>;
+  /**
+   * Update only the description (and updatedAt timestamp) of an existing
+   * secret without touching the encrypted value. Returns false if no secret
+   * with that name exists. Lets API routes implement "edit metadata" flows
+   * without ever needing to decrypt the value.
+   */
+  updateSecretDescription(name: string, description: string | undefined): Promise<boolean>;
+  deleteSecret(name: string): Promise<void>;
+}
+
 export interface SessionStore {
   getMessages(sessionId: string): Promise<Message[]>;
   append(sessionId: string, messages: Message[]): Promise<void>;
@@ -1001,70 +1044,26 @@ export type UnifiedStore = AgentStore &
   RunStore &
   TraceStore &
   SkillStore &
-  WebhookSecretStore &
+  SecretStore &
   WebhookDeliveryStore &
   ScopableStore;
 
 // ═══════════════════════════════════════════════════════════════════════
-// Webhook secrets — named, per-user signing keys used by the dispatcher to
-// sign outbound webhook POSTs. The raw secret is kept in the store so the
-// dispatcher can sign requests; consumers receive the same raw secret once at
-// creation time and use it to verify signatures.
-// ═══════════════════════════════════════════════════════════════════════
-
-export interface WebhookSecret {
-  /** Server-generated, e.g. `whsec_<random>`. */
-  id: string;
-  /** User-chosen, unique per user (e.g. `gymtext-prod`). */
-  name: string;
-  userId: string;
-  /**
-   * Raw signing secret. Storing the raw secret is a deliberate tradeoff: HMAC
-   * signing requires the original bytes, so we cannot hash-only. The secret
-   * is treated as a credential at rest. Future hardening: encrypt-at-rest
-   * with an env-supplied key.
-   */
-  secret: string;
-  /** ISO 8601 timestamp at creation. */
-  createdAt: string;
-  /** ISO 8601 timestamp marking the secret as superseded by rotation. */
-  rotatedAt?: string;
-}
-
-/**
- * Secret payload returned at create/rotate time. Includes the raw secret
- * (always available on `WebhookSecret.secret` too — the dedicated subtype
- * communicates to callers that THIS is the moment to copy it client-side).
- */
-export interface WebhookSecretCreated extends WebhookSecret {
-  secret: string;
-}
-
-export interface WebhookSecretStore {
-  /** Generate id + secret, persist, return the raw secret once. */
-  create(name: string): Promise<WebhookSecretCreated>;
-  /** List active + rotated secrets owned by the scoped user (no filtering). */
-  list(): Promise<WebhookSecret[]>;
-  /** Mark `id` as rotated and create a fresh active secret with the same name. */
-  rotate(id: string): Promise<WebhookSecretCreated>;
-  /** Hard-delete a secret. In-flight deliveries that captured this id keep working until the next attempt. */
-  revoke(id: string): Promise<void>;
-  /** Return the active (non-rotated, non-revoked) secret by name. */
-  resolveByName(name: string): Promise<WebhookSecret | undefined>;
-  /** Return any secret (rotated included) by id, so in-flight signing keeps working. */
-  resolveById(id: string): Promise<WebhookSecret | undefined>;
-}
-
-// ═══════════════════════════════════════════════════════════════════════
 // Webhook deliveries — outbox table for outbound webhook POSTs.
+//
+// Webhook signing secrets live in the unified `SecretStore` (per-user,
+// AES-256-GCM encrypted at rest). The dispatcher resolves the active secret
+// by name at each delivery attempt — so an out-of-band rotation (via
+// SecretStore.putSecret) is picked up on the next attempt without any
+// pinning machinery.
 // ═══════════════════════════════════════════════════════════════════════
 
 export interface WebhookDelivery {
   id: string;
   runId: string;
   callbackUrl: string;
-  /** Pinned at invocation time so mid-run rotation can't break signing. */
-  secretId: string;
+  /** Name of the SecretStore entry whose plaintext is the HMAC signing key. */
+  secretName: string;
   payload: Record<string, unknown>;
   attempts: number;
   lastAttemptAt?: string;

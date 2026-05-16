@@ -175,7 +175,8 @@ export interface StepRef {
 export type ManifestToolEntry =
   | MCPToolEntry
   | LocalToolEntry
-  | AgentToolEntry;
+  | AgentToolEntry
+  | HTTPToolEntry;
 
 export interface MCPToolEntry {
   kind: "mcp";
@@ -201,6 +202,31 @@ export interface LocalToolEntry {
 export interface AgentToolEntry {
   kind: "agent";
   agent: string;
+}
+
+/**
+ * HTTP tool entry — one GET endpoint exposed to the model as one tool.
+ * URL placeholders ({X}, {X?}) derive the LLM-facing schema. Any keys in
+ * `params:` pin those placeholders to state-resolved templates (mirrors the
+ * MCP WrappedToolRef convention). `headers:` values are also templated.
+ * Auth tokens are referenced via `{{secrets.<name>}}`.
+ *
+ * MVP: only GET. The `method` field is typed permissively for future verbs
+ * (POST/PUT/DELETE) but validators reject anything other than "GET".
+ */
+export interface HTTPToolEntry {
+  kind: "http";
+  /** Becomes `http__<name>` for the model. Must be a programming identifier. */
+  name: string;
+  /** Endpoint URL. May contain `{X}` (required) or `{X?}` (optional) placeholders. */
+  url: string;
+  /** Only "GET" supported in MVP; type kept permissive for future extension. */
+  method?: "GET";
+  description?: string;
+  /** Pinned placeholders (state templates). Mirrors `WrappedToolRef.params`. */
+  params?: Record<string, string>;
+  /** HTTP headers. Values are state-templated and may reference `{{secrets.X}}`. */
+  headers?: Record<string, string>;
 }
 
 // ═══════════════════════════════════════════════════════════════════════

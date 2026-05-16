@@ -3,10 +3,17 @@ import { join } from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { listRunsInProcess } from "./list-runs.js";
 import { defineSkill } from "../skill.js";
+import {
+  encryptSecret,
+  decryptSecret,
+  getLastFour,
+} from "../utils/crypto.js";
 import type {
   AgentDefinition,
   AgentVersionSummary,
   ProviderConfig,
+  SecretDefinition,
+  SecretMetadata,
   SkillDefinition,
   UnifiedStore,
   ApiKeyRecord,
@@ -24,8 +31,6 @@ import type {
   TraceSummary,
   TraceFilter,
   WebhookDelivery,
-  WebhookSecret,
-  WebhookSecretCreated,
 } from "../types.js";
 import { encodeTraceCursor, decodeTraceCursor } from "./memory.js";
 
@@ -93,6 +98,7 @@ export class JsonFileStore implements UnifiedStore {
     await mkdir(join(root, "connections"), { recursive: true });
     await mkdir(join(root, "runs"), { recursive: true });
     await mkdir(join(root, "skills"), { recursive: true });
+    await mkdir(join(root, "secrets"), { recursive: true });
   }
 
   private async readJson<T>(path: string): Promise<T | null> {
@@ -472,6 +478,115 @@ export class JsonFileStore implements UnifiedStore {
     await unlink(this.skillPath(name)).catch(() => {});
   }
 
+  // ═══ SecretStore ═══
+
+  private secretPath(name: string): string {
+    return join(this.userRoot(), "secrets", `${this.sanitizeFilename(name)}.json`);
+  }
+
+  async listSecrets(): Promise<SecretMetadata[]> {
+    await this.ensureUserDirs();
+    const dir = join(this.userRoot(), "secrets");
+    const files = await readdir(dir).catch(() => []);
+    const result: SecretMetadata[] = [];
+    for (const file of files) {
+      if (!file.endsWith(".json")) continue;
+      const row = await this.readJson<{
+        name: string;
+        encrypted: string;
+        lastFour: string;
+        description?: string;
+        createdAt: string;
+        updatedAt: string;
+      }>(join(dir, file));
+      if (!row) continue;
+      result.push({
+        name: row.name,
+        lastFour: row.lastFour,
+        description: row.description,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      });
+    }
+    return result.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async getSecretMetadata(name: string): Promise<SecretMetadata | null> {
+    await this.ensureUserDirs();
+    const row = await this.readJson<{
+      name: string;
+      lastFour: string;
+      description?: string;
+      createdAt: string;
+      updatedAt: string;
+    }>(this.secretPath(name));
+    if (!row) return null;
+    return {
+      name: row.name,
+      lastFour: row.lastFour,
+      description: row.description,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
+  }
+
+  async getSecretValue(name: string): Promise<string | null> {
+    await this.ensureUserDirs();
+    const row = await this.readJson<{ encrypted: string }>(this.secretPath(name));
+    if (!row) return null;
+    return decryptSecret(row.encrypted);
+  }
+
+  async putSecret(secret: SecretDefinition): Promise<void> {
+    if (!secret.name) {
+      throw new Error("putSecret: name is required");
+    }
+    if (secret.value === undefined || secret.value === null) {
+      throw new Error("putSecret: value is required");
+    }
+    await this.ensureUserDirs();
+    const path = this.secretPath(secret.name);
+    const existing = await this.readJson<{ createdAt?: string }>(path);
+    const now = this.nextTimestamp();
+    await this.writeJson(path, {
+      name: secret.name,
+      encrypted: encryptSecret(secret.value),
+      lastFour: getLastFour(secret.value),
+      description: secret.description,
+      createdAt: existing?.createdAt ?? secret.createdAt ?? now,
+      updatedAt: now,
+    });
+  }
+
+  async updateSecretDescription(
+    name: string,
+    description: string | undefined,
+  ): Promise<boolean> {
+    await this.ensureUserDirs();
+    const path = this.secretPath(name);
+    const existing = await this.readJson<{
+      name: string;
+      encrypted: string;
+      lastFour: string;
+      description?: string;
+      createdAt: string;
+      updatedAt: string;
+    }>(path);
+    if (!existing) return false;
+    const now = this.nextTimestamp();
+    await this.writeJson(path, {
+      ...existing,
+      description,
+      updatedAt: now,
+    });
+    return true;
+  }
+
+  async deleteSecret(name: string): Promise<void> {
+    await this.ensureUserDirs();
+    await unlink(this.secretPath(name)).catch(() => {});
+  }
+
   // ═══ RunStore ═══
   // Runs live under basePath/users/<userId>/runs/<runId>.json
 
@@ -766,94 +881,6 @@ export class JsonFileStore implements UnifiedStore {
     return { userId: row.userId, keyId: row.id };
   }
 
-  // ═══ WebhookSecretStore ═══
-
-  private webhookSecretsPath(): string {
-    return join(this.userRoot(), "webhook-secrets.json");
-  }
-
-  private async readWebhookSecrets(): Promise<WebhookSecret[]> {
-    return (await this.readJson<WebhookSecret[]>(this.webhookSecretsPath())) ?? [];
-  }
-
-  private async writeWebhookSecrets(rows: WebhookSecret[]): Promise<void> {
-    await mkdir(this.userRoot(), { recursive: true });
-    await this.writeJson(this.webhookSecretsPath(), rows);
-  }
-
-  async create(name: string): Promise<WebhookSecretCreated> {
-    const u = this.requireUser();
-    if (!name || typeof name !== "string") {
-      throw new Error("WebhookSecretStore.create: `name` must be a non-empty string");
-    }
-    const rows = await this.readWebhookSecrets();
-    if (rows.find((r) => r.name === name && !r.rotatedAt)) {
-      throw new Error(`Webhook secret with name "${name}" already exists`);
-    }
-    const id = `whsec_${randomBytes(16).toString("hex")}`;
-    const raw = `whsec_${randomBytes(32).toString("hex")}`;
-    const now = new Date().toISOString();
-    const secret: WebhookSecret = {
-      id,
-      name,
-      userId: u,
-      secret: raw,
-      createdAt: now,
-    };
-    rows.push(secret);
-    await this.writeWebhookSecrets(rows);
-    return { ...secret, secret: raw };
-  }
-
-  async list(): Promise<WebhookSecret[]> {
-    const rows = await this.readWebhookSecrets();
-    return rows
-      .map((s) => ({ ...s }))
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  }
-
-  async rotate(id: string): Promise<WebhookSecretCreated> {
-    const u = this.requireUser();
-    const rows = await this.readWebhookSecrets();
-    const existing = rows.find((r) => r.id === id);
-    if (!existing) {
-      throw new Error(`Webhook secret not found: ${id}`);
-    }
-    const now = new Date().toISOString();
-    existing.rotatedAt = now;
-    const newId = `whsec_${randomBytes(16).toString("hex")}`;
-    const raw = `whsec_${randomBytes(32).toString("hex")}`;
-    const fresh: WebhookSecret = {
-      id: newId,
-      name: existing.name,
-      userId: u,
-      secret: raw,
-      createdAt: now,
-    };
-    rows.push(fresh);
-    await this.writeWebhookSecrets(rows);
-    return { ...fresh, secret: raw };
-  }
-
-  async revoke(id: string): Promise<void> {
-    const rows = await this.readWebhookSecrets();
-    const next = rows.filter((r) => r.id !== id);
-    if (next.length === rows.length) return;
-    await this.writeWebhookSecrets(next);
-  }
-
-  async resolveByName(name: string): Promise<WebhookSecret | undefined> {
-    const rows = await this.readWebhookSecrets();
-    const found = rows.find((r) => r.name === name && !r.rotatedAt);
-    return found ? { ...found } : undefined;
-  }
-
-  async resolveById(id: string): Promise<WebhookSecret | undefined> {
-    const rows = await this.readWebhookSecrets();
-    const found = rows.find((r) => r.id === id);
-    return found ? { ...found } : undefined;
-  }
-
   // ═══ WebhookDeliveryStore ═══
 
   private webhookDeliveriesPath(): string {
@@ -881,7 +908,7 @@ export class JsonFileStore implements UnifiedStore {
       id: delivery.id,
       runId: delivery.runId,
       callbackUrl: delivery.callbackUrl,
-      secretId: delivery.secretId,
+      secretName: delivery.secretName,
       payload: delivery.payload,
       attempts: 0,
       status: "pending",

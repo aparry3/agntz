@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createHmac } from "node:crypto";
 import {
   createWebhookDispatcher,
@@ -9,25 +9,22 @@ import {
 } from "../../src/webhooks/dispatcher.js";
 import { MemoryStore } from "../../src/stores/memory.js";
 import { SpanEmitter } from "../../src/telemetry.js";
-import type {
-  TraceLiveEvent,
-  WebhookEvent,
-  WebhookSecret,
-} from "../../src/types.js";
+import { _resetCryptoKeyCache } from "../../src/utils/crypto.js";
+import type { TraceLiveEvent, WebhookEvent } from "../../src/types.js";
 
 /**
- * Make a memory-backed store that has a pre-provisioned webhook secret and
- * an empty delivery outbox. The dispatcher only needs these two interfaces;
- * we keep the helper tight so each test reads top-to-bottom.
+ * MemoryStore now serves both HTTP-tool secrets and webhook HMAC keys via
+ * the unified SecretStore — we just put a secret by name and pass that name
+ * to the dispatcher.
  */
-async function setupStore(): Promise<{
-  store: MemoryStore;
-  secret: WebhookSecret;
-}> {
+const SECRET_NAME = "gymtext_prod";
+const SECRET_VALUE = "whsec_deadbeefdeadbeefdeadbeefdeadbeef";
+
+async function setupStore(): Promise<MemoryStore> {
   const root = new MemoryStore({ strict: true });
   const store = root.forUser("user_a");
-  const created = await store.create("gymtext-prod");
-  return { store, secret: created };
+  await store.putSecret({ name: SECRET_NAME, value: SECRET_VALUE });
+  return store;
 }
 
 function makeReplyEvent(): WebhookEvent {
@@ -45,19 +42,26 @@ function makeResponse(status: number): Response {
   return new Response(null, { status });
 }
 
+beforeEach(() => {
+  // MemoryStore's SecretStore implementation uses crypto.encryptSecret which
+  // requires AGNTZ_SECRET_KEY. Set a deterministic key for tests.
+  process.env.AGNTZ_SECRET_KEY =
+    "0000000000000000000000000000000000000000000000000000000000000001";
+  _resetCryptoKeyCache();
+});
+
 describe("createWebhookDispatcher", () => {
   it("200 response → delivered after 1 attempt", async () => {
-    const { store, secret } = await setupStore();
+    const store = await setupStore();
     const fetchMock = vi.fn(async () => makeResponse(200));
 
     const dispatcher = createWebhookDispatcher({
       deliveryStore: store,
       secretStore: store,
-      secretId: secret.id,
+      secretName: SECRET_NAME,
       callbackUrl: "https://consumer.example/webhook",
       runId: "run_1",
       fetch: fetchMock as unknown as typeof fetch,
-      // No delay so the test runs synchronously.
       retryDelaysMs: [0],
     });
 
@@ -65,12 +69,11 @@ describe("createWebhookDispatcher", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const deliveries = await store.listPending();
-    // delivered → no longer pending
     expect(deliveries.length).toBe(0);
   });
 
   it("500 → 500 → 200: three attempts, eventually delivered", async () => {
-    const { store, secret } = await setupStore();
+    const store = await setupStore();
     let call = 0;
     const fetchMock = vi.fn(async () => {
       call += 1;
@@ -81,7 +84,7 @@ describe("createWebhookDispatcher", () => {
     const dispatcher = createWebhookDispatcher({
       deliveryStore: store,
       secretStore: store,
-      secretId: secret.id,
+      secretName: SECRET_NAME,
       callbackUrl: "https://consumer.example/webhook",
       runId: "run_1",
       fetch: fetchMock as unknown as typeof fetch,
@@ -93,8 +96,8 @@ describe("createWebhookDispatcher", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
-  it("500 × 3 → failed_permanent, lastError set, telemetry span errored", async () => {
-    const { store, secret } = await setupStore();
+  it("500 × 3 → failed_permanent, telemetry span errored", async () => {
+    const store = await setupStore();
     const fetchMock = vi.fn(async () => makeResponse(500));
 
     const spanEvents: TraceLiveEvent[] = [];
@@ -105,7 +108,7 @@ describe("createWebhookDispatcher", () => {
     const dispatcher = createWebhookDispatcher({
       deliveryStore: store,
       secretStore: store,
-      secretId: secret.id,
+      secretName: SECRET_NAME,
       callbackUrl: "https://consumer.example/webhook",
       runId: "run_1",
       fetch: fetchMock as unknown as typeof fetch,
@@ -118,13 +121,9 @@ describe("createWebhookDispatcher", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
 
-    // The dispatcher should have flipped the delivery to failed_permanent.
-    // Pending list excludes failed rows, so it's empty; sanity check via the
-    // raw backing map by calling listPending without filter.
     const pending = await store.listPending();
     expect(pending.length).toBe(0);
 
-    // Span lifecycle: at least one span-start and one span-end with status=error.
     const ends = spanEvents.filter((e) => e.type === "span-end");
     expect(ends.length).toBeGreaterThan(0);
     const errorEnd = ends.find(
@@ -134,13 +133,13 @@ describe("createWebhookDispatcher", () => {
   });
 
   it("400 (not 429) → failed_permanent immediately, no retries", async () => {
-    const { store, secret } = await setupStore();
+    const store = await setupStore();
     const fetchMock = vi.fn(async () => makeResponse(400));
 
     const dispatcher = createWebhookDispatcher({
       deliveryStore: store,
       secretStore: store,
-      secretId: secret.id,
+      secretName: SECRET_NAME,
       callbackUrl: "https://consumer.example/webhook",
       runId: "run_1",
       fetch: fetchMock as unknown as typeof fetch,
@@ -153,7 +152,7 @@ describe("createWebhookDispatcher", () => {
   });
 
   it("429 retried with backoff", async () => {
-    const { store, secret } = await setupStore();
+    const store = await setupStore();
     let call = 0;
     const fetchMock = vi.fn(async () => {
       call += 1;
@@ -164,7 +163,7 @@ describe("createWebhookDispatcher", () => {
     const dispatcher = createWebhookDispatcher({
       deliveryStore: store,
       secretStore: store,
-      secretId: secret.id,
+      secretName: SECRET_NAME,
       callbackUrl: "https://consumer.example/webhook",
       runId: "run_1",
       fetch: fetchMock as unknown as typeof fetch,
@@ -185,8 +184,8 @@ describe("createWebhookDispatcher", () => {
     expect(signBody(raw, body)).toBe(expected);
   });
 
-  it("HMAC signature header on dispatch matches signBody over the request body", async () => {
-    const { store, secret } = await setupStore();
+  it("HMAC signature header matches signBody over the request body", async () => {
+    const store = await setupStore();
     let capturedSignature = "";
     let capturedBody = "";
     let capturedDeliveryId = "";
@@ -204,7 +203,7 @@ describe("createWebhookDispatcher", () => {
     const dispatcher = createWebhookDispatcher({
       deliveryStore: store,
       secretStore: store,
-      secretId: secret.id,
+      secretName: SECRET_NAME,
       callbackUrl: "https://consumer.example/webhook",
       runId: "run_1",
       fetch: fetchMock as unknown as typeof fetch,
@@ -213,33 +212,24 @@ describe("createWebhookDispatcher", () => {
 
     await dispatcher.dispatch(makeReplyEvent());
 
-    expect(capturedSignature).toBe(signBody(secret.secret, capturedBody));
-    // Delivery id is included in BOTH headers so consumers can dedupe either way.
+    expect(capturedSignature).toBe(signBody(SECRET_VALUE, capturedBody));
     expect(capturedDeliveryId).toBeTruthy();
     expect(capturedIdempotencyKey).toBe(capturedDeliveryId);
   });
 
-  it("uses the pinned secret_id even after rotation", async () => {
-    const { store, secret } = await setupStore();
-    // Rotate BEFORE dispatching. The old secret stays resolvable by id and
-    // should be the one used to sign — that's the whole point of pinning.
-    const fresh = await store.rotate(secret.id);
-    expect(fresh.id).not.toBe(secret.id);
-
-    let capturedSignature = "";
-    let capturedBody = "";
+  it("regenerating between dispatches → next dispatch signs with the new value", async () => {
+    const store = await setupStore();
+    const captured: string[] = [];
     const fetchMock = vi.fn(async (_url: unknown, init: RequestInit) => {
-      capturedBody = init.body as string;
-      capturedSignature = (init.headers as Record<string, string>)[
-        WEBHOOK_SIGNATURE_HEADER
-      ];
+      const headers = init.headers as Record<string, string>;
+      captured.push(headers[WEBHOOK_SIGNATURE_HEADER]);
       return makeResponse(200);
     });
 
     const dispatcher = createWebhookDispatcher({
       deliveryStore: store,
       secretStore: store,
-      secretId: secret.id, // pinned to OLD id
+      secretName: SECRET_NAME,
       callbackUrl: "https://consumer.example/webhook",
       runId: "run_1",
       fetch: fetchMock as unknown as typeof fetch,
@@ -248,13 +238,21 @@ describe("createWebhookDispatcher", () => {
 
     await dispatcher.dispatch(makeReplyEvent());
 
-    // Signed with the OLD secret, not the rotated one.
-    expect(capturedSignature).toBe(signBody(secret.secret, capturedBody));
-    expect(capturedSignature).not.toBe(signBody(fresh.secret, capturedBody));
+    // Rotation in the new model: just upsert the same name with a new value.
+    const NEW_VALUE = "whsec_newvaluenewvaluenewvaluenewvalue";
+    await store.putSecret({ name: SECRET_NAME, value: NEW_VALUE });
+
+    await dispatcher.dispatch(makeReplyEvent());
+
+    expect(captured).toHaveLength(2);
+    // First dispatch signed with the original value; second with the new one.
+    const bodyEcho = JSON.stringify(makeReplyEvent());
+    expect(captured[0]).toBe(signBody(SECRET_VALUE, bodyEcho));
+    expect(captured[1]).toBe(signBody(NEW_VALUE, bodyEcho));
   });
 
   it("cancelled run delivers a final complete event with status=cancelled", async () => {
-    const { store, secret } = await setupStore();
+    const store = await setupStore();
     let lastPayload: Record<string, unknown> | null = null;
     const fetchMock = vi.fn(async (_url: unknown, init: RequestInit) => {
       lastPayload = JSON.parse(init.body as string) as Record<string, unknown>;
@@ -264,15 +262,13 @@ describe("createWebhookDispatcher", () => {
     const dispatcher = createWebhookDispatcher({
       deliveryStore: store,
       secretStore: store,
-      secretId: secret.id,
+      secretName: SECRET_NAME,
       callbackUrl: "https://consumer.example/webhook",
       runId: "run_1",
       fetch: fetchMock as unknown as typeof fetch,
       retryDelaysMs: [0],
     });
 
-    // Simulate the route handler's forwarder: a reply, then a cancelled
-    // complete event. Both should reach the consumer in order.
     await dispatcher.dispatch(makeReplyEvent());
     await dispatcher.dispatch({
       type: "complete",
@@ -290,14 +286,14 @@ describe("createWebhookDispatcher", () => {
     });
   });
 
-  it("404 secret_id resolution → failed_permanent without HTTP attempts", async () => {
-    const { store } = await setupStore();
+  it("unknown secret name → failed_permanent without HTTP attempts", async () => {
+    const store = await setupStore();
     const fetchMock = vi.fn(async () => makeResponse(200));
 
     const dispatcher = createWebhookDispatcher({
       deliveryStore: store,
       secretStore: store,
-      secretId: "whsec_nonexistent",
+      secretName: "does_not_exist",
       callbackUrl: "https://consumer.example/webhook",
       runId: "run_1",
       fetch: fetchMock as unknown as typeof fetch,

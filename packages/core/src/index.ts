@@ -20,6 +20,8 @@ export { createUseSkillTool } from "./tools/use-skill.js";
 export { createReplyTool } from "./tools/reply.js";
 export type { ReplyToolDeps } from "./tools/reply.js";
 export { DEFAULT_REPLY_MAX_PER_RUN } from "./types.js";
+export { buildHttpToolDefinition } from "./http-tool.js";
+export type { HTTPToolEntry as HTTPToolEntryRuntime, AgentState as RuntimeState } from "./http-tool.js";
 
 // Stores
 export { MemoryStore } from "./stores/memory.js";
@@ -70,6 +72,12 @@ export type { TraceSink } from "./types.js";
 export { withRetry } from "./utils/retry.js";
 export type { RetryConfig } from "./utils/retry.js";
 export { summarizeMessages, trimHistoryWithSummary } from "./utils/summarize.js";
+export {
+  encryptSecret,
+  decryptSecret,
+  getLastFour,
+  _resetCryptoKeyCache,
+} from "./utils/crypto.js";
 
 // Eval
 export { runEval } from "./eval.js";
@@ -185,10 +193,12 @@ export type {
   SkillDefinition,
   SkillStore,
 
+  // Secrets (used for both HTTP-tool auth and webhook HMAC signing keys)
+  SecretDefinition,
+  SecretMetadata,
+  SecretStore,
+
   // Webhooks
-  WebhookSecret,
-  WebhookSecretCreated,
-  WebhookSecretStore,
   WebhookDelivery,
   WebhookDeliveryStore,
 

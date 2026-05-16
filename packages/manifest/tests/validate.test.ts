@@ -712,3 +712,278 @@ spawnable:
     expect(result.valid).toBe(true);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+// HTTP tool entry — structural
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("validateManifest - http tool structural", () => {
+  it("passes a clean HTTP tool entry", () => {
+    const result = validateManifest(`
+id: agent
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Use the tool."
+tools:
+  - kind: http
+    name: get_user
+    url: "https://api.example.com/users/{userId}?status={status?}"
+    description: "Fetch a user record."
+    params:
+      userId: "{{userId}}"
+    headers:
+      Authorization: "Bearer {{secrets.api_token}}"
+inputSchema:
+  userId: string
+`);
+    expect(result.errors).toHaveLength(0);
+    expect(result.valid).toBe(true);
+  });
+
+  it("errors on optional placeholder appearing in the path", () => {
+    const result = validateManifest(`
+id: agent
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Use the tool."
+tools:
+  - kind: http
+    name: get_user
+    url: "https://api.example.com/users/{userId?}"
+`);
+    expect(result.errors.some(e =>
+      e.level === "structural" && e.message.includes("Optional placeholders") && e.message.includes("query string"),
+    )).toBe(true);
+  });
+
+  it("errors on params key that does not correspond to a URL placeholder", () => {
+    const result = validateManifest(`
+id: agent
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Use the tool."
+tools:
+  - kind: http
+    name: get_user
+    url: "https://api.example.com/users/{userId}"
+    params:
+      foo: "{{bar}}"
+`);
+    expect(result.errors.some(e =>
+      e.level === "structural" && e.message.includes("params.foo") && e.message.includes("does not correspond"),
+    )).toBe(true);
+  });
+
+  it("errors on non-GET method", () => {
+    const result = validateManifest(`
+id: agent
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Use the tool."
+tools:
+  - kind: http
+    name: post_user
+    url: "https://api.example.com/users"
+    method: POST
+`);
+    expect(result.errors.some(e =>
+      e.level === "structural" && e.message.includes("GET") && e.message.includes("only"),
+    )).toBe(true);
+  });
+
+  it("errors on malformed URL syntax", () => {
+    const result = validateManifest(`
+id: agent
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Use the tool."
+tools:
+  - kind: http
+    name: bad
+    url: "this is not a url"
+`);
+    expect(result.errors.some(e =>
+      e.level === "structural" && e.message.includes("not a valid URL"),
+    )).toBe(true);
+  });
+
+  it("errors on missing name", () => {
+    const result = validateManifest(`
+id: agent
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Use the tool."
+tools:
+  - kind: http
+    url: "https://api.example.com/users"
+`);
+    expect(result.errors.some(e =>
+      e.level === "structural" && e.message.includes("name"),
+    )).toBe(true);
+  });
+
+  it("errors on invalid name (kebab case is not allowed)", () => {
+    const result = validateManifest(`
+id: agent
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Use the tool."
+tools:
+  - kind: http
+    name: get-user
+    url: "https://api.example.com/users"
+`);
+    expect(result.errors.some(e =>
+      e.level === "structural" && e.message.includes("get-user"),
+    )).toBe(true);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// HTTP tool entry — external (liveness probe + secret resolution)
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("validateManifestFull - http tool external", () => {
+  const okYaml = `
+id: agent
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Use the tool."
+tools:
+  - kind: http
+    name: get_user
+    url: "https://api.example.com/users/{userId}"
+    params:
+      userId: "{{userId}}"
+inputSchema:
+  userId: string
+`;
+
+  const secretYaml = `
+id: agent
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Use the tool."
+tools:
+  - kind: http
+    name: get_user
+    url: "https://api.example.com/users"
+    headers:
+      Authorization: "Bearer {{secrets.missing_token}}"
+`;
+
+  function ctx(overrides?: Partial<ValidationContext>): ValidationContext {
+    return {
+      resolveAgent: vi.fn().mockResolvedValue(true),
+      resolveTools: vi.fn().mockResolvedValue([]),
+      localTools: [],
+      ...overrides,
+    };
+  }
+
+  // Stash and restore globalThis.fetch around each test.
+  const originalFetch = globalThis.fetch;
+  function setFetch(impl: typeof globalThis.fetch | undefined): void {
+    if (impl) (globalThis as { fetch: typeof globalThis.fetch }).fetch = impl;
+    else (globalThis as { fetch: typeof globalThis.fetch }).fetch = originalFetch;
+  }
+
+  it("emits an external error for an unreachable host when strict", async () => {
+    setFetch(vi.fn().mockRejectedValue(new Error("ENOTFOUND"))) as never;
+    try {
+      const result = await validateManifestFull(okYaml, ctx({ strict: true }));
+      expect(result.errors.some(e =>
+        e.level === "external" && e.message.includes("Could not reach HTTP endpoint"),
+      )).toBe(true);
+      expect(result.valid).toBe(false);
+    } finally {
+      setFetch(undefined);
+    }
+  });
+
+  it("emits a warning (not error) for an unreachable host when not strict", async () => {
+    setFetch(vi.fn().mockRejectedValue(new Error("ENOTFOUND"))) as never;
+    try {
+      const result = await validateManifestFull(okYaml, ctx({ strict: false }));
+      expect(result.errors.filter(e => e.level === "external" && e.message.includes("Could not reach"))).toHaveLength(0);
+      expect(result.warnings.some(w => w.message.includes("Could not reach HTTP endpoint"))).toBe(true);
+      expect(result.valid).toBe(true);
+    } finally {
+      setFetch(undefined);
+    }
+  });
+
+  it("treats a 401 HEAD response as alive (no error)", async () => {
+    setFetch(vi.fn().mockResolvedValue(new Response(null, { status: 401 })));
+    try {
+      const result = await validateManifestFull(okYaml, ctx({ strict: true }));
+      // No external error about reaching the host.
+      expect(result.errors.filter(e => e.level === "external" && e.message.includes("Could not reach"))).toHaveLength(0);
+    } finally {
+      setFetch(undefined);
+    }
+  });
+
+  it("retries with OPTIONS when HEAD returns 405", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 405 }))
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+    setFetch(fetchMock as never);
+    try {
+      const result = await validateManifestFull(okYaml, ctx({ strict: true }));
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const first = fetchMock.mock.calls[0][1] as RequestInit;
+      const second = fetchMock.mock.calls[1][1] as RequestInit;
+      expect(first.method).toBe("HEAD");
+      expect(second.method).toBe("OPTIONS");
+      expect(result.errors.filter(e => e.level === "external" && e.message.includes("Could not reach"))).toHaveLength(0);
+    } finally {
+      setFetch(undefined);
+    }
+  });
+
+  it("emits a warning (never an error) when a referenced secret is missing", async () => {
+    setFetch(vi.fn().mockResolvedValue(new Response(null, { status: 200 })));
+    try {
+      const result = await validateManifestFull(secretYaml, ctx({
+        strict: true,
+        resolveSecret: vi.fn().mockResolvedValue(false),
+      }));
+      expect(result.errors.filter(e => e.message.includes("missing_token"))).toHaveLength(0);
+      expect(result.warnings.some(w => w.message.includes("missing_token"))).toBe(true);
+    } finally {
+      setFetch(undefined);
+    }
+  });
+
+  it("does not emit a warning when a referenced secret exists", async () => {
+    setFetch(vi.fn().mockResolvedValue(new Response(null, { status: 200 })));
+    try {
+      const result = await validateManifestFull(secretYaml, ctx({
+        strict: true,
+        resolveSecret: vi.fn().mockResolvedValue(true),
+      }));
+      expect(result.warnings.filter(w => w.message.includes("missing_token"))).toHaveLength(0);
+    } finally {
+      setFetch(undefined);
+    }
+  });
+});

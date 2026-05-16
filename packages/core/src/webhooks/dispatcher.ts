@@ -2,8 +2,8 @@ import { createHmac, randomBytes } from "node:crypto";
 import type {
   InvokeResult,
   Reply,
+  SecretStore,
   WebhookDeliveryStore,
-  WebhookSecretStore,
 } from "../types.js";
 import type { SpanEmitter } from "../telemetry.js";
 
@@ -36,9 +36,18 @@ export const DEFAULT_TIMEOUT_MS = 10_000;
 
 export interface WebhookDispatcherOptions {
   deliveryStore: WebhookDeliveryStore;
-  secretStore: WebhookSecretStore;
-  /** Pinned secret id for this run. Resolved by the caller before invoke. */
-  secretId: string;
+  /**
+   * Unified secrets store. The dispatcher resolves the HMAC signing key by
+   * `secretName` at each delivery attempt and decrypts it inline, so an
+   * out-of-band rotation flows through naturally without per-run pinning.
+   */
+  secretStore: SecretStore;
+  /**
+   * Name of the SecretStore entry whose plaintext is the HMAC signing key.
+   * Caller validates existence before invoke (typically 400 on a missing
+   * name from `POST /runs`).
+   */
+  secretName: string;
   /** Where to POST the payload. Pinned per dispatcher instance. */
   callbackUrl: string;
   /** Run id for outbox correlation. */
@@ -131,7 +140,7 @@ export function createWebhookDispatcher(
       id: deliveryId,
       runId: opts.runId,
       callbackUrl: opts.callbackUrl,
-      secretId: opts.secretId,
+      secretName: opts.secretName,
       payload,
     });
 
@@ -151,7 +160,7 @@ export function createWebhookDispatcher(
           deliveryId,
           payload,
           callbackUrl: opts.callbackUrl,
-          secretId: opts.secretId,
+          secretName: opts.secretName,
           secretStore: opts.secretStore,
           deliveryStore: opts.deliveryStore,
           fetchImpl,
@@ -194,8 +203,8 @@ interface DeliveryLoopOpts {
   deliveryId: string;
   payload: Record<string, unknown>;
   callbackUrl: string;
-  secretId: string;
-  secretStore: WebhookSecretStore;
+  secretName: string;
+  secretStore: SecretStore;
   deliveryStore: WebhookDeliveryStore;
   fetchImpl: typeof fetch;
   timeoutMs: number;
@@ -205,18 +214,21 @@ interface DeliveryLoopOpts {
 }
 
 async function runDeliveryLoop(o: DeliveryLoopOpts): Promise<void> {
-  // Resolve secret once before the loop — using the pinned secret_id, so
-  // mid-run rotation can't break signing.
-  const secret = await o.secretStore.resolveById(o.secretId);
-  if (!secret) {
-    const err = `webhook secret not found: ${o.secretId}`;
+  // Resolve secret once before the loop. We sign with the value as it is now;
+  // any out-of-band rotation will be picked up on the next attempt of a
+  // future delivery. (We deliberately don't re-resolve between retries of
+  // this delivery — the consumer who got our first signature should be able
+  // to verify the second too.)
+  const plaintext = await o.secretStore.getSecretValue(o.secretName);
+  if (plaintext == null) {
+    const err = `webhook secret not found: ${o.secretName}`;
     await o.deliveryStore.updateStatus(o.deliveryId, "failed_permanent", err);
     o.span?.error(err);
     return;
   }
 
   const body = JSON.stringify(o.payload);
-  const signature = signBody(secret.secret, body);
+  const signature = signBody(plaintext, body);
 
   let lastError = "";
   for (let attempt = 0; attempt < o.retryDelaysMs.length; attempt++) {

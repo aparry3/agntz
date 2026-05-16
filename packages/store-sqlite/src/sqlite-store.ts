@@ -1,7 +1,13 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import Database from "better-sqlite3";
 import type { Database as DatabaseType } from "better-sqlite3";
-import { defineSkill, INVOCATION_LOG_BLOCKS_PREFIX as BLOCKS_JSON_PREFIX } from "@agntz/core";
+import {
+  defineSkill,
+  encryptSecret,
+  decryptSecret,
+  getLastFour,
+  INVOCATION_LOG_BLOCKS_PREFIX as BLOCKS_JSON_PREFIX,
+} from "@agntz/core";
 import type {
   AgentDefinition,
   ContentBlock,
@@ -21,13 +27,13 @@ import type {
   RunListFilters,
   RunListResult,
   RunStatus,
+  SecretDefinition,
+  SecretMetadata,
   SkillDefinition,
   Span,
   TraceSummary,
   TraceFilter,
   WebhookDelivery,
-  WebhookSecret,
-  WebhookSecretCreated,
 } from "@agntz/core";
 
 const MIGRATIONS = [
@@ -270,31 +276,40 @@ const MIGRATIONS = [
 
   UPDATE schema_version SET version = 9;
   `,
-  // v10: Webhook secrets + delivery outbox.
-  // `webhook_secrets.secret_raw` stores the raw signing secret. HMAC requires
-  // the original bytes; documented credential-at-rest trade-off.
-  // Unique (user_id, name) WHERE rotated_at IS NULL keeps active names unique
-  // per user while letting rotated rows linger so in-flight deliveries that
-  // captured the old id keep signing successfully.
+  // v10: User-scoped encrypted secrets (used for both HTTP-tool auth tokens
+  // and webhook HMAC signing keys). `value` stores AES-256-GCM ciphertext
+  // as `base64(iv):base64(tag):base64(ct)`. `last_four` is the last 4 chars
+  // of plaintext for masked-UI display only. Webhook secrets are encrypted
+  // at rest just like any other secret; the dispatcher decrypts at sign
+  // time. Rotation is in-place: SecretStore.putSecret upserts on
+  // (user_id, name), so out-of-band rotation is picked up on the next
+  // delivery attempt without per-row rotation lifecycle bookkeeping.
   `
-  CREATE TABLE IF NOT EXISTS webhook_secrets (
-    user_id    TEXT NOT NULL,
-    id         TEXT NOT NULL PRIMARY KEY,
-    name       TEXT NOT NULL,
-    secret_raw TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    rotated_at TEXT
+  CREATE TABLE IF NOT EXISTS secrets (
+    user_id      TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    value        TEXT NOT NULL,
+    last_four    TEXT NOT NULL,
+    description  TEXT,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL,
+    PRIMARY KEY (user_id, name)
   );
-  CREATE INDEX IF NOT EXISTS idx_webhook_secrets_user_name ON webhook_secrets(user_id, name);
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_webhook_secrets_user_name_active
-    ON webhook_secrets(user_id, name) WHERE rotated_at IS NULL;
+  CREATE INDEX IF NOT EXISTS idx_secrets_user ON secrets(user_id);
 
+  UPDATE schema_version SET version = 10;
+  `,
+  // v11: Webhook delivery outbox. `secret_name` references `secrets.name`
+  // for the active HMAC signing key at delivery time — the dispatcher
+  // resolves the row at each attempt so an out-of-band rotation flows
+  // through naturally.
+  `
   CREATE TABLE IF NOT EXISTS webhook_deliveries (
     id              TEXT NOT NULL PRIMARY KEY,
     user_id         TEXT NOT NULL,
     run_id          TEXT NOT NULL,
     callback_url    TEXT NOT NULL,
-    secret_id       TEXT NOT NULL,
+    secret_name     TEXT NOT NULL,
     payload         TEXT NOT NULL,
     attempts        INTEGER NOT NULL DEFAULT 0,
     last_attempt_at TEXT,
@@ -306,7 +321,7 @@ const MIGRATIONS = [
   CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_status ON webhook_deliveries(status);
   CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_run ON webhook_deliveries(user_id, run_id);
 
-  UPDATE schema_version SET version = 10;
+  UPDATE schema_version SET version = 11;
   `,
 ];
 
@@ -1330,6 +1345,121 @@ export class SqliteStore implements UnifiedStore {
     this.db.prepare("DELETE FROM skills WHERE user_id = ? AND name = ?").run(u, name);
   }
 
+  // ═══ SecretStore ═══
+
+  async listSecrets(): Promise<SecretMetadata[]> {
+    const u = this.requireUser();
+    const rows = this.db
+      .prepare(
+        `SELECT name, last_four, description, created_at, updated_at
+         FROM secrets WHERE user_id = ? ORDER BY name ASC`
+      )
+      .all(u) as Array<{
+        name: string;
+        last_four: string;
+        description: string | null;
+        created_at: string;
+        updated_at: string;
+      }>;
+    return rows.map((r) => ({
+      name: r.name,
+      lastFour: r.last_four,
+      description: r.description ?? undefined,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    }));
+  }
+
+  async getSecretMetadata(name: string): Promise<SecretMetadata | null> {
+    const u = this.requireUser();
+    const row = this.db
+      .prepare(
+        `SELECT name, last_four, description, created_at, updated_at
+         FROM secrets WHERE user_id = ? AND name = ?`
+      )
+      .get(u, name) as
+      | {
+          name: string;
+          last_four: string;
+          description: string | null;
+          created_at: string;
+          updated_at: string;
+        }
+      | undefined;
+    if (!row) return null;
+    return {
+      name: row.name,
+      lastFour: row.last_four,
+      description: row.description ?? undefined,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  async getSecretValue(name: string): Promise<string | null> {
+    const u = this.requireUser();
+    const row = this.db
+      .prepare(
+        `SELECT value FROM secrets WHERE user_id = ? AND name = ?`
+      )
+      .get(u, name) as { value: string } | undefined;
+    if (!row) return null;
+    return decryptSecret(row.value);
+  }
+
+  async putSecret(secret: SecretDefinition): Promise<void> {
+    const u = this.requireUser();
+    if (!secret.name) {
+      throw new Error("putSecret: name is required");
+    }
+    if (secret.value === undefined || secret.value === null) {
+      throw new Error("putSecret: value is required");
+    }
+    const encrypted = encryptSecret(secret.value);
+    const lastFour = getLastFour(secret.value);
+    const now = this.nextTimestamp();
+    const createdAt = secret.createdAt ?? now;
+    this.db
+      .prepare(
+        `INSERT INTO secrets (user_id, name, value, last_four, description, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, name) DO UPDATE SET
+           value = excluded.value,
+           last_four = excluded.last_four,
+           description = excluded.description,
+           updated_at = excluded.updated_at`
+      )
+      .run(
+        u,
+        secret.name,
+        encrypted,
+        lastFour,
+        secret.description ?? null,
+        createdAt,
+        now
+      );
+  }
+
+  async updateSecretDescription(
+    name: string,
+    description: string | undefined,
+  ): Promise<boolean> {
+    const u = this.requireUser();
+    const now = this.nextTimestamp();
+    const info = this.db
+      .prepare(
+        `UPDATE secrets SET description = ?, updated_at = ?
+         WHERE user_id = ? AND name = ?`,
+      )
+      .run(description ?? null, now, u, name);
+    return info.changes > 0;
+  }
+
+  async deleteSecret(name: string): Promise<void> {
+    const u = this.requireUser();
+    this.db.prepare("DELETE FROM secrets WHERE user_id = ? AND name = ?").run(u, name);
+  }
+
   // ═══ ApiKeyStore (unscoped) ═══
 
   async createApiKey(params: { userId: string; name: string }): Promise<{ record: ApiKeyRecord; rawKey: string }> {
@@ -1393,110 +1523,6 @@ export class SqliteStore implements UnifiedStore {
     return { userId: row.user_id, keyId: row.id };
   }
 
-  // ═══ WebhookSecretStore ═══
-
-  async create(name: string): Promise<WebhookSecretCreated> {
-    const u = this.requireUser();
-    if (!name || typeof name !== "string") {
-      throw new Error("WebhookSecretStore.create: `name` must be a non-empty string");
-    }
-    // Active-name uniqueness is enforced by the partial unique index, but we
-    // pre-check so we can throw a friendly message instead of a constraint
-    // error from better-sqlite3.
-    const existing = this.db
-      .prepare(
-        `SELECT id FROM webhook_secrets WHERE user_id = ? AND name = ? AND rotated_at IS NULL`,
-      )
-      .get(u, name);
-    if (existing) {
-      throw new Error(`Webhook secret with name "${name}" already exists`);
-    }
-    const id = `whsec_${randomBytes(16).toString("hex")}`;
-    const raw = `whsec_${randomBytes(32).toString("hex")}`;
-    const now = new Date().toISOString();
-    this.db
-      .prepare(
-        `INSERT INTO webhook_secrets (user_id, id, name, secret_raw, created_at, rotated_at)
-         VALUES (?, ?, ?, ?, ?, NULL)`,
-      )
-      .run(u, id, name, raw, now);
-    return { id, name, userId: u, secret: raw, createdAt: now };
-  }
-
-  async list(): Promise<WebhookSecret[]> {
-    const u = this.requireUser();
-    const rows = this.db
-      .prepare(
-        `SELECT id, user_id, name, secret_raw, created_at, rotated_at
-         FROM webhook_secrets WHERE user_id = ? ORDER BY created_at ASC`,
-      )
-      .all(u) as Array<WebhookSecretRow>;
-    return rows.map(rowToWebhookSecret);
-  }
-
-  async rotate(id: string): Promise<WebhookSecretCreated> {
-    const u = this.requireUser();
-    const existing = this.db
-      .prepare(
-        `SELECT id, user_id, name, secret_raw, created_at, rotated_at
-         FROM webhook_secrets WHERE user_id = ? AND id = ?`,
-      )
-      .get(u, id) as WebhookSecretRow | undefined;
-    if (!existing) {
-      throw new Error(`Webhook secret not found: ${id}`);
-    }
-    const now = new Date().toISOString();
-    const newId = `whsec_${randomBytes(16).toString("hex")}`;
-    const raw = `whsec_${randomBytes(32).toString("hex")}`;
-    const tx = this.db.transaction(() => {
-      // Mark old as rotated first to free the partial unique index slot before
-      // inserting the replacement with the same name.
-      this.db
-        .prepare(
-          `UPDATE webhook_secrets SET rotated_at = ? WHERE user_id = ? AND id = ?`,
-        )
-        .run(now, u, id);
-      this.db
-        .prepare(
-          `INSERT INTO webhook_secrets (user_id, id, name, secret_raw, created_at, rotated_at)
-           VALUES (?, ?, ?, ?, ?, NULL)`,
-        )
-        .run(u, newId, existing.name, raw, now);
-    });
-    tx();
-    return { id: newId, name: existing.name, userId: u, secret: raw, createdAt: now };
-  }
-
-  async revoke(id: string): Promise<void> {
-    const u = this.requireUser();
-    this.db
-      .prepare(`DELETE FROM webhook_secrets WHERE user_id = ? AND id = ?`)
-      .run(u, id);
-  }
-
-  async resolveByName(name: string): Promise<WebhookSecret | undefined> {
-    const u = this.requireUser();
-    const row = this.db
-      .prepare(
-        `SELECT id, user_id, name, secret_raw, created_at, rotated_at
-         FROM webhook_secrets
-         WHERE user_id = ? AND name = ? AND rotated_at IS NULL`,
-      )
-      .get(u, name) as WebhookSecretRow | undefined;
-    return row ? rowToWebhookSecret(row) : undefined;
-  }
-
-  async resolveById(id: string): Promise<WebhookSecret | undefined> {
-    const u = this.requireUser();
-    const row = this.db
-      .prepare(
-        `SELECT id, user_id, name, secret_raw, created_at, rotated_at
-         FROM webhook_secrets WHERE user_id = ? AND id = ?`,
-      )
-      .get(u, id) as WebhookSecretRow | undefined;
-    return row ? rowToWebhookSecret(row) : undefined;
-  }
-
   // ═══ WebhookDeliveryStore ═══
 
   async insert(
@@ -1509,7 +1535,7 @@ export class SqliteStore implements UnifiedStore {
     this.db
       .prepare(
         `INSERT INTO webhook_deliveries (
-            id, user_id, run_id, callback_url, secret_id, payload,
+            id, user_id, run_id, callback_url, secret_name, payload,
             attempts, status, last_error, last_attempt_at, created_at
           ) VALUES (?, ?, ?, ?, ?, ?, 0, 'pending', NULL, NULL, ?)`,
       )
@@ -1518,7 +1544,7 @@ export class SqliteStore implements UnifiedStore {
         u,
         delivery.runId,
         delivery.callbackUrl,
-        delivery.secretId,
+        delivery.secretName,
         JSON.stringify(delivery.payload),
         now,
       );
@@ -1582,7 +1608,7 @@ export class SqliteStore implements UnifiedStore {
     args.push(limit);
     const rows = this.db
       .prepare(
-        `SELECT id, user_id, run_id, callback_url, secret_id, payload,
+        `SELECT id, user_id, run_id, callback_url, secret_name, payload,
                 attempts, last_attempt_at, status, last_error, created_at
          FROM webhook_deliveries
          WHERE ${clauses.join(" AND ")}
@@ -1661,39 +1687,18 @@ interface SkillRow {
   updated_at: string;
 }
 
-interface WebhookSecretRow {
-  id: string;
-  user_id: string;
-  name: string;
-  secret_raw: string;
-  created_at: string;
-  rotated_at: string | null;
-}
-
 interface WebhookDeliveryRow {
   id: string;
   user_id: string;
   run_id: string;
   callback_url: string;
-  secret_id: string;
+  secret_name: string;
   payload: string;
   attempts: number;
   last_attempt_at: string | null;
   status: WebhookDelivery["status"];
   last_error: string | null;
   created_at: string;
-}
-
-function rowToWebhookSecret(r: WebhookSecretRow): WebhookSecret {
-  const s: WebhookSecret = {
-    id: r.id,
-    name: r.name,
-    userId: r.user_id,
-    secret: r.secret_raw,
-    createdAt: r.created_at,
-  };
-  if (r.rotated_at) s.rotatedAt = r.rotated_at;
-  return s;
 }
 
 function rowToWebhookDelivery(r: WebhookDeliveryRow): WebhookDelivery {
@@ -1707,7 +1712,7 @@ function rowToWebhookDelivery(r: WebhookDeliveryRow): WebhookDelivery {
     id: r.id,
     runId: r.run_id,
     callbackUrl: r.callback_url,
-    secretId: r.secret_id,
+    secretName: r.secret_name,
     payload,
     attempts: r.attempts,
     status: r.status,

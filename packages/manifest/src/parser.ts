@@ -219,6 +219,16 @@ function normalizeTools(raw: unknown[]): ManifestToolEntry[] {
           kind: "agent" as const,
           agent: requireString(e, "agent"),
         };
+      case "http":
+        return {
+          kind: "http" as const,
+          name: requireString(e, "name"),
+          url: requireString(e, "url"),
+          method: e.method as "GET" | undefined,
+          description: e.description as string | undefined,
+          params: e.params as Record<string, string> | undefined,
+          headers: e.headers as Record<string, string> | undefined,
+        };
       default:
         throw new Error(`Unknown tool kind: ${kind}`);
     }

@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
@@ -444,31 +445,34 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
         input?: unknown;
         sessionId?: string;
         callbackUrl?: string;
-        webhookId?: string;
+        webhookSecretName?: string;
       };
-      const { agentId, input, callbackUrl, webhookId } = body;
+      const { agentId, input, callbackUrl, webhookSecretName } = body;
       agentIdForLog = agentId;
 
       if (!agentId) {
         return c.json({ error: "Missing required field: agentId" }, 400);
       }
 
-      // Webhook validation: callbackUrl + webhookId pair must be coherent.
-      // We resolve the secret here (sync with the request) so a missing or
-      // typo'd webhookId returns 400 before we register a Run we'd otherwise
-      // have to cancel.
-      let pinnedSecretId: string | undefined;
+      // Webhook validation: callbackUrl + webhookSecretName pair must be coherent.
+      // We resolve the secret metadata here (sync with the request) so a
+      // missing or typo'd name returns 400 before we register a Run we'd
+      // otherwise have to cancel.
+      let resolvedSecretName: string | undefined;
       if (callbackUrl) {
-        if (!webhookId) {
-          return c.json({ error: "webhookId required with callbackUrl" }, 400);
+        if (!webhookSecretName) {
+          return c.json({ error: "webhookSecretName required with callbackUrl" }, 400);
         }
-        const secret = await store.forUser(userId).resolveByName(webhookId);
-        if (!secret) {
+        const meta = await store
+          .forUser(userId)
+          .getSecretMetadata(webhookSecretName);
+        if (!meta) {
           return c.json({ error: "webhook secret not found" }, 400);
         }
-        // Pin the secret_id at invocation time so mid-run rotation can't
-        // break signing for this Run's deliveries.
-        pinnedSecretId = secret.id;
+        // Pass the name through to the dispatcher; it resolves the live
+        // plaintext at each delivery attempt so an out-of-band rotation
+        // flows through without any pinning machinery.
+        resolvedSecretName = webhookSecretName;
       }
 
       // Always work with a concrete sessionId. Top-level Runs are indexed in
@@ -493,7 +497,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
       console.log(
         `[runs] start run=${run.id} agent=${agentId} user=${userId} ` +
         `inputLen=${inputStr.length}` +
-        (callbackUrl ? ` webhook=${webhookId}` : ""),
+        (callbackUrl ? ` webhook=${webhookSecretName}` : ""),
       );
 
       // Wire the dispatcher BEFORE starting the executor so the registry's
@@ -504,11 +508,11 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
       const replyCollector: Reply[] = [];
       let dispatcher: WebhookDispatcher | undefined;
       let webhookForwarder: Promise<void> | undefined;
-      if (pinnedSecretId && callbackUrl) {
+      if (resolvedSecretName && callbackUrl) {
         dispatcher = createWebhookDispatcher({
           deliveryStore: store.forUser(userId),
           secretStore: store.forUser(userId),
-          secretId: pinnedSecretId,
+          secretName: resolvedSecretName,
           callbackUrl,
           runId: run.id,
           ownerId: userId,
@@ -654,68 +658,88 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
   });
 
   // ───────────────────────────────────────────────────────────────────────
-  // /webhook-secrets/* — user-scoped HMAC signing keys for outbound webhooks.
-  // The raw `secret` field is returned ONLY at create/rotate time so the
-  // caller can copy it to their consumer's env. Subsequent `GET` responses
-  // never include it.
+  // /webhook-secrets/* — server-generates HMAC signing keys and stores them
+  // in the unified SecretStore (AES-256-GCM at rest). The raw `value` field
+  // is returned ONLY at create/regenerate time so the caller can copy it to
+  // their consumer's env. Subsequent `GET` responses never include it.
+  // Regeneration is in-place upsert: the old value stops working immediately;
+  // the consumer must redeploy with the new value to verify new signatures.
   // ───────────────────────────────────────────────────────────────────────
 
   app.post("/webhook-secrets", async (c) => {
     try {
       const userId = getUserId(c);
-      const body = (getCachedBody(c) ?? (await c.req.json())) as { name?: string };
+      const body = (getCachedBody(c) ?? (await c.req.json())) as {
+        name?: string;
+        description?: string;
+      };
       const name = body?.name;
       if (!name || typeof name !== "string") {
         return c.json({ error: "Missing required field: name" }, 400);
       }
-      const created = await store.forUser(userId).create(name);
-      return c.json(created, 201);
+      const scopedStore = store.forUser(userId);
+      const existing = await scopedStore.getSecretMetadata(name);
+      if (existing) {
+        return c.json({ error: `Secret "${name}" already exists` }, 409);
+      }
+      const value = `whsec_${randomBytes(32).toString("hex")}`;
+      const createdAt = new Date().toISOString();
+      await scopedStore.putSecret({
+        name,
+        value,
+        description: body?.description,
+        createdAt,
+        updatedAt: createdAt,
+      });
+      return c.json({ name, value, createdAt }, 201);
     } catch (error) {
-      const msg = errorMessage(error);
-      // Friendly 409 on duplicate active-name; everything else is 500.
-      const status = msg.includes("already exists") ? 409 : 500;
-      return c.json({ error: msg }, status);
+      return c.json({ error: errorMessage(error) }, 500);
     }
   });
 
   app.get("/webhook-secrets", async (c) => {
     try {
       const userId = getUserId(c);
-      const rows = await store.forUser(userId).list();
-      // Strip raw secrets — list responses never include them. The dispatcher
-      // resolves by name/id internally; consumers must use the value captured
-      // at create/rotate time to verify signatures.
-      const sanitized = rows.map((s) => ({
-        id: s.id,
-        name: s.name,
-        userId: s.userId,
-        createdAt: s.createdAt,
-        rotatedAt: s.rotatedAt,
-      }));
-      return c.json(sanitized);
+      const rows = await store.forUser(userId).listSecrets();
+      // Returns metadata only (lastFour for masked display); raw values are
+      // only available at create/regenerate time. Note: this lists the
+      // user's full secret pool, including secrets used as HTTP-tool auth.
+      // The unified store has no `kind` discriminator.
+      return c.json(rows);
     } catch (error) {
       return c.json({ error: errorMessage(error) }, 500);
     }
   });
 
-  app.post("/webhook-secrets/:id/rotate", async (c) => {
+  app.post("/webhook-secrets/:name/regenerate", async (c) => {
     try {
       const userId = getUserId(c);
-      const id = c.req.param("id");
-      const created = await store.forUser(userId).rotate(id);
-      return c.json(created);
+      const name = c.req.param("name");
+      const scopedStore = store.forUser(userId);
+      const existing = await scopedStore.getSecretMetadata(name);
+      if (!existing) {
+        return c.json({ error: "webhook secret not found" }, 404);
+      }
+      const value = `whsec_${randomBytes(32).toString("hex")}`;
+      const updatedAt = new Date().toISOString();
+      await scopedStore.putSecret({
+        name,
+        value,
+        description: existing.description,
+        createdAt: existing.createdAt,
+        updatedAt,
+      });
+      return c.json({ name, value, createdAt: existing.createdAt, updatedAt });
     } catch (error) {
-      const msg = errorMessage(error);
-      const status = msg.includes("not found") ? 404 : 500;
-      return c.json({ error: msg }, status);
+      return c.json({ error: errorMessage(error) }, 500);
     }
   });
 
-  app.delete("/webhook-secrets/:id", async (c) => {
+  app.delete("/webhook-secrets/:name", async (c) => {
     try {
       const userId = getUserId(c);
-      const id = c.req.param("id");
-      await store.forUser(userId).revoke(id);
+      const name = c.req.param("name");
+      await store.forUser(userId).deleteSecret(name);
       return c.body(null, 204);
     } catch (error) {
       return c.json({ error: errorMessage(error) }, 500);

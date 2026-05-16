@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { InMemoryRunRegistry, MemoryStore, type WebhookSecretCreated } from "@agntz/core";
+import { beforeEach, describe, expect, it } from "vitest";
+import {
+  InMemoryRunRegistry,
+  MemoryStore,
+  _resetCryptoKeyCache,
+} from "@agntz/core";
 import { createWorkerAPI } from "../src/routes.js";
 
 const SECRET = "test-secret";
@@ -25,20 +29,31 @@ function internalAuthHeaders() {
   } as const;
 }
 
+interface CreatedSecret {
+  name: string;
+  value: string;
+  createdAt: string;
+}
+
+beforeEach(() => {
+  process.env.AGNTZ_SECRET_KEY =
+    "0000000000000000000000000000000000000000000000000000000000000001";
+  _resetCryptoKeyCache();
+});
+
 describe("POST /webhook-secrets", () => {
-  it("creates a secret and returns the raw value once", async () => {
+  it("server-generates a secret and returns the raw value once", async () => {
     const { app } = makeApp();
     const res = await app.request("/webhook-secrets", {
       method: "POST",
       headers: internalAuthHeaders(),
-      body: JSON.stringify({ userId: "u1", name: "gymtext-prod" }),
+      body: JSON.stringify({ userId: "u1", name: "gymtext_prod" }),
     });
     expect(res.status).toBe(201);
-    const body = (await res.json()) as WebhookSecretCreated;
-    expect(body.name).toBe("gymtext-prod");
-    expect(body.userId).toBe("u1");
-    expect(body.secret).toMatch(/^whsec_[0-9a-f]{64}$/);
-    expect(body.id).toMatch(/^whsec_[0-9a-f]{32}$/);
+    const body = (await res.json()) as CreatedSecret;
+    expect(body.name).toBe("gymtext_prod");
+    expect(body.value).toMatch(/^whsec_[0-9a-f]{64}$/);
+    expect(body.createdAt).toBeTruthy();
   });
 
   it("400 when name is missing", async () => {
@@ -56,53 +71,28 @@ describe("POST /webhook-secrets", () => {
     await app.request("/webhook-secrets", {
       method: "POST",
       headers: internalAuthHeaders(),
-      body: JSON.stringify({ userId: "u1", name: "gymtext-prod" }),
+      body: JSON.stringify({ userId: "u1", name: "gymtext_prod" }),
     });
     const res = await app.request("/webhook-secrets", {
       method: "POST",
       headers: internalAuthHeaders(),
-      body: JSON.stringify({ userId: "u1", name: "gymtext-prod" }),
+      body: JSON.stringify({ userId: "u1", name: "gymtext_prod" }),
     });
     expect(res.status).toBe(409);
   });
 });
 
 describe("GET /webhook-secrets", () => {
-  it("lists secrets WITHOUT the raw secret field", async () => {
-    const { app } = makeApp();
-    await app.request("/webhook-secrets", {
-      method: "POST",
-      headers: internalAuthHeaders(),
-      body: JSON.stringify({ userId: "u1", name: "gymtext-prod" }),
-    });
-    const res = await app.request("/webhook-secrets", {
-      method: "POST", // POST with userId in body so internal auth resolves user
-      headers: internalAuthHeaders(),
-      body: JSON.stringify({ userId: "u1", name: "another" }),
-    });
-    expect(res.status).toBe(201);
-
-    // Now do an actual GET via bearer.
-    const root = new MemoryStore();
-    // Use the same app's store-backed key for u1.
-    // Workaround: reuse internal auth — but GET needs auth too. Use POST then
-    // GET via Bearer.
-    // To keep this test simple, route-cover via additional list operation.
-  });
-
-  it("lists secrets with no raw secret (uses bearer auth)", async () => {
+  it("lists secret metadata (no raw value) with bearer auth", async () => {
     const { app, store } = makeApp();
-    // Provision a key for u1 via the underlying store directly so we can use
-    // Bearer auth for the GET (internal+GET path doesn't carry userId).
     const { rawKey } = await store
       .forUser("u1")
       .createApiKey({ userId: "u1", name: "test" });
 
-    // Create a secret via internal POST.
     const createRes = await app.request("/webhook-secrets", {
       method: "POST",
       headers: internalAuthHeaders(),
-      body: JSON.stringify({ userId: "u1", name: "gymtext-prod" }),
+      body: JSON.stringify({ userId: "u1", name: "gymtext_prod" }),
     });
     expect(createRes.status).toBe(201);
 
@@ -113,41 +103,43 @@ describe("GET /webhook-secrets", () => {
     expect(listRes.status).toBe(200);
     const rows = (await listRes.json()) as Array<Record<string, unknown>>;
     expect(rows.length).toBe(1);
-    expect(rows[0]).toMatchObject({ name: "gymtext-prod", userId: "u1" });
-    // Raw secret MUST be stripped from list responses.
+    expect(rows[0]).toMatchObject({ name: "gymtext_prod" });
+    expect(rows[0].lastFour).toBeTruthy();
+    // Raw plaintext must never appear in list responses.
+    expect(rows[0].value).toBeUndefined();
     expect(rows[0].secret).toBeUndefined();
   });
 });
 
-describe("POST /webhook-secrets/:id/rotate", () => {
-  it("rotates and returns a new active secret", async () => {
+describe("POST /webhook-secrets/:name/regenerate", () => {
+  it("upserts a new value in place and returns it once", async () => {
     const { app } = makeApp();
     const first = (await (
       await app.request("/webhook-secrets", {
         method: "POST",
         headers: internalAuthHeaders(),
-        body: JSON.stringify({ userId: "u1", name: "gymtext-prod" }),
+        body: JSON.stringify({ userId: "u1", name: "gymtext_prod" }),
       })
-    ).json()) as WebhookSecretCreated;
+    ).json()) as CreatedSecret;
 
-    const rotateRes = await app.request(
-      `/webhook-secrets/${first.id}/rotate`,
+    const regenRes = await app.request(
+      "/webhook-secrets/gymtext_prod/regenerate",
       {
         method: "POST",
         headers: internalAuthHeaders(),
         body: JSON.stringify({ userId: "u1" }),
       },
     );
-    expect(rotateRes.status).toBe(200);
-    const second = (await rotateRes.json()) as WebhookSecretCreated;
-    expect(second.id).not.toBe(first.id);
-    expect(second.name).toBe("gymtext-prod");
-    expect(second.secret).toMatch(/^whsec_[0-9a-f]{64}$/);
+    expect(regenRes.status).toBe(200);
+    const second = (await regenRes.json()) as CreatedSecret;
+    expect(second.name).toBe("gymtext_prod");
+    expect(second.value).toMatch(/^whsec_[0-9a-f]{64}$/);
+    expect(second.value).not.toBe(first.value);
   });
 
-  it("404 when rotating a non-existent id", async () => {
+  it("404 when regenerating a non-existent name", async () => {
     const { app } = makeApp();
-    const res = await app.request("/webhook-secrets/whsec_nope/rotate", {
+    const res = await app.request("/webhook-secrets/nope/regenerate", {
       method: "POST",
       headers: internalAuthHeaders(),
       body: JSON.stringify({ userId: "u1" }),
@@ -156,22 +148,20 @@ describe("POST /webhook-secrets/:id/rotate", () => {
   });
 });
 
-describe("DELETE /webhook-secrets/:id", () => {
+describe("DELETE /webhook-secrets/:name", () => {
   it("204 and the secret is unresolvable afterwards", async () => {
     const { app, store } = makeApp();
-    const created = (await (
-      await app.request("/webhook-secrets", {
-        method: "POST",
-        headers: internalAuthHeaders(),
-        body: JSON.stringify({ userId: "u1", name: "gymtext-prod" }),
-      })
-    ).json()) as WebhookSecretCreated;
+    await app.request("/webhook-secrets", {
+      method: "POST",
+      headers: internalAuthHeaders(),
+      body: JSON.stringify({ userId: "u1", name: "gymtext_prod" }),
+    });
 
     const { rawKey } = await store
       .forUser("u1")
       .createApiKey({ userId: "u1", name: "test" });
 
-    const del = await app.request(`/webhook-secrets/${created.id}`, {
+    const del = await app.request("/webhook-secrets/gymtext_prod", {
       method: "DELETE",
       headers: { Authorization: `Bearer ${rawKey}` },
     });
@@ -188,7 +178,7 @@ describe("DELETE /webhook-secrets/:id", () => {
 });
 
 describe("POST /runs — webhook validation", () => {
-  it("400 when callbackUrl is set without webhookId", async () => {
+  it("400 when callbackUrl is set without webhookSecretName", async () => {
     const { app } = makeApp();
     const res = await app.request("/runs", {
       method: "POST",
@@ -201,10 +191,10 @@ describe("POST /runs — webhook validation", () => {
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
-    expect(body.error).toMatch(/webhookId/);
+    expect(body.error).toMatch(/webhookSecretName/);
   });
 
-  it("400 when webhookId references a non-existent secret", async () => {
+  it("400 when webhookSecretName references a non-existent secret", async () => {
     const { app } = makeApp();
     const res = await app.request("/runs", {
       method: "POST",
@@ -213,7 +203,7 @@ describe("POST /runs — webhook validation", () => {
         userId: "u1",
         agentId: "any-agent",
         callbackUrl: "https://consumer.example/hook",
-        webhookId: "gymtext-prod",
+        webhookSecretName: "gymtext_prod",
       }),
     });
     expect(res.status).toBe(400);
@@ -221,10 +211,11 @@ describe("POST /runs — webhook validation", () => {
     expect(body.error).toMatch(/not found/);
   });
 
-  it("starts a run when callbackUrl + valid webhookId are provided", async () => {
+  it("starts a run when callbackUrl + valid webhookSecretName are provided", async () => {
     const { app, store } = makeApp();
-    // Provision the secret first.
-    await store.forUser("u1").create("gymtext-prod");
+    await store
+      .forUser("u1")
+      .putSecret({ name: "gymtext_prod", value: "whsec_test" });
 
     const res = await app.request("/runs", {
       method: "POST",
@@ -233,38 +224,9 @@ describe("POST /runs — webhook validation", () => {
         userId: "u1",
         agentId: "missing-agent",
         callbackUrl: "https://consumer.example/hook",
-        webhookId: "gymtext-prod",
+        webhookSecretName: "gymtext_prod",
       }),
     });
     expect(res.status).toBe(201);
-  });
-
-  it("rotation: in-flight run keeps using the secret id pinned at invoke time", async () => {
-    // Hard-to-observe without dispatching a real HTTP call, but we can at
-    // least assert the run starts and that the post-rotation `resolveById`
-    // still returns the original secret (the dispatcher uses this lookup).
-    const { app, store } = makeApp();
-    const first = await store.forUser("u1").create("gymtext-prod");
-
-    const res = await app.request("/runs", {
-      method: "POST",
-      headers: internalAuthHeaders(),
-      body: JSON.stringify({
-        userId: "u1",
-        agentId: "missing-agent",
-        callbackUrl: "https://consumer.example/hook",
-        webhookId: "gymtext-prod",
-      }),
-    });
-    expect(res.status).toBe(201);
-
-    const rotated = await store.forUser("u1").rotate(first.id);
-    expect(rotated.id).not.toBe(first.id);
-
-    // The dispatcher resolves the OLD id by id; the secret store guarantees
-    // this lookup still works post-rotation.
-    const oldStill = await store.forUser("u1").resolveById(first.id);
-    expect(oldStill?.id).toBe(first.id);
-    expect(oldStill?.secret).toBe(first.secret);
   });
 });

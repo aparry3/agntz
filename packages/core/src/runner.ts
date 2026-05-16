@@ -2,6 +2,7 @@ import type {
   RunnerConfig,
   AgentDefinition,
   ToolDefinition,
+  ToolReference,
   InvokeOptions,
   InvokeResult,
   InvokeStream,
@@ -21,6 +22,7 @@ import type {
   ProviderStore,
   ConnectionStore,
   SkillStore,
+  SecretStore,
   ModelProvider,
   PendingChildResult,
   Reply,
@@ -30,6 +32,8 @@ import { isContentBlockArray, DEFAULT_REPLY_MAX_PER_RUN } from "./types.js";
 import { normalizeImageBlocks } from "./image-fetcher.js";
 import { flattenContentToText } from "./message-builder.js";
 import type { AiSdkMessage } from "./message-builder.js";
+import { buildHttpToolDefinition } from "./http-tool.js";
+import type { AgentState } from "./http-tool.js";
 import { ToolRegistry } from "./tool.js";
 import { zodToJsonSchema } from "./utils/schema.js";
 import {
@@ -78,6 +82,38 @@ const DEFAULT_MAX_RECURSION_DEPTH = 3;
 const DRAIN_BUDGET = 16;
 
 /**
+ * Matches a `{{secrets.<name>}}` template reference. Used to walk an
+ * agent's HTTP tool entries at invoke() time and pre-resolve the set of
+ * secrets needed for this run.
+ */
+const SECRET_REF_RE = /\{\{\s*secrets\.([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g;
+
+/**
+ * Walk an agent's tool references and collect the unique set of secret
+ * names referenced via `{{secrets.<name>}}` in any HTTP tool's `params`
+ * or `headers` template values. Returned as a Set so callers can iterate
+ * once and fetch each secret exactly once per run.
+ */
+function collectSecretReferences(agent: AgentDefinition): Set<string> {
+  const names = new Set<string>();
+  for (const ref of agent.tools ?? []) {
+    if (ref.type !== "http") continue;
+    const entry = ref.entry;
+    const values: string[] = [];
+    if (entry.params) values.push(...Object.values(entry.params));
+    if (entry.headers) values.push(...Object.values(entry.headers));
+    for (const v of values) {
+      SECRET_REF_RE.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = SECRET_REF_RE.exec(v)) !== null) {
+        names.add(m[1]);
+      }
+    }
+  }
+  return names;
+}
+
+/**
  * The Runner. Central orchestrator for agntz.
  * Created via createRunner().
  */
@@ -89,6 +125,7 @@ export class Runner {
   private _providerStore: ProviderStore | undefined;
   private _connectionStore: ConnectionStore | undefined;
   private _skillStore: SkillStore | undefined;
+  private _secretStore: SecretStore | undefined;
   private modelProvider: ModelProvider;
   private toolRegistry: ToolRegistry;
   private mcpManager: MCPClientManager | null = null;
@@ -126,6 +163,9 @@ export class Runner {
       : undefined;
     this._skillStore = unifiedStore && "getSkill" in unifiedStore
       ? unifiedStore as SkillStore
+      : undefined;
+    this._secretStore = unifiedStore && "getSecretValue" in unifiedStore
+      ? unifiedStore as SecretStore
       : undefined;
     this.modelProvider = config.modelProvider ?? new AISDKModelProvider({
       providerStore: this._providerStore,
@@ -382,6 +422,32 @@ export class Runner {
       const inputAsString =
         typeof input === "string" ? input : flattenContentToText(input);
 
+      // ─── Secrets pre-fetch ────────────────────────────────────────────
+      // Mirror of the non-streaming invoke() path. See comments there for
+      // the rationale. Resolves `{{secrets.<name>}}` references in HTTP
+      // tools to plaintext once per invocation, kept in `state.secrets` so
+      // `interpolate()` stays synchronous and per-invocation.
+      const state: AgentState = {};
+      const secretNames = collectSecretReferences(agent);
+      if (secretNames.size > 0) {
+        if (!self._secretStore) {
+          throw new Error(
+            `Agent '${agent.id}' references secrets but no SecretStore is wired to the Runner.`,
+          );
+        }
+        const resolved: Record<string, string> = {};
+        for (const name of secretNames) {
+          const value = await self._secretStore.getSecretValue(name);
+          if (value == null) {
+            throw new Error(
+              `Secret '${name}' referenced by agent '${agent.id}' does not exist for this user.`,
+            );
+          }
+          resolved[name] = value;
+        }
+        state.secrets = resolved;
+      }
+
       // ─── Cancel-and-replace concurrency + Run registration ────────────
       const runRegistry = options.runRegistry;
       let runId = options.runId;
@@ -531,6 +597,7 @@ export class Runner {
           runId: effectiveRunId,
           rootId: effectiveRootId,
           onReplyAccepted,
+          state,
         });
 
         // See invoke() for the rationale. Persist the user turn up-front when
@@ -795,6 +862,7 @@ export class Runner {
               runId: effectiveRunId,
               rootId: effectiveRootId,
               onReplyAccepted,
+              state,
             });
             const seen = new Set(base.map((t) => t.name));
             availableTools = base.concat(
@@ -964,6 +1032,34 @@ export class Runner {
     const inputAsString =
       typeof input === "string" ? input : flattenContentToText(input);
 
+    // ─── Secrets pre-fetch ────────────────────────────────────────────
+    // Walk the agent's HTTP tool entries and pre-resolve every
+    // `{{secrets.<name>}}` reference into a plain map. The decrypted
+    // values live on `state.secrets` for the lifetime of this invocation
+    // only — they go away with `state` when the function returns. This
+    // keeps `interpolate()` synchronous at tool-execute time and means
+    // we hit the secret store at most once per name per run.
+    const state: AgentState = {};
+    const secretNames = collectSecretReferences(agent);
+    if (secretNames.size > 0) {
+      if (!this._secretStore) {
+        throw new Error(
+          `Agent '${agent.id}' references secrets but no SecretStore is wired to the Runner.`,
+        );
+      }
+      const resolved: Record<string, string> = {};
+      for (const name of secretNames) {
+        const value = await this._secretStore.getSecretValue(name);
+        if (value == null) {
+          throw new Error(
+            `Secret '${name}' referenced by agent '${agent.id}' does not exist for this user.`,
+          );
+        }
+        resolved[name] = value;
+      }
+      state.secrets = resolved;
+    }
+
     // ─── Cancel-and-replace concurrency + Run registration ────────────
     // The per-session mutex must wrap "check active → cancel → create new",
     // because publishing this run's id as the session's active run is the
@@ -1126,8 +1222,10 @@ export class Runner {
       await this.augmentSystemPromptWithSkills(agent, messages);
 
       // Resolve available tools for this agent (incl. spawn_agent/check_agents
-      // when the agent declares `spawnable` and a runRegistry is provided,
-      // and `reply` when the agent declares `reply`).
+      // when the agent declares `spawnable`, `reply` when the agent declares
+      // `reply`, and HTTP tools — `state.secrets` was pre-resolved above so
+      // those tools can interpolate `{{secrets.X}}` synchronously at execute
+      // time).
       let availableTools = await this.resolveToolsForAgent(agent, {
         runRegistry,
         ephemeralTools,
@@ -1135,6 +1233,7 @@ export class Runner {
         effectiveSessionId,
         runId: effectiveRunId,
         rootId: effectiveRootId,
+        state,
       });
 
       // When the agent can reply mid-run, persist the user input *before* the
@@ -1371,6 +1470,7 @@ export class Runner {
             effectiveSessionId,
             runId: effectiveRunId,
             rootId: effectiveRootId,
+            state,
           });
           const seen = new Set(base.map((t) => t.name));
           availableTools = base.concat(
@@ -1669,6 +1769,11 @@ export class Runner {
    * also synthesizes per-invocation `spawn_agent` and `check_agents` tools.
    * These live in the supplied `ephemeralTools` map (not the global registry)
    * because their schemas are agent-specific.
+   *
+   * HTTP tools also live in `ephemeralTools` because they close over the
+   * per-invocation `state` (notably `state.secrets`); registering them
+   * globally would either leak secrets across invocations or hit the
+   * "already registered" guard the second time.
    */
   private async resolveToolsForAgent(
     agent: AgentDefinition,
@@ -1689,6 +1794,13 @@ export class Runner {
        * async iterator output without re-subscribing to the registry.
        */
       onReplyAccepted?: (reply: Reply) => void;
+      /**
+       * Per-invocation template state (carries `secrets`, etc.). Required
+       * for HTTP tool resolution; ignored by other tool kinds. Defaults
+       * to an empty object when omitted so existing call sites that don't
+       * use HTTP tools keep working.
+       */
+      state?: AgentState;
     },
   ): Promise<Array<{
     name: string;
@@ -1726,6 +1838,8 @@ export class Runner {
       parameters: Record<string, unknown>;
     }> = [];
 
+    const state = opts?.state ?? {};
+
     for (const ref of agent.tools ?? []) {
       if (ref.type === "inline") {
         const info = this.toolRegistry.get(ref.name);
@@ -1744,6 +1858,23 @@ export class Runner {
       } else if (ref.type === "mcp") {
         const mcpTools = this.resolveMCPTools(ref.server, ref.tools);
         resolved.push(...mcpTools);
+      } else if (ref.type === "http") {
+        // HTTP tools close over `state` (which carries decrypted secrets),
+        // so they MUST live in the per-invocation ephemeral map. The same
+        // entry called from two concurrent invocations would otherwise
+        // share whichever closure won the registration race.
+        if (!opts?.ephemeralTools) {
+          // No ephemeral map → no place to put this tool. Skip rather
+          // than mutate the global registry.
+          continue;
+        }
+        const httpTool = buildHttpToolDefinition(ref.entry, state);
+        opts.ephemeralTools.set(httpTool.name, httpTool);
+        resolved.push({
+          name: httpTool.name,
+          description: httpTool.description,
+          parameters: zodToJsonSchema(httpTool.input),
+        });
       }
     }
 

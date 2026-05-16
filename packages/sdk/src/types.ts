@@ -173,17 +173,19 @@ export interface RunsStartInput {
   /**
    * Per-invocation webhook callback URL. When set, the worker will POST
    * intermediate `reply` events and a final `complete` event to this URL,
-   * signed with the secret named by `webhookId` (HMAC-SHA256, `X-Agntz-Signature` header).
+   * signed with the secret named by `webhookSecretName` (HMAC-SHA256,
+   * `X-Agntz-Signature` header).
    *
-   * If `callbackUrl` is set, `webhookId` is required.
+   * If `callbackUrl` is set, `webhookSecretName` is required.
    */
   callbackUrl?: string;
   /**
-   * Name of the webhook secret to sign callback payloads with. Must match the
-   * `name` of an existing webhook secret (resolved by name, not id, so users
-   * configure a stable label and rotate the underlying key freely).
+   * Name of the SecretStore entry whose plaintext is the HMAC signing key.
+   * Resolved by name at each delivery attempt, so an out-of-band regenerate
+   * is picked up automatically (the consumer must redeploy with the new
+   * value to verify the new signatures).
    */
-  webhookId?: string;
+  webhookSecretName?: string;
 }
 
 export interface RunsStreamInput {

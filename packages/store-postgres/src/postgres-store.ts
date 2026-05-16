@@ -1,6 +1,12 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import pg from "pg";
-import { defineSkill, INVOCATION_LOG_BLOCKS_PREFIX } from "@agntz/core";
+import {
+  defineSkill,
+  encryptSecret,
+  decryptSecret,
+  getLastFour,
+  INVOCATION_LOG_BLOCKS_PREFIX,
+} from "@agntz/core";
 import type {
   AgentDefinition,
   ContentBlock,
@@ -20,13 +26,13 @@ import type {
   RunStatus,
   RunListFilters,
   RunListResult,
+  SecretDefinition,
+  SecretMetadata,
   SkillDefinition,
   Span,
   TraceSummary,
   TraceFilter,
   WebhookDelivery,
-  WebhookSecret,
-  WebhookSecretCreated,
 } from "@agntz/core";
 
 const { Pool } = pg;
@@ -315,32 +321,40 @@ const MIGRATIONS: string[] = [
 
   UPDATE ar_schema_version SET version = 10;
   `,
-  // v11: Webhook secrets + delivery outbox.
-  // ar_webhook_secrets.secret_raw stores the raw HMAC signing secret; HMAC
-  // requires the original bytes. Treated as a credential at rest. Future
-  // hardening: encrypt-at-rest with an env-supplied key.
-  // Partial unique index keeps active names unique per user while letting
-  // rotated rows linger for in-flight signature verification.
+  // v11: User-scoped encrypted secrets (used for both HTTP-tool auth tokens
+  // and webhook HMAC signing keys). `value` stores AES-256-GCM ciphertext
+  // as `base64(iv):base64(tag):base64(ct)`. `last_four` is the last 4 chars
+  // of plaintext for masked-UI display only. Webhook secrets are encrypted
+  // at rest just like any other secret; the dispatcher decrypts at sign
+  // time. Rotation is in-place: SecretStore.putSecret upserts on
+  // (user_id, name), so out-of-band rotation is picked up on the next
+  // delivery attempt without per-row rotation lifecycle bookkeeping.
   `
-  CREATE TABLE IF NOT EXISTS ar_webhook_secrets (
-    user_id    TEXT NOT NULL,
-    id         TEXT PRIMARY KEY,
-    name       TEXT NOT NULL,
-    secret_raw TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    rotated_at TIMESTAMPTZ
+  CREATE TABLE IF NOT EXISTS ar_secrets (
+    user_id      TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    value        TEXT NOT NULL,
+    last_four    TEXT NOT NULL,
+    description  TEXT,
+    created_at   TIMESTAMPTZ NOT NULL,
+    updated_at   TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (user_id, name)
   );
-  CREATE INDEX IF NOT EXISTS idx_ar_webhook_secrets_user_name
-    ON ar_webhook_secrets(user_id, name);
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_ar_webhook_secrets_user_name_active
-    ON ar_webhook_secrets(user_id, name) WHERE rotated_at IS NULL;
+  CREATE INDEX IF NOT EXISTS idx_ar_secrets_user ON ar_secrets(user_id);
 
+  UPDATE ar_schema_version SET version = 11;
+  `,
+  // v12: Webhook delivery outbox. `secret_name` references `ar_secrets.name`
+  // for the active HMAC signing key at delivery time — the dispatcher
+  // resolves the row at each attempt so an out-of-band rotation flows
+  // through naturally.
+  `
   CREATE TABLE IF NOT EXISTS ar_webhook_deliveries (
     id              TEXT PRIMARY KEY,
     user_id         TEXT NOT NULL,
     run_id          TEXT NOT NULL,
     callback_url    TEXT NOT NULL,
-    secret_id       TEXT NOT NULL,
+    secret_name     TEXT NOT NULL,
     payload         JSONB NOT NULL,
     attempts        INTEGER NOT NULL DEFAULT 0,
     last_attempt_at TIMESTAMPTZ,
@@ -355,7 +369,7 @@ const MIGRATIONS: string[] = [
   CREATE INDEX IF NOT EXISTS idx_ar_webhook_deliveries_run
     ON ar_webhook_deliveries(user_id, run_id);
 
-  UPDATE ar_schema_version SET version = 11;
+  UPDATE ar_schema_version SET version = 12;
   `,
 ];
 
@@ -1467,6 +1481,111 @@ export class PostgresStore implements UnifiedStore {
     );
   }
 
+  // ═══ SecretStore ═══
+
+  async listSecrets(): Promise<SecretMetadata[]> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const { rows } = await this.pool.query(
+      `SELECT name, last_four, description, created_at, updated_at
+       FROM ${this.t("secrets")}
+       WHERE user_id = $1 ORDER BY name ASC`,
+      [u]
+    );
+    return rows.map(
+      (r: {
+        name: string;
+        last_four: string;
+        description: string | null;
+        created_at: Date | string;
+        updated_at: Date | string;
+      }) => pgRowToSecretMetadata(r)
+    );
+  }
+
+  async getSecretMetadata(name: string): Promise<SecretMetadata | null> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const { rows } = await this.pool.query(
+      `SELECT name, last_four, description, created_at, updated_at
+       FROM ${this.t("secrets")}
+       WHERE user_id = $1 AND name = $2`,
+      [u, name]
+    );
+    return rows.length === 0 ? null : pgRowToSecretMetadata(rows[0]);
+  }
+
+  async getSecretValue(name: string): Promise<string | null> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const { rows } = await this.pool.query(
+      `SELECT value FROM ${this.t("secrets")}
+       WHERE user_id = $1 AND name = $2`,
+      [u, name]
+    );
+    if (rows.length === 0) return null;
+    return decryptSecret(rows[0].value as string);
+  }
+
+  async putSecret(secret: SecretDefinition): Promise<void> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    if (!secret.name) {
+      throw new Error("putSecret: name is required");
+    }
+    if (secret.value === undefined || secret.value === null) {
+      throw new Error("putSecret: value is required");
+    }
+    const encrypted = encryptSecret(secret.value);
+    const lastFour = getLastFour(secret.value);
+    const now = this.nextTimestamp();
+    const createdAt = secret.createdAt ?? now;
+    await this.pool.query(
+      `INSERT INTO ${this.t("secrets")}
+         (user_id, name, value, last_four, description, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (user_id, name) DO UPDATE SET
+         value = EXCLUDED.value,
+         last_four = EXCLUDED.last_four,
+         description = EXCLUDED.description,
+         updated_at = EXCLUDED.updated_at`,
+      [
+        u,
+        secret.name,
+        encrypted,
+        lastFour,
+        secret.description ?? null,
+        createdAt,
+        now,
+      ]
+    );
+  }
+
+  async updateSecretDescription(
+    name: string,
+    description: string | undefined,
+  ): Promise<boolean> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const now = this.nextTimestamp();
+    const result = await this.pool.query(
+      `UPDATE ${this.t("secrets")}
+       SET description = $1, updated_at = $2
+       WHERE user_id = $3 AND name = $4`,
+      [description ?? null, now, u, name],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async deleteSecret(name: string): Promise<void> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    await this.pool.query(
+      `DELETE FROM ${this.t("secrets")} WHERE user_id = $1 AND name = $2`,
+      [u, name]
+    );
+  }
+
   // ═══ ApiKeyStore (unscoped admin) ═══
 
   async createApiKey(params: { userId: string; name: string }): Promise<{ record: ApiKeyRecord; rawKey: string }> {
@@ -1518,121 +1637,6 @@ export class PostgresStore implements UnifiedStore {
     return { userId: rows[0].user_id, keyId: rows[0].id };
   }
 
-  // ═══ WebhookSecretStore ═══
-
-  async create(name: string): Promise<WebhookSecretCreated> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    if (!name || typeof name !== "string") {
-      throw new Error("WebhookSecretStore.create: `name` must be a non-empty string");
-    }
-    const existing = await this.pool.query(
-      `SELECT id FROM ${this.t("webhook_secrets")}
-       WHERE user_id = $1 AND name = $2 AND rotated_at IS NULL`,
-      [u, name],
-    );
-    if (existing.rows.length > 0) {
-      throw new Error(`Webhook secret with name "${name}" already exists`);
-    }
-    const id = `whsec_${randomBytes(16).toString("hex")}`;
-    const raw = `whsec_${randomBytes(32).toString("hex")}`;
-    const now = new Date().toISOString();
-    await this.pool.query(
-      `INSERT INTO ${this.t("webhook_secrets")} (user_id, id, name, secret_raw, created_at)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [u, id, name, raw, now],
-    );
-    return { id, name, userId: u, secret: raw, createdAt: now };
-  }
-
-  async list(): Promise<WebhookSecret[]> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const result = await this.pool.query(
-      `SELECT id, user_id, name, secret_raw, created_at, rotated_at
-       FROM ${this.t("webhook_secrets")} WHERE user_id = $1
-       ORDER BY created_at ASC`,
-      [u],
-    );
-    return result.rows.map(pgRowToWebhookSecret);
-  }
-
-  async rotate(id: string): Promise<WebhookSecretCreated> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
-      const existing = await client.query(
-        `SELECT id, user_id, name, secret_raw, created_at, rotated_at
-         FROM ${this.t("webhook_secrets")} WHERE user_id = $1 AND id = $2
-         FOR UPDATE`,
-        [u, id],
-      );
-      if (existing.rows.length === 0) {
-        await client.query("ROLLBACK");
-        throw new Error(`Webhook secret not found: ${id}`);
-      }
-      const row = existing.rows[0];
-      const now = new Date().toISOString();
-      const newId = `whsec_${randomBytes(16).toString("hex")}`;
-      const raw = `whsec_${randomBytes(32).toString("hex")}`;
-      // Mark old as rotated first to free the partial-unique slot on (user_id, name)
-      // before inserting the replacement.
-      await client.query(
-        `UPDATE ${this.t("webhook_secrets")} SET rotated_at = $1
-         WHERE user_id = $2 AND id = $3`,
-        [now, u, id],
-      );
-      await client.query(
-        `INSERT INTO ${this.t("webhook_secrets")} (user_id, id, name, secret_raw, created_at)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [u, newId, row.name, raw, now],
-      );
-      await client.query("COMMIT");
-      return { id: newId, name: row.name, userId: u, secret: raw, createdAt: now };
-    } catch (err) {
-      await client.query("ROLLBACK");
-      throw err;
-    } finally {
-      client.release();
-    }
-  }
-
-  async revoke(id: string): Promise<void> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    await this.pool.query(
-      `DELETE FROM ${this.t("webhook_secrets")} WHERE user_id = $1 AND id = $2`,
-      [u, id],
-    );
-  }
-
-  async resolveByName(name: string): Promise<WebhookSecret | undefined> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const result = await this.pool.query(
-      `SELECT id, user_id, name, secret_raw, created_at, rotated_at
-       FROM ${this.t("webhook_secrets")}
-       WHERE user_id = $1 AND name = $2 AND rotated_at IS NULL`,
-      [u, name],
-    );
-    if (result.rows.length === 0) return undefined;
-    return pgRowToWebhookSecret(result.rows[0]);
-  }
-
-  async resolveById(id: string): Promise<WebhookSecret | undefined> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const result = await this.pool.query(
-      `SELECT id, user_id, name, secret_raw, created_at, rotated_at
-       FROM ${this.t("webhook_secrets")} WHERE user_id = $1 AND id = $2`,
-      [u, id],
-    );
-    if (result.rows.length === 0) return undefined;
-    return pgRowToWebhookSecret(result.rows[0]);
-  }
-
   // ═══ WebhookDeliveryStore ═══
 
   async insert(
@@ -1645,7 +1649,7 @@ export class PostgresStore implements UnifiedStore {
     const now = new Date().toISOString();
     await this.pool.query(
       `INSERT INTO ${this.t("webhook_deliveries")} (
-          id, user_id, run_id, callback_url, secret_id, payload,
+          id, user_id, run_id, callback_url, secret_name, payload,
           attempts, status, created_at
         ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, 0, 'pending', $7)`,
       [
@@ -1653,7 +1657,7 @@ export class PostgresStore implements UnifiedStore {
         u,
         delivery.runId,
         delivery.callbackUrl,
-        delivery.secretId,
+        delivery.secretName,
         JSON.stringify(delivery.payload),
         now,
       ],
@@ -1715,7 +1719,7 @@ export class PostgresStore implements UnifiedStore {
     }
     args.push(filter?.limit ?? 1000);
     const result = await this.pool.query(
-      `SELECT id, user_id, run_id, callback_url, secret_id, payload,
+      `SELECT id, user_id, run_id, callback_url, secret_name, payload,
               attempts, last_attempt_at, status, last_error, created_at
        FROM ${this.t("webhook_deliveries")}
        WHERE ${clauses.join(" AND ")}
@@ -1943,6 +1947,24 @@ function pgRowToSkill(r: {
   return skill;
 }
 
+function pgRowToSecretMetadata(r: {
+  name: string;
+  last_four: string;
+  description: string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}): SecretMetadata {
+  const toIso = (v: Date | string) =>
+    v instanceof Date ? v.toISOString() : String(v);
+  return {
+    name: r.name,
+    lastFour: r.last_four,
+    description: r.description ?? undefined,
+    createdAt: toIso(r.created_at),
+    updatedAt: toIso(r.updated_at),
+  };
+}
+
 function pgRowToSummary(r: Record<string, unknown>): TraceSummary {
   return {
     traceId: r.trace_id as string,
@@ -2012,32 +2034,12 @@ function rowToApiKey(r: {
   };
 }
 
-function pgRowToWebhookSecret(r: {
-  id: string;
-  user_id: string;
-  name: string;
-  secret_raw: string;
-  created_at: Date | string;
-  rotated_at: Date | string | null;
-}): WebhookSecret {
-  const toIso = (v: Date | string) => (v instanceof Date ? v.toISOString() : String(v));
-  const s: WebhookSecret = {
-    id: r.id,
-    name: r.name,
-    userId: r.user_id,
-    secret: r.secret_raw,
-    createdAt: toIso(r.created_at),
-  };
-  if (r.rotated_at) s.rotatedAt = toIso(r.rotated_at);
-  return s;
-}
-
 function pgRowToWebhookDelivery(r: {
   id: string;
   user_id: string;
   run_id: string;
   callback_url: string;
-  secret_id: string;
+  secret_name: string;
   payload: unknown;
   attempts: number;
   last_attempt_at: Date | string | null;
@@ -2063,7 +2065,7 @@ function pgRowToWebhookDelivery(r: {
     id: r.id,
     runId: r.run_id,
     callbackUrl: r.callback_url,
-    secretId: r.secret_id,
+    secretName: r.secret_name,
     payload,
     attempts: r.attempts,
     status: r.status,

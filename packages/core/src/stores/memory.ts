@@ -1,9 +1,16 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { listRunsInProcess } from "./list-runs.js";
 import { defineSkill } from "../skill.js";
+import {
+  encryptSecret,
+  decryptSecret,
+  getLastFour,
+} from "../utils/crypto.js";
 import type {
   AgentDefinition,
   ProviderConfig,
+  SecretDefinition,
+  SecretMetadata,
   SkillDefinition,
   UnifiedStore,
   ApiKeyRecord,
@@ -22,8 +29,6 @@ import type {
   TraceSummary,
   TraceFilter,
   WebhookDelivery,
-  WebhookSecret,
-  WebhookSecretCreated,
 } from "../types.js";
 
 interface AgentVersion {
@@ -51,6 +56,15 @@ interface ApiKeyRow {
   revokedAt: string | null;
 }
 
+interface SecretRow {
+  /** Encrypted ciphertext as `base64(iv):base64(tag):base64(ct)`. */
+  encrypted: string;
+  lastFour: string;
+  description?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /**
  * Shared backing state across MemoryStore instances created via forUser().
  */
@@ -67,7 +81,7 @@ interface MemoryBackend {
   spans: Map<string, Span>;                                  // spanId -> span
   summaries: Map<string, TraceSummary>;                      // traceId -> summary
   skills: Map<string, Map<string, SkillDefinition>>;         // userId -> name -> skill
-  webhookSecrets: Map<string, Map<string, WebhookSecret>>;   // userId -> id -> secret
+  secrets: Map<string, Map<string, SecretRow>>;              // userId -> name -> row
   webhookDeliveries: Map<string, WebhookDelivery>;           // id -> delivery
 }
 
@@ -85,7 +99,7 @@ function createBackend(): MemoryBackend {
     spans: new Map(),
     summaries: new Map(),
     skills: new Map(),
-    webhookSecrets: new Map(),
+    secrets: new Map(),
     webhookDeliveries: new Map(),
   };
 }
@@ -438,6 +452,88 @@ export class MemoryStore implements UnifiedStore {
     this.skillMap().delete(name);
   }
 
+  // ═══ SecretStore ═══
+
+  private secretMap(): Map<string, SecretRow> {
+    const u = this.requireUser();
+    let m = this.backend.secrets.get(u);
+    if (!m) {
+      m = new Map();
+      this.backend.secrets.set(u, m);
+    }
+    return m;
+  }
+
+  async listSecrets(): Promise<SecretMetadata[]> {
+    const map = this.secretMap();
+    return Array.from(map.entries())
+      .map(([name, row]) => ({
+        name,
+        lastFour: row.lastFour,
+        description: row.description,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async getSecretMetadata(name: string): Promise<SecretMetadata | null> {
+    const row = this.secretMap().get(name);
+    if (!row) return null;
+    return {
+      name,
+      lastFour: row.lastFour,
+      description: row.description,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
+  }
+
+  async getSecretValue(name: string): Promise<string | null> {
+    const row = this.secretMap().get(name);
+    if (!row) return null;
+    return decryptSecret(row.encrypted);
+  }
+
+  async putSecret(secret: SecretDefinition): Promise<void> {
+    if (!secret.name) {
+      throw new Error("putSecret: name is required");
+    }
+    if (secret.value === undefined || secret.value === null) {
+      throw new Error("putSecret: value is required");
+    }
+    const map = this.secretMap();
+    const now = this.nextTimestamp();
+    const existing = map.get(secret.name);
+    map.set(secret.name, {
+      encrypted: encryptSecret(secret.value),
+      lastFour: getLastFour(secret.value),
+      description: secret.description,
+      createdAt: existing?.createdAt ?? secret.createdAt ?? now,
+      updatedAt: now,
+    });
+  }
+
+  async updateSecretDescription(
+    name: string,
+    description: string | undefined,
+  ): Promise<boolean> {
+    const map = this.secretMap();
+    const row = map.get(name);
+    if (!row) return false;
+    const now = this.nextTimestamp();
+    map.set(name, {
+      ...row,
+      description,
+      updatedAt: now,
+    });
+    return true;
+  }
+
+  async deleteSecret(name: string): Promise<void> {
+    this.secretMap().delete(name);
+  }
+
   // ═══ ApiKeyStore (unscoped admin) ═══
 
   async createApiKey(params: { userId: string; name: string }): Promise<{ record: ApiKeyRecord; rawKey: string }> {
@@ -660,91 +756,6 @@ export class MemoryStore implements UnifiedStore {
     return traceIdsToDelete.length;
   }
 
-  // ═══ WebhookSecretStore ═══
-
-  private webhookSecretMap(): Map<string, WebhookSecret> {
-    const u = this.requireUser();
-    let m = this.backend.webhookSecrets.get(u);
-    if (!m) {
-      m = new Map();
-      this.backend.webhookSecrets.set(u, m);
-    }
-    return m;
-  }
-
-  async create(name: string): Promise<WebhookSecretCreated> {
-    const u = this.requireUser();
-    if (!name || typeof name !== "string") {
-      throw new Error("WebhookSecretStore.create: `name` must be a non-empty string");
-    }
-    // Uniqueness: an active (non-rotated) secret with the same name blocks creation.
-    const map = this.webhookSecretMap();
-    for (const existing of map.values()) {
-      if (existing.name === name && !existing.rotatedAt) {
-        throw new Error(`Webhook secret with name "${name}" already exists`);
-      }
-    }
-    const id = `whsec_${randomBytes(16).toString("hex")}`;
-    const raw = `whsec_${randomBytes(32).toString("hex")}`;
-    const now = new Date().toISOString();
-    const secret: WebhookSecret = {
-      id,
-      name,
-      userId: u,
-      secret: raw,
-      createdAt: now,
-    };
-    map.set(id, secret);
-    return { ...secret, secret: raw };
-  }
-
-  async list(): Promise<WebhookSecret[]> {
-    const map = this.webhookSecretMap();
-    // Clone so callers can't mutate stored entries (including the raw secret).
-    return Array.from(map.values())
-      .map((s) => ({ ...s }))
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  }
-
-  async rotate(id: string): Promise<WebhookSecretCreated> {
-    const u = this.requireUser();
-    const map = this.webhookSecretMap();
-    const existing = map.get(id);
-    if (!existing) {
-      throw new Error(`Webhook secret not found: ${id}`);
-    }
-    const now = new Date().toISOString();
-    existing.rotatedAt = now;
-    const newId = `whsec_${randomBytes(16).toString("hex")}`;
-    const raw = `whsec_${randomBytes(32).toString("hex")}`;
-    const fresh: WebhookSecret = {
-      id: newId,
-      name: existing.name,
-      userId: u,
-      secret: raw,
-      createdAt: now,
-    };
-    map.set(newId, fresh);
-    return { ...fresh, secret: raw };
-  }
-
-  async revoke(id: string): Promise<void> {
-    this.webhookSecretMap().delete(id);
-  }
-
-  async resolveByName(name: string): Promise<WebhookSecret | undefined> {
-    const map = this.webhookSecretMap();
-    for (const s of map.values()) {
-      if (s.name === name && !s.rotatedAt) return { ...s };
-    }
-    return undefined;
-  }
-
-  async resolveById(id: string): Promise<WebhookSecret | undefined> {
-    const s = this.webhookSecretMap().get(id);
-    return s ? { ...s } : undefined;
-  }
-
   // ═══ WebhookDeliveryStore ═══
 
   async insert(
@@ -758,7 +769,7 @@ export class MemoryStore implements UnifiedStore {
       id: delivery.id,
       runId: delivery.runId,
       callbackUrl: delivery.callbackUrl,
-      secretId: delivery.secretId,
+      secretName: delivery.secretName,
       payload: delivery.payload,
       attempts: 0,
       status: "pending",

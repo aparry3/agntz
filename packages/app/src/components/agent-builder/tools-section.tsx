@@ -1,9 +1,13 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
+import { parseUrlPlaceholders } from "@agntz/manifest";
 import type { Catalog } from "@/lib/use-catalog";
 import { TOOL_ENTRY_KINDS, type ToolEntryKind } from "@/lib/manifest-catalog";
-import { Field, SectionCard, Select, SmallButton, TextInput } from "./form-controls";
+import { Field, SectionCard, Select, SmallButton, TextArea, TextInput } from "./form-controls";
+import { PlaceholderPreview } from "./placeholder-preview";
+import { HeadersEditor } from "./headers-editor";
+import { ParamsEditor } from "./params-editor";
 
 export interface ToolEntryDraft {
   kind: ToolEntryKind | "";
@@ -13,6 +17,13 @@ export interface ToolEntryDraft {
   server?: string;
   // For kind=agent: agent id.
   agent?: string;
+  // For kind=http: see HTTPToolEntry in @agntz/manifest.
+  name?: string;
+  url?: string;
+  method?: "GET";
+  description?: string;
+  params?: Record<string, string>;
+  headers?: Record<string, string>;
 }
 
 interface ToolsSectionProps {
@@ -94,10 +105,24 @@ function ToolEntryRow({
             allowEmpty
             emptyLabel="Select…"
             onChange={(next) => {
+              // Reset every kind-specific field so the YAML output never
+              // accidentally carries forward a stale `server`, `agent`, or
+              // HTTP block from a previous kind selection.
+              const reset = {
+                tools: [],
+                server: undefined,
+                agent: undefined,
+                name: undefined,
+                url: undefined,
+                method: undefined,
+                description: undefined,
+                params: undefined,
+                headers: undefined,
+              };
               if (next === "") {
-                onChange({ kind: "", tools: [], server: undefined, agent: undefined });
+                onChange({ kind: "", ...reset });
               } else {
-                onChange({ kind: next, tools: [], server: undefined, agent: undefined });
+                onChange({ kind: next, ...reset });
               }
             }}
             options={TOOL_ENTRY_KINDS.map((k) => ({ value: k, label: k }))}
@@ -165,6 +190,10 @@ function ToolEntryRow({
                 options={catalog.agents.map((a) => ({ value: a.id, label: a.name }))}
               />
             </Field>
+          )}
+
+          {entry.kind === "http" && (
+            <HttpEntryFields entry={entry} catalog={catalog} onChange={onChange} />
           )}
 
           {entry.kind === "" && (
@@ -285,5 +314,113 @@ function FreeTextAdd({ onAdd }: { onAdd: (text: string) => void }) {
       }}
       className="w-full rounded-lg border border-stone-200 bg-stone-50 px-2 py-1.5 text-xs outline-none focus:border-zinc-400 focus:bg-white"
     />
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// HTTP tool entry fields
+// ═══════════════════════════════════════════════════════════════════════
+
+const HTTP_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+
+function HttpEntryFields({
+  entry,
+  catalog,
+  onChange,
+}: {
+  entry: ToolEntryDraft;
+  catalog: Catalog;
+  onChange: (patch: Partial<ToolEntryDraft>) => void;
+}) {
+  const url = entry.url ?? "";
+  const params = entry.params ?? {};
+  const headers = entry.headers ?? {};
+
+  // Parse placeholders client-side for instant feedback. Validators on the
+  // server still run on save, but this drives both the PlaceholderPreview
+  // and the optional-in-path lint warning below.
+  const placeholders = useMemo(
+    () => (url ? parseUrlPlaceholders(url) : []),
+    [url],
+  );
+  const optionalInPath = useMemo(
+    () => placeholders.some((p) => p.position === "path" && p.optional),
+    [placeholders],
+  );
+
+  const nameInvalid = entry.name != null && entry.name.length > 0 && !HTTP_NAME_RE.test(entry.name);
+
+  return (
+    <div className="space-y-3">
+      <Field
+        label="Tool name"
+        hint="Becomes http__<name> for the model. Lowercase letters, digits, underscores; must start with a letter or underscore."
+      >
+        <TextInput
+          value={entry.name ?? ""}
+          onChange={(v) => onChange({ name: v })}
+          placeholder="e.g. github_get_user"
+        />
+        {nameInvalid && (
+          <span className="mt-1 block text-[11px] text-red-600">
+            Name must match /^[a-zA-Z_][a-zA-Z0-9_]*$/.
+          </span>
+        )}
+      </Field>
+
+      <Field
+        label="URL"
+        hint="Use {placeholder} for required params, {placeholder?} for optional query params."
+      >
+        <TextInput
+          value={url}
+          onChange={(v) => onChange({ url: v })}
+          placeholder="https://api.example.com/users/{userId}?status={status?}"
+          mono
+        />
+        <PlaceholderPreview url={url} pinnedKeys={Object.keys(params)} />
+        {optionalInPath && (
+          <span className="mt-1 block text-[11px] text-red-600">
+            Optional placeholders ({"{X?}"}) are only allowed in the query string.
+          </span>
+        )}
+      </Field>
+
+      <Field
+        label="Method"
+        hint="Only GET supported in this release."
+      >
+        <Select<"GET">
+          value="GET"
+          onChange={() => onChange({ method: "GET" })}
+          options={[{ value: "GET", label: "GET" }]}
+        />
+      </Field>
+
+      <Field
+        label="Description"
+        hint="Shown to the LLM. Helps it decide when to call this tool."
+      >
+        <TextArea
+          value={entry.description ?? ""}
+          onChange={(v) => onChange({ description: v })}
+          placeholder="Looks up a user by ID."
+          rows={3}
+        />
+      </Field>
+
+      <HeadersEditor
+        headers={headers}
+        onChange={(next) => onChange({ headers: next })}
+        secrets={catalog.secrets}
+      />
+
+      <ParamsEditor
+        params={params}
+        placeholders={placeholders}
+        onChange={(next) => onChange({ params: next })}
+        secrets={catalog.secrets}
+      />
+    </div>
   );
 }

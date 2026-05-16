@@ -1,7 +1,7 @@
 export const AGENT_KINDS = ["llm", "tool", "sequential", "parallel"] as const;
 export type AgentKindOption = (typeof AGENT_KINDS)[number];
 
-export const TOOL_ENTRY_KINDS = ["local", "mcp", "agent"] as const;
+export const TOOL_ENTRY_KINDS = ["local", "mcp", "agent", "http"] as const;
 export type ToolEntryKind = (typeof TOOL_ENTRY_KINDS)[number];
 
 export const SPAWNABLE_KINDS = ["ref", "inline"] as const;
