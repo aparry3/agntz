@@ -88,8 +88,22 @@ export {
   SkillNotFoundError,
 } from "./errors.js";
 
+// Multimodal — image content blocks + fetcher
+export { isContentBlockArray } from "./types.js";
+export { normalizeImageBlocks, ImageFetchError } from "./image-fetcher.js";
+export type { NormalizeImageBlocksOptions } from "./image-fetcher.js";
+
+// Sentinel prefix used by SQL stores to encode a ContentBlock[]
+// `InvocationLog.input` inside the legacy `input TEXT` column without a
+// second column. Shared so all stores stay in lockstep.
+export const INVOCATION_LOG_BLOCKS_PREFIX = "__agntz_blocks__:";
+
 // Types
 export type {
+  // Multimodal
+  ContentBlock,
+  ImageMediaType,
+
   // Agent
   AgentDefinition,
   AgentRef,

@@ -1,8 +1,9 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import pg from "pg";
-import { defineSkill } from "@agntz/core";
+import { defineSkill, INVOCATION_LOG_BLOCKS_PREFIX } from "@agntz/core";
 import type {
   AgentDefinition,
+  ContentBlock,
   ProviderConfig,
   UnifiedStore,
   ApiKeyRecord,
@@ -301,6 +302,16 @@ const MIGRATIONS: string[] = [
 
   UPDATE ar_schema_version SET version = 9;
   `,
+  // v10: multimodal — ar_messages.content_blocks stores the original
+  // ContentBlock[] payload alongside the legacy TEXT `content` column.
+  // Writes are dual: `content` always holds a flattened text view (so old
+  // readers still work), `content_blocks` is non-null only when the message
+  // was multimodal.
+  `
+  ALTER TABLE ar_messages ADD COLUMN IF NOT EXISTS content_blocks JSONB;
+
+  UPDATE ar_schema_version SET version = 10;
+  `,
 ];
 
 export interface PostgresStoreOptions {
@@ -547,7 +558,7 @@ export class PostgresStore implements UnifiedStore {
     await this.ensureMigrated();
     const u = this.requireUser();
     const result = await this.pool.query(
-      `SELECT m.role, m.content, m.tool_calls, m.tool_call_id, m.timestamp
+      `SELECT m.role, m.content, m.content_blocks, m.tool_calls, m.tool_call_id, m.timestamp
        FROM ${this.t("messages")} m
        INNER JOIN ${this.t("sessions")} s ON s.id = m.session_id
        WHERE s.user_id = $1 AND m.session_id = $2
@@ -558,13 +569,24 @@ export class PostgresStore implements UnifiedStore {
     return result.rows.map((r: {
       role: string;
       content: string;
+      content_blocks: unknown;
       tool_calls: unknown;
       tool_call_id: string | null;
       timestamp: Date;
     }) => {
+      // pg returns JSONB as already-parsed JS values; tolerate a raw string
+      // too in case some driver path returns it unparsed.
+      let content: string | ContentBlock[] = r.content;
+      if (r.content_blocks != null) {
+        const raw =
+          typeof r.content_blocks === "string"
+            ? safeJsonParse(r.content_blocks)
+            : r.content_blocks;
+        if (Array.isArray(raw)) content = raw as ContentBlock[];
+      }
       const msg: Message = {
         role: r.role as Message["role"],
-        content: r.content,
+        content,
         timestamp: r.timestamp instanceof Date ? r.timestamp.toISOString() : String(r.timestamp),
       };
       if (r.tool_calls) msg.toolCalls = r.tool_calls as Message["toolCalls"];
@@ -597,13 +619,17 @@ export class PostgresStore implements UnifiedStore {
       );
 
       for (const msg of messages) {
+        // Dual-write: legacy text column always populated (flattened view of
+        // any blocks), content_blocks only when input was multimodal.
+        const { contentText, contentBlocksJson } = serializeContent(msg.content);
         await client.query(
-          `INSERT INTO ${this.t("messages")} (session_id, role, content, tool_calls, tool_call_id, timestamp)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
+          `INSERT INTO ${this.t("messages")} (session_id, role, content, content_blocks, tool_calls, tool_call_id, timestamp)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
           [
             sessionId,
             msg.role,
-            msg.content,
+            contentText,
+            contentBlocksJson,
             msg.toolCalls ? JSON.stringify(msg.toolCalls) : null,
             msg.toolCallId ?? null,
             msg.timestamp,
@@ -736,6 +762,14 @@ export class PostgresStore implements UnifiedStore {
   async log(entry: InvocationLog): Promise<void> {
     await this.ensureMigrated();
     const u = this.requireUser();
+    // For multimodal input, serialize the blocks JSON into the existing
+    // `input` TEXT column with a sentinel prefix. Keeps the column shape
+    // backward-compatible: legacy readers see the prefix + JSON; the row
+    // helper detects the prefix and rehydrates the blocks.
+    const inputStored =
+      typeof entry.input === "string"
+        ? entry.input
+        : `${INVOCATION_LOG_BLOCKS_PREFIX}${JSON.stringify(entry.input)}`;
     await this.pool.query(
       `INSERT INTO ${this.t("invocation_logs")}
        (user_id, id, agent_id, session_id, input, output, tool_calls,
@@ -746,7 +780,7 @@ export class PostgresStore implements UnifiedStore {
         entry.id,
         entry.agentId,
         entry.sessionId ?? null,
-        entry.input,
+        inputStored,
         entry.output,
         JSON.stringify(entry.toolCalls),
         entry.usage.promptTokens,
@@ -1452,6 +1486,38 @@ export class PostgresStore implements UnifiedStore {
   }
 }
 
+/**
+ * Serialize a `Message.content` for dual-write. Always returns a flattened
+ * text view for the legacy `content` column; the JSON blocks view is set
+ * only when the content was a `ContentBlock[]`. Plain-string content writes
+ * NULL to content_blocks.
+ */
+function serializeContent(content: string | ContentBlock[]): {
+  contentText: string;
+  contentBlocksJson: string | null;
+} {
+  if (typeof content === "string") {
+    return { contentText: content, contentBlocksJson: null };
+  }
+  const pieces: string[] = [];
+  for (const b of content) {
+    if (b.type === "text") pieces.push(b.text);
+    else pieces.push("[image]");
+  }
+  return {
+    contentText: pieces.join(" "),
+    contentBlocksJson: JSON.stringify(content),
+  };
+}
+
+function safeJsonParse(s: string): unknown {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
+
 function rowToInvocationLog(r: {
   id: string;
   agent_id: string;
@@ -1468,11 +1534,16 @@ function rowToInvocationLog(r: {
   timestamp: Date;
   status?: string | null;
 }): InvocationLog {
+  let input: string | ContentBlock[] = r.input;
+  if (typeof r.input === "string" && r.input.startsWith(INVOCATION_LOG_BLOCKS_PREFIX)) {
+    const parsed = safeJsonParse(r.input.slice(INVOCATION_LOG_BLOCKS_PREFIX.length));
+    if (Array.isArray(parsed)) input = parsed as ContentBlock[];
+  }
   const log: InvocationLog = {
     id: r.id,
     agentId: r.agent_id,
     sessionId: r.session_id ?? undefined,
-    input: r.input,
+    input,
     output: r.output,
     toolCalls: (typeof r.tool_calls === "string" ? JSON.parse(r.tool_calls) : r.tool_calls) as InvocationLog["toolCalls"],
     usage: {

@@ -236,9 +236,66 @@ export interface TokenUsage {
 // Messages & Sessions
 // ═══════════════════════════════════════════════════════════════════════
 
+/**
+ * Supported image media types. The image fetcher allow-list is intentionally
+ * narrow — adding a new type requires updating both this union and the fetch
+ * validator in `image-fetcher.ts`.
+ */
+export type ImageMediaType =
+  | "image/jpeg"
+  | "image/png"
+  | "image/gif"
+  | "image/webp";
+
+/**
+ * One block of a multimodal message. Text blocks pass through to the model
+ * as-is; image blocks may reference a URL (fetched lazily by the runner) or
+ * an already-base64-encoded body.
+ */
+export type ContentBlock =
+  | { type: "text"; text: string }
+  | {
+      type: "image";
+      url: string;
+      headers?: Record<string, string>;
+      mediaType?: ImageMediaType;
+    }
+  | { type: "image"; base64: string; mediaType: ImageMediaType };
+
+/**
+ * Type guard for `ContentBlock[]`. Returns true only for non-empty arrays
+ * where every element is a well-formed text/image block. Used by the runner
+ * and message-builder to discriminate between legacy string input and the new
+ * multimodal parts payload.
+ */
+export function isContentBlockArray(input: unknown): input is ContentBlock[] {
+  if (!Array.isArray(input)) return false;
+  if (input.length === 0) return false;
+  for (const block of input) {
+    if (!block || typeof block !== "object") return false;
+    const b = block as Record<string, unknown>;
+    if (b.type === "text") {
+      if (typeof b.text !== "string") return false;
+    } else if (b.type === "image") {
+      const hasUrl = typeof b.url === "string";
+      const hasBase64 = typeof b.base64 === "string";
+      if (!hasUrl && !hasBase64) return false;
+      if (hasBase64 && typeof b.mediaType !== "string") return false;
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
+
 export interface Message {
   role: "system" | "user" | "assistant" | "tool";
-  content: string;
+  /**
+   * Either a plain string (legacy / single-text payload) or a `ContentBlock[]`
+   * for multimodal user messages. Stores persist the blocks array alongside a
+   * flattened text view; readers must accept both shapes.
+   */
+  content: string | ContentBlock[];
   toolCalls?: ToolCallRecord[];
   toolCallId?: string;
   timestamp: string;
@@ -272,7 +329,12 @@ export interface InvocationLog {
   id: string;
   agentId: string;
   sessionId?: string;
-  input: string;
+  /**
+   * Original invocation input. Plain string for legacy/text-only callers; a
+   * `ContentBlock[]` for multimodal (e.g. MMS-image) callers. Readers must
+   * accept both shapes — log views render text and ignore image bodies.
+   */
+  input: string | ContentBlock[];
   output: string;
   toolCalls: ToolCallRecord[];
   usage: TokenUsage;
@@ -912,6 +974,14 @@ export interface ModelStreamResult {
 
 export interface GenerateTextOptions {
   model: ModelConfig;
+  /**
+   * Conversation messages. `content` is declared `string` for back-compat
+   * with existing ModelProvider implementations; at runtime it may also
+   * carry an AI SDK parts array (e.g.
+   * `[{type:"text", text}, {type:"image", image, mediaType}]`) for
+   * multimodal user turns. Callers building parts arrays cast at the call
+   * site; the AI SDK accepts both shapes and validates them itself.
+   */
   messages: Array<{ role: string; content: string }>;
   tools?: Array<{
     name: string;

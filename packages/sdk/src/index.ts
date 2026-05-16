@@ -9,7 +9,9 @@ export { normalizeEvent, normalizeRunEvent, normalizeTraceLiveEvent } from "./ev
 export type {
   AgentKind,
   AgntzClientOptions,
+  ContentBlock,
   HealthResult,
+  ImageMediaType,
   MultiplexedRunEvent,
   Run,
   RunInput,

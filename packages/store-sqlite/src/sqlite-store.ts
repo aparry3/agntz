@@ -1,9 +1,10 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import Database from "better-sqlite3";
 import type { Database as DatabaseType } from "better-sqlite3";
-import { defineSkill } from "@agntz/core";
+import { defineSkill, INVOCATION_LOG_BLOCKS_PREFIX as BLOCKS_JSON_PREFIX } from "@agntz/core";
 import type {
   AgentDefinition,
+  ContentBlock,
   ProviderConfig,
   UnifiedStore,
   ApiKeyRecord,
@@ -256,6 +257,16 @@ const MIGRATIONS = [
 
   UPDATE schema_version SET version = 8;
   `,
+  // v9: multimodal — messages.content_blocks stores a JSON ContentBlock[]
+  // payload alongside the legacy text-only `content` column. Writes are
+  // dual: `content` always holds a flattened text view (so old readers still
+  // work), `content_blocks` is non-null only when the original message was
+  // multimodal. Sqlite has no native JSONB; TEXT storing JSON is fine.
+  `
+  ALTER TABLE messages ADD COLUMN content_blocks TEXT;
+
+  UPDATE schema_version SET version = 9;
+  `,
 ];
 
 export interface SqliteStoreOptions {
@@ -431,7 +442,7 @@ export class SqliteStore implements UnifiedStore {
     const u = this.requireUser();
     const rows = this.db
       .prepare(
-        `SELECT m.role, m.content, m.tool_calls, m.tool_call_id, m.timestamp
+        `SELECT m.role, m.content, m.content_blocks, m.tool_calls, m.tool_call_id, m.timestamp
          FROM messages m
          INNER JOIN sessions s ON s.id = m.session_id
          WHERE s.user_id = ? AND m.session_id = ?
@@ -440,15 +451,28 @@ export class SqliteStore implements UnifiedStore {
       .all(u, sessionId) as Array<{
       role: string;
       content: string;
+      content_blocks: string | null;
       tool_calls: string | null;
       tool_call_id: string | null;
       timestamp: string;
     }>;
 
     return rows.map((r) => {
+      // Prefer the multimodal blocks payload if present; fall back to the
+      // legacy text-only column.
+      let content: string | ContentBlock[] = r.content;
+      if (r.content_blocks) {
+        try {
+          const parsed = JSON.parse(r.content_blocks);
+          if (Array.isArray(parsed)) content = parsed as ContentBlock[];
+        } catch {
+          // Malformed JSON — surface text fallback rather than throwing.
+        }
+      }
+
       const msg: Message = {
         role: r.role as Message["role"],
-        content: r.content,
+        content,
         timestamp: r.timestamp,
       };
       if (r.tool_calls) msg.toolCalls = JSON.parse(r.tool_calls);
@@ -467,8 +491,8 @@ export class SqliteStore implements UnifiedStore {
        ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at`
     );
     const insertMsg = this.db.prepare(
-      `INSERT INTO messages (session_id, role, content, tool_calls, tool_call_id, timestamp)
-       VALUES (?, ?, ?, ?, ?, ?)`
+      `INSERT INTO messages (session_id, role, content, content_blocks, tool_calls, tool_call_id, timestamp)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
     );
 
     const transaction = this.db.transaction(() => {
@@ -478,10 +502,14 @@ export class SqliteStore implements UnifiedStore {
       }
       upsertSession.run(u, sessionId, now, now);
       for (const msg of messages) {
+        // Dual-write: legacy text column always populated (flattened view of
+        // any blocks), content_blocks only when input was multimodal.
+        const { contentText, contentBlocksJson } = serializeContent(msg.content);
         insertMsg.run(
           sessionId,
           msg.role,
-          msg.content,
+          contentText,
+          contentBlocksJson,
           msg.toolCalls ? JSON.stringify(msg.toolCalls) : null,
           msg.toolCallId ?? null,
           msg.timestamp
@@ -608,6 +636,15 @@ export class SqliteStore implements UnifiedStore {
 
   async log(entry: InvocationLog): Promise<void> {
     const u = this.requireUser();
+    // For multimodal input we serialize the blocks JSON into the existing
+    // `input` TEXT column with a sentinel prefix so the column shape stays
+    // backward-compatible: legacy readers see the prefix + JSON (still a
+    // string); the row helper below detects the prefix and rehydrates the
+    // blocks. Avoids adding a separate input_blocks column.
+    const inputStored =
+      typeof entry.input === "string"
+        ? entry.input
+        : `${BLOCKS_JSON_PREFIX}${JSON.stringify(entry.input)}`;
     this.db
       .prepare(
         `INSERT INTO invocation_logs (user_id, id, agent_id, session_id, input, output, tool_calls,
@@ -619,7 +656,7 @@ export class SqliteStore implements UnifiedStore {
         entry.id,
         entry.agentId,
         entry.sessionId ?? null,
-        entry.input,
+        inputStored,
         entry.output,
         JSON.stringify(entry.toolCalls),
         entry.usage.promptTokens,
@@ -1383,6 +1420,32 @@ interface SkillRow {
   updated_at: string;
 }
 
+/**
+ * Serialize a `Message.content` for dual-write. Always returns a flattened
+ * text view for the legacy `content` column; the JSON blocks view is set
+ * only when the content was a `ContentBlock[]`. Plain-string content writes
+ * NULL to content_blocks so old rows look identical.
+ */
+function serializeContent(content: string | ContentBlock[]): {
+  contentText: string;
+  contentBlocksJson: string | null;
+} {
+  if (typeof content === "string") {
+    return { contentText: content, contentBlocksJson: null };
+  }
+  // Flatten for the text column — image blocks render as a `[image]`
+  // placeholder so logs/UIs that read content TEXT stay sensible.
+  const pieces: string[] = [];
+  for (const b of content) {
+    if (b.type === "text") pieces.push(b.text);
+    else pieces.push("[image]");
+  }
+  return {
+    contentText: pieces.join(" "),
+    contentBlocksJson: JSON.stringify(content),
+  };
+}
+
 function rowToSkill(r: SkillRow): SkillDefinition {
   const skill: SkillDefinition = {
     name: r.name,
@@ -1416,12 +1479,28 @@ function rowToRun(r: RunRow): Run {
   return run;
 }
 
+/**
+ * Sentinel prefix on `invocation_logs.input` that signals "what follows is a
+ * JSON-encoded `ContentBlock[]`". The prefix is non-empty and unlikely to
+ * appear in user-typed input — chosen to be self-documenting in `sqlite3`
+ * shell dumps too.
+ */
+
 function rowToLog(r: LogRow): InvocationLog {
+  let input: string | ContentBlock[] = r.input;
+  if (typeof r.input === "string" && r.input.startsWith(BLOCKS_JSON_PREFIX)) {
+    try {
+      const parsed = JSON.parse(r.input.slice(BLOCKS_JSON_PREFIX.length));
+      if (Array.isArray(parsed)) input = parsed as ContentBlock[];
+    } catch {
+      // Malformed sentinel — leave the raw text in place.
+    }
+  }
   const log: InvocationLog = {
     id: r.id,
     agentId: r.agent_id,
     sessionId: r.session_id ?? undefined,
-    input: r.input,
+    input,
     output: r.output,
     toolCalls: JSON.parse(r.tool_calls),
     usage: {

@@ -225,6 +225,49 @@ describe("SqliteStore", () => {
       const sessions = await store.listSessions();
       expect(sessions).toHaveLength(2);
     });
+
+    it("dual-writes multimodal ContentBlock[] content and reads it back as blocks", async () => {
+      const blocks = [
+        { type: "text", text: "how's my form?" },
+        {
+          type: "image",
+          base64: "QUFBQQ==",
+          mediaType: "image/jpeg" as const,
+        },
+      ];
+      await store.append("sess-mm", [
+        { role: "user", content: blocks, timestamp: now } as Message,
+        { role: "assistant", content: "Great squat!", timestamp: now },
+      ]);
+
+      // Inspect raw rows: legacy content column has flattened text; the new
+      // content_blocks column carries the JSON payload.
+      const raw = admin.database
+        .prepare(
+          `SELECT role, content, content_blocks FROM messages
+           WHERE session_id = ? ORDER BY id`,
+        )
+        .all("sess-mm") as Array<{
+        role: string;
+        content: string;
+        content_blocks: string | null;
+      }>;
+      expect(raw[0].role).toBe("user");
+      expect(raw[0].content).toBe("how's my form? [image]");
+      expect(raw[0].content_blocks).not.toBeNull();
+      expect(JSON.parse(raw[0].content_blocks as string)).toEqual(blocks);
+      // Assistant string content writes NULL to content_blocks.
+      expect(raw[1].content_blocks).toBeNull();
+      expect(raw[1].content).toBe("Great squat!");
+
+      // Reads return the blocks array on the multimodal message and a plain
+      // string on the assistant reply.
+      const out = await store.getMessages("sess-mm");
+      expect(out).toHaveLength(2);
+      expect(Array.isArray(out[0].content)).toBe(true);
+      expect(out[0].content).toEqual(blocks);
+      expect(out[1].content).toBe("Great squat!");
+    });
   });
 
   // ═══════════════════════════════════════════════════════════════════

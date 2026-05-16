@@ -5,9 +5,41 @@ export interface AgntzClientOptions {
   defaultSignal?: AbortSignal;
 }
 
+/**
+ * IANA media types accepted by multimodal image blocks. Mirrors
+ * `@agntz/core`'s `ImageMediaType` — duplicated so the SDK has no runtime
+ * dependency on core.
+ */
+export type ImageMediaType =
+  | "image/jpeg"
+  | "image/png"
+  | "image/gif"
+  | "image/webp";
+
+/**
+ * One block of a multimodal user message. Either a text fragment or an
+ * image referenced by URL (fetched server-side) or already-base64-encoded
+ * body. Mirrors `@agntz/core`'s `ContentBlock`.
+ */
+export type ContentBlock =
+  | { type: "text"; text: string }
+  | {
+      type: "image";
+      url: string;
+      headers?: Record<string, string>;
+      mediaType?: ImageMediaType;
+    }
+  | { type: "image"; base64: string; mediaType: ImageMediaType };
+
 export interface RunInput {
   agentId: string;
-  input?: unknown;
+  /**
+   * Agent input. For LLM agents this is typically a string or a
+   * `ContentBlock[]` (for multimodal MMS-style inputs); for non-LLM
+   * tool/manifest agents it can be any JSON value the manifest is wired to
+   * consume.
+   */
+  input?: unknown | string | ContentBlock[];
   /** Forward-compat: worker accepts but ignores today. */
   sessionId?: string;
   signal?: AbortSignal;
@@ -98,7 +130,8 @@ export interface Run {
 
 export interface RunsStartInput {
   agentId: string;
-  input?: unknown;
+  /** See `RunInput.input` for the accepted shapes. */
+  input?: unknown | string | ContentBlock[];
   sessionId?: string;
   signal?: AbortSignal;
 }

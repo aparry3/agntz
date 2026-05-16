@@ -10,6 +10,7 @@ import type {
   ToolInfo,
   ToolContext,
   ContextEntry,
+  ContentBlock,
   Message,
   InvocationLog,
   TokenUsage,
@@ -24,6 +25,10 @@ import type {
   PendingChildResult,
   RunRegistry,
 } from "./types.js";
+import { isContentBlockArray } from "./types.js";
+import { normalizeImageBlocks } from "./image-fetcher.js";
+import { flattenContentToText } from "./message-builder.js";
+import type { AiSdkMessage } from "./message-builder.js";
 import { ToolRegistry } from "./tool.js";
 import { zodToJsonSchema } from "./utils/schema.js";
 import {
@@ -336,7 +341,11 @@ export class Runner {
    * (text-delta, tool-call-start, tool-call-end, step-complete, draining)
    * to the registry when one is wired.
    */
-  stream(agentId: string, input: string, options: Omit<InvokeOptions, "stream"> = {}): InvokeStream {
+  stream(
+    agentId: string,
+    input: string | ContentBlock[],
+    options: Omit<InvokeOptions, "stream"> = {},
+  ): InvokeStream {
     const self = this;
     let resolveResult: (r: InvokeResult) => void;
     let rejectResult: (e: unknown) => void;
@@ -364,6 +373,13 @@ export class Runner {
       const effectiveSessionId = options.sessionId ?? generateSessionId();
       await self.sessionStore.getOrCreateSession(effectiveSessionId);
 
+      // For multimodal input the Run record/InvocationLog still need a string
+      // — the flattened text view is what list UIs render and what spawn
+      // semantics require. The actual blocks (with base64 image bodies) live
+      // on the persisted Message and on InvocationLog.input.
+      const inputAsString =
+        typeof input === "string" ? input : flattenContentToText(input);
+
       // ─── Cancel-and-replace concurrency + Run registration ────────────
       const runRegistry = options.runRegistry;
       let runId = options.runId;
@@ -381,7 +397,7 @@ export class Runner {
               }
               const root = runRegistry.create({
                 agentId,
-                input,
+                input: inputAsString,
                 parentRunId: options.parentRunId,
                 userId: options.userId,
                 sessionId: effectiveSessionId,
@@ -395,7 +411,7 @@ export class Runner {
           } else {
             const root = runRegistry.create({
               agentId,
-              input,
+              input: inputAsString,
               parentRunId: options.parentRunId,
               userId: options.userId,
               sessionId: effectiveSessionId,
@@ -468,9 +484,17 @@ export class Runner {
           }
         }
 
+        // For multimodal input, fetch URLs → base64 BEFORE building the
+        // model messages so the AI SDK sees ready-to-send image parts. The
+        // normalized blocks (or original string) are also what we persist to
+        // the session and to InvocationLog.input.
+        const normalizedInput: string | ContentBlock[] = isContentBlockArray(input)
+          ? await normalizeImageBlocks(input)
+          : input;
+
         const messages = buildMessages({
           agent,
-          input,
+          input: normalizedInput,
           sessionHistory,
           contextEntries,
           extraContext: options.extraContext,
@@ -518,7 +542,11 @@ export class Runner {
           if (self.modelProvider.streamText) {
             const streamResult = await self.modelProvider.streamText({
               model: modelConfig,
-              messages,
+              // AiSdkMessage union widens content to string | AiMessagePart[];
+              // ModelProvider.generateText was originally typed
+              // content:string. The AI SDK accepts both at runtime — cast
+              // through `unknown` for backward-compatible providers.
+              messages: messages as unknown as Array<{ role: string; content: string }>,
               tools: availableTools.length > 0 ? availableTools : undefined,
               outputSchema,
               signal: effectiveSignal,
@@ -547,7 +575,7 @@ export class Runner {
             // Fallback for providers without streaming
             const result = await self.modelProvider.generateText({
               model: modelConfig,
-              messages,
+              messages: messages as unknown as Array<{ role: string; content: string }>,
               tools: availableTools.length > 0 ? availableTools : undefined,
               outputSchema,
               signal: effectiveSignal,
@@ -728,11 +756,12 @@ export class Runner {
         // Persist session — but only if this run wasn't cancelled mid-loop.
         // A cancelled run shouldn't poison the conversation history; the
         // replacing run will re-persist the user input as part of its own
-        // turn.
+        // turn. Persist the normalized form (base64-materialized images) so
+        // replaying the conversation doesn't require re-fetching URLs.
         if (!effectiveSignal?.aborted) {
           const now = new Date().toISOString();
           await self.sessionStore.append(effectiveSessionId, [
-            { role: "user", content: input, timestamp: now },
+            { role: "user", content: normalizedInput, timestamp: now },
             {
               role: "assistant",
               content: finalOutput,
@@ -757,12 +786,13 @@ export class Runner {
 
         const cancelled = effectiveSignal?.aborted ?? false;
 
-        // Log
+        // Log — preserve the normalized blocks (or original string) so the
+        // input view rebuilds exactly what was sent to the model.
         await self.logStore.log({
           id: invocationId,
           agentId,
           sessionId: effectiveSessionId,
-          input,
+          input: normalizedInput,
           output: finalOutput,
           toolCalls: allToolCalls,
           usage: totalUsage,
@@ -834,7 +864,11 @@ export class Runner {
   /**
    * Invoke an agent. This is the main entry point for running an agent.
    */
-  async invoke(agentId: string, input: string, options: InvokeOptions = {}): Promise<InvokeResult> {
+  async invoke(
+    agentId: string,
+    input: string | ContentBlock[],
+    options: InvokeOptions = {},
+  ): Promise<InvokeResult> {
     // Check recursion depth for agent-as-tool chains
     const currentDepth = options._recursionDepth ?? 0;
     const maxDepth = this.config.maxRecursionDepth ?? DEFAULT_MAX_RECURSION_DEPTH;
@@ -854,6 +888,13 @@ export class Runner {
     // persistent home before any messages get appended.
     const effectiveSessionId = options.sessionId ?? generateSessionId();
     await this.sessionStore.getOrCreateSession(effectiveSessionId);
+
+    // For multimodal input the Run record/telemetry input still need a
+    // string view (used by list UIs and span attributes); the actual blocks
+    // (with base64 image bodies) live on the persisted Message and on
+    // InvocationLog.input.
+    const inputAsString =
+      typeof input === "string" ? input : flattenContentToText(input);
 
     // ─── Cancel-and-replace concurrency + Run registration ────────────
     // The per-session mutex must wrap "check active → cancel → create new",
@@ -878,7 +919,7 @@ export class Runner {
             }
             const root = runRegistry.create({
               agentId,
-              input,
+              input: inputAsString,
               parentRunId: options.parentRunId,
               userId: options.userId,
               sessionId: effectiveSessionId,
@@ -892,7 +933,7 @@ export class Runner {
         } else {
           const root = runRegistry.create({
             agentId,
-            input,
+            input: inputAsString,
             parentRunId: options.parentRunId,
             userId: options.userId,
             sessionId: effectiveSessionId,
@@ -934,7 +975,8 @@ export class Runner {
     // Use the per-request emitter when provided; fall back to the runner-level one.
     const spanEmitter = options.spanEmitter ?? this.telemetry;
 
-    // Start telemetry span
+    // Start telemetry span — span attributes are scalar text, so use the
+    // flattened view (image bytes don't belong in a span attribute).
     const span = spanEmitter.startInvoke({
       agentId,
       invocationId,
@@ -942,7 +984,7 @@ export class Runner {
       ownerId: options.ownerId,
       sessionId: effectiveSessionId,
       contextIds: options.contextIds,
-      input,
+      input: inputAsString,
     });
 
     // Hoisted so the catch block can write an audit log entry even when a
@@ -985,10 +1027,18 @@ export class Runner {
         }
       }
 
+      // For multimodal input, fetch URLs → base64 BEFORE building the model
+      // messages so the AI SDK sees ready-to-send image parts. The normalized
+      // blocks (or original string) are also what we persist to the session
+      // and to InvocationLog.input.
+      const normalizedInput: string | ContentBlock[] = isContentBlockArray(input)
+        ? await normalizeImageBlocks(input)
+        : input;
+
       // Build messages
       const messages = buildMessages({
         agent,
-        input,
+        input: normalizedInput,
         sessionHistory,
         contextEntries,
         extraContext: options.extraContext,
@@ -1046,7 +1096,10 @@ export class Runner {
           result = await withRetry(
             () => this.modelProvider.generateText({
               model: modelConfig,
-              messages,
+              // See stream() — AiSdkMessage union widens content to
+              // string | AiMessagePart[]; cast through `unknown` for the
+              // legacy-typed ModelProvider interface.
+              messages: messages as unknown as Array<{ role: string; content: string }>,
               tools: availableTools.length > 0 ? availableTools : undefined,
               outputSchema,
               signal: effectiveSignal,
@@ -1242,10 +1295,12 @@ export class Runner {
       // A cancelled run shouldn't poison the conversation history; the
       // replacing run will re-persist the user input as part of its own
       // turn. Tool side effects already executed remain in InvocationLog.
+      // Persist the normalized form (base64-materialized images) so replaying
+      // the conversation doesn't require re-fetching URLs.
       if (!effectiveSignal?.aborted) {
         const now = new Date().toISOString();
         const newMessages: Message[] = [
-          { role: "user", content: input, timestamp: now },
+          { role: "user", content: normalizedInput, timestamp: now },
           {
             role: "assistant",
             content: finalOutput,
@@ -1277,7 +1332,7 @@ export class Runner {
         id: invocationId,
         agentId,
         sessionId: effectiveSessionId,
-        input,
+        input: normalizedInput,
         output: finalOutput,
         toolCalls: allToolCalls,
         usage: totalUsage,
@@ -1349,11 +1404,12 @@ export class Runner {
    */
   private async augmentSystemPromptWithSkills(
     agent: AgentDefinition,
-    messages: Array<{ role: string; content: string }>,
+    messages: AiSdkMessage[],
   ): Promise<void> {
     if (!agent.skills?.length || !this._skillStore) return;
     const sys = messages[0];
     if (!sys || sys.role !== "system") return;
+    if (typeof sys.content !== "string") return;
 
     const lines: string[] = [];
     for (const name of agent.skills) {
@@ -1379,7 +1435,7 @@ export class Runner {
   private injectPendingCompletions(
     registry: RunRegistry,
     runId: string,
-    messages: Array<{ role: string; content: string }>,
+    messages: AiSdkMessage[],
   ): number {
     const pending = registry.consumePending(runId);
     for (const p of pending) {

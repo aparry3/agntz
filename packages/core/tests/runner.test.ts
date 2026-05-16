@@ -435,4 +435,82 @@ describe("Runner", () => {
     expect(entries[0].content).toBe("Here are my findings.");
     expect(entries[0].agentId).toBe("researcher");
   });
+
+  it("normalizes multimodal ContentBlock[] input — URLs fetched, base64'd, persisted", async () => {
+    const body = new Uint8Array([0xff, 0xd8, 0xff, 0xe0]); // tiny JPEG header
+    const expectedBase64 = Buffer.from(body).toString("base64");
+    const customFetch = vi.fn(async () => {
+      const headers = new Headers({
+        "content-type": "image/jpeg",
+        "content-length": String(body.byteLength),
+      });
+      return new Response(body, { status: 200, headers });
+    });
+
+    // Patch the global fetch for the runner's image-fetcher path.
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = customFetch as unknown as typeof fetch;
+
+    try {
+      const provider = new MockModelProvider(mockResponse("That's a great pose!"));
+      const runner = createRunner({ modelProvider: provider });
+
+      runner.registerAgent(
+        defineAgent({
+          id: "trainer",
+          name: "Trainer",
+          systemPrompt: "You coach lifts from photos.",
+          model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+        }),
+      );
+
+      const result = await runner.invoke("trainer", [
+        { type: "text", text: "how's my form?" },
+        { type: "image", url: "https://example.test/squat.jpg" },
+      ]);
+
+      // The image-fetcher resolved the URL once.
+      expect(customFetch).toHaveBeenCalledTimes(1);
+
+      // Messages handed to the model carry parts with base64 image data.
+      expect(provider.calls).toHaveLength(1);
+      const userMsg = provider.calls[0].messages.find((m) => m.role === "user");
+      expect(userMsg).toBeDefined();
+      const parts = userMsg!.content as unknown as Array<{
+        type: string;
+        text?: string;
+        image?: string;
+        mediaType?: string;
+      }>;
+      expect(Array.isArray(parts)).toBe(true);
+      expect(parts[0]).toEqual({ type: "text", text: "how's my form?" });
+      expect(parts[1]).toEqual({
+        type: "image",
+        image: expectedBase64,
+        mediaType: "image/jpeg",
+      });
+
+      // Session was persisted with the normalized blocks.
+      const stored = await runner.sessions.getMessages(result.sessionId);
+      expect(stored).toHaveLength(2);
+      const userStored = stored[0];
+      expect(Array.isArray(userStored.content)).toBe(true);
+      const blocks = userStored.content as Array<
+        { type: "text"; text: string } | { type: "image"; base64: string; mediaType: string }
+      >;
+      expect(blocks[0]).toEqual({ type: "text", text: "how's my form?" });
+      expect(blocks[1]).toEqual({
+        type: "image",
+        base64: expectedBase64,
+        mediaType: "image/jpeg",
+      });
+
+      // Invocation log carries the normalized blocks too.
+      const log = await runner.logs.getLog(result.invocationId);
+      expect(log).not.toBeNull();
+      expect(Array.isArray(log!.input)).toBe(true);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
 });
