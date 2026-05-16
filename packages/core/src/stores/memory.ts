@@ -493,6 +493,22 @@ export class MemoryStore implements UnifiedStore {
     });
   }
 
+  async updateSecretDescription(
+    name: string,
+    description: string | undefined,
+  ): Promise<boolean> {
+    const map = this.secretMap();
+    const row = map.get(name);
+    if (!row) return false;
+    const now = this.nextTimestamp();
+    map.set(name, {
+      ...row,
+      description,
+      updatedAt: now,
+    });
+    return true;
+  }
+
   async deleteSecret(name: string): Promise<void> {
     this.secretMap().delete(name);
   }

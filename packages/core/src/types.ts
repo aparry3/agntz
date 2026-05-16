@@ -487,6 +487,13 @@ export interface SecretStore {
   /** Decrypted value — runtime only; never expose via an HTTP API route. */
   getSecretValue(name: string): Promise<string | null>;
   putSecret(secret: SecretDefinition): Promise<void>;
+  /**
+   * Update only the description (and updatedAt timestamp) of an existing
+   * secret without touching the encrypted value. Returns false if no secret
+   * with that name exists. Lets API routes implement "edit metadata" flows
+   * without ever needing to decrypt the value.
+   */
+  updateSecretDescription(name: string, description: string | undefined): Promise<boolean>;
   deleteSecret(name: string): Promise<void>;
 }
 

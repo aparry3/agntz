@@ -1460,6 +1460,22 @@ export class PostgresStore implements UnifiedStore {
     );
   }
 
+  async updateSecretDescription(
+    name: string,
+    description: string | undefined,
+  ): Promise<boolean> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const now = this.nextTimestamp();
+    const result = await this.pool.query(
+      `UPDATE ${this.t("secrets")}
+       SET description = $1, updated_at = $2
+       WHERE user_id = $3 AND name = $4`,
+      [description ?? null, now, u, name],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
   async deleteSecret(name: string): Promise<void> {
     await this.ensureMigrated();
     const u = this.requireUser();

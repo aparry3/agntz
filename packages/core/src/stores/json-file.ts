@@ -543,6 +543,30 @@ export class JsonFileStore implements UnifiedStore {
     });
   }
 
+  async updateSecretDescription(
+    name: string,
+    description: string | undefined,
+  ): Promise<boolean> {
+    await this.ensureUserDirs();
+    const path = this.secretPath(name);
+    const existing = await this.readJson<{
+      name: string;
+      encrypted: string;
+      lastFour: string;
+      description?: string;
+      createdAt: string;
+      updatedAt: string;
+    }>(path);
+    if (!existing) return false;
+    const now = this.nextTimestamp();
+    await this.writeJson(path, {
+      ...existing,
+      description,
+      updatedAt: now,
+    });
+    return true;
+  }
+
   async deleteSecret(name: string): Promise<void> {
     await this.ensureUserDirs();
     await unlink(this.secretPath(name)).catch(() => {});

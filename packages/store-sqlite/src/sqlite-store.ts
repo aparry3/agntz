@@ -1340,6 +1340,21 @@ export class SqliteStore implements UnifiedStore {
       );
   }
 
+  async updateSecretDescription(
+    name: string,
+    description: string | undefined,
+  ): Promise<boolean> {
+    const u = this.requireUser();
+    const now = this.nextTimestamp();
+    const info = this.db
+      .prepare(
+        `UPDATE secrets SET description = ?, updated_at = ?
+         WHERE user_id = ? AND name = ?`,
+      )
+      .run(description ?? null, now, u, name);
+    return info.changes > 0;
+  }
+
   async deleteSecret(name: string): Promise<void> {
     const u = this.requireUser();
     this.db.prepare("DELETE FROM secrets WHERE user_id = ? AND name = ?").run(u, name);
