@@ -324,6 +324,23 @@ export function findNode(root: PipelineNode, id: string): PipelineNode | null {
 }
 
 /**
+ * Walks the tree to find the parent of the node with the given id. Returns
+ * null for the root (it has no parent) and undefined if the id isn't found.
+ * Used by the inspector's delete affordance so we can re-select a sensible
+ * neighbour after pruning a step.
+ */
+export function findParent(root: PipelineNode, id: string): PipelineNode | null | undefined {
+  if (root.id === id) return null;
+  const children = root.steps ?? root.branches ?? [];
+  for (const child of children) {
+    if (child.id === id) return root;
+    const found = findParent(child, id);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+/**
  * State snapshot for the inspector's AVAILABLE STATE panel. Walks down from
  * the root to `target.id`, accumulating:
  *   - the root agent's declared `inputSchema` keys (visible everywhere)

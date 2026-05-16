@@ -11,6 +11,7 @@ import { PipelineCanvas } from "./pipeline-canvas";
 import { PipelineInspector } from "./pipeline-inspector";
 import {
   findNode,
+  findParent,
   isRecord,
   nodeFromAgent,
   setIn,
@@ -101,6 +102,27 @@ export function AgentBuilder({ manifest, onChange, catalog, idLocked }: AgentBui
     onChange(stringifyYAML(orderManifestKeys(next), { lineWidth: 0 }));
   };
 
+  const handleRemoveStep = (node: PipelineNode) => {
+    // Root has no enclosing array — guard so the affordance can't bypass the
+    // inspector's `!isRoot` check by accident.
+    if (node.isRoot || !node.stepPath) return;
+    const arrPath = node.stepPath.slice(0, -1);
+    const indexInArr = node.stepPath[node.stepPath.length - 1];
+    if (typeof indexInArr !== "number") return;
+
+    const current = readArrayAt(parsedManifest, arrPath);
+    const nextArr = [...current.slice(0, indexInArr), ...current.slice(indexInArr + 1)];
+
+    // Re-select the parent so the inspector stays useful; fall back to root
+    // if for some reason the parent isn't in the tree.
+    const parent = findParent(pipeline, node.id);
+    setSelectedId(parent?.id ?? pipeline.id);
+
+    // Drop the whole array key when emptying — the YAML is cleaner without an
+    // empty `steps: []` left behind.
+    setField(arrPath, nextArr.length > 0 ? nextArr : undefined);
+  };
+
   const handleAddStep = (parent: PipelineNode, index: number) => {
     const newAgent = {
       id: `step-${Date.now().toString(36)}`,
@@ -153,6 +175,7 @@ export function AgentBuilder({ manifest, onChange, catalog, idLocked }: AgentBui
           catalog={catalog}
           setField={setField}
           idLocked={idLocked}
+          onRemove={handleRemoveStep}
         />
       </aside>
     </div>
