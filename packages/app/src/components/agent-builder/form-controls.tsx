@@ -1,5 +1,10 @@
 "use client";
 
+// Small UI primitives used by the legacy HTTP-tool sub-editors
+// (HeadersEditor, ParamsEditor) that still ship as standalone components
+// embedded inside the pipeline inspector. The pipeline inspector itself
+// uses its own inline-styled controls; this file is intentionally narrow.
+
 import type { ReactNode } from "react";
 
 export function Field({
@@ -73,43 +78,6 @@ export function TextArea({
   );
 }
 
-export function NumberInput({
-  value,
-  onChange,
-  placeholder,
-  min,
-  max,
-  step,
-}: {
-  value: number | undefined;
-  onChange: (next: number | undefined) => void;
-  placeholder?: string;
-  min?: number;
-  max?: number;
-  step?: number;
-}) {
-  return (
-    <input
-      type="number"
-      value={value ?? ""}
-      onChange={(event) => {
-        const raw = event.target.value;
-        if (raw === "") {
-          onChange(undefined);
-          return;
-        }
-        const num = Number(raw);
-        if (Number.isFinite(num)) onChange(num);
-      }}
-      placeholder={placeholder}
-      min={min}
-      max={max}
-      step={step}
-      className={inputClass}
-    />
-  );
-}
-
 export function Select<T extends string>({
   value,
   onChange,
@@ -137,31 +105,6 @@ export function Select<T extends string>({
         </option>
       ))}
     </select>
-  );
-}
-
-export function SectionCard({
-  title,
-  description,
-  actions,
-  children,
-}: {
-  title: string;
-  description?: string;
-  actions?: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <div className="rounded-2xl border border-stone-200 bg-white p-5">
-      <div className="mb-4 flex items-start justify-between gap-3">
-        <div>
-          <h3 className="text-sm font-semibold text-zinc-900">{title}</h3>
-          {description && <p className="mt-1 text-xs text-zinc-500">{description}</p>}
-        </div>
-        {actions}
-      </div>
-      {children}
-    </div>
   );
 }
 

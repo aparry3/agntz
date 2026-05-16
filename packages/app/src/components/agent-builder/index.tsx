@@ -1,15 +1,22 @@
 "use client";
 
-import { useMemo } from "react";
+// Primary "Build" mode for the agent editor. The pipeline canvas is the
+// glanceable flow view; clicking a block opens the inspector that edits
+// every YAML config option without leaving the page.
+
+import { useEffect, useMemo, useState } from "react";
 import { parse as parseYAML, stringify as stringifyYAML } from "yaml";
 import type { Catalog } from "@/lib/use-catalog";
-import { AGENT_KINDS, type AgentKindOption, type PropertyType } from "@/lib/manifest-catalog";
-import { IdentitySection } from "./identity-section";
-import { InstructionSection } from "./instruction-section";
-import { ModelSection } from "./model-section";
-import { ToolsSection, type ToolEntryDraft } from "./tools-section";
-import { SpawnableSection, type SpawnableDraft } from "./spawnable-section";
-import { OutputSection, type OutputFieldDraft } from "./output-section";
+import { PipelineCanvas } from "./pipeline-canvas";
+import { PipelineInspector } from "./pipeline-inspector";
+import {
+  findNode,
+  isRecord,
+  nodeFromAgent,
+  setIn,
+  type PipelineNode,
+  type PipelinePath,
+} from "./pipeline-types";
 
 interface AgentBuilderProps {
   manifest: string;
@@ -18,306 +25,9 @@ interface AgentBuilderProps {
   idLocked: boolean;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function asString(value: unknown): string {
-  return typeof value === "string" ? value : "";
-}
-
-function asNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-function readStringRecord(value: unknown): Record<string, string> | undefined {
-  if (!isRecord(value)) return undefined;
-  const out: Record<string, string> = {};
-  let saw = false;
-  for (const [k, v] of Object.entries(value)) {
-    if (typeof v === "string") {
-      out[k] = v;
-      saw = true;
-    }
-  }
-  return saw ? out : undefined;
-}
-
-function toolEntriesFromManifest(manifest: Record<string, unknown>): ToolEntryDraft[] {
-  const raw = manifest.tools;
-  if (!Array.isArray(raw)) return [];
-  return raw.map((entry): ToolEntryDraft => {
-    if (!isRecord(entry)) return { kind: "", tools: [] };
-    const kind = entry.kind;
-    if (kind === "local") {
-      const tools = Array.isArray(entry.tools) ? entry.tools.filter((t): t is string => typeof t === "string") : [];
-      return { kind: "local", tools };
-    }
-    if (kind === "mcp") {
-      const server = typeof entry.server === "string" ? entry.server : undefined;
-      const tools = Array.isArray(entry.tools)
-        ? entry.tools
-            .map((t) => (typeof t === "string" ? t : isRecord(t) && typeof t.tool === "string" ? t.tool : null))
-            .filter((t): t is string => t !== null)
-        : [];
-      return { kind: "mcp", tools, server };
-    }
-    if (kind === "agent") {
-      const agent = typeof entry.agent === "string" ? entry.agent : undefined;
-      return { kind: "agent", tools: [], agent };
-    }
-    if (kind === "http") {
-      return {
-        kind: "http",
-        tools: [],
-        name: typeof entry.name === "string" ? entry.name : undefined,
-        url: typeof entry.url === "string" ? entry.url : undefined,
-        method: entry.method === "GET" ? "GET" : undefined,
-        description: typeof entry.description === "string" ? entry.description : undefined,
-        params: readStringRecord(entry.params),
-        headers: readStringRecord(entry.headers),
-      };
-    }
-    return { kind: "", tools: [] };
-  });
-}
-
-function toolEntriesToManifest(entries: ToolEntryDraft[]): unknown[] {
-  return entries
-    .filter((e) => e.kind !== "")
-    .map((entry) => {
-      if (entry.kind === "local") return { kind: "local", tools: entry.tools };
-      if (entry.kind === "mcp") {
-        const out: Record<string, unknown> = { kind: "mcp" };
-        if (entry.server) out.server = entry.server;
-        if (entry.tools.length > 0) out.tools = entry.tools;
-        return out;
-      }
-      if (entry.kind === "agent") {
-        const out: Record<string, unknown> = { kind: "agent" };
-        if (entry.agent) out.agent = entry.agent;
-        return out;
-      }
-      if (entry.kind === "http") {
-        const out: Record<string, unknown> = { kind: "http" };
-        if (entry.name) out.name = entry.name;
-        if (entry.url) out.url = entry.url;
-        // Default to GET — omit explicit method since it's the only allowed
-        // value in MVP, keeping the serialised YAML minimal.
-        if (entry.method && entry.method !== "GET") out.method = entry.method;
-        if (entry.description) out.description = entry.description;
-        if (entry.params && Object.keys(entry.params).length > 0) out.params = entry.params;
-        if (entry.headers && Object.keys(entry.headers).length > 0) out.headers = entry.headers;
-        return out;
-      }
-      return {};
-    });
-}
-
-function spawnableFromManifest(manifest: Record<string, unknown>): SpawnableDraft[] {
-  const raw = manifest.spawnable;
-  if (!Array.isArray(raw)) return [];
-  return raw.map((entry): SpawnableDraft => {
-    if (!isRecord(entry)) return { kind: "ref" };
-    if (entry.kind === "inline") {
-      return { kind: "inline", inlineYaml: undefined };
-    }
-    return {
-      kind: "ref",
-      agentId: typeof entry.agentId === "string" ? entry.agentId : undefined,
-    };
-  });
-}
-
-function spawnableToManifest(entries: SpawnableDraft[], previous: unknown): unknown[] {
-  const prevArr = Array.isArray(previous) ? previous : [];
-  return entries.map((entry, index) => {
-    if (entry.kind === "inline") {
-      // Preserve the existing inline definition if there was one at this index.
-      const existing = prevArr[index];
-      if (isRecord(existing) && existing.kind === "inline") return existing;
-      return { kind: "inline", definition: {} };
-    }
-    const out: Record<string, unknown> = { kind: "ref" };
-    if (entry.agentId) out.agentId = entry.agentId;
-    return out;
-  });
-}
-
-function outputFieldsFromManifest(manifest: Record<string, unknown>): OutputFieldDraft[] {
-  const raw = manifest.outputSchema;
-  if (!isRecord(raw)) return [];
-  return Object.entries(raw).map(([key, value]) => {
-    let type: PropertyType | "" = "";
-    if (typeof value === "string") {
-      type = (value as PropertyType) ?? "";
-    } else if (isRecord(value) && typeof value.type === "string") {
-      type = value.type as PropertyType;
-    }
-    return { key, type };
-  });
-}
-
-function outputFieldsToManifest(fields: OutputFieldDraft[]): Record<string, unknown> | undefined {
-  const valid = fields.filter((f) => f.key.trim() && f.type);
-  if (valid.length === 0) return undefined;
-  const out: Record<string, unknown> = {};
-  for (const f of valid) {
-    out[f.key.trim()] = f.type;
-  }
-  return out;
-}
-
-export function AgentBuilder({ manifest, onChange, catalog, idLocked }: AgentBuilderProps) {
-  const parsed = useMemo<Record<string, unknown>>(() => {
-    try {
-      const v = parseYAML(manifest);
-      return isRecord(v) ? v : {};
-    } catch {
-      return {};
-    }
-  }, [manifest]);
-
-  const id = asString(parsed.id);
-  const name = asString(parsed.name);
-  const description = asString(parsed.description);
-  const instruction = asString(parsed.instruction);
-  const kindRaw = asString(parsed.kind);
-  const kind: AgentKindOption | "" = (AGENT_KINDS as readonly string[]).includes(kindRaw)
-    ? (kindRaw as AgentKindOption)
-    : "";
-
-  const model = isRecord(parsed.model) ? parsed.model : {};
-  const provider = asString(model.provider);
-  const modelName = asString(model.name);
-  const temperature = asNumber(model.temperature);
-  const maxTokens = asNumber(model.maxTokens);
-  const topP = asNumber(model.topP);
-
-  const toolEntries = useMemo(() => toolEntriesFromManifest(parsed), [parsed]);
-  const spawnable = useMemo(() => spawnableFromManifest(parsed), [parsed]);
-  const outputFields = useMemo(() => outputFieldsFromManifest(parsed), [parsed]);
-
-  const writeBack = (next: Record<string, unknown>) => {
-    onChange(stringifyYAML(next, { lineWidth: 0 }));
-  };
-
-  const setIdentity = (patch: Partial<Record<"id" | "name" | "description" | "kind", string>>) => {
-    const next: Record<string, unknown> = { ...parsed };
-    for (const [key, value] of Object.entries(patch)) {
-      if (value === undefined) continue;
-      if (value === "" && key !== "id" && key !== "kind") {
-        delete next[key];
-      } else {
-        next[key] = value;
-      }
-    }
-    writeBack(orderManifestKeys(next));
-  };
-
-  const setModel = (model: {
-    provider: string;
-    name: string;
-    temperature?: number;
-    maxTokens?: number;
-    topP?: number;
-  }) => {
-    const next: Record<string, unknown> = { ...parsed };
-    const modelObj: Record<string, unknown> = {
-      provider: model.provider,
-      name: model.name,
-    };
-    if (model.temperature !== undefined) modelObj.temperature = model.temperature;
-    if (model.maxTokens !== undefined) modelObj.maxTokens = model.maxTokens;
-    if (model.topP !== undefined) modelObj.topP = model.topP;
-    next.model = modelObj;
-    writeBack(orderManifestKeys(next));
-  };
-
-  const setTools = (entries: ToolEntryDraft[]) => {
-    const next: Record<string, unknown> = { ...parsed };
-    const arr = toolEntriesToManifest(entries);
-    if (arr.length === 0) delete next.tools;
-    else next.tools = arr;
-    writeBack(orderManifestKeys(next));
-  };
-
-  const setSpawnable = (entries: SpawnableDraft[]) => {
-    const next: Record<string, unknown> = { ...parsed };
-    if (entries.length === 0) {
-      delete next.spawnable;
-    } else {
-      next.spawnable = spawnableToManifest(entries, parsed.spawnable);
-    }
-    writeBack(orderManifestKeys(next));
-  };
-
-  const setInstruction = (next: string) => {
-    const parsedNext: Record<string, unknown> = { ...parsed };
-    if (next === "") {
-      delete parsedNext.instruction;
-    } else {
-      parsedNext.instruction = next;
-    }
-    writeBack(orderManifestKeys(parsedNext));
-  };
-
-  const setOutput = (fields: OutputFieldDraft[]) => {
-    const next: Record<string, unknown> = { ...parsed };
-    const schema = outputFieldsToManifest(fields);
-    if (!schema) delete next.outputSchema;
-    else next.outputSchema = schema;
-    writeBack(orderManifestKeys(next));
-  };
-
-  const showLlmSections = kind === "llm" || kind === "";
-
-  return (
-    <div className="space-y-4">
-      <IdentitySection
-        id={id}
-        name={name}
-        description={description}
-        kind={kind}
-        idLocked={idLocked}
-        onIdChange={(v) => setIdentity({ id: v })}
-        onNameChange={(v) => setIdentity({ name: v })}
-        onDescriptionChange={(v) => setIdentity({ description: v })}
-        onKindChange={(v) => setIdentity({ kind: v })}
-      />
-
-      {showLlmSections && (
-        <>
-          <InstructionSection instruction={instruction} onChange={setInstruction} />
-
-          <ModelSection
-            provider={provider}
-            name={modelName}
-            temperature={temperature}
-            maxTokens={maxTokens}
-            topP={topP}
-            catalog={catalog}
-            onChange={setModel}
-          />
-
-          <ToolsSection entries={toolEntries} catalog={catalog} onChange={setTools} />
-
-          <SpawnableSection entries={spawnable} catalog={catalog} onChange={setSpawnable} />
-
-          <OutputSection fields={outputFields} onChange={setOutput} />
-        </>
-      )}
-
-      {!showLlmSections && (
-        <div className="rounded-2xl border border-dashed border-stone-300 bg-stone-50 px-4 py-5 text-sm text-zinc-500">
-          Forms for <span className="font-mono">{kind}</span> agents aren't built yet. Edit
-          in YAML view.
-        </div>
-      )}
-    </div>
-  );
-}
-
+// Keys ordered the same way the previous form-based builder used to. The
+// runtime is order-insensitive but humans like reading top-down, and
+// `stringify` preserves key order.
 const PREFERRED_ORDER = [
   "id",
   "name",
@@ -330,6 +40,8 @@ const PREFERRED_ORDER = [
   "examples",
   "tools",
   "spawnable",
+  "skills",
+  "reply",
   "outputSchema",
   "tool",
   "steps",
@@ -348,4 +60,116 @@ function orderManifestKeys(manifest: Record<string, unknown>): Record<string, un
     if (!(key in ordered)) ordered[key] = manifest[key];
   }
   return ordered;
+}
+
+export function AgentBuilder({ manifest, onChange, catalog, idLocked }: AgentBuilderProps) {
+  const parsedManifest = useMemo<Record<string, unknown>>(() => {
+    try {
+      const v = parseYAML(manifest);
+      return isRecord(v) ? v : {};
+    } catch {
+      return {};
+    }
+  }, [manifest]);
+
+  // Build the normalized pipeline tree from the parsed manifest. We don't
+  // re-derive the tree on every render — only when the parsed manifest
+  // changes — so block-click handlers and selection stay stable.
+  const pipeline = useMemo<PipelineNode>(
+    () => nodeFromAgent(parsedManifest, [], { isRoot: true }),
+    [parsedManifest],
+  );
+
+  const [selectedId, setSelectedId] = useState<string>(pipeline.id);
+
+  // If the user edits the YAML elsewhere (or AI rewrites the manifest)
+  // and the previously-selected node disappears, fall back to the root.
+  useEffect(() => {
+    if (!findNode(pipeline, selectedId)) {
+      setSelectedId(pipeline.id);
+    }
+  }, [pipeline, selectedId]);
+
+  const selected = useMemo<PipelineNode>(
+    () => findNode(pipeline, selectedId) ?? pipeline,
+    [pipeline, selectedId],
+  );
+
+  const setField = (path: PipelinePath, value: unknown) => {
+    const next = setIn(parsedManifest, path, value);
+    if (!isRecord(next)) return;
+    onChange(stringifyYAML(orderManifestKeys(next), { lineWidth: 0 }));
+  };
+
+  const handleAddStep = (parent: PipelineNode, index: number) => {
+    const newAgent = {
+      id: `step-${Date.now().toString(36)}`,
+      kind: "llm",
+      model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+      instruction: "Write the system prompt here.",
+    };
+    const arrPath: PipelinePath =
+      parent.kind === "parallel"
+        ? [...parent.agentPath, "branches"]
+        : [...parent.agentPath, "steps"];
+    const current = readArrayAt(parsedManifest, arrPath);
+    const next = [...current.slice(0, index), { agent: newAgent }, ...current.slice(index)];
+    setField(arrPath, next);
+    setSelectedId(newAgent.id);
+  };
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "minmax(0, 1fr) 420px",
+        gap: 0,
+        border: "1px solid #e7e5e4",
+        borderRadius: 16,
+        overflow: "hidden",
+        background: "#fff",
+        minHeight: 560,
+      }}
+    >
+      <PipelineCanvas
+        pipeline={pipeline}
+        selectedId={selectedId}
+        onSelect={setSelectedId}
+        onAddStep={handleAddStep}
+      />
+      <aside
+        style={{
+          borderLeft: "1px solid #e7e5e4",
+          minHeight: 0,
+          maxHeight: 720,
+          overflow: "hidden",
+          background: "#fff",
+        }}
+      >
+        <PipelineInspector
+          pipeline={pipeline}
+          selected={selected}
+          parsedManifest={parsedManifest}
+          catalog={catalog}
+          setField={setField}
+          idLocked={idLocked}
+        />
+      </aside>
+    </div>
+  );
+}
+
+function readArrayAt(root: unknown, path: PipelinePath): unknown[] {
+  let cursor: unknown = root;
+  for (const segment of path) {
+    if (cursor == null) return [];
+    if (typeof segment === "number") {
+      if (!Array.isArray(cursor)) return [];
+      cursor = cursor[segment];
+    } else {
+      if (!isRecord(cursor)) return [];
+      cursor = cursor[segment];
+    }
+  }
+  return Array.isArray(cursor) ? cursor : [];
 }
