@@ -3,10 +3,17 @@ import { join } from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { listRunsInProcess } from "./list-runs.js";
 import { defineSkill } from "../skill.js";
+import {
+  encryptSecret,
+  decryptSecret,
+  getLastFour,
+} from "../utils/crypto.js";
 import type {
   AgentDefinition,
   AgentVersionSummary,
   ProviderConfig,
+  SecretDefinition,
+  SecretMetadata,
   SkillDefinition,
   UnifiedStore,
   ApiKeyRecord,
@@ -90,6 +97,7 @@ export class JsonFileStore implements UnifiedStore {
     await mkdir(join(root, "connections"), { recursive: true });
     await mkdir(join(root, "runs"), { recursive: true });
     await mkdir(join(root, "skills"), { recursive: true });
+    await mkdir(join(root, "secrets"), { recursive: true });
   }
 
   private async readJson<T>(path: string): Promise<T | null> {
@@ -453,6 +461,91 @@ export class JsonFileStore implements UnifiedStore {
   async deleteSkill(name: string): Promise<void> {
     await this.ensureUserDirs();
     await unlink(this.skillPath(name)).catch(() => {});
+  }
+
+  // ═══ SecretStore ═══
+
+  private secretPath(name: string): string {
+    return join(this.userRoot(), "secrets", `${this.sanitizeFilename(name)}.json`);
+  }
+
+  async listSecrets(): Promise<SecretMetadata[]> {
+    await this.ensureUserDirs();
+    const dir = join(this.userRoot(), "secrets");
+    const files = await readdir(dir).catch(() => []);
+    const result: SecretMetadata[] = [];
+    for (const file of files) {
+      if (!file.endsWith(".json")) continue;
+      const row = await this.readJson<{
+        name: string;
+        encrypted: string;
+        lastFour: string;
+        description?: string;
+        createdAt: string;
+        updatedAt: string;
+      }>(join(dir, file));
+      if (!row) continue;
+      result.push({
+        name: row.name,
+        lastFour: row.lastFour,
+        description: row.description,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      });
+    }
+    return result.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async getSecretMetadata(name: string): Promise<SecretMetadata | null> {
+    await this.ensureUserDirs();
+    const row = await this.readJson<{
+      name: string;
+      lastFour: string;
+      description?: string;
+      createdAt: string;
+      updatedAt: string;
+    }>(this.secretPath(name));
+    if (!row) return null;
+    return {
+      name: row.name,
+      lastFour: row.lastFour,
+      description: row.description,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
+  }
+
+  async getSecretValue(name: string): Promise<string | null> {
+    await this.ensureUserDirs();
+    const row = await this.readJson<{ encrypted: string }>(this.secretPath(name));
+    if (!row) return null;
+    return decryptSecret(row.encrypted);
+  }
+
+  async putSecret(secret: SecretDefinition): Promise<void> {
+    if (!secret.name) {
+      throw new Error("putSecret: name is required");
+    }
+    if (secret.value === undefined || secret.value === null) {
+      throw new Error("putSecret: value is required");
+    }
+    await this.ensureUserDirs();
+    const path = this.secretPath(secret.name);
+    const existing = await this.readJson<{ createdAt?: string }>(path);
+    const now = this.nextTimestamp();
+    await this.writeJson(path, {
+      name: secret.name,
+      encrypted: encryptSecret(secret.value),
+      lastFour: getLastFour(secret.value),
+      description: secret.description,
+      createdAt: existing?.createdAt ?? secret.createdAt ?? now,
+      updatedAt: now,
+    });
+  }
+
+  async deleteSecret(name: string): Promise<void> {
+    await this.ensureUserDirs();
+    await unlink(this.secretPath(name)).catch(() => {});
   }
 
   // ═══ RunStore ═══

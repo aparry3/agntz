@@ -58,6 +58,12 @@ export type { TraceSink } from "./types.js";
 export { withRetry } from "./utils/retry.js";
 export type { RetryConfig } from "./utils/retry.js";
 export { summarizeMessages, trimHistoryWithSummary } from "./utils/summarize.js";
+export {
+  encryptSecret,
+  decryptSecret,
+  getLastFour,
+  _resetCryptoKeyCache,
+} from "./utils/crypto.js";
 
 // Eval
 export { runEval } from "./eval.js";
@@ -142,6 +148,11 @@ export type {
   // Skills
   SkillDefinition,
   SkillStore,
+
+  // Secrets
+  SecretDefinition,
+  SecretMetadata,
+  SecretStore,
 
   // Runs
   Run,

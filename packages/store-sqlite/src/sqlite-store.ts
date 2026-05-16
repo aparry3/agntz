@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import Database from "better-sqlite3";
 import type { Database as DatabaseType } from "better-sqlite3";
-import { defineSkill } from "@agntz/core";
+import { defineSkill, encryptSecret, decryptSecret, getLastFour } from "@agntz/core";
 import type {
   AgentDefinition,
   ProviderConfig,
@@ -20,6 +20,8 @@ import type {
   RunListFilters,
   RunListResult,
   RunStatus,
+  SecretDefinition,
+  SecretMetadata,
   SkillDefinition,
   Span,
   TraceSummary,
@@ -248,6 +250,24 @@ const MIGRATIONS = [
   CREATE INDEX IF NOT EXISTS idx_skills_user ON skills(user_id);
 
   UPDATE schema_version SET version = 7;
+  `,
+  // v8: User-scoped encrypted secrets.
+  // `value` stores AES-256-GCM ciphertext as `base64(iv):base64(tag):base64(ct)`.
+  // `last_four` is the last 4 chars of plaintext for masked-UI display only.
+  `
+  CREATE TABLE IF NOT EXISTS secrets (
+    user_id      TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    value        TEXT NOT NULL,
+    last_four    TEXT NOT NULL,
+    description  TEXT,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL,
+    PRIMARY KEY (user_id, name)
+  );
+  CREATE INDEX IF NOT EXISTS idx_secrets_user ON secrets(user_id);
+
+  UPDATE schema_version SET version = 8;
   `,
 ];
 
@@ -1223,6 +1243,106 @@ export class SqliteStore implements UnifiedStore {
   async deleteSkill(name: string): Promise<void> {
     const u = this.requireUser();
     this.db.prepare("DELETE FROM skills WHERE user_id = ? AND name = ?").run(u, name);
+  }
+
+  // ═══ SecretStore ═══
+
+  async listSecrets(): Promise<SecretMetadata[]> {
+    const u = this.requireUser();
+    const rows = this.db
+      .prepare(
+        `SELECT name, last_four, description, created_at, updated_at
+         FROM secrets WHERE user_id = ? ORDER BY name ASC`
+      )
+      .all(u) as Array<{
+        name: string;
+        last_four: string;
+        description: string | null;
+        created_at: string;
+        updated_at: string;
+      }>;
+    return rows.map((r) => ({
+      name: r.name,
+      lastFour: r.last_four,
+      description: r.description ?? undefined,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    }));
+  }
+
+  async getSecretMetadata(name: string): Promise<SecretMetadata | null> {
+    const u = this.requireUser();
+    const row = this.db
+      .prepare(
+        `SELECT name, last_four, description, created_at, updated_at
+         FROM secrets WHERE user_id = ? AND name = ?`
+      )
+      .get(u, name) as
+      | {
+          name: string;
+          last_four: string;
+          description: string | null;
+          created_at: string;
+          updated_at: string;
+        }
+      | undefined;
+    if (!row) return null;
+    return {
+      name: row.name,
+      lastFour: row.last_four,
+      description: row.description ?? undefined,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  async getSecretValue(name: string): Promise<string | null> {
+    const u = this.requireUser();
+    const row = this.db
+      .prepare(
+        `SELECT value FROM secrets WHERE user_id = ? AND name = ?`
+      )
+      .get(u, name) as { value: string } | undefined;
+    if (!row) return null;
+    return decryptSecret(row.value);
+  }
+
+  async putSecret(secret: SecretDefinition): Promise<void> {
+    const u = this.requireUser();
+    if (!secret.name) {
+      throw new Error("putSecret: name is required");
+    }
+    if (secret.value === undefined || secret.value === null) {
+      throw new Error("putSecret: value is required");
+    }
+    const encrypted = encryptSecret(secret.value);
+    const lastFour = getLastFour(secret.value);
+    const now = this.nextTimestamp();
+    const createdAt = secret.createdAt ?? now;
+    this.db
+      .prepare(
+        `INSERT INTO secrets (user_id, name, value, last_four, description, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, name) DO UPDATE SET
+           value = excluded.value,
+           last_four = excluded.last_four,
+           description = excluded.description,
+           updated_at = excluded.updated_at`
+      )
+      .run(
+        u,
+        secret.name,
+        encrypted,
+        lastFour,
+        secret.description ?? null,
+        createdAt,
+        now
+      );
+  }
+
+  async deleteSecret(name: string): Promise<void> {
+    const u = this.requireUser();
+    this.db.prepare("DELETE FROM secrets WHERE user_id = ? AND name = ?").run(u, name);
   }
 
   // ═══ ApiKeyStore (unscoped) ═══

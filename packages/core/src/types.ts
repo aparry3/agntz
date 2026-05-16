@@ -456,6 +456,40 @@ export interface SkillStore {
   deleteSkill(name: string): Promise<void>;
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// Secrets — per-user encrypted credentials referenced by HTTP tools (and
+// other future template consumers) as `{{secrets.<name>}}`. Values are
+// AES-256-GCM encrypted at rest; only the runtime fetches plaintext.
+// ═══════════════════════════════════════════════════════════════════════
+
+export interface SecretDefinition {
+  /** Referenced as `{{secrets.<name>}}` in agent manifests. */
+  name: string;
+  /** Plaintext at the API boundary; encrypted at rest by the store. */
+  value: string;
+  description?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface SecretMetadata {
+  name: string;
+  description?: string;
+  /** Last 4 chars of plaintext for masked-UI display (e.g. `••••5678`). */
+  lastFour: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SecretStore {
+  listSecrets(): Promise<SecretMetadata[]>;
+  getSecretMetadata(name: string): Promise<SecretMetadata | null>;
+  /** Decrypted value — runtime only; never expose via an HTTP API route. */
+  getSecretValue(name: string): Promise<string | null>;
+  putSecret(secret: SecretDefinition): Promise<void>;
+  deleteSecret(name: string): Promise<void>;
+}
+
 export interface SessionStore {
   getMessages(sessionId: string): Promise<Message[]>;
   append(sessionId: string, messages: Message[]): Promise<void>;
@@ -843,6 +877,7 @@ export type UnifiedStore = AgentStore &
   RunStore &
   TraceStore &
   SkillStore &
+  SecretStore &
   ScopableStore;
 
 // ═══════════════════════════════════════════════════════════════════════

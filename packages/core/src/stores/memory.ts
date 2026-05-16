@@ -1,9 +1,16 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { listRunsInProcess } from "./list-runs.js";
 import { defineSkill } from "../skill.js";
+import {
+  encryptSecret,
+  decryptSecret,
+  getLastFour,
+} from "../utils/crypto.js";
 import type {
   AgentDefinition,
   ProviderConfig,
+  SecretDefinition,
+  SecretMetadata,
   SkillDefinition,
   UnifiedStore,
   ApiKeyRecord,
@@ -48,6 +55,15 @@ interface ApiKeyRow {
   revokedAt: string | null;
 }
 
+interface SecretRow {
+  /** Encrypted ciphertext as `base64(iv):base64(tag):base64(ct)`. */
+  encrypted: string;
+  lastFour: string;
+  description?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /**
  * Shared backing state across MemoryStore instances created via forUser().
  */
@@ -64,6 +80,7 @@ interface MemoryBackend {
   spans: Map<string, Span>;                                  // spanId -> span
   summaries: Map<string, TraceSummary>;                      // traceId -> summary
   skills: Map<string, Map<string, SkillDefinition>>;         // userId -> name -> skill
+  secrets: Map<string, Map<string, SecretRow>>;              // userId -> name -> row
 }
 
 function createBackend(): MemoryBackend {
@@ -80,6 +97,7 @@ function createBackend(): MemoryBackend {
     spans: new Map(),
     summaries: new Map(),
     skills: new Map(),
+    secrets: new Map(),
   };
 }
 
@@ -411,6 +429,72 @@ export class MemoryStore implements UnifiedStore {
 
   async deleteSkill(name: string): Promise<void> {
     this.skillMap().delete(name);
+  }
+
+  // ═══ SecretStore ═══
+
+  private secretMap(): Map<string, SecretRow> {
+    const u = this.requireUser();
+    let m = this.backend.secrets.get(u);
+    if (!m) {
+      m = new Map();
+      this.backend.secrets.set(u, m);
+    }
+    return m;
+  }
+
+  async listSecrets(): Promise<SecretMetadata[]> {
+    const map = this.secretMap();
+    return Array.from(map.entries())
+      .map(([name, row]) => ({
+        name,
+        lastFour: row.lastFour,
+        description: row.description,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async getSecretMetadata(name: string): Promise<SecretMetadata | null> {
+    const row = this.secretMap().get(name);
+    if (!row) return null;
+    return {
+      name,
+      lastFour: row.lastFour,
+      description: row.description,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
+  }
+
+  async getSecretValue(name: string): Promise<string | null> {
+    const row = this.secretMap().get(name);
+    if (!row) return null;
+    return decryptSecret(row.encrypted);
+  }
+
+  async putSecret(secret: SecretDefinition): Promise<void> {
+    if (!secret.name) {
+      throw new Error("putSecret: name is required");
+    }
+    if (secret.value === undefined || secret.value === null) {
+      throw new Error("putSecret: value is required");
+    }
+    const map = this.secretMap();
+    const now = this.nextTimestamp();
+    const existing = map.get(secret.name);
+    map.set(secret.name, {
+      encrypted: encryptSecret(secret.value),
+      lastFour: getLastFour(secret.value),
+      description: secret.description,
+      createdAt: existing?.createdAt ?? secret.createdAt ?? now,
+      updatedAt: now,
+    });
+  }
+
+  async deleteSecret(name: string): Promise<void> {
+    this.secretMap().delete(name);
   }
 
   // ═══ ApiKeyStore (unscoped admin) ═══

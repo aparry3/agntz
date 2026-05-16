@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import pg from "pg";
-import { defineSkill } from "@agntz/core";
+import { defineSkill, encryptSecret, decryptSecret, getLastFour } from "@agntz/core";
 import type {
   AgentDefinition,
   ProviderConfig,
@@ -19,6 +19,8 @@ import type {
   RunStatus,
   RunListFilters,
   RunListResult,
+  SecretDefinition,
+  SecretMetadata,
   SkillDefinition,
   Span,
   TraceSummary,
@@ -292,6 +294,24 @@ const MIGRATIONS: string[] = [
   CREATE INDEX IF NOT EXISTS idx_ar_skills_user ON ar_skills(user_id);
 
   UPDATE ar_schema_version SET version = 8;
+  `,
+  // v9: User-scoped encrypted secrets.
+  // `value` stores AES-256-GCM ciphertext as `base64(iv):base64(tag):base64(ct)`.
+  // `last_four` is the last 4 chars of plaintext for masked-UI display only.
+  `
+  CREATE TABLE IF NOT EXISTS ar_secrets (
+    user_id      TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    value        TEXT NOT NULL,
+    last_four    TEXT NOT NULL,
+    description  TEXT,
+    created_at   TIMESTAMPTZ NOT NULL,
+    updated_at   TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (user_id, name)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ar_secrets_user ON ar_secrets(user_id);
+
+  UPDATE ar_schema_version SET version = 9;
   `,
 ];
 
@@ -1360,6 +1380,95 @@ export class PostgresStore implements UnifiedStore {
     );
   }
 
+  // ═══ SecretStore ═══
+
+  async listSecrets(): Promise<SecretMetadata[]> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const { rows } = await this.pool.query(
+      `SELECT name, last_four, description, created_at, updated_at
+       FROM ${this.t("secrets")}
+       WHERE user_id = $1 ORDER BY name ASC`,
+      [u]
+    );
+    return rows.map(
+      (r: {
+        name: string;
+        last_four: string;
+        description: string | null;
+        created_at: Date | string;
+        updated_at: Date | string;
+      }) => pgRowToSecretMetadata(r)
+    );
+  }
+
+  async getSecretMetadata(name: string): Promise<SecretMetadata | null> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const { rows } = await this.pool.query(
+      `SELECT name, last_four, description, created_at, updated_at
+       FROM ${this.t("secrets")}
+       WHERE user_id = $1 AND name = $2`,
+      [u, name]
+    );
+    return rows.length === 0 ? null : pgRowToSecretMetadata(rows[0]);
+  }
+
+  async getSecretValue(name: string): Promise<string | null> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const { rows } = await this.pool.query(
+      `SELECT value FROM ${this.t("secrets")}
+       WHERE user_id = $1 AND name = $2`,
+      [u, name]
+    );
+    if (rows.length === 0) return null;
+    return decryptSecret(rows[0].value as string);
+  }
+
+  async putSecret(secret: SecretDefinition): Promise<void> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    if (!secret.name) {
+      throw new Error("putSecret: name is required");
+    }
+    if (secret.value === undefined || secret.value === null) {
+      throw new Error("putSecret: value is required");
+    }
+    const encrypted = encryptSecret(secret.value);
+    const lastFour = getLastFour(secret.value);
+    const now = this.nextTimestamp();
+    const createdAt = secret.createdAt ?? now;
+    await this.pool.query(
+      `INSERT INTO ${this.t("secrets")}
+         (user_id, name, value, last_four, description, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (user_id, name) DO UPDATE SET
+         value = EXCLUDED.value,
+         last_four = EXCLUDED.last_four,
+         description = EXCLUDED.description,
+         updated_at = EXCLUDED.updated_at`,
+      [
+        u,
+        secret.name,
+        encrypted,
+        lastFour,
+        secret.description ?? null,
+        createdAt,
+        now,
+      ]
+    );
+  }
+
+  async deleteSecret(name: string): Promise<void> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    await this.pool.query(
+      `DELETE FROM ${this.t("secrets")} WHERE user_id = $1 AND name = $2`,
+      [u, name]
+    );
+  }
+
   // ═══ ApiKeyStore (unscoped admin) ═══
 
   async createApiKey(params: { userId: string; name: string }): Promise<{ record: ApiKeyRecord; rawKey: string }> {
@@ -1586,6 +1695,24 @@ function pgRowToSkill(r: {
       : r.metadata) as Record<string, unknown>;
   }
   return skill;
+}
+
+function pgRowToSecretMetadata(r: {
+  name: string;
+  last_four: string;
+  description: string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}): SecretMetadata {
+  const toIso = (v: Date | string) =>
+    v instanceof Date ? v.toISOString() : String(v);
+  return {
+    name: r.name,
+    lastFour: r.last_four,
+    description: r.description ?? undefined,
+    createdAt: toIso(r.created_at),
+    updatedAt: toIso(r.updated_at),
+  };
 }
 
 function pgRowToSummary(r: Record<string, unknown>): TraceSummary {
