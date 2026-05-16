@@ -24,6 +24,9 @@ import type {
   Span,
   TraceSummary,
   TraceFilter,
+  WebhookDelivery,
+  WebhookSecret,
+  WebhookSecretCreated,
 } from "@agntz/core";
 
 const { Pool } = pg;
@@ -311,6 +314,48 @@ const MIGRATIONS: string[] = [
   ALTER TABLE ar_messages ADD COLUMN IF NOT EXISTS content_blocks JSONB;
 
   UPDATE ar_schema_version SET version = 10;
+  `,
+  // v11: Webhook secrets + delivery outbox.
+  // ar_webhook_secrets.secret_raw stores the raw HMAC signing secret; HMAC
+  // requires the original bytes. Treated as a credential at rest. Future
+  // hardening: encrypt-at-rest with an env-supplied key.
+  // Partial unique index keeps active names unique per user while letting
+  // rotated rows linger for in-flight signature verification.
+  `
+  CREATE TABLE IF NOT EXISTS ar_webhook_secrets (
+    user_id    TEXT NOT NULL,
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    secret_raw TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    rotated_at TIMESTAMPTZ
+  );
+  CREATE INDEX IF NOT EXISTS idx_ar_webhook_secrets_user_name
+    ON ar_webhook_secrets(user_id, name);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_ar_webhook_secrets_user_name_active
+    ON ar_webhook_secrets(user_id, name) WHERE rotated_at IS NULL;
+
+  CREATE TABLE IF NOT EXISTS ar_webhook_deliveries (
+    id              TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL,
+    run_id          TEXT NOT NULL,
+    callback_url    TEXT NOT NULL,
+    secret_id       TEXT NOT NULL,
+    payload         JSONB NOT NULL,
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at TIMESTAMPTZ,
+    status          TEXT NOT NULL CHECK (status IN ('pending','delivered','failed_permanent')),
+    last_error      TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  CREATE INDEX IF NOT EXISTS idx_ar_webhook_deliveries_user
+    ON ar_webhook_deliveries(user_id);
+  CREATE INDEX IF NOT EXISTS idx_ar_webhook_deliveries_status
+    ON ar_webhook_deliveries(status);
+  CREATE INDEX IF NOT EXISTS idx_ar_webhook_deliveries_run
+    ON ar_webhook_deliveries(user_id, run_id);
+
+  UPDATE ar_schema_version SET version = 11;
   `,
 ];
 
@@ -1473,6 +1518,214 @@ export class PostgresStore implements UnifiedStore {
     return { userId: rows[0].user_id, keyId: rows[0].id };
   }
 
+  // ═══ WebhookSecretStore ═══
+
+  async create(name: string): Promise<WebhookSecretCreated> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    if (!name || typeof name !== "string") {
+      throw new Error("WebhookSecretStore.create: `name` must be a non-empty string");
+    }
+    const existing = await this.pool.query(
+      `SELECT id FROM ${this.t("webhook_secrets")}
+       WHERE user_id = $1 AND name = $2 AND rotated_at IS NULL`,
+      [u, name],
+    );
+    if (existing.rows.length > 0) {
+      throw new Error(`Webhook secret with name "${name}" already exists`);
+    }
+    const id = `whsec_${randomBytes(16).toString("hex")}`;
+    const raw = `whsec_${randomBytes(32).toString("hex")}`;
+    const now = new Date().toISOString();
+    await this.pool.query(
+      `INSERT INTO ${this.t("webhook_secrets")} (user_id, id, name, secret_raw, created_at)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [u, id, name, raw, now],
+    );
+    return { id, name, userId: u, secret: raw, createdAt: now };
+  }
+
+  async list(): Promise<WebhookSecret[]> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const result = await this.pool.query(
+      `SELECT id, user_id, name, secret_raw, created_at, rotated_at
+       FROM ${this.t("webhook_secrets")} WHERE user_id = $1
+       ORDER BY created_at ASC`,
+      [u],
+    );
+    return result.rows.map(pgRowToWebhookSecret);
+  }
+
+  async rotate(id: string): Promise<WebhookSecretCreated> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const existing = await client.query(
+        `SELECT id, user_id, name, secret_raw, created_at, rotated_at
+         FROM ${this.t("webhook_secrets")} WHERE user_id = $1 AND id = $2
+         FOR UPDATE`,
+        [u, id],
+      );
+      if (existing.rows.length === 0) {
+        await client.query("ROLLBACK");
+        throw new Error(`Webhook secret not found: ${id}`);
+      }
+      const row = existing.rows[0];
+      const now = new Date().toISOString();
+      const newId = `whsec_${randomBytes(16).toString("hex")}`;
+      const raw = `whsec_${randomBytes(32).toString("hex")}`;
+      // Mark old as rotated first to free the partial-unique slot on (user_id, name)
+      // before inserting the replacement.
+      await client.query(
+        `UPDATE ${this.t("webhook_secrets")} SET rotated_at = $1
+         WHERE user_id = $2 AND id = $3`,
+        [now, u, id],
+      );
+      await client.query(
+        `INSERT INTO ${this.t("webhook_secrets")} (user_id, id, name, secret_raw, created_at)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [u, newId, row.name, raw, now],
+      );
+      await client.query("COMMIT");
+      return { id: newId, name: row.name, userId: u, secret: raw, createdAt: now };
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  async revoke(id: string): Promise<void> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    await this.pool.query(
+      `DELETE FROM ${this.t("webhook_secrets")} WHERE user_id = $1 AND id = $2`,
+      [u, id],
+    );
+  }
+
+  async resolveByName(name: string): Promise<WebhookSecret | undefined> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const result = await this.pool.query(
+      `SELECT id, user_id, name, secret_raw, created_at, rotated_at
+       FROM ${this.t("webhook_secrets")}
+       WHERE user_id = $1 AND name = $2 AND rotated_at IS NULL`,
+      [u, name],
+    );
+    if (result.rows.length === 0) return undefined;
+    return pgRowToWebhookSecret(result.rows[0]);
+  }
+
+  async resolveById(id: string): Promise<WebhookSecret | undefined> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const result = await this.pool.query(
+      `SELECT id, user_id, name, secret_raw, created_at, rotated_at
+       FROM ${this.t("webhook_secrets")} WHERE user_id = $1 AND id = $2`,
+      [u, id],
+    );
+    if (result.rows.length === 0) return undefined;
+    return pgRowToWebhookSecret(result.rows[0]);
+  }
+
+  // ═══ WebhookDeliveryStore ═══
+
+  async insert(
+    delivery: Omit<WebhookDelivery, "attempts" | "status" | "createdAt"> & {
+      payload: Record<string, unknown>;
+    },
+  ): Promise<string> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const now = new Date().toISOString();
+    await this.pool.query(
+      `INSERT INTO ${this.t("webhook_deliveries")} (
+          id, user_id, run_id, callback_url, secret_id, payload,
+          attempts, status, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, 0, 'pending', $7)`,
+      [
+        delivery.id,
+        u,
+        delivery.runId,
+        delivery.callbackUrl,
+        delivery.secretId,
+        JSON.stringify(delivery.payload),
+        now,
+      ],
+    );
+    return delivery.id;
+  }
+
+  async updateStatus(
+    id: string,
+    status: WebhookDelivery["status"],
+    lastError?: string,
+  ): Promise<void> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    if (lastError !== undefined) {
+      await this.pool.query(
+        `UPDATE ${this.t("webhook_deliveries")} SET status = $1, last_error = $2
+         WHERE user_id = $3 AND id = $4`,
+        [status, lastError, u, id],
+      );
+    } else {
+      await this.pool.query(
+        `UPDATE ${this.t("webhook_deliveries")} SET status = $1
+         WHERE user_id = $2 AND id = $3`,
+        [status, u, id],
+      );
+    }
+  }
+
+  async incrementAttempt(id: string, lastError?: string): Promise<void> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const now = new Date().toISOString();
+    if (lastError !== undefined) {
+      await this.pool.query(
+        `UPDATE ${this.t("webhook_deliveries")}
+         SET attempts = attempts + 1, last_attempt_at = $1, last_error = $2
+         WHERE user_id = $3 AND id = $4`,
+        [now, lastError, u, id],
+      );
+    } else {
+      await this.pool.query(
+        `UPDATE ${this.t("webhook_deliveries")}
+         SET attempts = attempts + 1, last_attempt_at = $1
+         WHERE user_id = $2 AND id = $3`,
+        [now, u, id],
+      );
+    }
+  }
+
+  async listPending(filter?: { olderThan?: string; limit?: number }): Promise<WebhookDelivery[]> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const clauses = [`user_id = $1`, `status = 'pending'`];
+    const args: unknown[] = [u];
+    if (filter?.olderThan) {
+      args.push(filter.olderThan);
+      clauses.push(`created_at < $${args.length}`);
+    }
+    args.push(filter?.limit ?? 1000);
+    const result = await this.pool.query(
+      `SELECT id, user_id, run_id, callback_url, secret_id, payload,
+              attempts, last_attempt_at, status, last_error, created_at
+       FROM ${this.t("webhook_deliveries")}
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY created_at ASC
+       LIMIT $${args.length}`,
+      args,
+    );
+    return result.rows.map(pgRowToWebhookDelivery);
+  }
+
   // ═══ Lifecycle ═══
 
   async close(): Promise<void> {
@@ -1757,4 +2010,66 @@ function rowToApiKey(r: {
     lastUsedAt: toIso(r.last_used_at),
     revokedAt: toIso(r.revoked_at),
   };
+}
+
+function pgRowToWebhookSecret(r: {
+  id: string;
+  user_id: string;
+  name: string;
+  secret_raw: string;
+  created_at: Date | string;
+  rotated_at: Date | string | null;
+}): WebhookSecret {
+  const toIso = (v: Date | string) => (v instanceof Date ? v.toISOString() : String(v));
+  const s: WebhookSecret = {
+    id: r.id,
+    name: r.name,
+    userId: r.user_id,
+    secret: r.secret_raw,
+    createdAt: toIso(r.created_at),
+  };
+  if (r.rotated_at) s.rotatedAt = toIso(r.rotated_at);
+  return s;
+}
+
+function pgRowToWebhookDelivery(r: {
+  id: string;
+  user_id: string;
+  run_id: string;
+  callback_url: string;
+  secret_id: string;
+  payload: unknown;
+  attempts: number;
+  last_attempt_at: Date | string | null;
+  status: WebhookDelivery["status"];
+  last_error: string | null;
+  created_at: Date | string;
+}): WebhookDelivery {
+  const toIso = (v: Date | string) => (v instanceof Date ? v.toISOString() : String(v));
+  // pg returns JSONB as already-parsed; tolerate raw strings too.
+  let payload: Record<string, unknown>;
+  if (typeof r.payload === "string") {
+    try {
+      payload = JSON.parse(r.payload) as Record<string, unknown>;
+    } catch {
+      payload = {};
+    }
+  } else if (r.payload && typeof r.payload === "object") {
+    payload = r.payload as Record<string, unknown>;
+  } else {
+    payload = {};
+  }
+  const d: WebhookDelivery = {
+    id: r.id,
+    runId: r.run_id,
+    callbackUrl: r.callback_url,
+    secretId: r.secret_id,
+    payload,
+    attempts: r.attempts,
+    status: r.status,
+    createdAt: toIso(r.created_at),
+  };
+  if (r.last_attempt_at) d.lastAttemptAt = toIso(r.last_attempt_at);
+  if (r.last_error) d.lastError = r.last_error;
+  return d;
 }

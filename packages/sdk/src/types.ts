@@ -170,6 +170,20 @@ export interface RunsStartInput {
   input?: unknown | string | ContentBlock[];
   sessionId?: string;
   signal?: AbortSignal;
+  /**
+   * Per-invocation webhook callback URL. When set, the worker will POST
+   * intermediate `reply` events and a final `complete` event to this URL,
+   * signed with the secret named by `webhookId` (HMAC-SHA256, `X-Agntz-Signature` header).
+   *
+   * If `callbackUrl` is set, `webhookId` is required.
+   */
+  callbackUrl?: string;
+  /**
+   * Name of the webhook secret to sign callback payloads with. Must match the
+   * `name` of an existing webhook secret (resolved by name, not id, so users
+   * configure a stable label and rotate the underlying key freely).
+   */
+  webhookId?: string;
 }
 
 export interface RunsStreamInput {

@@ -21,6 +21,9 @@ import type {
   Span,
   TraceSummary,
   TraceFilter,
+  WebhookDelivery,
+  WebhookSecret,
+  WebhookSecretCreated,
 } from "../types.js";
 
 interface AgentVersion {
@@ -64,6 +67,8 @@ interface MemoryBackend {
   spans: Map<string, Span>;                                  // spanId -> span
   summaries: Map<string, TraceSummary>;                      // traceId -> summary
   skills: Map<string, Map<string, SkillDefinition>>;         // userId -> name -> skill
+  webhookSecrets: Map<string, Map<string, WebhookSecret>>;   // userId -> id -> secret
+  webhookDeliveries: Map<string, WebhookDelivery>;           // id -> delivery
 }
 
 function createBackend(): MemoryBackend {
@@ -80,6 +85,8 @@ function createBackend(): MemoryBackend {
     spans: new Map(),
     summaries: new Map(),
     skills: new Map(),
+    webhookSecrets: new Map(),
+    webhookDeliveries: new Map(),
   };
 }
 
@@ -651,6 +658,144 @@ export class MemoryStore implements UnifiedStore {
       }
     }
     return traceIdsToDelete.length;
+  }
+
+  // ═══ WebhookSecretStore ═══
+
+  private webhookSecretMap(): Map<string, WebhookSecret> {
+    const u = this.requireUser();
+    let m = this.backend.webhookSecrets.get(u);
+    if (!m) {
+      m = new Map();
+      this.backend.webhookSecrets.set(u, m);
+    }
+    return m;
+  }
+
+  async create(name: string): Promise<WebhookSecretCreated> {
+    const u = this.requireUser();
+    if (!name || typeof name !== "string") {
+      throw new Error("WebhookSecretStore.create: `name` must be a non-empty string");
+    }
+    // Uniqueness: an active (non-rotated) secret with the same name blocks creation.
+    const map = this.webhookSecretMap();
+    for (const existing of map.values()) {
+      if (existing.name === name && !existing.rotatedAt) {
+        throw new Error(`Webhook secret with name "${name}" already exists`);
+      }
+    }
+    const id = `whsec_${randomBytes(16).toString("hex")}`;
+    const raw = `whsec_${randomBytes(32).toString("hex")}`;
+    const now = new Date().toISOString();
+    const secret: WebhookSecret = {
+      id,
+      name,
+      userId: u,
+      secret: raw,
+      createdAt: now,
+    };
+    map.set(id, secret);
+    return { ...secret, secret: raw };
+  }
+
+  async list(): Promise<WebhookSecret[]> {
+    const map = this.webhookSecretMap();
+    // Clone so callers can't mutate stored entries (including the raw secret).
+    return Array.from(map.values())
+      .map((s) => ({ ...s }))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  async rotate(id: string): Promise<WebhookSecretCreated> {
+    const u = this.requireUser();
+    const map = this.webhookSecretMap();
+    const existing = map.get(id);
+    if (!existing) {
+      throw new Error(`Webhook secret not found: ${id}`);
+    }
+    const now = new Date().toISOString();
+    existing.rotatedAt = now;
+    const newId = `whsec_${randomBytes(16).toString("hex")}`;
+    const raw = `whsec_${randomBytes(32).toString("hex")}`;
+    const fresh: WebhookSecret = {
+      id: newId,
+      name: existing.name,
+      userId: u,
+      secret: raw,
+      createdAt: now,
+    };
+    map.set(newId, fresh);
+    return { ...fresh, secret: raw };
+  }
+
+  async revoke(id: string): Promise<void> {
+    this.webhookSecretMap().delete(id);
+  }
+
+  async resolveByName(name: string): Promise<WebhookSecret | undefined> {
+    const map = this.webhookSecretMap();
+    for (const s of map.values()) {
+      if (s.name === name && !s.rotatedAt) return { ...s };
+    }
+    return undefined;
+  }
+
+  async resolveById(id: string): Promise<WebhookSecret | undefined> {
+    const s = this.webhookSecretMap().get(id);
+    return s ? { ...s } : undefined;
+  }
+
+  // ═══ WebhookDeliveryStore ═══
+
+  async insert(
+    delivery: Omit<WebhookDelivery, "attempts" | "status" | "createdAt"> & {
+      payload: Record<string, unknown>;
+    },
+  ): Promise<string> {
+    this.requireUser();
+    const now = new Date().toISOString();
+    const row: WebhookDelivery = {
+      id: delivery.id,
+      runId: delivery.runId,
+      callbackUrl: delivery.callbackUrl,
+      secretId: delivery.secretId,
+      payload: delivery.payload,
+      attempts: 0,
+      status: "pending",
+      createdAt: now,
+    };
+    this.backend.webhookDeliveries.set(delivery.id, row);
+    return delivery.id;
+  }
+
+  async updateStatus(
+    id: string,
+    status: WebhookDelivery["status"],
+    lastError?: string,
+  ): Promise<void> {
+    const row = this.backend.webhookDeliveries.get(id);
+    if (!row) return;
+    row.status = status;
+    if (lastError !== undefined) row.lastError = lastError;
+  }
+
+  async incrementAttempt(id: string, lastError?: string): Promise<void> {
+    const row = this.backend.webhookDeliveries.get(id);
+    if (!row) return;
+    row.attempts += 1;
+    row.lastAttemptAt = new Date().toISOString();
+    if (lastError !== undefined) row.lastError = lastError;
+  }
+
+  async listPending(filter?: { olderThan?: string; limit?: number }): Promise<WebhookDelivery[]> {
+    const rows: WebhookDelivery[] = [];
+    for (const r of this.backend.webhookDeliveries.values()) {
+      if (r.status !== "pending") continue;
+      if (filter?.olderThan && r.createdAt >= filter.olderThan) continue;
+      rows.push({ ...r });
+    }
+    rows.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    return filter?.limit ? rows.slice(0, filter.limit) : rows;
   }
 }
 

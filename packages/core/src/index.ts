@@ -75,6 +75,22 @@ export { summarizeMessages, trimHistoryWithSummary } from "./utils/summarize.js"
 export { runEval } from "./eval.js";
 export type { AssertionResult, EvalRunOptions, CustomAssertionFn } from "./eval.js";
 
+// Webhooks
+export {
+  createWebhookDispatcher,
+  signBody,
+  WEBHOOK_SIGNATURE_HEADER,
+  WEBHOOK_DELIVERY_ID_HEADER,
+  WEBHOOK_IDEMPOTENCY_HEADER,
+  DEFAULT_RETRY_DELAYS_MS,
+  DEFAULT_TIMEOUT_MS,
+} from "./webhooks/dispatcher.js";
+export type {
+  WebhookDispatcher,
+  WebhookDispatcherOptions,
+  WebhookEvent,
+} from "./webhooks/dispatcher.js";
+
 // Errors
 export {
   AgntzError,
@@ -168,6 +184,13 @@ export type {
   // Skills
   SkillDefinition,
   SkillStore,
+
+  // Webhooks
+  WebhookSecret,
+  WebhookSecretCreated,
+  WebhookSecretStore,
+  WebhookDelivery,
+  WebhookDeliveryStore,
 
   // Replies
   Reply,

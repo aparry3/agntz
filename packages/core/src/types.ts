@@ -1001,7 +1001,99 @@ export type UnifiedStore = AgentStore &
   RunStore &
   TraceStore &
   SkillStore &
+  WebhookSecretStore &
+  WebhookDeliveryStore &
   ScopableStore;
+
+// ═══════════════════════════════════════════════════════════════════════
+// Webhook secrets — named, per-user signing keys used by the dispatcher to
+// sign outbound webhook POSTs. The raw secret is kept in the store so the
+// dispatcher can sign requests; consumers receive the same raw secret once at
+// creation time and use it to verify signatures.
+// ═══════════════════════════════════════════════════════════════════════
+
+export interface WebhookSecret {
+  /** Server-generated, e.g. `whsec_<random>`. */
+  id: string;
+  /** User-chosen, unique per user (e.g. `gymtext-prod`). */
+  name: string;
+  userId: string;
+  /**
+   * Raw signing secret. Storing the raw secret is a deliberate tradeoff: HMAC
+   * signing requires the original bytes, so we cannot hash-only. The secret
+   * is treated as a credential at rest. Future hardening: encrypt-at-rest
+   * with an env-supplied key.
+   */
+  secret: string;
+  /** ISO 8601 timestamp at creation. */
+  createdAt: string;
+  /** ISO 8601 timestamp marking the secret as superseded by rotation. */
+  rotatedAt?: string;
+}
+
+/**
+ * Secret payload returned at create/rotate time. Includes the raw secret
+ * (always available on `WebhookSecret.secret` too — the dedicated subtype
+ * communicates to callers that THIS is the moment to copy it client-side).
+ */
+export interface WebhookSecretCreated extends WebhookSecret {
+  secret: string;
+}
+
+export interface WebhookSecretStore {
+  /** Generate id + secret, persist, return the raw secret once. */
+  create(name: string): Promise<WebhookSecretCreated>;
+  /** List active + rotated secrets owned by the scoped user (no filtering). */
+  list(): Promise<WebhookSecret[]>;
+  /** Mark `id` as rotated and create a fresh active secret with the same name. */
+  rotate(id: string): Promise<WebhookSecretCreated>;
+  /** Hard-delete a secret. In-flight deliveries that captured this id keep working until the next attempt. */
+  revoke(id: string): Promise<void>;
+  /** Return the active (non-rotated, non-revoked) secret by name. */
+  resolveByName(name: string): Promise<WebhookSecret | undefined>;
+  /** Return any secret (rotated included) by id, so in-flight signing keeps working. */
+  resolveById(id: string): Promise<WebhookSecret | undefined>;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Webhook deliveries — outbox table for outbound webhook POSTs.
+// ═══════════════════════════════════════════════════════════════════════
+
+export interface WebhookDelivery {
+  id: string;
+  runId: string;
+  callbackUrl: string;
+  /** Pinned at invocation time so mid-run rotation can't break signing. */
+  secretId: string;
+  payload: Record<string, unknown>;
+  attempts: number;
+  lastAttemptAt?: string;
+  status: "pending" | "delivered" | "failed_permanent";
+  lastError?: string;
+  createdAt: string;
+}
+
+export interface WebhookDeliveryStore {
+  /** Insert a new pending delivery; returns the row id. */
+  insert(
+    delivery: Omit<WebhookDelivery, "attempts" | "status" | "createdAt"> & {
+      payload: Record<string, unknown>;
+    },
+  ): Promise<string>;
+  updateStatus(
+    id: string,
+    status: WebhookDelivery["status"],
+    lastError?: string,
+  ): Promise<void>;
+  /** Increment attempts and stamp `lastAttemptAt`; updates `lastError` opportunistically. */
+  incrementAttempt(id: string, lastError?: string): Promise<void>;
+  /**
+   * Return pending deliveries, oldest first. `olderThan` is an ISO timestamp;
+   * when set, rows with `createdAt >= olderThan` are excluded (useful for
+   * future drain workers that re-attempt stale rows).
+   */
+  listPending(filter?: { olderThan?: string; limit?: number }): Promise<WebhookDelivery[]>;
+}
 
 // ═══════════════════════════════════════════════════════════════════════
 // Model Provider

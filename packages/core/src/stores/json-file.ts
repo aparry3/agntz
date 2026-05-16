@@ -23,6 +23,9 @@ import type {
   Span,
   TraceSummary,
   TraceFilter,
+  WebhookDelivery,
+  WebhookSecret,
+  WebhookSecretCreated,
 } from "../types.js";
 import { encodeTraceCursor, decodeTraceCursor } from "./memory.js";
 
@@ -763,6 +766,164 @@ export class JsonFileStore implements UnifiedStore {
     return { userId: row.userId, keyId: row.id };
   }
 
+  // ═══ WebhookSecretStore ═══
+
+  private webhookSecretsPath(): string {
+    return join(this.userRoot(), "webhook-secrets.json");
+  }
+
+  private async readWebhookSecrets(): Promise<WebhookSecret[]> {
+    return (await this.readJson<WebhookSecret[]>(this.webhookSecretsPath())) ?? [];
+  }
+
+  private async writeWebhookSecrets(rows: WebhookSecret[]): Promise<void> {
+    await mkdir(this.userRoot(), { recursive: true });
+    await this.writeJson(this.webhookSecretsPath(), rows);
+  }
+
+  async create(name: string): Promise<WebhookSecretCreated> {
+    const u = this.requireUser();
+    if (!name || typeof name !== "string") {
+      throw new Error("WebhookSecretStore.create: `name` must be a non-empty string");
+    }
+    const rows = await this.readWebhookSecrets();
+    if (rows.find((r) => r.name === name && !r.rotatedAt)) {
+      throw new Error(`Webhook secret with name "${name}" already exists`);
+    }
+    const id = `whsec_${randomBytes(16).toString("hex")}`;
+    const raw = `whsec_${randomBytes(32).toString("hex")}`;
+    const now = new Date().toISOString();
+    const secret: WebhookSecret = {
+      id,
+      name,
+      userId: u,
+      secret: raw,
+      createdAt: now,
+    };
+    rows.push(secret);
+    await this.writeWebhookSecrets(rows);
+    return { ...secret, secret: raw };
+  }
+
+  async list(): Promise<WebhookSecret[]> {
+    const rows = await this.readWebhookSecrets();
+    return rows
+      .map((s) => ({ ...s }))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  async rotate(id: string): Promise<WebhookSecretCreated> {
+    const u = this.requireUser();
+    const rows = await this.readWebhookSecrets();
+    const existing = rows.find((r) => r.id === id);
+    if (!existing) {
+      throw new Error(`Webhook secret not found: ${id}`);
+    }
+    const now = new Date().toISOString();
+    existing.rotatedAt = now;
+    const newId = `whsec_${randomBytes(16).toString("hex")}`;
+    const raw = `whsec_${randomBytes(32).toString("hex")}`;
+    const fresh: WebhookSecret = {
+      id: newId,
+      name: existing.name,
+      userId: u,
+      secret: raw,
+      createdAt: now,
+    };
+    rows.push(fresh);
+    await this.writeWebhookSecrets(rows);
+    return { ...fresh, secret: raw };
+  }
+
+  async revoke(id: string): Promise<void> {
+    const rows = await this.readWebhookSecrets();
+    const next = rows.filter((r) => r.id !== id);
+    if (next.length === rows.length) return;
+    await this.writeWebhookSecrets(next);
+  }
+
+  async resolveByName(name: string): Promise<WebhookSecret | undefined> {
+    const rows = await this.readWebhookSecrets();
+    const found = rows.find((r) => r.name === name && !r.rotatedAt);
+    return found ? { ...found } : undefined;
+  }
+
+  async resolveById(id: string): Promise<WebhookSecret | undefined> {
+    const rows = await this.readWebhookSecrets();
+    const found = rows.find((r) => r.id === id);
+    return found ? { ...found } : undefined;
+  }
+
+  // ═══ WebhookDeliveryStore ═══
+
+  private webhookDeliveriesPath(): string {
+    return join(this.userRoot(), "webhook-deliveries.json");
+  }
+
+  private async readWebhookDeliveries(): Promise<WebhookDelivery[]> {
+    return (await this.readJson<WebhookDelivery[]>(this.webhookDeliveriesPath())) ?? [];
+  }
+
+  private async writeWebhookDeliveries(rows: WebhookDelivery[]): Promise<void> {
+    await mkdir(this.userRoot(), { recursive: true });
+    await this.writeJson(this.webhookDeliveriesPath(), rows);
+  }
+
+  async insert(
+    delivery: Omit<WebhookDelivery, "attempts" | "status" | "createdAt"> & {
+      payload: Record<string, unknown>;
+    },
+  ): Promise<string> {
+    this.requireUser();
+    const rows = await this.readWebhookDeliveries();
+    const now = new Date().toISOString();
+    rows.push({
+      id: delivery.id,
+      runId: delivery.runId,
+      callbackUrl: delivery.callbackUrl,
+      secretId: delivery.secretId,
+      payload: delivery.payload,
+      attempts: 0,
+      status: "pending",
+      createdAt: now,
+    });
+    await this.writeWebhookDeliveries(rows);
+    return delivery.id;
+  }
+
+  async updateStatus(
+    id: string,
+    status: WebhookDelivery["status"],
+    lastError?: string,
+  ): Promise<void> {
+    const rows = await this.readWebhookDeliveries();
+    const row = rows.find((r) => r.id === id);
+    if (!row) return;
+    row.status = status;
+    if (lastError !== undefined) row.lastError = lastError;
+    await this.writeWebhookDeliveries(rows);
+  }
+
+  async incrementAttempt(id: string, lastError?: string): Promise<void> {
+    const rows = await this.readWebhookDeliveries();
+    const row = rows.find((r) => r.id === id);
+    if (!row) return;
+    row.attempts += 1;
+    row.lastAttemptAt = new Date().toISOString();
+    if (lastError !== undefined) row.lastError = lastError;
+    await this.writeWebhookDeliveries(rows);
+  }
+
+  async listPending(filter?: { olderThan?: string; limit?: number }): Promise<WebhookDelivery[]> {
+    const rows = await this.readWebhookDeliveries();
+    let out = rows.filter((r) => r.status === "pending");
+    if (filter?.olderThan) {
+      const cutoff = filter.olderThan;
+      out = out.filter((r) => r.createdAt < cutoff);
+    }
+    out.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    return filter?.limit ? out.slice(0, filter.limit) : out;
+  }
 }
 
 function rowToRecord(row: ApiKeyRow): ApiKeyRecord {

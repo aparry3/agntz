@@ -25,6 +25,9 @@ import type {
   Span,
   TraceSummary,
   TraceFilter,
+  WebhookDelivery,
+  WebhookSecret,
+  WebhookSecretCreated,
 } from "@agntz/core";
 
 const MIGRATIONS = [
@@ -266,6 +269,44 @@ const MIGRATIONS = [
   ALTER TABLE messages ADD COLUMN content_blocks TEXT;
 
   UPDATE schema_version SET version = 9;
+  `,
+  // v10: Webhook secrets + delivery outbox.
+  // `webhook_secrets.secret_raw` stores the raw signing secret. HMAC requires
+  // the original bytes; documented credential-at-rest trade-off.
+  // Unique (user_id, name) WHERE rotated_at IS NULL keeps active names unique
+  // per user while letting rotated rows linger so in-flight deliveries that
+  // captured the old id keep signing successfully.
+  `
+  CREATE TABLE IF NOT EXISTS webhook_secrets (
+    user_id    TEXT NOT NULL,
+    id         TEXT NOT NULL PRIMARY KEY,
+    name       TEXT NOT NULL,
+    secret_raw TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    rotated_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_webhook_secrets_user_name ON webhook_secrets(user_id, name);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_webhook_secrets_user_name_active
+    ON webhook_secrets(user_id, name) WHERE rotated_at IS NULL;
+
+  CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    id              TEXT NOT NULL PRIMARY KEY,
+    user_id         TEXT NOT NULL,
+    run_id          TEXT NOT NULL,
+    callback_url    TEXT NOT NULL,
+    secret_id       TEXT NOT NULL,
+    payload         TEXT NOT NULL,
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at TEXT,
+    status          TEXT NOT NULL CHECK (status IN ('pending','delivered','failed_permanent')),
+    last_error      TEXT,
+    created_at      TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_user ON webhook_deliveries(user_id);
+  CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_status ON webhook_deliveries(status);
+  CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_run ON webhook_deliveries(user_id, run_id);
+
+  UPDATE schema_version SET version = 10;
   `,
 ];
 
@@ -1352,6 +1393,206 @@ export class SqliteStore implements UnifiedStore {
     return { userId: row.user_id, keyId: row.id };
   }
 
+  // ═══ WebhookSecretStore ═══
+
+  async create(name: string): Promise<WebhookSecretCreated> {
+    const u = this.requireUser();
+    if (!name || typeof name !== "string") {
+      throw new Error("WebhookSecretStore.create: `name` must be a non-empty string");
+    }
+    // Active-name uniqueness is enforced by the partial unique index, but we
+    // pre-check so we can throw a friendly message instead of a constraint
+    // error from better-sqlite3.
+    const existing = this.db
+      .prepare(
+        `SELECT id FROM webhook_secrets WHERE user_id = ? AND name = ? AND rotated_at IS NULL`,
+      )
+      .get(u, name);
+    if (existing) {
+      throw new Error(`Webhook secret with name "${name}" already exists`);
+    }
+    const id = `whsec_${randomBytes(16).toString("hex")}`;
+    const raw = `whsec_${randomBytes(32).toString("hex")}`;
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO webhook_secrets (user_id, id, name, secret_raw, created_at, rotated_at)
+         VALUES (?, ?, ?, ?, ?, NULL)`,
+      )
+      .run(u, id, name, raw, now);
+    return { id, name, userId: u, secret: raw, createdAt: now };
+  }
+
+  async list(): Promise<WebhookSecret[]> {
+    const u = this.requireUser();
+    const rows = this.db
+      .prepare(
+        `SELECT id, user_id, name, secret_raw, created_at, rotated_at
+         FROM webhook_secrets WHERE user_id = ? ORDER BY created_at ASC`,
+      )
+      .all(u) as Array<WebhookSecretRow>;
+    return rows.map(rowToWebhookSecret);
+  }
+
+  async rotate(id: string): Promise<WebhookSecretCreated> {
+    const u = this.requireUser();
+    const existing = this.db
+      .prepare(
+        `SELECT id, user_id, name, secret_raw, created_at, rotated_at
+         FROM webhook_secrets WHERE user_id = ? AND id = ?`,
+      )
+      .get(u, id) as WebhookSecretRow | undefined;
+    if (!existing) {
+      throw new Error(`Webhook secret not found: ${id}`);
+    }
+    const now = new Date().toISOString();
+    const newId = `whsec_${randomBytes(16).toString("hex")}`;
+    const raw = `whsec_${randomBytes(32).toString("hex")}`;
+    const tx = this.db.transaction(() => {
+      // Mark old as rotated first to free the partial unique index slot before
+      // inserting the replacement with the same name.
+      this.db
+        .prepare(
+          `UPDATE webhook_secrets SET rotated_at = ? WHERE user_id = ? AND id = ?`,
+        )
+        .run(now, u, id);
+      this.db
+        .prepare(
+          `INSERT INTO webhook_secrets (user_id, id, name, secret_raw, created_at, rotated_at)
+           VALUES (?, ?, ?, ?, ?, NULL)`,
+        )
+        .run(u, newId, existing.name, raw, now);
+    });
+    tx();
+    return { id: newId, name: existing.name, userId: u, secret: raw, createdAt: now };
+  }
+
+  async revoke(id: string): Promise<void> {
+    const u = this.requireUser();
+    this.db
+      .prepare(`DELETE FROM webhook_secrets WHERE user_id = ? AND id = ?`)
+      .run(u, id);
+  }
+
+  async resolveByName(name: string): Promise<WebhookSecret | undefined> {
+    const u = this.requireUser();
+    const row = this.db
+      .prepare(
+        `SELECT id, user_id, name, secret_raw, created_at, rotated_at
+         FROM webhook_secrets
+         WHERE user_id = ? AND name = ? AND rotated_at IS NULL`,
+      )
+      .get(u, name) as WebhookSecretRow | undefined;
+    return row ? rowToWebhookSecret(row) : undefined;
+  }
+
+  async resolveById(id: string): Promise<WebhookSecret | undefined> {
+    const u = this.requireUser();
+    const row = this.db
+      .prepare(
+        `SELECT id, user_id, name, secret_raw, created_at, rotated_at
+         FROM webhook_secrets WHERE user_id = ? AND id = ?`,
+      )
+      .get(u, id) as WebhookSecretRow | undefined;
+    return row ? rowToWebhookSecret(row) : undefined;
+  }
+
+  // ═══ WebhookDeliveryStore ═══
+
+  async insert(
+    delivery: Omit<WebhookDelivery, "attempts" | "status" | "createdAt"> & {
+      payload: Record<string, unknown>;
+    },
+  ): Promise<string> {
+    const u = this.requireUser();
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO webhook_deliveries (
+            id, user_id, run_id, callback_url, secret_id, payload,
+            attempts, status, last_error, last_attempt_at, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, 0, 'pending', NULL, NULL, ?)`,
+      )
+      .run(
+        delivery.id,
+        u,
+        delivery.runId,
+        delivery.callbackUrl,
+        delivery.secretId,
+        JSON.stringify(delivery.payload),
+        now,
+      );
+    return delivery.id;
+  }
+
+  async updateStatus(
+    id: string,
+    status: WebhookDelivery["status"],
+    lastError?: string,
+  ): Promise<void> {
+    const u = this.requireUser();
+    if (lastError !== undefined) {
+      this.db
+        .prepare(
+          `UPDATE webhook_deliveries SET status = ?, last_error = ?
+           WHERE user_id = ? AND id = ?`,
+        )
+        .run(status, lastError, u, id);
+    } else {
+      this.db
+        .prepare(
+          `UPDATE webhook_deliveries SET status = ?
+           WHERE user_id = ? AND id = ?`,
+        )
+        .run(status, u, id);
+    }
+  }
+
+  async incrementAttempt(id: string, lastError?: string): Promise<void> {
+    const u = this.requireUser();
+    const now = new Date().toISOString();
+    if (lastError !== undefined) {
+      this.db
+        .prepare(
+          `UPDATE webhook_deliveries
+           SET attempts = attempts + 1, last_attempt_at = ?, last_error = ?
+           WHERE user_id = ? AND id = ?`,
+        )
+        .run(now, lastError, u, id);
+    } else {
+      this.db
+        .prepare(
+          `UPDATE webhook_deliveries
+           SET attempts = attempts + 1, last_attempt_at = ?
+           WHERE user_id = ? AND id = ?`,
+        )
+        .run(now, u, id);
+    }
+  }
+
+  async listPending(filter?: { olderThan?: string; limit?: number }): Promise<WebhookDelivery[]> {
+    const u = this.requireUser();
+    const clauses = ["user_id = ?", "status = 'pending'"];
+    const args: unknown[] = [u];
+    if (filter?.olderThan) {
+      clauses.push("created_at < ?");
+      args.push(filter.olderThan);
+    }
+    const limit = filter?.limit ?? 1000;
+    args.push(limit);
+    const rows = this.db
+      .prepare(
+        `SELECT id, user_id, run_id, callback_url, secret_id, payload,
+                attempts, last_attempt_at, status, last_error, created_at
+         FROM webhook_deliveries
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY created_at ASC
+         LIMIT ?`,
+      )
+      .all(...args) as Array<WebhookDeliveryRow>;
+    return rows.map(rowToWebhookDelivery);
+  }
+
   // ═══ Lifecycle ═══
 
   close(): void {
@@ -1418,6 +1659,63 @@ interface SkillRow {
   metadata: string | null;
   created_at: string;
   updated_at: string;
+}
+
+interface WebhookSecretRow {
+  id: string;
+  user_id: string;
+  name: string;
+  secret_raw: string;
+  created_at: string;
+  rotated_at: string | null;
+}
+
+interface WebhookDeliveryRow {
+  id: string;
+  user_id: string;
+  run_id: string;
+  callback_url: string;
+  secret_id: string;
+  payload: string;
+  attempts: number;
+  last_attempt_at: string | null;
+  status: WebhookDelivery["status"];
+  last_error: string | null;
+  created_at: string;
+}
+
+function rowToWebhookSecret(r: WebhookSecretRow): WebhookSecret {
+  const s: WebhookSecret = {
+    id: r.id,
+    name: r.name,
+    userId: r.user_id,
+    secret: r.secret_raw,
+    createdAt: r.created_at,
+  };
+  if (r.rotated_at) s.rotatedAt = r.rotated_at;
+  return s;
+}
+
+function rowToWebhookDelivery(r: WebhookDeliveryRow): WebhookDelivery {
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(r.payload) as Record<string, unknown>;
+  } catch {
+    payload = {};
+  }
+  const d: WebhookDelivery = {
+    id: r.id,
+    runId: r.run_id,
+    callbackUrl: r.callback_url,
+    secretId: r.secret_id,
+    payload,
+    attempts: r.attempts,
+    status: r.status,
+    createdAt: r.created_at,
+  };
+  if (r.last_attempt_at) d.lastAttemptAt = r.last_attempt_at;
+  if (r.last_error) d.lastError = r.last_error;
+  return d;
 }
 
 /**
