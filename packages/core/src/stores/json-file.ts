@@ -234,6 +234,20 @@ export class JsonFileStore implements UnifiedStore {
     await unlink(this.sessionPath(sessionId)).catch(() => {});
   }
 
+  async getOrCreateSession(sessionId: string): Promise<void> {
+    await this.ensureUserDirs();
+    const path = this.sessionPath(sessionId);
+    const existing = await this.readJson<{ messages: Message[]; createdAt: string }>(path);
+    if (existing) return;
+    const now = new Date().toISOString();
+    await this.writeJson(path, {
+      sessionId,
+      messages: [],
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
   async listSessions(_agentId?: string): Promise<SessionSummary[]> {
     await this.ensureUserDirs();
     const dir = join(this.userRoot(), "sessions");

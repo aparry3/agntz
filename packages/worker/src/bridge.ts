@@ -102,7 +102,9 @@ export function createExecutionContext(
           : JSON.stringify(state);
 
         const result = await runner.invoke(tempId, userInput, {
-          ...(runRegistry ? { runRegistry, parentRunId, userId, sessionId } : {}),
+          ...(runRegistry ? { runRegistry, parentRunId } : {}),
+          ...(userId ? { userId } : {}),
+          ...(sessionId ? { sessionId } : {}),
           ...(spanEmitter ? { spanEmitter } : {}),
           ...(ownerId ? { ownerId } : {}),
         });

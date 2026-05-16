@@ -3,6 +3,7 @@ import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import {
   createRunner,
+  generateSessionId,
   InMemoryRunRegistry,
   MemoryStore,
   SpanEmitter,
@@ -163,8 +164,15 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
         return c.json({ error: "Missing required field: agentId" }, 400);
       }
 
+      // Always work with a concrete sessionId. If the caller didn't provide
+      // one we mint it here so the response carries the id even when the
+      // manifest doesn't surface it back. The runner will also do this
+      // independently for safety, but pre-allocating keeps the wire response
+      // authoritative.
+      const sessionId = body.sessionId ?? generateSessionId();
+
       console.log(
-        `[run] start agent=${agentId} user=${userId} ` +
+        `[run] start agent=${agentId} user=${userId} session=${sessionId} ` +
         `inputKeys=${input && typeof input === "object" ? Object.keys(input).join(",") : typeof input}`
       );
 
@@ -178,7 +186,13 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
         },
         recordIO: false,
       });
-      const ctx = createExecutionContext(runner, { runRegistry, spanEmitter, ownerId: userId });
+      const ctx = createExecutionContext(runner, {
+        runRegistry,
+        spanEmitter,
+        ownerId: userId,
+        userId,
+        sessionId,
+      });
       const result = await execute(manifest, input ?? "", ctx);
 
       console.log(
@@ -186,7 +200,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
         `outputKeys=${result.output && typeof result.output === "object" ? Object.keys(result.output).join(",") : typeof result.output}`
       );
 
-      return c.json({ output: result.output, state: result.state });
+      return c.json({ output: result.output, state: result.state, sessionId });
     } catch (error) {
       const status = isNotFound(error) ? 404 : 500;
       console.error(`[run] failed agent=${agentIdForLog} ${Date.now() - start}ms: ${errorMessage(error)}`);
@@ -208,6 +222,9 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
         return c.json({ error: "Missing required field: agentId" }, 400);
       }
 
+      // Pre-allocate sessionId so the run-start SSE frame is authoritative.
+      const sessionId = body.sessionId ?? generateSessionId();
+
       const { runner, manifest } = await resolveRunnerAndManifest(store, userId, agentId);
       const runRegistry = new InMemoryRunRegistry();
       const spanEmitter = new SpanEmitter({
@@ -218,20 +235,26 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
         },
         recordIO: false,
       });
-      const ctx = createExecutionContext(runner, { runRegistry, spanEmitter, ownerId: userId });
+      const ctx = createExecutionContext(runner, {
+        runRegistry,
+        spanEmitter,
+        ownerId: userId,
+        userId,
+        sessionId,
+      });
 
       return streamSSE(c, async (stream) => {
         try {
           await stream.writeSSE({
             event: "run-start",
-            data: JSON.stringify({ agentId, kind: manifest.kind }),
+            data: JSON.stringify({ agentId, kind: manifest.kind, sessionId }),
           });
 
           const result = await execute(manifest, input ?? "", ctx);
 
           await stream.writeSSE({
             event: "run-complete",
-            data: JSON.stringify({ output: result.output, state: result.state }),
+            data: JSON.stringify({ output: result.output, state: result.state, sessionId }),
           });
         } catch (error) {
           await stream.writeSSE({
@@ -293,12 +316,17 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
         input?: unknown;
         sessionId?: string;
       };
-      const { agentId, input, sessionId } = body;
+      const { agentId, input } = body;
       agentIdForLog = agentId;
 
       if (!agentId) {
         return c.json({ error: "Missing required field: agentId" }, 400);
       }
+
+      // Always work with a concrete sessionId. Top-level Runs are indexed in
+      // the registry by sessionId to power cancel-and-replace, so an absent
+      // id must not mean "no session" — it means "fresh session".
+      const sessionId = body.sessionId ?? generateSessionId();
 
       const inputStr =
         typeof input === "string"
@@ -345,6 +373,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
         const invokeResult: InvokeResult = {
           output: outputStr,
           invocationId: run.id,
+          sessionId,
           toolCalls: [],
           usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
           duration: Date.now() - runStart,

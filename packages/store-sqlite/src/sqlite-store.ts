@@ -249,6 +249,13 @@ const MIGRATIONS = [
 
   UPDATE schema_version SET version = 7;
   `,
+  // v8: invocation_logs.status — records terminal state ("completed" |
+  // "cancelled" | "failed") for billing/audit when a run is superseded.
+  `
+  ALTER TABLE invocation_logs ADD COLUMN status TEXT;
+
+  UPDATE schema_version SET version = 8;
+  `,
 ];
 
 export interface SqliteStoreOptions {
@@ -500,6 +507,25 @@ export class SqliteStore implements UnifiedStore {
     transaction();
   }
 
+  async getOrCreateSession(sessionId: string): Promise<void> {
+    const u = this.requireUser();
+    // Ownership check: if a row exists for a different user, surface that
+    // rather than silently aliasing the id.
+    const existing = this.db
+      .prepare("SELECT user_id FROM sessions WHERE id = ?")
+      .get(sessionId) as { user_id: string } | undefined;
+    if (existing && existing.user_id !== u) {
+      throw new Error(`Session ${sessionId} belongs to a different user`);
+    }
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO sessions (user_id, id, agent_id, created_at, updated_at)
+         VALUES (?, ?, NULL, ?, ?)`
+      )
+      .run(u, sessionId, now, now);
+  }
+
   async listSessions(agentId?: string): Promise<SessionSummary[]> {
     const u = this.requireUser();
     let query = `
@@ -585,8 +611,8 @@ export class SqliteStore implements UnifiedStore {
     this.db
       .prepare(
         `INSERT INTO invocation_logs (user_id, id, agent_id, session_id, input, output, tool_calls,
-          prompt_tokens, completion_tokens, total_tokens, duration, model, error, timestamp)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          prompt_tokens, completion_tokens, total_tokens, duration, model, error, timestamp, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         u,
@@ -602,7 +628,8 @@ export class SqliteStore implements UnifiedStore {
         entry.duration,
         entry.model,
         entry.error ?? null,
-        entry.timestamp
+        entry.timestamp,
+        entry.status ?? null
       );
   }
 
@@ -1315,6 +1342,7 @@ interface LogRow {
   model: string;
   error: string | null;
   timestamp: string;
+  status: string | null;
 }
 
 interface ApiKeyRow {
@@ -1389,7 +1417,7 @@ function rowToRun(r: RunRow): Run {
 }
 
 function rowToLog(r: LogRow): InvocationLog {
-  return {
+  const log: InvocationLog = {
     id: r.id,
     agentId: r.agent_id,
     sessionId: r.session_id ?? undefined,
@@ -1406,6 +1434,8 @@ function rowToLog(r: LogRow): InvocationLog {
     error: r.error ?? undefined,
     timestamp: r.timestamp,
   };
+  if (r.status) log.status = r.status as InvocationLog["status"];
+  return log;
 }
 
 function sqliteRowToConnection(r: {

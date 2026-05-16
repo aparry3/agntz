@@ -201,6 +201,12 @@ export interface InvokeResult {
   output: string;
   /** Unique ID for this invocation */
   invocationId: string;
+  /**
+   * Session this invocation ran under. Always set — the runner auto-allocates
+   * one if the caller didn't pass `options.sessionId`. Callers should record
+   * this id to continue the conversation on later invokes.
+   */
+  sessionId: string;
   /** All tool calls made during execution */
   toolCalls: ToolCallRecord[];
   /** Token usage */
@@ -273,6 +279,13 @@ export interface InvocationLog {
   duration: number;
   model: string;
   error?: string;
+  /**
+   * Final disposition of this invocation. Recorded for auditability so the
+   * token bill, tool calls, and any partial output of cancelled runs are
+   * still attributable. Optional for backward compat — older log rows that
+   * predate this field are treated as `completed` unless `error` is set.
+   */
+  status?: "completed" | "cancelled" | "failed";
   timestamp: string;
 }
 
@@ -461,6 +474,13 @@ export interface SessionStore {
   append(sessionId: string, messages: Message[]): Promise<void>;
   deleteSession(sessionId: string): Promise<void>;
   listSessions(agentId?: string): Promise<SessionSummary[]>;
+  /**
+   * Ensure a session row exists for `sessionId`. No-op if it does. Used by
+   * the runner so the always-allocated sessionId has a persistent home before
+   * any messages are appended — keeps webhooks/replays able to reference the
+   * session even if the run is cancelled before its first turn completes.
+   */
+  getOrCreateSession(sessionId: string): Promise<void>;
 }
 
 export interface ContextStore {
@@ -657,6 +677,33 @@ export interface RunRegistry {
    * Idempotent.
    */
   notifyFailed(runId: string, err: unknown): void;
+  /**
+   * Return the runId of the currently-active (pre-terminal) Run for the
+   * given sessionId, or undefined if there is none. Used by the runner's
+   * cancel-and-replace logic to detect and supersede an in-flight invoke
+   * on the same session.
+   */
+  findActiveBySession(sessionId: string): string | undefined;
+  /**
+   * Acquire a per-session mutex. The returned function must be called to
+   * release the lock — typically in a `finally` block. Pending acquirers
+   * are served FIFO so cancel-and-replace decisions on the same session
+   * serialize cleanly without TOCTOU races.
+   */
+  acquireSessionLock(sessionId: string): Promise<() => void>;
+  /**
+   * Resolve when the given runId reaches a terminal status (completed,
+   * failed, or cancelled). Resolves immediately if already terminal.
+   * Resolves (does not reject) if the run is unknown to the registry.
+   */
+  waitForTerminal(runId: string): Promise<void>;
+  /**
+   * Return the AbortSignal driving the Run's internal controller. The
+   * runner uses this for top-level invokes — which never go through
+   * `start()` — so that `cancel(runId)` can still abort a mid-loop model
+   * call. Returns undefined for unknown runIds.
+   */
+  getAbortSignal(runId: string): AbortSignal | undefined;
 }
 
 /**

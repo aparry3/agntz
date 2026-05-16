@@ -22,12 +22,14 @@ export function normalizeEvent(frame: SseFrame): StreamEvent | null {
     case "run-start": {
       const agentId = asString(payload, "agentId");
       const kind = asAgentKind(payload);
-      return { type: "start", agentId, kind };
+      const sessionId = asString(payload, "sessionId");
+      return { type: "start", agentId, kind, sessionId };
     }
     case "run-complete": {
       const output = (payload as { output?: unknown }).output;
       const state = asStateRecord(payload);
-      return { type: "complete", output, state };
+      const sessionId = asString(payload, "sessionId");
+      return { type: "complete", output, state, sessionId };
     }
     case "run-error": {
       const error = asString(payload, "error");

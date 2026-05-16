@@ -38,7 +38,7 @@ import { MemoryStore } from "./stores/memory.js";
 import { AISDKModelProvider } from "./model-provider.js";
 import { buildMessages, trimHistory } from "./message-builder.js";
 import { trimHistoryWithSummary } from "./utils/summarize.js";
-import { generateInvocationId } from "./utils/id.js";
+import { generateInvocationId, generateSessionId } from "./utils/id.js";
 import { MCPClientManager } from "./mcp/client-manager.js";
 import type { MCPTool } from "./mcp/client-manager.js";
 import { resolveMCPServer as resolveMCPServerHelper } from "./mcp/resolve-server.js";
@@ -360,22 +360,50 @@ export class Runner {
       const invocationId = generateInvocationId();
       const agent = await self.resolveAgent(agentId);
 
-      // ─── Run registry integration ──────────────────────────────────────
+      // Always work with a concrete sessionId — symmetric with invoke().
+      const effectiveSessionId = options.sessionId ?? generateSessionId();
+      await self.sessionStore.getOrCreateSession(effectiveSessionId);
+
+      // ─── Cancel-and-replace concurrency + Run registration ────────────
       const runRegistry = options.runRegistry;
       let runId = options.runId;
       let rootId: string | undefined;
       if (runRegistry) {
         if (!runId) {
-          const root = runRegistry.create({
-            agentId,
-            input,
-            parentRunId: options.parentRunId,
-            userId: options.userId,
-            sessionId: options.sessionId,
-            spanEmitter: options.spanEmitter,
-          });
-          runId = root.id;
-          rootId = root.rootId;
+          const isTopLevel = currentDepth === 0 && !options.parentRunId;
+          if (isTopLevel) {
+            const release = await runRegistry.acquireSessionLock(effectiveSessionId);
+            try {
+              const activeRunId = runRegistry.findActiveBySession(effectiveSessionId);
+              if (activeRunId) {
+                runRegistry.cancel(activeRunId, "superseded");
+                await runRegistry.waitForTerminal(activeRunId);
+              }
+              const root = runRegistry.create({
+                agentId,
+                input,
+                parentRunId: options.parentRunId,
+                userId: options.userId,
+                sessionId: effectiveSessionId,
+                spanEmitter: options.spanEmitter,
+              });
+              runId = root.id;
+              rootId = root.rootId;
+            } finally {
+              release();
+            }
+          } else {
+            const root = runRegistry.create({
+              agentId,
+              input,
+              parentRunId: options.parentRunId,
+              userId: options.userId,
+              sessionId: effectiveSessionId,
+              spanEmitter: options.spanEmitter,
+            });
+            runId = root.id;
+            rootId = root.rootId;
+          }
         } else {
           rootId = runRegistry.get(runId)?.rootId ?? runId;
         }
@@ -394,11 +422,24 @@ export class Runner {
       };
       const modelStr = `${modelConfig.provider}/${modelConfig.name}`;
 
+      // Top-level invokes never go through registry.start(); bridge the
+      // registry's AbortController so cancel-and-replace can interrupt
+      // mid-loop model calls.
+      const effectiveSignal = combineSignals(
+        options.signal,
+        runRegistry && runId ? runRegistry.getAbortSignal(runId) : undefined,
+      );
+
+      // Hoisted so the catch block can write an audit log entry even when a
+      // cancel-and-replace abort interrupts the loop mid-flight.
+      const allToolCalls: ToolCallRecord[] = [];
+      const totalUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+
       try {
         // Load session history
         let sessionHistory: Message[] = [];
-        if (options.sessionId) {
-          sessionHistory = await self.sessionStore.getMessages(options.sessionId);
+        {
+          sessionHistory = await self.sessionStore.getMessages(effectiveSessionId);
           const maxMessages = self.config.session?.maxMessages ?? 50;
           const strategy = self.config.session?.strategy ?? "sliding";
 
@@ -407,7 +448,7 @@ export class Runner {
               maxMessages,
               modelProvider: self.modelProvider,
               modelConfig: modelConfig as import("./types.js").ModelConfig,
-              signal: options.signal,
+              signal: effectiveSignal,
             });
           } else if (strategy !== "none") {
             sessionHistory = trimHistory(sessionHistory, maxMessages);
@@ -444,8 +485,8 @@ export class Runner {
           ephemeralTools,
         });
 
-        const allToolCalls: ToolCallRecord[] = [];
-        const totalUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+        // allToolCalls and totalUsage are hoisted above so a mid-loop cancel
+        // can still produce an audit log entry.
         let finalOutput = "";
         let step = 0;
 
@@ -456,7 +497,7 @@ export class Runner {
         while (step < effectiveMaxSteps) {
           step++;
 
-          if (options.signal?.aborted) {
+          if (effectiveSignal?.aborted) {
             throw new InvocationCancelledError();
           }
 
@@ -480,7 +521,7 @@ export class Runner {
               messages,
               tools: availableTools.length > 0 ? availableTools : undefined,
               outputSchema,
-              signal: options.signal,
+              signal: effectiveSignal,
             });
 
             // Yield text deltas (both to the local stream and to the registry).
@@ -509,7 +550,7 @@ export class Runner {
               messages,
               tools: availableTools.length > 0 ? availableTools : undefined,
               outputSchema,
-              signal: options.signal,
+              signal: effectiveSignal,
             });
 
             resultText = result.text;
@@ -567,7 +608,7 @@ export class Runner {
                       seq: 0,
                     });
                   }
-                  await runRegistry.awaitNextSettled(runId, options.signal);
+                  await runRegistry.awaitNextSettled(runId, effectiveSignal);
                 }
                 continue;
               }
@@ -604,6 +645,7 @@ export class Runner {
               loadedSkills,
               loadedSkillToolDescriptors,
               currentDepth,
+              sessionId: effectiveSessionId,
             });
 
             // Detect a successful use_skill call (returns name+instructions) so
@@ -683,10 +725,13 @@ export class Runner {
 
         const duration = Date.now() - startTime;
 
-        // Persist session
-        if (options.sessionId) {
+        // Persist session — but only if this run wasn't cancelled mid-loop.
+        // A cancelled run shouldn't poison the conversation history; the
+        // replacing run will re-persist the user input as part of its own
+        // turn.
+        if (!effectiveSignal?.aborted) {
           const now = new Date().toISOString();
-          await self.sessionStore.append(options.sessionId, [
+          await self.sessionStore.append(effectiveSessionId, [
             { role: "user", content: input, timestamp: now },
             {
               role: "assistant",
@@ -710,23 +755,27 @@ export class Runner {
           }
         }
 
+        const cancelled = effectiveSignal?.aborted ?? false;
+
         // Log
         await self.logStore.log({
           id: invocationId,
           agentId,
-          sessionId: options.sessionId,
+          sessionId: effectiveSessionId,
           input,
           output: finalOutput,
           toolCalls: allToolCalls,
           usage: totalUsage,
           duration,
           model: modelStr,
+          status: cancelled ? "cancelled" : "completed",
           timestamp: new Date().toISOString(),
         });
 
         const invokeResult: InvokeResult = {
           output: finalOutput,
           invocationId,
+          sessionId: effectiveSessionId,
           toolCalls: allToolCalls,
           usage: totalUsage,
           duration,
@@ -740,6 +789,28 @@ export class Runner {
         resolveResult!(invokeResult);
         yield { type: "done" as const, result: invokeResult };
       } catch (err) {
+        // Audit-log the cancellation/failure even when the loop throws mid-flight.
+        const cancelled =
+          err instanceof InvocationCancelledError ||
+          (effectiveSignal?.aborted ?? false);
+        try {
+          await self.logStore.log({
+            id: invocationId,
+            agentId,
+            sessionId: effectiveSessionId,
+            input,
+            output: "",
+            toolCalls: allToolCalls,
+            usage: totalUsage,
+            duration: Date.now() - startTime,
+            model: modelStr,
+            error: err instanceof Error ? err.message : String(err),
+            status: cancelled ? "cancelled" : "failed",
+            timestamp: new Date().toISOString(),
+          });
+        } catch {
+          // Log persistence failure should not mask the original error.
+        }
         if (runRegistry && runId) {
           runRegistry.notifyFailed(runId, err);
         }
@@ -778,29 +849,70 @@ export class Runner {
     const invocationId = generateInvocationId();
     const agent = await this.resolveAgent(agentId);
 
-    // ─── Run registry integration ──────────────────────────────────────
-    // If a registry is wired and there is no current Run id, materialize
-    // one for this top-level call. Children always pass runId explicitly via
-    // the spawn_agent tool, so this only fires for top-level invocations.
+    // Always work with a concrete sessionId — auto-allocate if the caller
+    // didn't pass one. The session row is ensured below so the id has a
+    // persistent home before any messages get appended.
+    const effectiveSessionId = options.sessionId ?? generateSessionId();
+    await this.sessionStore.getOrCreateSession(effectiveSessionId);
+
+    // ─── Cancel-and-replace concurrency + Run registration ────────────
+    // The per-session mutex must wrap "check active → cancel → create new",
+    // because publishing this run's id as the session's active run is the
+    // moment a concurrent caller can race. We release the lock as soon as
+    // the new run is created and indexed; the model loop runs outside it.
     const runRegistry = options.runRegistry;
     let runId = options.runId;
     let rootId: string | undefined;
     if (runRegistry) {
       if (!runId) {
-        const root = runRegistry.create({
-          agentId,
-          input,
-          parentRunId: options.parentRunId,
-          userId: options.userId,
-          sessionId: options.sessionId,
-          spanEmitter: options.spanEmitter,
-        });
-        runId = root.id;
-        rootId = root.rootId;
+        // Only top-level invokes (no parentRunId, depth 0) participate in
+        // cancel-and-replace. Children carry their own parent context.
+        const isTopLevel = currentDepth === 0 && !options.parentRunId;
+        if (isTopLevel) {
+          const release = await runRegistry.acquireSessionLock(effectiveSessionId);
+          try {
+            const activeRunId = runRegistry.findActiveBySession(effectiveSessionId);
+            if (activeRunId) {
+              runRegistry.cancel(activeRunId, "superseded");
+              await runRegistry.waitForTerminal(activeRunId);
+            }
+            const root = runRegistry.create({
+              agentId,
+              input,
+              parentRunId: options.parentRunId,
+              userId: options.userId,
+              sessionId: effectiveSessionId,
+              spanEmitter: options.spanEmitter,
+            });
+            runId = root.id;
+            rootId = root.rootId;
+          } finally {
+            release();
+          }
+        } else {
+          const root = runRegistry.create({
+            agentId,
+            input,
+            parentRunId: options.parentRunId,
+            userId: options.userId,
+            sessionId: effectiveSessionId,
+            spanEmitter: options.spanEmitter,
+          });
+          runId = root.id;
+          rootId = root.rootId;
+        }
       } else {
         rootId = runRegistry.get(runId)?.rootId ?? runId;
       }
     }
+
+    // Top-level invokes don't go through registry.start(), so the registry's
+    // AbortController isn't wired into the model call by default. Bridge it
+    // here so cancel-and-replace can interrupt a mid-loop model call.
+    const effectiveSignal = combineSignals(
+      options.signal,
+      runRegistry && runId ? runRegistry.getAbortSignal(runId) : undefined,
+    );
     // Per-invocation ephemeral tools. spawn_agent/check_agents live here,
     // not in the global registry, because their schemas are agent-specific.
     const ephemeralTools = new Map<string, ToolDefinition>();
@@ -828,16 +940,21 @@ export class Runner {
       invocationId,
       model: modelStr,
       ownerId: options.ownerId,
-      sessionId: options.sessionId,
+      sessionId: effectiveSessionId,
       contextIds: options.contextIds,
       input,
     });
 
+    // Hoisted so the catch block can write an audit log entry even when a
+    // cancel-and-replace abort interrupts the loop mid-flight.
+    const allToolCalls: ToolCallRecord[] = [];
+    const totalUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+
     try {
       // Load session history
       let sessionHistory: Message[] = [];
-      if (options.sessionId) {
-        sessionHistory = await this.sessionStore.getMessages(options.sessionId);
+      {
+        sessionHistory = await this.sessionStore.getMessages(effectiveSessionId);
         const maxMessages = this.config.session?.maxMessages ?? 50;
         const strategy = this.config.session?.strategy ?? "sliding";
 
@@ -846,7 +963,7 @@ export class Runner {
             maxMessages,
             modelProvider: this.modelProvider,
             modelConfig: modelConfig as import("./types.js").ModelConfig,
-            signal: options.signal,
+            signal: effectiveSignal,
           });
         } else if (strategy !== "none") {
           sessionHistory = trimHistory(sessionHistory, maxMessages);
@@ -888,9 +1005,9 @@ export class Runner {
         ephemeralTools,
       });
 
-      // Execute the agent loop (model → tools → repeat)
-      const allToolCalls: ToolCallRecord[] = [];
-      const totalUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+      // Execute the agent loop (model → tools → repeat). allToolCalls and
+      // totalUsage are hoisted above so a mid-loop cancel can still produce
+      // an audit log entry.
       let finalOutput = "";
       let step = 0;
 
@@ -901,8 +1018,9 @@ export class Runner {
       while (step < effectiveMaxSteps) {
         step++;
 
-        // Check for cancellation
-        if (options.signal?.aborted) {
+        // Check for cancellation (either caller-supplied signal or our own
+        // registry-driven cancel)
+        if (effectiveSignal?.aborted) {
           throw new InvocationCancelledError();
         }
 
@@ -923,17 +1041,18 @@ export class Runner {
 
         let result;
         try {
-          // Call the model (with retry)
+          // Call the model (with retry). effectiveSignal aborts on either
+          // caller cancel or registry-driven cancel-and-replace.
           result = await withRetry(
             () => this.modelProvider.generateText({
               model: modelConfig,
               messages,
               tools: availableTools.length > 0 ? availableTools : undefined,
               outputSchema,
-              signal: options.signal,
+              signal: effectiveSignal,
             }),
             this.config.retry,
-            options.signal,
+            effectiveSignal,
           );
 
           const costUsd = computeCost(result.usage, modelConfig.provider, modelConfig.name);
@@ -986,7 +1105,7 @@ export class Runner {
                     seq: 0,
                   });
                 }
-                await runRegistry.awaitNextSettled(runId, options.signal);
+                await runRegistry.awaitNextSettled(runId, effectiveSignal);
               }
               continue;
             }
@@ -1023,6 +1142,7 @@ export class Runner {
             loadedSkills,
             loadedSkillToolDescriptors,
             currentDepth,
+            sessionId: effectiveSessionId,
           });
           allToolCalls.push(record);
 
@@ -1118,8 +1238,11 @@ export class Runner {
         stepCount: step,
       });
 
-      // Save to session
-      if (options.sessionId) {
+      // Save to session — but only if this run wasn't cancelled mid-loop.
+      // A cancelled run shouldn't poison the conversation history; the
+      // replacing run will re-persist the user input as part of its own
+      // turn. Tool side effects already executed remain in InvocationLog.
+      if (!effectiveSignal?.aborted) {
         const now = new Date().toISOString();
         const newMessages: Message[] = [
           { role: "user", content: input, timestamp: now },
@@ -1130,7 +1253,7 @@ export class Runner {
             timestamp: now,
           },
         ];
-        await this.sessionStore.append(options.sessionId, newMessages);
+        await this.sessionStore.append(effectiveSessionId, newMessages);
       }
 
       // Write to context if agent has contextWrite enabled
@@ -1146,17 +1269,21 @@ export class Runner {
         }
       }
 
-      // Log the invocation
+      // Log the invocation. Record cancellation status for auditability so
+      // the token bill, tool calls, and any partial output are still
+      // attributable even when the run was superseded.
+      const cancelled = effectiveSignal?.aborted ?? false;
       const logEntry: InvocationLog = {
         id: invocationId,
         agentId,
-        sessionId: options.sessionId,
+        sessionId: effectiveSessionId,
         input,
         output: finalOutput,
         toolCalls: allToolCalls,
         usage: totalUsage,
         duration,
         model: modelStr,
+        status: cancelled ? "cancelled" : "completed",
         timestamp: new Date().toISOString(),
       };
       await this.logStore.log(logEntry);
@@ -1166,6 +1293,7 @@ export class Runner {
       const invokeResult: InvokeResult = {
         output: finalOutput,
         invocationId,
+        sessionId: effectiveSessionId,
         toolCalls: allToolCalls,
         usage: totalUsage,
         duration,
@@ -1179,6 +1307,29 @@ export class Runner {
       return invokeResult;
     } catch (err) {
       span.error(err instanceof Error ? err : new Error(String(err)));
+      // Write an audit log entry even on cancel/failure so token usage and
+      // tool calls executed before the abort remain attributable.
+      const cancelled =
+        err instanceof InvocationCancelledError ||
+        (effectiveSignal?.aborted ?? false);
+      try {
+        await this.logStore.log({
+          id: invocationId,
+          agentId,
+          sessionId: effectiveSessionId,
+          input,
+          output: "",
+          toolCalls: allToolCalls,
+          usage: totalUsage,
+          duration: Date.now() - startTime,
+          model: modelStr,
+          error: err instanceof Error ? err.message : String(err),
+          status: cancelled ? "cancelled" : "failed",
+          timestamp: new Date().toISOString(),
+        });
+      } catch {
+        // Persistence failure on the audit log shouldn't mask the original.
+      }
       if (runRegistry && runId) {
         runRegistry.notifyFailed(runId, err);
       }
@@ -1261,6 +1412,8 @@ export class Runner {
     loadedSkills: Set<string>;
     loadedSkillToolDescriptors: Array<{ name: string; description: string; parameters: Record<string, unknown> }>;
     currentDepth: number;
+    /** Effective sessionId (auto-allocated if caller passed none). */
+    sessionId?: string;
   }): Promise<ToolCallRecord> {
     const {
       tc,
@@ -1273,12 +1426,13 @@ export class Runner {
       loadedSkills,
       loadedSkillToolDescriptors,
       currentDepth,
+      sessionId,
     } = params;
 
     const toolStartTime = Date.now();
     const toolCtx: ToolContext = {
       agentId,
-      sessionId: options.sessionId,
+      sessionId: sessionId ?? options.sessionId,
       contextIds: options.contextIds,
       invocationId,
       runId,
@@ -1592,6 +1746,28 @@ export class Runner {
  */
 export function createRunner(config: RunnerConfig = {}): Runner {
   return new Runner(config);
+}
+
+/**
+ * Combine zero or more AbortSignals into one. The returned signal aborts as
+ * soon as any input signal aborts. Returns undefined if no signals were
+ * supplied — callers can pass it through unchanged.
+ */
+function combineSignals(
+  ...signals: Array<AbortSignal | undefined>
+): AbortSignal | undefined {
+  const present = signals.filter((s): s is AbortSignal => Boolean(s));
+  if (present.length === 0) return undefined;
+  if (present.length === 1) return present[0];
+  const ctrl = new AbortController();
+  for (const s of present) {
+    if (s.aborted) {
+      ctrl.abort(s.reason);
+      return ctrl.signal;
+    }
+    s.addEventListener("abort", () => ctrl.abort(s.reason), { once: true });
+  }
+  return ctrl.signal;
 }
 
 /**

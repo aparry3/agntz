@@ -7,18 +7,18 @@ describe("normalizeEvent", () => {
     expect(
       normalizeEvent({
         event: "run-start",
-        data: JSON.stringify({ agentId: "a1", kind: "llm" }),
+        data: JSON.stringify({ agentId: "a1", kind: "llm", sessionId: "sess_1" }),
       }),
-    ).toEqual({ type: "start", agentId: "a1", kind: "llm" });
+    ).toEqual({ type: "start", agentId: "a1", kind: "llm", sessionId: "sess_1" });
   });
 
   it("maps run-complete", () => {
     expect(
       normalizeEvent({
         event: "run-complete",
-        data: JSON.stringify({ output: "ok", state: { n: 1 } }),
+        data: JSON.stringify({ output: "ok", state: { n: 1 }, sessionId: "sess_1" }),
       }),
-    ).toEqual({ type: "complete", output: "ok", state: { n: 1 } });
+    ).toEqual({ type: "complete", output: "ok", state: { n: 1 }, sessionId: "sess_1" });
   });
 
   it("maps run-error", () => {
@@ -48,7 +48,7 @@ describe("normalizeEvent", () => {
     expect(() =>
       normalizeEvent({
         event: "run-start",
-        data: JSON.stringify({ agentId: "a1", kind: "wizardry" }),
+        data: JSON.stringify({ agentId: "a1", kind: "wizardry", sessionId: "sess_1" }),
       }),
     ).toThrow(StreamError);
   });
@@ -57,8 +57,8 @@ describe("normalizeEvent", () => {
     expect(
       normalizeEvent({
         event: "run-complete",
-        data: JSON.stringify({ output: 1 }),
+        data: JSON.stringify({ output: 1, sessionId: "sess_1" }),
       }),
-    ).toEqual({ type: "complete", output: 1, state: {} });
+    ).toEqual({ type: "complete", output: 1, state: {}, sessionId: "sess_1" });
   });
 });

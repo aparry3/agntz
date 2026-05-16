@@ -87,6 +87,7 @@ describe("AgntzClient.runs.stream", () => {
         result: {
           output: "done",
           invocationId: "run_abc",
+          sessionId: "sess_test",
           toolCalls: [],
           usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
           duration: 0,

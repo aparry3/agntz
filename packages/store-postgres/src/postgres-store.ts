@@ -293,6 +293,14 @@ const MIGRATIONS: string[] = [
 
   UPDATE ar_schema_version SET version = 8;
   `,
+  // v9: ar_invocation_logs.status — records terminal state
+  // ("completed" | "cancelled" | "failed") for billing/audit when a run is
+  // superseded by cancel-and-replace.
+  `
+  ALTER TABLE ar_invocation_logs ADD COLUMN IF NOT EXISTS status TEXT;
+
+  UPDATE ar_schema_version SET version = 9;
+  `,
 ];
 
 export interface PostgresStoreOptions {
@@ -621,6 +629,25 @@ export class PostgresStore implements UnifiedStore {
     );
   }
 
+  async getOrCreateSession(sessionId: string): Promise<void> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    // Ownership check: avoid silently aliasing the id under a different user.
+    const existing = await this.pool.query(
+      `SELECT user_id FROM ${this.t("sessions")} WHERE id = $1`,
+      [sessionId]
+    );
+    if (existing.rows.length > 0 && existing.rows[0].user_id !== u) {
+      throw new Error(`Session ${sessionId} belongs to a different user`);
+    }
+    await this.pool.query(
+      `INSERT INTO ${this.t("sessions")} (id, user_id, created_at, updated_at)
+       VALUES ($1, $2, NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`,
+      [sessionId, u]
+    );
+  }
+
   async listSessions(agentId?: string): Promise<SessionSummary[]> {
     await this.ensureMigrated();
     const u = this.requireUser();
@@ -712,8 +739,8 @@ export class PostgresStore implements UnifiedStore {
     await this.pool.query(
       `INSERT INTO ${this.t("invocation_logs")}
        (user_id, id, agent_id, session_id, input, output, tool_calls,
-        prompt_tokens, completion_tokens, total_tokens, duration, model, error, timestamp)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+        prompt_tokens, completion_tokens, total_tokens, duration, model, error, timestamp, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
       [
         u,
         entry.id,
@@ -729,6 +756,7 @@ export class PostgresStore implements UnifiedStore {
         entry.model,
         entry.error ?? null,
         entry.timestamp,
+        entry.status ?? null,
       ]
     );
   }
@@ -1438,8 +1466,9 @@ function rowToInvocationLog(r: {
   model: string;
   error: string | null;
   timestamp: Date;
+  status?: string | null;
 }): InvocationLog {
-  return {
+  const log: InvocationLog = {
     id: r.id,
     agentId: r.agent_id,
     sessionId: r.session_id ?? undefined,
@@ -1456,6 +1485,8 @@ function rowToInvocationLog(r: {
     error: r.error ?? undefined,
     timestamp: r.timestamp instanceof Date ? r.timestamp.toISOString() : String(r.timestamp),
   };
+  if (r.status) log.status = r.status as InvocationLog["status"];
+  return log;
 }
 
 function rowToConnection(r: {

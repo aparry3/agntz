@@ -81,6 +81,24 @@ export class InMemoryRunRegistry implements RunRegistry {
   private runSpans?: Map<string, RunSpan>;
   private gracePeriodMs: number;
   private persistRun?: (run: Run) => void | Promise<void>;
+  /**
+   * sessionId → runId of the currently in-flight Run for that session. Only
+   * one entry per session at a time. Maintained by start() (set) and
+   * completeRun/failRun (delete if the cleared runId still matches). Used by
+   * findActiveBySession to power cancel-and-replace.
+   */
+  private sessionToActiveRun = new Map<string, string>();
+  /**
+   * Per-session mutex chains. Each entry is the tail Promise of the queue;
+   * acquireSessionLock awaits it then publishes a fresh tail. Entries are
+   * deleted when their queue drains so we don't accumulate dead sessions.
+   */
+  private sessionLocks = new Map<string, Promise<void>>();
+  /**
+   * Per-run terminal waiters. Resolved by completeRun/failRun when the run
+   * transitions to a terminal status.
+   */
+  private terminalWaiters = new Map<string, Array<() => void>>();
 
   constructor(opts: InMemoryRunRegistryOptions = {}) {
     this.replayBufferSize = opts.replayBufferSize ?? DEFAULT_REPLAY_BUFFER_SIZE;
@@ -131,6 +149,15 @@ export class InMemoryRunRegistry implements RunRegistry {
       set.add(id);
       this.childrenByParent.set(parent.id, set);
     }
+    // Top-level Runs (no parent) index on session immediately — they don't
+    // necessarily go through start() (the runner's top-level invoke calls
+    // create() and then notifyCompleted/notifyFailed directly). Child Runs
+    // skip session indexing entirely: cancel-and-replace is a top-level
+    // concern, and a child sharing a sessionId with its parent must not
+    // collide on the index slot.
+    if (opts.sessionId && !opts.parentRunId) {
+      this.sessionToActiveRun.set(opts.sessionId, id);
+    }
 
     this.emit(rootId, {
       type: "run-spawn",
@@ -160,6 +187,15 @@ export class InMemoryRunRegistry implements RunRegistry {
       return;
     }
     internal.status = "running";
+    // Belt-and-braces session indexing. Top-level runs are already indexed
+    // by create(), but if a caller drives create()+start() on a child whose
+    // parent isn't known to the registry, we still want this run findable.
+    if (internal.sessionId && !internal.parentId) {
+      const indexed = this.sessionToActiveRun.get(internal.sessionId);
+      if (!indexed) {
+        this.sessionToActiveRun.set(internal.sessionId, internal.id);
+      }
+    }
     void this.persist(internal);
 
     const emitter = this.runEmitters?.get(run.id);
@@ -200,6 +236,16 @@ export class InMemoryRunRegistry implements RunRegistry {
   get(runId: string): Run | undefined {
     const run = this.runs.get(runId);
     return run ? toExternal(run) : undefined;
+  }
+
+  /**
+   * Return the AbortSignal of the Run's internal controller. Used by the
+   * runner so that top-level invokes (which don't go through start()) can
+   * still react to `cancel(runId)` mid-loop — without this, cancel-and-replace
+   * couldn't stop an in-flight model call on the superseded run.
+   */
+  getAbortSignal(runId: string): AbortSignal | undefined {
+    return this.runs.get(runId)?.abortController.signal;
   }
 
   children(parentRunId: string): Run[] {
@@ -371,6 +417,54 @@ export class InMemoryRunRegistry implements RunRegistry {
     this.runEmitters?.delete(runId);
   }
 
+  // ─── Session indexing + per-session mutex ──────────────────────────────
+
+  findActiveBySession(sessionId: string): string | undefined {
+    const runId = this.sessionToActiveRun.get(sessionId);
+    if (!runId) return undefined;
+    const run = this.runs.get(runId);
+    // Defensive: if the indexed run vanished or is terminal, treat as none.
+    if (!run || isTerminal(run.status)) {
+      this.sessionToActiveRun.delete(sessionId);
+      return undefined;
+    }
+    return runId;
+  }
+
+  /**
+   * FIFO mutex per sessionId. Returned function releases the lock. The
+   * implementation chains promises so all acquirers serialize. We also
+   * delete the chain entry when its tail resolves to avoid leaking
+   * Map entries for sessions that never touch concurrency again.
+   */
+  acquireSessionLock(sessionId: string): Promise<() => void> {
+    const previous = this.sessionLocks.get(sessionId) ?? Promise.resolve();
+    let release!: () => void;
+    const next = new Promise<void>((resolve) => {
+      release = () => {
+        // On release, if no later acquirer chained onto this lock, drop
+        // the map entry so empty sessions don't accumulate.
+        if (this.sessionLocks.get(sessionId) === next) {
+          this.sessionLocks.delete(sessionId);
+        }
+        resolve();
+      };
+    });
+    this.sessionLocks.set(sessionId, next);
+    return previous.then(() => release);
+  }
+
+  waitForTerminal(runId: string): Promise<void> {
+    const run = this.runs.get(runId);
+    if (!run) return Promise.resolve();
+    if (isTerminal(run.status)) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const list = this.terminalWaiters.get(runId) ?? [];
+      list.push(resolve);
+      this.terminalWaiters.set(runId, list);
+    });
+  }
+
   // ─── Internals ─────────────────────────────────────────────────────────
 
   private completeRun(runId: string, result: InvokeResult): void {
@@ -379,6 +473,7 @@ export class InMemoryRunRegistry implements RunRegistry {
     run.status = "completed";
     run.result = result;
     run.endedAt = Date.now();
+    this.clearSessionIndex(run);
     this.emit(run.rootId, { type: "run-complete", runId, result, seq: 0 });
     void this.persist(run);
     this.deliverToParent(run, {
@@ -386,6 +481,7 @@ export class InMemoryRunRegistry implements RunRegistry {
       output: result.output,
       usage: result.usage,
     });
+    this.resolveTerminalWaiters(runId);
   }
 
   private failRun(runId: string, err: unknown): void {
@@ -398,6 +494,7 @@ export class InMemoryRunRegistry implements RunRegistry {
     run.status = cancelled ? "cancelled" : "failed";
     run.error = errorMsg;
     run.endedAt = Date.now();
+    this.clearSessionIndex(run);
 
     if (cancelled) {
       this.emit(run.rootId, { type: "run-cancelled", runId, seq: 0 });
@@ -406,6 +503,30 @@ export class InMemoryRunRegistry implements RunRegistry {
     }
     void this.persist(run);
     this.deliverToParent(run, { ok: false, error: errorMsg, cancelled });
+    this.resolveTerminalWaiters(runId);
+  }
+
+  /**
+   * Drop the sessionToActiveRun entry for this run iff this run is still
+   * the indexed one. Skipping the equality check would race with a
+   * cancel-and-replace where the replacing run has already claimed the
+   * slot via start().
+   */
+  private clearSessionIndex(run: RunInternal): void {
+    if (!run.sessionId) return;
+    const indexed = this.sessionToActiveRun.get(run.sessionId);
+    if (indexed === run.id) {
+      this.sessionToActiveRun.delete(run.sessionId);
+    }
+  }
+
+  private resolveTerminalWaiters(runId: string): void {
+    const waiters = this.terminalWaiters.get(runId);
+    if (!waiters) return;
+    this.terminalWaiters.delete(runId);
+    for (const w of waiters) {
+      try { w(); } catch {}
+    }
   }
 
   private deliverToParent(
@@ -494,10 +615,17 @@ export class InMemoryRunRegistry implements RunRegistry {
     }
 
     for (const id of toRemove) {
+      const ev = this.runs.get(id);
+      if (ev && ev.sessionId) {
+        // Defensive: only clear the index if it still points at this run.
+        const indexed = this.sessionToActiveRun.get(ev.sessionId);
+        if (indexed === id) this.sessionToActiveRun.delete(ev.sessionId);
+      }
       this.runs.delete(id);
       this.pending.delete(id);
       this.waiters.delete(id);
       this.childrenByParent.delete(id);
+      this.terminalWaiters.delete(id);
     }
     // Root-keyed bookkeeping
     this.replayBuffers.delete(rootId);

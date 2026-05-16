@@ -406,6 +406,20 @@ describe("SqliteStore", () => {
       expect(result!.error).toBe("Something broke");
     });
 
+    it("should persist status for cancel/fail audit", async () => {
+      await store.log({ ...logEntry, id: "log-cancelled", status: "cancelled" });
+      await store.log({ ...logEntry, id: "log-failed", status: "failed" });
+      await store.log({ ...logEntry, id: "log-default" });
+
+      const cancelled = await store.getLog("log-cancelled");
+      const failed = await store.getLog("log-failed");
+      const defaulted = await store.getLog("log-default");
+
+      expect(cancelled!.status).toBe("cancelled");
+      expect(failed!.status).toBe("failed");
+      expect(defaulted!.status).toBeUndefined();
+    });
+
     it("should return logs newest first", async () => {
       await store.log({
         ...logEntry,

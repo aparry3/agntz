@@ -16,13 +16,19 @@ export interface RunInput {
 export interface RunResult {
   output: unknown;
   state: Record<string, unknown>;
+  /**
+   * Session this run executed under. Always present — the worker auto-allocates
+   * one if the caller didn't pass `sessionId` on the request. Persist this id
+   * client-side to continue the conversation on subsequent /run calls.
+   */
+  sessionId: string;
 }
 
 export type AgentKind = "llm" | "tool" | "sequential" | "parallel";
 
 export type StreamEvent =
-  | { type: "start"; agentId: string; kind: AgentKind }
-  | { type: "complete"; output: unknown; state: Record<string, unknown> }
+  | { type: "start"; agentId: string; kind: AgentKind; sessionId: string }
+  | { type: "complete"; output: unknown; state: Record<string, unknown>; sessionId: string }
   | { type: "error"; error: string };
 
 export interface HealthResult {
@@ -67,6 +73,7 @@ export interface Run {
   result?: {
     output: string;
     invocationId: string;
+    sessionId: string;
     toolCalls: Array<{
       id: string;
       name: string;

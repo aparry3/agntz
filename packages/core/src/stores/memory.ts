@@ -232,6 +232,24 @@ export class MemoryStore implements UnifiedStore {
     }
   }
 
+  async getOrCreateSession(sessionId: string): Promise<void> {
+    const u = this.requireUser();
+    const existing = this.backend.sessions.get(sessionId);
+    if (existing) {
+      if (existing.userId !== u) {
+        throw new Error(`Session ${sessionId} belongs to a different user`);
+      }
+      return;
+    }
+    const now = new Date().toISOString();
+    this.backend.sessions.set(sessionId, {
+      userId: u,
+      messages: [],
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
   async listSessions(agentId?: string): Promise<SessionSummary[]> {
     const u = this.requireUser();
     const result: SessionSummary[] = [];
