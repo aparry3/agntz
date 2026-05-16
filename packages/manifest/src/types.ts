@@ -82,6 +82,13 @@ export interface LLMAgentManifest extends AgentManifestBase {
    * names must match `^[a-z][a-z0-9-]*$`.
    */
   skills?: string[];
+  /**
+   * When set, the runner registers a per-invocation `reply` tool the model
+   * can call to deliver intermediate messages. Mirrors
+   * `AgentDefinition.reply` in `@agntz/core`. Pass `true` for defaults or
+   * an object to override `maxPerRun`.
+   */
+  reply?: boolean | { maxPerRun?: number };
 }
 
 /**

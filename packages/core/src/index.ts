@@ -17,6 +17,9 @@ export {
 } from "./tools/spawn-agent.js";
 export type { SpawnLimits, SpawnableEntry } from "./tools/spawn-agent.js";
 export { createUseSkillTool } from "./tools/use-skill.js";
+export { createReplyTool } from "./tools/reply.js";
+export type { ReplyToolDeps } from "./tools/reply.js";
+export { DEFAULT_REPLY_MAX_PER_RUN } from "./types.js";
 
 // Stores
 export { MemoryStore } from "./stores/memory.js";
@@ -165,6 +168,9 @@ export type {
   // Skills
   SkillDefinition,
   SkillStore,
+
+  // Replies
+  Reply,
 
   // Runs
   Run,

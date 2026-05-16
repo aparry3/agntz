@@ -40,6 +40,15 @@ export interface AgentDefinition {
   /** Skills the agent may load mid-run via the synthetic `use_skill` tool. Names resolve in `SkillStore`. */
   skills?: string[];
 
+  /**
+   * When set, the runner registers a per-invocation `reply` tool the model
+   * can call to deliver intermediate messages to the user. Each call is
+   * persisted to the session immediately, surfaced on `InvokeResult.replies`,
+   * and (when a `RunRegistry` is wired) emitted as a multiplexed `reply`
+   * event. Pass `true` for defaults or an object to override `maxPerRun`.
+   */
+  reply?: boolean | { maxPerRun?: number };
+
   /** Structured output constraint (JSON Schema) */
   outputSchema?: Record<string, unknown>;
 
@@ -215,7 +224,34 @@ export interface InvokeResult {
   duration: number;
   /** Model used */
   model: string;
+  /**
+   * Intermediate replies the agent delivered during this invocation via the
+   * synthetic `reply` tool. Only present when at least one reply was sent.
+   * Each entry is persisted to the session at the moment of the call so
+   * conversation history reflects partial output even on cancellation.
+   */
+  replies?: Reply[];
 }
+
+/**
+ * One intermediate user-facing message emitted mid-run via the `reply` tool.
+ * Surfaced on `InvokeResult.replies` and (when a RunRegistry is wired) as a
+ * multiplexed `reply` event.
+ */
+export interface Reply {
+  text: string;
+  /** ISO 8601 timestamp the reply was emitted at. */
+  ts: string;
+  sessionId: string;
+  runId: string;
+}
+
+/**
+ * Default `reply` tool rate limit. Caps `InvokeResult.replies.length` and
+ * the number of accepted reply tool calls per invocation. Overridable per
+ * agent via `AgentDefinition.reply.maxPerRun`.
+ */
+export const DEFAULT_REPLY_MAX_PER_RUN = 50;
 
 export interface ToolCallRecord {
   id: string;
@@ -671,6 +707,11 @@ export type MultiplexedEvent =
   | { type: "tool-call-end"; runId: string; toolCall: ToolCallRecord; seq: number }
   | { type: "step-complete"; runId: string; step: number; toolCalls: ToolCallRecord[]; seq: number }
   | { type: "draining"; runId: string; pendingChildren: string[]; seq: number }
+  /**
+   * Intermediate reply delivered via the synthetic `reply` tool. Phase 4 will
+   * forward these to SSE consumers; the registry already broadcasts them.
+   */
+  | { type: "reply"; runId: string; sessionId: string; text: string; ts: string; seq: number }
   | { type: "run-complete"; runId: string; result: InvokeResult; seq: number }
   | { type: "run-error"; runId: string; error: string; seq: number }
   | { type: "run-cancelled"; runId: string; seq: number };

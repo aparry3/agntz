@@ -23,9 +23,10 @@ import type {
   SkillStore,
   ModelProvider,
   PendingChildResult,
+  Reply,
   RunRegistry,
 } from "./types.js";
-import { isContentBlockArray } from "./types.js";
+import { isContentBlockArray, DEFAULT_REPLY_MAX_PER_RUN } from "./types.js";
 import { normalizeImageBlocks } from "./image-fetcher.js";
 import { flattenContentToText } from "./message-builder.js";
 import type { AiSdkMessage } from "./message-builder.js";
@@ -39,6 +40,7 @@ import {
 } from "./tools/spawn-agent.js";
 import type { SpawnableEntry } from "./tools/spawn-agent.js";
 import { createUseSkillTool } from "./tools/use-skill.js";
+import { createReplyTool } from "./tools/reply.js";
 import { MemoryStore } from "./stores/memory.js";
 import { AISDKModelProvider } from "./model-provider.js";
 import { buildMessages, trimHistory } from "./message-builder.js";
@@ -429,6 +431,12 @@ export class Runner {
       // use_skill tool sees a consistent view across turns.
       const loadedSkills = new Set<string>();
       const loadedSkillToolDescriptors: Array<{ name: string; description: string; parameters: Record<string, unknown> }> = [];
+      // Per-invocation reply collector — see invoke() for the contract. The
+      // runId fallback to invocationId keeps Reply.runId stable when no
+      // registry is wired.
+      const replyCollector: Reply[] = [];
+      const effectiveRunId = runId ?? invocationId;
+      const effectiveRootId = rootId ?? effectiveRunId;
 
       const modelConfig = {
         ...self.config.defaults?.model,
@@ -507,7 +515,22 @@ export class Runner {
         let availableTools = await self.resolveToolsForAgent(agent, {
           runRegistry,
           ephemeralTools,
+          replyCollector,
+          effectiveSessionId,
+          runId: effectiveRunId,
+          rootId: effectiveRootId,
         });
+
+        // See invoke() for the rationale. Persist the user turn up-front when
+        // the agent can reply mid-run so reply rows land after the user row
+        // in session history.
+        const replyEnabled = Boolean(agent.reply);
+        if (replyEnabled) {
+          const nowEarly = new Date().toISOString();
+          await self.sessionStore.append(effectiveSessionId, [
+            { role: "user", content: normalizedInput, timestamp: nowEarly },
+          ]);
+        }
 
         // allToolCalls and totalUsage are hoisted above so a mid-loop cancel
         // can still produce an audit log entry.
@@ -739,6 +762,10 @@ export class Runner {
             const base = await self.resolveToolsForAgent(agent, {
               runRegistry,
               ephemeralTools,
+              replyCollector,
+              effectiveSessionId,
+              runId: effectiveRunId,
+              rootId: effectiveRootId,
             });
             const seen = new Set(base.map((t) => t.name));
             availableTools = base.concat(
@@ -758,17 +785,28 @@ export class Runner {
         // replacing run will re-persist the user input as part of its own
         // turn. Persist the normalized form (base64-materialized images) so
         // replaying the conversation doesn't require re-fetching URLs.
+        //
+        // Reply path: see invoke() — user + replies were persisted earlier,
+        // so we only need the final assistant row here, and skip it when
+        // empty replies already represent the response.
         if (!effectiveSignal?.aborted) {
           const now = new Date().toISOString();
-          await self.sessionStore.append(effectiveSessionId, [
-            { role: "user", content: normalizedInput, timestamp: now },
-            {
+          const newMessages: Message[] = [];
+          if (!replyEnabled) {
+            newMessages.push({ role: "user", content: normalizedInput, timestamp: now });
+          }
+          const skipEmptyAssistant = replyEnabled && !finalOutput && replyCollector.length > 0;
+          if (!skipEmptyAssistant) {
+            newMessages.push({
               role: "assistant",
               content: finalOutput,
               toolCalls: allToolCalls.length > 0 ? allToolCalls : undefined,
               timestamp: now,
-            },
-          ]);
+            });
+          }
+          if (newMessages.length > 0) {
+            await self.sessionStore.append(effectiveSessionId, newMessages);
+          }
         }
 
         // Context write
@@ -810,6 +848,7 @@ export class Runner {
           usage: totalUsage,
           duration,
           model: modelStr,
+          ...(replyCollector.length > 0 ? { replies: replyCollector } : {}),
         };
 
         if (runRegistry && runId) {
@@ -961,6 +1000,15 @@ export class Runner {
     // use_skill tool sees a consistent view across turns.
     const loadedSkills = new Set<string>();
     const loadedSkillToolDescriptors: Array<{ name: string; description: string; parameters: Record<string, unknown> }> = [];
+    // Per-invocation reply collector. The synthetic `reply` tool pushes each
+    // accepted reply onto this; we surface it on InvokeResult.replies at the
+    // end of the run. Always allocated — the tool factory only sees it when
+    // the agent declares `reply`. Effective runId is the registry-allocated
+    // runId when one exists, else the invocationId so the Reply still has a
+    // stable identifier.
+    const replyCollector: Reply[] = [];
+    const effectiveRunId = runId ?? invocationId;
+    const effectiveRootId = rootId ?? effectiveRunId;
 
     // Resolve model config (agent model or defaults)
     const modelConfig = {
@@ -1049,11 +1097,29 @@ export class Runner {
       await this.augmentSystemPromptWithSkills(agent, messages);
 
       // Resolve available tools for this agent (incl. spawn_agent/check_agents
-      // when the agent declares `spawnable` and a runRegistry is provided).
+      // when the agent declares `spawnable` and a runRegistry is provided,
+      // and `reply` when the agent declares `reply`).
       let availableTools = await this.resolveToolsForAgent(agent, {
         runRegistry,
         ephemeralTools,
+        replyCollector,
+        effectiveSessionId,
+        runId: effectiveRunId,
+        rootId: effectiveRootId,
       });
+
+      // When the agent can reply mid-run, persist the user input *before* the
+      // model loop. Otherwise the reply tool's at-call-time assistant writes
+      // would land in the session before the user turn, jumbling history.
+      // The end-of-run persistence path below only writes the final assistant
+      // row in that case.
+      const replyEnabled = Boolean(agent.reply);
+      if (replyEnabled) {
+        const now = new Date().toISOString();
+        await this.sessionStore.append(effectiveSessionId, [
+          { role: "user", content: normalizedInput, timestamp: now },
+        ]);
+      }
 
       // Execute the agent loop (model → tools → repeat). allToolCalls and
       // totalUsage are hoisted above so a mid-loop cancel can still produce
@@ -1272,6 +1338,10 @@ export class Runner {
           const base = await this.resolveToolsForAgent(agent, {
             runRegistry,
             ephemeralTools,
+            replyCollector,
+            effectiveSessionId,
+            runId: effectiveRunId,
+            rootId: effectiveRootId,
           });
           const seen = new Set(base.map((t) => t.name));
           availableTools = base.concat(
@@ -1297,18 +1367,30 @@ export class Runner {
       // turn. Tool side effects already executed remain in InvocationLog.
       // Persist the normalized form (base64-materialized images) so replaying
       // the conversation doesn't require re-fetching URLs.
+      //
+      // Reply path: when `agent.reply` is set, the user message and each
+      // reply row were already persisted earlier (user up-front, replies at
+      // call time). Only append the final assistant row here, and skip it
+      // entirely when the model produced no final text — the replies are
+      // the agent's response and a trailing empty row just clutters history.
       if (!effectiveSignal?.aborted) {
         const now = new Date().toISOString();
-        const newMessages: Message[] = [
-          { role: "user", content: normalizedInput, timestamp: now },
-          {
+        const newMessages: Message[] = [];
+        if (!replyEnabled) {
+          newMessages.push({ role: "user", content: normalizedInput, timestamp: now });
+        }
+        const skipEmptyAssistant = replyEnabled && !finalOutput && replyCollector.length > 0;
+        if (!skipEmptyAssistant) {
+          newMessages.push({
             role: "assistant",
             content: finalOutput,
             toolCalls: allToolCalls.length > 0 ? allToolCalls : undefined,
             timestamp: now,
-          },
-        ];
-        await this.sessionStore.append(effectiveSessionId, newMessages);
+          });
+        }
+        if (newMessages.length > 0) {
+          await this.sessionStore.append(effectiveSessionId, newMessages);
+        }
       }
 
       // Write to context if agent has contextWrite enabled
@@ -1353,6 +1435,7 @@ export class Runner {
         usage: totalUsage,
         duration,
         model: modelStr,
+        ...(replyCollector.length > 0 ? { replies: replyCollector } : {}),
       };
 
       if (runRegistry && runId) {
@@ -1563,6 +1646,14 @@ export class Runner {
     opts?: {
       runRegistry?: RunRegistry;
       ephemeralTools?: Map<string, ToolDefinition>;
+      /** Buffer the synthetic `reply` tool pushes accepted replies into. */
+      replyCollector?: Reply[];
+      /** Effective session id for the current invocation. */
+      effectiveSessionId?: string;
+      /** Run id for the current invocation. */
+      runId?: string;
+      /** Root run id; defaults to `runId` for top-level runs. */
+      rootId?: string;
     },
   ): Promise<Array<{
     name: string;
@@ -1573,7 +1664,13 @@ export class Runner {
       Boolean(agent.spawnable?.length) && Boolean(opts?.runRegistry) && Boolean(opts?.ephemeralTools);
     const hasSkills =
       Boolean(agent.skills?.length) && Boolean(this._skillStore) && Boolean(opts?.ephemeralTools);
-    if (!agent.tools?.length && !hasSpawnable && !hasSkills) return [];
+    const hasReply =
+      Boolean(agent.reply) &&
+      Boolean(opts?.ephemeralTools) &&
+      Boolean(opts?.replyCollector) &&
+      Boolean(opts?.effectiveSessionId) &&
+      Boolean(opts?.runId);
+    if (!agent.tools?.length && !hasSpawnable && !hasSkills && !hasReply) return [];
 
     // Ensure every referenced MCP server is connected (resolving registered
     // connection names to urls/headers) before we ask for its tools.
@@ -1661,6 +1758,31 @@ export class Runner {
           parameters: zodToJsonSchema(useSkill.input),
         });
       }
+    }
+
+    // Synthesize the per-invocation `reply` tool. Lives in the ephemeral map
+    // because it closes over this invocation's `collector`, `sessionId`, and
+    // `runId`. Registering it globally would leak state across runs.
+    if (hasReply) {
+      const maxPerRun =
+        typeof agent.reply === "object"
+          ? (agent.reply.maxPerRun ?? DEFAULT_REPLY_MAX_PER_RUN)
+          : DEFAULT_REPLY_MAX_PER_RUN;
+      const replyTool = createReplyTool({
+        collector: opts!.replyCollector!,
+        sessionId: opts!.effectiveSessionId!,
+        runId: opts!.runId!,
+        rootId: opts!.rootId,
+        sessionStore: this.sessionStore,
+        runRegistry: opts!.runRegistry,
+        maxPerRun,
+      });
+      opts!.ephemeralTools!.set(replyTool.name, replyTool);
+      resolved.push({
+        name: replyTool.name,
+        description: replyTool.description,
+        parameters: zodToJsonSchema(replyTool.input),
+      });
     }
 
     return resolved;

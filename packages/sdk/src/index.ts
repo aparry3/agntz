@@ -13,6 +13,7 @@ export type {
   HealthResult,
   ImageMediaType,
   MultiplexedRunEvent,
+  Reply,
   Run,
   RunInput,
   RunListFilter,

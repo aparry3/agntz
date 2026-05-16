@@ -59,7 +59,27 @@ function normalizeLLM(base: Record<string, unknown>, raw: Record<string, unknown
     outputSchema: raw.outputSchema as Record<string, unknown> | undefined,
     spawnable: raw.spawnable ? normalizeSpawnable(raw.spawnable as unknown[]) : undefined,
     skills: raw.skills ? normalizeSkills(raw.skills as unknown[]) : undefined,
+    reply: raw.reply !== undefined ? normalizeReply(raw.reply) : undefined,
   } as LLMAgentManifest;
+}
+
+// Accept `reply: true` for defaults or `reply: { maxPerRun: N }` for a custom
+// rate limit. `reply: false` round-trips as undefined (i.e. no tool).
+function normalizeReply(raw: unknown): boolean | { maxPerRun?: number } | undefined {
+  if (raw === true) return true;
+  if (raw === false) return undefined;
+  if (raw && typeof raw === "object") {
+    const obj = raw as Record<string, unknown>;
+    const out: { maxPerRun?: number } = {};
+    if (obj.maxPerRun !== undefined) {
+      if (typeof obj.maxPerRun !== "number" || !Number.isFinite(obj.maxPerRun) || obj.maxPerRun < 1) {
+        throw new Error("'reply.maxPerRun' must be a positive number");
+      }
+      out.maxPerRun = obj.maxPerRun;
+    }
+    return out;
+  }
+  throw new Error("'reply' must be a boolean or { maxPerRun: number }");
 }
 
 function normalizeSpawnable(raw: unknown[]): AgentRef[] {

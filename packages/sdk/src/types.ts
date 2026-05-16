@@ -54,6 +54,26 @@ export interface RunResult {
    * client-side to continue the conversation on subsequent /run calls.
    */
   sessionId: string;
+  /**
+   * Intermediate replies the agent emitted via the `reply` tool during this
+   * run. Only present when at least one reply was sent. Each entry was also
+   * persisted to the session at the moment of the call, so a later
+   * `getMessages(sessionId)` will see them in conversation history.
+   */
+  replies?: Reply[];
+}
+
+/**
+ * One intermediate user-facing message emitted mid-run via the agent's
+ * `reply` tool. Mirrors `@agntz/core`'s `Reply` — duplicated so the SDK has
+ * no runtime dependency on core.
+ */
+export interface Reply {
+  text: string;
+  /** ISO 8601 timestamp the reply was emitted at. */
+  ts: string;
+  sessionId: string;
+  runId: string;
 }
 
 export type AgentKind = "llm" | "tool" | "sequential" | "parallel";

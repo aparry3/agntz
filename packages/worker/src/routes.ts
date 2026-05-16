@@ -8,6 +8,7 @@ import {
   MemoryStore,
   SpanEmitter,
   type InvokeResult,
+  type Reply,
   type Run,
   type RunListFilters,
   type Runner,
@@ -186,21 +187,29 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
         },
         recordIO: false,
       });
+      // Aggregate replies across all LLM invokes inside the manifest so the
+      // response can surface them. The runner persists each reply to the
+      // session at the moment of the call; this is purely for the HTTP body.
+      const replyCollector: Reply[] = [];
       const ctx = createExecutionContext(runner, {
         runRegistry,
         spanEmitter,
         ownerId: userId,
         userId,
         sessionId,
+        replyCollector,
       });
       const result = await execute(manifest, input ?? "", ctx);
 
       console.log(
         `[run] done agent=${agentId} ${Date.now() - start}ms kind=${manifest.kind} ` +
-        `outputKeys=${result.output && typeof result.output === "object" ? Object.keys(result.output).join(",") : typeof result.output}`
+        `outputKeys=${result.output && typeof result.output === "object" ? Object.keys(result.output).join(",") : typeof result.output} ` +
+        `replies=${replyCollector.length}`
       );
 
-      return c.json({ output: result.output, state: result.state, sessionId });
+      const responseBody: Record<string, unknown> = { output: result.output, state: result.state, sessionId };
+      if (replyCollector.length > 0) responseBody.replies = replyCollector;
+      return c.json(responseBody);
     } catch (error) {
       const status = isNotFound(error) ? 404 : 500;
       console.error(`[run] failed agent=${agentIdForLog} ${Date.now() - start}ms: ${errorMessage(error)}`);
@@ -235,12 +244,17 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
         },
         recordIO: false,
       });
+      // Replies are aggregated and included in the final `run-complete`
+      // payload. Phase 4 will add streaming `reply` events; for Phase 3 the
+      // batch surfaces them at the end.
+      const replyCollector: Reply[] = [];
       const ctx = createExecutionContext(runner, {
         runRegistry,
         spanEmitter,
         ownerId: userId,
         userId,
         sessionId,
+        replyCollector,
       });
 
       return streamSSE(c, async (stream) => {
@@ -252,9 +266,15 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 
           const result = await execute(manifest, input ?? "", ctx);
 
+          const completePayload: Record<string, unknown> = {
+            output: result.output,
+            state: result.state,
+            sessionId,
+          };
+          if (replyCollector.length > 0) completePayload.replies = replyCollector;
           await stream.writeSSE({
             event: "run-complete",
-            data: JSON.stringify({ output: result.output, state: result.state, sessionId }),
+            data: JSON.stringify(completePayload),
           });
         } catch (error) {
           await stream.writeSSE({
