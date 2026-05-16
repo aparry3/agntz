@@ -28,11 +28,18 @@ export interface McpServerCatalogEntry {
   url: string | null;
 }
 
+export interface SecretCatalogEntry {
+  name: string;
+  lastFour: string;
+  description?: string;
+}
+
 export interface Catalog {
   providers: ProviderCatalogEntry[];
   tools: ToolCatalogEntry[];
   agents: AgentCatalogEntry[];
   mcpServers: McpServerCatalogEntry[];
+  secrets: SecretCatalogEntry[];
   loading: boolean;
   mcpToolsByServer: Record<string, string[] | undefined>;
   loadMcpTools: (serverId: string) => Promise<string[]>;
@@ -50,11 +57,19 @@ interface AgentFromApi {
   description?: string;
 }
 
+interface SecretFromApi {
+  name: string;
+  lastFour?: string;
+  last_four?: string;
+  description?: string;
+}
+
 export function useCatalog(): Catalog {
   const [providers, setProviders] = useState<ProviderCatalogEntry[]>([]);
   const [tools, setTools] = useState<ToolCatalogEntry[]>([]);
   const [agents, setAgents] = useState<AgentCatalogEntry[]>([]);
   const [mcpServers, setMcpServers] = useState<McpServerCatalogEntry[]>([]);
+  const [secrets, setSecrets] = useState<SecretCatalogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [mcpToolsByServer, setMcpToolsByServer] = useState<Record<string, string[] | undefined>>({});
   const inflightMcpTools = useRef<Record<string, Promise<string[]> | undefined>>({});
@@ -68,7 +83,8 @@ export function useCatalog(): Catalog {
       fetch("/api/tools").then((r) => (r.ok ? r.json() : [])).catch(() => []),
       fetch("/api/agents").then((r) => (r.ok ? r.json() : [])).catch(() => []),
       fetch("/api/mcp-servers").then((r) => (r.ok ? r.json() : [])).catch(() => []),
-    ]).then(([providersData, toolsData, agentsData, serversData]) => {
+      fetch("/api/secrets").then((r) => (r.ok ? r.json() : [])).catch(() => []),
+    ]).then(([providersData, toolsData, agentsData, serversData, secretsData]) => {
       if (cancelled) return;
 
       setProviders(Array.isArray(providersData) ? providersData : []);
@@ -92,6 +108,16 @@ export function useCatalog(): Catalog {
       );
 
       setMcpServers(Array.isArray(serversData) ? serversData : []);
+
+      const secretsArr: SecretFromApi[] = Array.isArray(secretsData) ? secretsData : [];
+      setSecrets(
+        secretsArr.map((s) => ({
+          name: s.name,
+          lastFour: s.lastFour ?? s.last_four ?? "",
+          description: s.description,
+        })),
+      );
+
       setLoading(false);
     });
 
@@ -131,6 +157,7 @@ export function useCatalog(): Catalog {
     tools,
     agents,
     mcpServers,
+    secrets,
     loading,
     mcpToolsByServer,
     loadMcpTools,

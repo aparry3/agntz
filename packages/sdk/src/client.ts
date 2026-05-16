@@ -109,6 +109,8 @@ export class RunsResource {
     const body: Record<string, unknown> = { agentId: input.agentId };
     if (input.input !== undefined) body.input = input.input;
     if (input.sessionId !== undefined) body.sessionId = input.sessionId;
+    if (input.callbackUrl !== undefined) body.callbackUrl = input.callbackUrl;
+    if (input.webhookSecretName !== undefined) body.webhookSecretName = input.webhookSecretName;
     const res = await sendRequest({
       baseUrl: this.client._baseUrl,
       path: "/runs",

@@ -12,7 +12,7 @@ const BASE = "https://worker.example.com";
 describe("AgntzClient.agents.run", () => {
   it("sends POST /run with Bearer auth and returns the parsed body", async () => {
     const mock = mockFetch(() =>
-      jsonResponse(200, { output: "hi", state: { done: true } }),
+      jsonResponse(200, { output: "hi", state: { done: true }, sessionId: "s1" }),
     );
     const client = new AgntzClient({
       apiKey: "ar_test_abc",
@@ -24,7 +24,7 @@ describe("AgntzClient.agents.run", () => {
       input: { x: 1 },
       sessionId: "s1",
     });
-    expect(result).toEqual({ output: "hi", state: { done: true } });
+    expect(result).toEqual({ output: "hi", state: { done: true }, sessionId: "s1" });
     expect(mock.calls).toHaveLength(1);
     const call = mock.calls[0]!;
     expect(call.url).toBe(`${BASE}/run`);

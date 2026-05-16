@@ -1,4 +1,5 @@
 import type { Message, ModelProvider, ModelConfig } from "../types.js";
+import { flattenContentToText } from "../message-builder.js";
 
 /**
  * Summarize a list of messages into a concise summary message.
@@ -14,7 +15,7 @@ export async function summarizeMessages(
 
   const conversationText = messages
     .filter((m) => m.role !== "system")
-    .map((m) => `${m.role}: ${m.content}`)
+    .map((m) => `${m.role}: ${flattenContentToText(m.content)}`)
     .join("\n");
 
   const result = await modelProvider.generateText({
@@ -71,10 +72,13 @@ export async function trimHistoryWithSummary(
   }
 
   // Check if older messages already start with a summary
-  // (avoid re-summarizing a summary)
+  // (avoid re-summarizing a summary). Flatten first since content may be a
+  // ContentBlock[] in multimodal sessions.
   const existingSummary =
     olderMessages[0]?.role === "system" &&
-    olderMessages[0]?.content?.startsWith("[Conversation Summary]");
+    flattenContentToText(olderMessages[0]?.content ?? "").startsWith(
+      "[Conversation Summary]",
+    );
 
   const toSummarize = existingSummary
     ? olderMessages // include existing summary in re-summarization

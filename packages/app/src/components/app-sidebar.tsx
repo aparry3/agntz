@@ -19,6 +19,7 @@ const secondaryLinks = [
   { href: "/settings", label: "Settings" },
   { href: "/settings/api-keys", label: "API Keys" },
   { href: "/settings/connections", label: "Connections" },
+  { href: "/settings/secrets", label: "Secrets" },
 ];
 
 export function AppSidebar() {

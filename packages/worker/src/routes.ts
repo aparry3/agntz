@@ -1,18 +1,24 @@
+import { randomBytes } from "node:crypto";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import {
   createRunner,
+  createWebhookDispatcher,
+  generateSessionId,
   InMemoryRunRegistry,
   MemoryStore,
   SpanEmitter,
   type InvokeResult,
+  type MultiplexedEvent,
+  type Reply,
   type Run,
   type RunListFilters,
   type Runner,
   type RunRegistry,
   type TraceFilter,
   type UnifiedStore,
+  type WebhookDispatcher,
 } from "@agntz/core";
 import { execute, parseManifest, validateManifestFull } from "@agntz/manifest";
 import type { AgentManifest } from "@agntz/manifest";
@@ -43,6 +49,19 @@ export interface WorkerAPIOptions {
    * `runRegistry` is not supplied). Default 300_000 (5 min).
    */
   runGracePeriodMs?: number;
+  /**
+   * Test-only override: replaces `resolveRunnerAndManifest` so tests can
+   * inject a runner with a stub model provider plus an inline manifest.
+   * Production code does NOT supply this — the route default builds a
+   * user-scoped runner from `store` and reads the manifest from the user's
+   * agent store. When set, the override is invoked for every request that
+   * reaches `/run`, `/run/stream`, or `/runs`.
+   */
+  resolveRunnerAndManifest?: (
+    store: UnifiedStore,
+    userId: string,
+    agentId: string,
+  ) => Promise<{ runner: Runner; manifest: AgentManifest }>;
 }
 
 /**
@@ -56,6 +75,11 @@ export interface WorkerAPIOptions {
 export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
   const { store, internalSecret } = opts;
   const app = new Hono();
+
+  // Test override for the runner+manifest resolver, falling back to the
+  // production lookup against the user store + the system-agent registry.
+  const resolveRunnerAndManifestImpl =
+    opts.resolveRunnerAndManifest ?? resolveRunnerAndManifest;
 
   // Process-wide trace registry — one per worker instance, shared across requests.
   // Receives span events from per-request SpanEmitters and batches them to the store.
@@ -92,6 +116,8 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
   app.use("/traces", workerAuth({ store, internalSecret }));
   app.use("/traces/*", workerAuth({ store, internalSecret }));
   app.use("/validate", workerAuth({ store, internalSecret }));
+  app.use("/webhook-secrets", workerAuth({ store, internalSecret }));
+  app.use("/webhook-secrets/*", workerAuth({ store, internalSecret }));
   app.use("/system/agents", internalOnlyAuth({ internalSecret }));
   app.use("/system/agents/*", internalOnlyAuth({ internalSecret }));
 
@@ -163,12 +189,19 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
         return c.json({ error: "Missing required field: agentId" }, 400);
       }
 
+      // Always work with a concrete sessionId. If the caller didn't provide
+      // one we mint it here so the response carries the id even when the
+      // manifest doesn't surface it back. The runner will also do this
+      // independently for safety, but pre-allocating keeps the wire response
+      // authoritative.
+      const sessionId = body.sessionId ?? generateSessionId();
+
       console.log(
-        `[run] start agent=${agentId} user=${userId} ` +
+        `[run] start agent=${agentId} user=${userId} session=${sessionId} ` +
         `inputKeys=${input && typeof input === "object" ? Object.keys(input).join(",") : typeof input}`
       );
 
-      const { runner, manifest } = await resolveRunnerAndManifest(store, userId, agentId);
+      const { runner, manifest } = await resolveRunnerAndManifestImpl(store, userId, agentId);
       const runRegistry = new InMemoryRunRegistry();
       const spanEmitter = new SpanEmitter({
         traceSink: (event) => {
@@ -178,15 +211,29 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
         },
         recordIO: false,
       });
-      const ctx = createExecutionContext(runner, { runRegistry, spanEmitter, ownerId: userId });
+      // Aggregate replies across all LLM invokes inside the manifest so the
+      // response can surface them. The runner persists each reply to the
+      // session at the moment of the call; this is purely for the HTTP body.
+      const replyCollector: Reply[] = [];
+      const ctx = createExecutionContext(runner, {
+        runRegistry,
+        spanEmitter,
+        ownerId: userId,
+        userId,
+        sessionId,
+        replyCollector,
+      });
       const result = await execute(manifest, input ?? "", ctx);
 
       console.log(
         `[run] done agent=${agentId} ${Date.now() - start}ms kind=${manifest.kind} ` +
-        `outputKeys=${result.output && typeof result.output === "object" ? Object.keys(result.output).join(",") : typeof result.output}`
+        `outputKeys=${result.output && typeof result.output === "object" ? Object.keys(result.output).join(",") : typeof result.output} ` +
+        `replies=${replyCollector.length}`
       );
 
-      return c.json({ output: result.output, state: result.state });
+      const responseBody: Record<string, unknown> = { output: result.output, state: result.state, sessionId };
+      if (replyCollector.length > 0) responseBody.replies = replyCollector;
+      return c.json(responseBody);
     } catch (error) {
       const status = isNotFound(error) ? 404 : 500;
       console.error(`[run] failed agent=${agentIdForLog} ${Date.now() - start}ms: ${errorMessage(error)}`);
@@ -208,8 +255,11 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
         return c.json({ error: "Missing required field: agentId" }, 400);
       }
 
-      const { runner, manifest } = await resolveRunnerAndManifest(store, userId, agentId);
-      const runRegistry = new InMemoryRunRegistry();
+      // Pre-allocate sessionId so the run-start SSE frame is authoritative.
+      const sessionId = body.sessionId ?? generateSessionId();
+
+      const { runner, manifest } = await resolveRunnerAndManifestImpl(store, userId, agentId);
+      const baseRegistry = new InMemoryRunRegistry();
       const spanEmitter = new SpanEmitter({
         traceSink: (event) => {
           if (event.type === "span-start") traceRegistry.spanStart(event.span);
@@ -218,22 +268,124 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
         },
         recordIO: false,
       });
-      const ctx = createExecutionContext(runner, { runRegistry, spanEmitter, ownerId: userId });
+      // Replies are aggregated into a per-request collector AND, when
+      // `agent.reply` is set, broadcast as `reply` multiplexed events on the
+      // per-request registry. We tap the registry's `emit` so reply events
+      // flow onto the SSE wire as they happen; the same replies are still
+      // included on the final `run-complete` payload for batch readers.
+      const replyCollector: Reply[] = [];
+      type QueuedReply = {
+        runId: string;
+        sessionId: string;
+        text: string;
+        ts: string;
+        seq: number;
+      };
+      const pendingReplies: QueuedReply[] = [];
+      let replyResolver: (() => void) | null = null;
+      let runComplete = false;
+
+      // Wrap the per-request registry's `emit` so we can intercept reply
+      // events without polling for the rootId. The wrapper preserves all
+      // other registry behavior (replay buffers, subscribers, seq stamping,
+      // terminal eviction) — we only fork on `reply`. We read the canonical
+      // seq from the seq counter map BEFORE stamping happens; since emit()
+      // is the only writer and we wrap it, the order matches.
+      const seqForChannel = new Map<string, number>();
+      const runRegistry: RunRegistry = new Proxy(baseRegistry, {
+        get(target, prop, receiver) {
+          if (prop === "emit") {
+            return (rootId: string, event: Parameters<RunRegistry["emit"]>[1]) => {
+              const next = (seqForChannel.get(rootId) ?? 0) + 1;
+              seqForChannel.set(rootId, next);
+              target.emit(rootId, event);
+              if (event.type === "reply") {
+                pendingReplies.push({
+                  runId: event.runId,
+                  sessionId: event.sessionId,
+                  text: event.text,
+                  ts: event.ts,
+                  seq: next,
+                });
+                const r = replyResolver;
+                replyResolver = null;
+                r?.();
+              }
+            };
+          }
+          return Reflect.get(target, prop, receiver);
+        },
+      }) as unknown as RunRegistry;
+
+      const ctx = createExecutionContext(runner, {
+        runRegistry,
+        spanEmitter,
+        ownerId: userId,
+        userId,
+        sessionId,
+        replyCollector,
+      });
 
       return streamSSE(c, async (stream) => {
+        // Drain reply events as they arrive. Runs concurrently with the
+        // manifest execution; closes when the main path flips `runComplete`.
+        const forwarder = (async () => {
+          while (true) {
+            while (pendingReplies.length > 0) {
+              const ev = pendingReplies.shift()!;
+              await stream.writeSSE({
+                event: "reply",
+                data: JSON.stringify({
+                  type: "reply",
+                  runId: ev.runId,
+                  sessionId: ev.sessionId,
+                  text: ev.text,
+                  ts: ev.ts,
+                  seq: ev.seq,
+                }),
+                id: String(ev.seq),
+              });
+            }
+            if (runComplete) return;
+            await new Promise<void>((r) => {
+              replyResolver = r;
+            });
+          }
+        })();
+
         try {
           await stream.writeSSE({
             event: "run-start",
-            data: JSON.stringify({ agentId, kind: manifest.kind }),
+            data: JSON.stringify({ agentId, kind: manifest.kind, sessionId }),
           });
 
           const result = await execute(manifest, input ?? "", ctx);
 
+          const completePayload: Record<string, unknown> = {
+            output: result.output,
+            state: result.state,
+            sessionId,
+          };
+          if (replyCollector.length > 0) completePayload.replies = replyCollector;
+
+          // Drain any tail reply events emitted in the same tick as the
+          // final tool execution before we close with run-complete.
+          runComplete = true;
+          const r = replyResolver;
+          replyResolver = null;
+          r?.();
+          await forwarder;
+
           await stream.writeSSE({
             event: "run-complete",
-            data: JSON.stringify({ output: result.output, state: result.state }),
+            data: JSON.stringify(completePayload),
           });
         } catch (error) {
+          runComplete = true;
+          const r = replyResolver;
+          replyResolver = null;
+          r?.();
+          await forwarder.catch(() => {});
           await stream.writeSSE({
             event: "run-error",
             data: JSON.stringify({ error: errorMessage(error) }),
@@ -292,13 +444,41 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
         agentId?: string;
         input?: unknown;
         sessionId?: string;
+        callbackUrl?: string;
+        webhookSecretName?: string;
       };
-      const { agentId, input, sessionId } = body;
+      const { agentId, input, callbackUrl, webhookSecretName } = body;
       agentIdForLog = agentId;
 
       if (!agentId) {
         return c.json({ error: "Missing required field: agentId" }, 400);
       }
+
+      // Webhook validation: callbackUrl + webhookSecretName pair must be coherent.
+      // We resolve the secret metadata here (sync with the request) so a
+      // missing or typo'd name returns 400 before we register a Run we'd
+      // otherwise have to cancel.
+      let resolvedSecretName: string | undefined;
+      if (callbackUrl) {
+        if (!webhookSecretName) {
+          return c.json({ error: "webhookSecretName required with callbackUrl" }, 400);
+        }
+        const meta = await store
+          .forUser(userId)
+          .getSecretMetadata(webhookSecretName);
+        if (!meta) {
+          return c.json({ error: "webhook secret not found" }, 400);
+        }
+        // Pass the name through to the dispatcher; it resolves the live
+        // plaintext at each delivery attempt so an out-of-band rotation
+        // flows through without any pinning machinery.
+        resolvedSecretName = webhookSecretName;
+      }
+
+      // Always work with a concrete sessionId. Top-level Runs are indexed in
+      // the registry by sessionId to power cancel-and-replace, so an absent
+      // id must not mean "no session" — it means "fresh session".
+      const sessionId = body.sessionId ?? generateSessionId();
 
       const inputStr =
         typeof input === "string"
@@ -316,12 +496,39 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 
       console.log(
         `[runs] start run=${run.id} agent=${agentId} user=${userId} ` +
-        `inputLen=${inputStr.length}`,
+        `inputLen=${inputStr.length}` +
+        (callbackUrl ? ` webhook=${webhookSecretName}` : ""),
       );
+
+      // Wire the dispatcher BEFORE starting the executor so the registry's
+      // first emitted reply (and the eventual run-complete) are seen by our
+      // subscriber. We subscribe via `runRegistry.subscribe(run.rootId)` —
+      // the multiplexed feed is the canonical place to observe reply +
+      // run-complete events for a Run.
+      const replyCollector: Reply[] = [];
+      let dispatcher: WebhookDispatcher | undefined;
+      let webhookForwarder: Promise<void> | undefined;
+      if (resolvedSecretName && callbackUrl) {
+        dispatcher = createWebhookDispatcher({
+          deliveryStore: store.forUser(userId),
+          secretStore: store.forUser(userId),
+          secretName: resolvedSecretName,
+          callbackUrl,
+          runId: run.id,
+          ownerId: userId,
+        });
+        webhookForwarder = forwardEventsToDispatcher({
+          runRegistry,
+          rootId: run.rootId,
+          runId: run.id,
+          dispatcher,
+          replyCollector,
+        });
+      }
 
       runRegistry.start(run, async (signal) => {
         const runStart = Date.now();
-        const { runner, manifest } = await resolveRunnerAndManifest(
+        const { runner, manifest } = await resolveRunnerAndManifestImpl(
           store,
           userId,
           agentId,
@@ -331,6 +538,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
           parentRunId: run.id,
           userId,
           sessionId,
+          replyCollector,
         });
         const result = await execute(manifest, input ?? "", ctx);
         if (signal.aborted) {
@@ -345,13 +553,24 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
         const invokeResult: InvokeResult = {
           output: outputStr,
           invocationId: run.id,
+          sessionId,
           toolCalls: [],
           usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
           duration: Date.now() - runStart,
           model: "manifest",
         };
+        if (replyCollector.length > 0) invokeResult.replies = [...replyCollector];
         return invokeResult;
       });
+
+      // Webhook forwarder runs detached from the request — it owns subscribe
+      // lifetime. We don't await it; the dispatcher inserts to outbox + has
+      // its own retry loop. The run continues regardless of webhook failures.
+      if (webhookForwarder) {
+        webhookForwarder.catch((err) => {
+          console.error(`[webhook] forwarder failed run=${run.id}: ${errorMessage(err)}`);
+        });
+      }
 
       const created = runRegistry.get(run.id) ?? run;
       return c.json(runToJSON(created), 201, {
@@ -436,6 +655,95 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
     // Return the current view so the client can poll for terminal.
     const after = runRegistry.get(runId) ?? run;
     return c.json(runToJSON(after));
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // /webhook-secrets/* — server-generates HMAC signing keys and stores them
+  // in the unified SecretStore (AES-256-GCM at rest). The raw `value` field
+  // is returned ONLY at create/regenerate time so the caller can copy it to
+  // their consumer's env. Subsequent `GET` responses never include it.
+  // Regeneration is in-place upsert: the old value stops working immediately;
+  // the consumer must redeploy with the new value to verify new signatures.
+  // ───────────────────────────────────────────────────────────────────────
+
+  app.post("/webhook-secrets", async (c) => {
+    try {
+      const userId = getUserId(c);
+      const body = (getCachedBody(c) ?? (await c.req.json())) as {
+        name?: string;
+        description?: string;
+      };
+      const name = body?.name;
+      if (!name || typeof name !== "string") {
+        return c.json({ error: "Missing required field: name" }, 400);
+      }
+      const scopedStore = store.forUser(userId);
+      const existing = await scopedStore.getSecretMetadata(name);
+      if (existing) {
+        return c.json({ error: `Secret "${name}" already exists` }, 409);
+      }
+      const value = `whsec_${randomBytes(32).toString("hex")}`;
+      const createdAt = new Date().toISOString();
+      await scopedStore.putSecret({
+        name,
+        value,
+        description: body?.description,
+        createdAt,
+        updatedAt: createdAt,
+      });
+      return c.json({ name, value, createdAt }, 201);
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 500);
+    }
+  });
+
+  app.get("/webhook-secrets", async (c) => {
+    try {
+      const userId = getUserId(c);
+      const rows = await store.forUser(userId).listSecrets();
+      // Returns metadata only (lastFour for masked display); raw values are
+      // only available at create/regenerate time. Note: this lists the
+      // user's full secret pool, including secrets used as HTTP-tool auth.
+      // The unified store has no `kind` discriminator.
+      return c.json(rows);
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 500);
+    }
+  });
+
+  app.post("/webhook-secrets/:name/regenerate", async (c) => {
+    try {
+      const userId = getUserId(c);
+      const name = c.req.param("name");
+      const scopedStore = store.forUser(userId);
+      const existing = await scopedStore.getSecretMetadata(name);
+      if (!existing) {
+        return c.json({ error: "webhook secret not found" }, 404);
+      }
+      const value = `whsec_${randomBytes(32).toString("hex")}`;
+      const updatedAt = new Date().toISOString();
+      await scopedStore.putSecret({
+        name,
+        value,
+        description: existing.description,
+        createdAt: existing.createdAt,
+        updatedAt,
+      });
+      return c.json({ name, value, createdAt: existing.createdAt, updatedAt });
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 500);
+    }
+  });
+
+  app.delete("/webhook-secrets/:name", async (c) => {
+    try {
+      const userId = getUserId(c);
+      const name = c.req.param("name");
+      await store.forUser(userId).deleteSecret(name);
+      return c.body(null, 204);
+    } catch (error) {
+      return c.json({ error: errorMessage(error) }, 500);
+    }
   });
 
   // ───────────────────────────────────────────────────────────────────────
@@ -619,4 +927,87 @@ function isNotFound(error: unknown): boolean {
       error.constructor.name === "AgentNotFoundError";
   }
   return false;
+}
+
+/**
+ * Subscribe to the run's multiplexed event feed and forward `reply` and
+ * terminal (`run-complete` | `run-error` | `run-cancelled`) events to the
+ * webhook dispatcher. The subscriber exits when the registry closes the feed
+ * after the root run terminates.
+ *
+ * The dispatcher.dispatch() call returns when the delivery loop settles, but
+ * each event is dispatched independently — slow consumers don't block
+ * subsequent events from being POSTed.
+ */
+async function forwardEventsToDispatcher(opts: {
+  runRegistry: RunRegistry;
+  rootId: string;
+  runId: string;
+  dispatcher: WebhookDispatcher;
+  replyCollector: Reply[];
+}): Promise<void> {
+  const { runRegistry, rootId, runId, dispatcher, replyCollector } = opts;
+  try {
+    for await (const ev of runRegistry.subscribe(rootId) as AsyncIterable<MultiplexedEvent>) {
+      // Only forward events for our root run. Subtree spawn events belong to
+      // children — we deliberately do NOT forward those to webhooks; consumers
+      // care about the top-level run's intermediate replies + final outcome.
+      if (ev.runId !== runId && ev.type !== "reply") continue;
+      if (ev.type === "reply") {
+        // Reply events from any run in the subtree are routed up to the same
+        // session, so we forward them too. (The reply tool tags `runId` =
+        // emitting run, not the root.)
+        await dispatcher.dispatch({
+          type: "reply",
+          runId: ev.runId,
+          sessionId: ev.sessionId,
+          text: ev.text,
+          ts: ev.ts,
+        });
+      } else if (ev.type === "run-complete") {
+        const result = ev.result;
+        await dispatcher.dispatch({
+          type: "complete",
+          runId,
+          sessionId: result.sessionId,
+          status: "completed",
+          output: result.output,
+          replies: replyCollector.length > 0 ? [...replyCollector] : undefined,
+          result,
+        });
+        // Drain in-flight dispatches before exiting so caller observes
+        // all deliveries reach a terminal state.
+        await dispatcher.drain();
+        return;
+      } else if (ev.type === "run-error") {
+        await dispatcher.dispatch({
+          type: "complete",
+          runId,
+          // sessionId may not be on the error event; fall back to "" (the
+          // payload still includes runId for correlation).
+          sessionId: "",
+          status: "failed",
+          output: null,
+          replies: replyCollector.length > 0 ? [...replyCollector] : undefined,
+          error: ev.error,
+        });
+        await dispatcher.drain();
+        return;
+      } else if (ev.type === "run-cancelled") {
+        await dispatcher.dispatch({
+          type: "complete",
+          runId,
+          sessionId: "",
+          status: "cancelled",
+          output: null,
+          replies: replyCollector.length > 0 ? [...replyCollector] : undefined,
+        });
+        await dispatcher.drain();
+        return;
+      }
+    }
+  } catch (err) {
+    // Subscribe iteration errors are non-fatal — the webhook just stops.
+    console.error(`[webhook] subscribe error run=${runId}: ${errorMessage(err)}`);
+  }
 }

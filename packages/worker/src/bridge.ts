@@ -1,4 +1,4 @@
-import type { Runner, AgentDefinition, AgentRef as CoreAgentRef, RunRegistry } from "@agntz/core";
+import type { Runner, AgentDefinition, AgentRef as CoreAgentRef, Reply, RunRegistry } from "@agntz/core";
 import type {
   ExecutionContext,
   AgentManifest,
@@ -40,6 +40,13 @@ export interface CreateExecutionContextOptions {
   userId?: string;
   /** Optional sessionId for ToolContext + Run scoping. */
   sessionId?: string;
+  /**
+   * Per-request reply accumulator. Each `runner.invoke()` call inside
+   * `invokeLLM` appends its `result.replies` here so the worker route can
+   * surface the union back to the caller. Optional — routes that don't
+   * care about replies (e.g. `/runs` async creation) can omit it.
+   */
+  replyCollector?: Reply[];
 }
 
 /**
@@ -52,7 +59,7 @@ export function createExecutionContext(
   runner: Runner,
   options: CreateExecutionContextOptions = {},
 ): ExecutionContext {
-  const { runRegistry, spanEmitter, ownerId, parentRunId, userId, sessionId } = options;
+  const { runRegistry, spanEmitter, ownerId, parentRunId, userId, sessionId, replyCollector } = options;
   return {
     spanEmitter,
     ownerId,
@@ -102,11 +109,20 @@ export function createExecutionContext(
           : JSON.stringify(state);
 
         const result = await runner.invoke(tempId, userInput, {
-          ...(runRegistry ? { runRegistry, parentRunId, userId, sessionId } : {}),
+          ...(runRegistry ? { runRegistry, parentRunId } : {}),
+          ...(userId ? { userId } : {}),
+          ...(sessionId ? { sessionId } : {}),
           ...(spanEmitter ? { spanEmitter } : {}),
           ...(ownerId ? { ownerId } : {}),
         });
         const duration = Date.now() - start;
+
+        // Bubble per-invoke replies up to the route layer. Replies are
+        // already persisted to the session by the runner; this just
+        // surfaces them on the wire response.
+        if (replyCollector && result.replies && result.replies.length > 0) {
+          replyCollector.push(...result.replies);
+        }
 
         // If outputSchema is defined, try to parse structured output
         if (hasSchema) {
@@ -208,6 +224,7 @@ function manifestToAgentDefinition(manifest: LLMAgentManifest, renderedInstructi
     spawnable: manifest.spawnable
       ? manifestSpawnableToCore(manifest.spawnable)
       : undefined,
+    reply: manifest.reply,
   };
 }
 
@@ -348,6 +365,12 @@ function manifestToolsToToolRefs(tools: LLMAgentManifest["tools"]) {
         break;
       case "agent":
         refs.push({ type: "agent", agentId: entry.agent });
+        break;
+      case "http":
+        // HTTP entries pass the full entry through to the core runner so
+        // `buildHttpToolDefinition` can build the per-invocation
+        // `ToolDefinition` with `state.secrets` baked in.
+        refs.push({ type: "http", entry });
         break;
     }
   }

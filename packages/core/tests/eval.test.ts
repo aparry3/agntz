@@ -20,6 +20,7 @@ function makeInvokeResult(output: string): InvokeResult {
   return {
     output,
     invocationId: "inv_test",
+    sessionId: "sess_test",
     toolCalls: [],
     usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
     duration: 100,

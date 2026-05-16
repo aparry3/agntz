@@ -2,6 +2,7 @@ import type {
   RunnerConfig,
   AgentDefinition,
   ToolDefinition,
+  ToolReference,
   InvokeOptions,
   InvokeResult,
   InvokeStream,
@@ -10,6 +11,7 @@ import type {
   ToolInfo,
   ToolContext,
   ContextEntry,
+  ContentBlock,
   Message,
   InvocationLog,
   TokenUsage,
@@ -20,10 +22,18 @@ import type {
   ProviderStore,
   ConnectionStore,
   SkillStore,
+  SecretStore,
   ModelProvider,
   PendingChildResult,
+  Reply,
   RunRegistry,
 } from "./types.js";
+import { isContentBlockArray, DEFAULT_REPLY_MAX_PER_RUN } from "./types.js";
+import { normalizeImageBlocks } from "./image-fetcher.js";
+import { flattenContentToText } from "./message-builder.js";
+import type { AiSdkMessage } from "./message-builder.js";
+import { buildHttpToolDefinition } from "./http-tool.js";
+import type { AgentState } from "./http-tool.js";
 import { ToolRegistry } from "./tool.js";
 import { zodToJsonSchema } from "./utils/schema.js";
 import {
@@ -34,11 +44,12 @@ import {
 } from "./tools/spawn-agent.js";
 import type { SpawnableEntry } from "./tools/spawn-agent.js";
 import { createUseSkillTool } from "./tools/use-skill.js";
+import { createReplyTool } from "./tools/reply.js";
 import { MemoryStore } from "./stores/memory.js";
 import { AISDKModelProvider } from "./model-provider.js";
 import { buildMessages, trimHistory } from "./message-builder.js";
 import { trimHistoryWithSummary } from "./utils/summarize.js";
-import { generateInvocationId } from "./utils/id.js";
+import { generateInvocationId, generateSessionId } from "./utils/id.js";
 import { MCPClientManager } from "./mcp/client-manager.js";
 import type { MCPTool } from "./mcp/client-manager.js";
 import { resolveMCPServer as resolveMCPServerHelper } from "./mcp/resolve-server.js";
@@ -71,6 +82,38 @@ const DEFAULT_MAX_RECURSION_DEPTH = 3;
 const DRAIN_BUDGET = 16;
 
 /**
+ * Matches a `{{secrets.<name>}}` template reference. Used to walk an
+ * agent's HTTP tool entries at invoke() time and pre-resolve the set of
+ * secrets needed for this run.
+ */
+const SECRET_REF_RE = /\{\{\s*secrets\.([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g;
+
+/**
+ * Walk an agent's tool references and collect the unique set of secret
+ * names referenced via `{{secrets.<name>}}` in any HTTP tool's `params`
+ * or `headers` template values. Returned as a Set so callers can iterate
+ * once and fetch each secret exactly once per run.
+ */
+function collectSecretReferences(agent: AgentDefinition): Set<string> {
+  const names = new Set<string>();
+  for (const ref of agent.tools ?? []) {
+    if (ref.type !== "http") continue;
+    const entry = ref.entry;
+    const values: string[] = [];
+    if (entry.params) values.push(...Object.values(entry.params));
+    if (entry.headers) values.push(...Object.values(entry.headers));
+    for (const v of values) {
+      SECRET_REF_RE.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = SECRET_REF_RE.exec(v)) !== null) {
+        names.add(m[1]);
+      }
+    }
+  }
+  return names;
+}
+
+/**
  * The Runner. Central orchestrator for agntz.
  * Created via createRunner().
  */
@@ -82,6 +125,7 @@ export class Runner {
   private _providerStore: ProviderStore | undefined;
   private _connectionStore: ConnectionStore | undefined;
   private _skillStore: SkillStore | undefined;
+  private _secretStore: SecretStore | undefined;
   private modelProvider: ModelProvider;
   private toolRegistry: ToolRegistry;
   private mcpManager: MCPClientManager | null = null;
@@ -119,6 +163,9 @@ export class Runner {
       : undefined;
     this._skillStore = unifiedStore && "getSkill" in unifiedStore
       ? unifiedStore as SkillStore
+      : undefined;
+    this._secretStore = unifiedStore && "getSecretValue" in unifiedStore
+      ? unifiedStore as SecretStore
       : undefined;
     this.modelProvider = config.modelProvider ?? new AISDKModelProvider({
       providerStore: this._providerStore,
@@ -336,7 +383,11 @@ export class Runner {
    * (text-delta, tool-call-start, tool-call-end, step-complete, draining)
    * to the registry when one is wired.
    */
-  stream(agentId: string, input: string, options: Omit<InvokeOptions, "stream"> = {}): InvokeStream {
+  stream(
+    agentId: string,
+    input: string | ContentBlock[],
+    options: Omit<InvokeOptions, "stream"> = {},
+  ): InvokeStream {
     const self = this;
     let resolveResult: (r: InvokeResult) => void;
     let rejectResult: (e: unknown) => void;
@@ -360,22 +411,83 @@ export class Runner {
       const invocationId = generateInvocationId();
       const agent = await self.resolveAgent(agentId);
 
-      // ─── Run registry integration ──────────────────────────────────────
+      // Always work with a concrete sessionId — symmetric with invoke().
+      const effectiveSessionId = options.sessionId ?? generateSessionId();
+      await self.sessionStore.getOrCreateSession(effectiveSessionId);
+
+      // For multimodal input the Run record/InvocationLog still need a string
+      // — the flattened text view is what list UIs render and what spawn
+      // semantics require. The actual blocks (with base64 image bodies) live
+      // on the persisted Message and on InvocationLog.input.
+      const inputAsString =
+        typeof input === "string" ? input : flattenContentToText(input);
+
+      // ─── Secrets pre-fetch ────────────────────────────────────────────
+      // Mirror of the non-streaming invoke() path. See comments there for
+      // the rationale. Resolves `{{secrets.<name>}}` references in HTTP
+      // tools to plaintext once per invocation, kept in `state.secrets` so
+      // `interpolate()` stays synchronous and per-invocation.
+      const state: AgentState = {};
+      const secretNames = collectSecretReferences(agent);
+      if (secretNames.size > 0) {
+        if (!self._secretStore) {
+          throw new Error(
+            `Agent '${agent.id}' references secrets but no SecretStore is wired to the Runner.`,
+          );
+        }
+        const resolved: Record<string, string> = {};
+        for (const name of secretNames) {
+          const value = await self._secretStore.getSecretValue(name);
+          if (value == null) {
+            throw new Error(
+              `Secret '${name}' referenced by agent '${agent.id}' does not exist for this user.`,
+            );
+          }
+          resolved[name] = value;
+        }
+        state.secrets = resolved;
+      }
+
+      // ─── Cancel-and-replace concurrency + Run registration ────────────
       const runRegistry = options.runRegistry;
       let runId = options.runId;
       let rootId: string | undefined;
       if (runRegistry) {
         if (!runId) {
-          const root = runRegistry.create({
-            agentId,
-            input,
-            parentRunId: options.parentRunId,
-            userId: options.userId,
-            sessionId: options.sessionId,
-            spanEmitter: options.spanEmitter,
-          });
-          runId = root.id;
-          rootId = root.rootId;
+          const isTopLevel = currentDepth === 0 && !options.parentRunId;
+          if (isTopLevel) {
+            const release = await runRegistry.acquireSessionLock(effectiveSessionId);
+            try {
+              const activeRunId = runRegistry.findActiveBySession(effectiveSessionId);
+              if (activeRunId) {
+                runRegistry.cancel(activeRunId, "superseded");
+                await runRegistry.waitForTerminal(activeRunId);
+              }
+              const root = runRegistry.create({
+                agentId,
+                input: inputAsString,
+                parentRunId: options.parentRunId,
+                userId: options.userId,
+                sessionId: effectiveSessionId,
+                spanEmitter: options.spanEmitter,
+              });
+              runId = root.id;
+              rootId = root.rootId;
+            } finally {
+              release();
+            }
+          } else {
+            const root = runRegistry.create({
+              agentId,
+              input: inputAsString,
+              parentRunId: options.parentRunId,
+              userId: options.userId,
+              sessionId: effectiveSessionId,
+              spanEmitter: options.spanEmitter,
+            });
+            runId = root.id;
+            rootId = root.rootId;
+          }
         } else {
           rootId = runRegistry.get(runId)?.rootId ?? runId;
         }
@@ -385,6 +497,23 @@ export class Runner {
       // use_skill tool sees a consistent view across turns.
       const loadedSkills = new Set<string>();
       const loadedSkillToolDescriptors: Array<{ name: string; description: string; parameters: Record<string, unknown> }> = [];
+      // Per-invocation reply collector — see invoke() for the contract. The
+      // runId fallback to invocationId keeps Reply.runId stable when no
+      // registry is wired.
+      const replyCollector: Reply[] = [];
+      const effectiveRunId = runId ?? invocationId;
+      const effectiveRootId = rootId ?? effectiveRunId;
+
+      // In-process pipe from the synthetic `reply` tool to this generator.
+      // The tool's `onAccepted` callback pushes Reply records here as they
+      // are accepted; the generator drains the queue at safe yield points
+      // (between text-delta chunks, after each tool call, between steps) so
+      // SSE consumers see reply events in real time instead of only on the
+      // final `done` payload.
+      const pendingStreamReplies: Reply[] = [];
+      const onReplyAccepted = (reply: Reply) => {
+        pendingStreamReplies.push(reply);
+      };
 
       const modelConfig = {
         ...self.config.defaults?.model,
@@ -394,11 +523,24 @@ export class Runner {
       };
       const modelStr = `${modelConfig.provider}/${modelConfig.name}`;
 
+      // Top-level invokes never go through registry.start(); bridge the
+      // registry's AbortController so cancel-and-replace can interrupt
+      // mid-loop model calls.
+      const effectiveSignal = combineSignals(
+        options.signal,
+        runRegistry && runId ? runRegistry.getAbortSignal(runId) : undefined,
+      );
+
+      // Hoisted so the catch block can write an audit log entry even when a
+      // cancel-and-replace abort interrupts the loop mid-flight.
+      const allToolCalls: ToolCallRecord[] = [];
+      const totalUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+
       try {
         // Load session history
         let sessionHistory: Message[] = [];
-        if (options.sessionId) {
-          sessionHistory = await self.sessionStore.getMessages(options.sessionId);
+        {
+          sessionHistory = await self.sessionStore.getMessages(effectiveSessionId);
           const maxMessages = self.config.session?.maxMessages ?? 50;
           const strategy = self.config.session?.strategy ?? "sliding";
 
@@ -407,7 +549,7 @@ export class Runner {
               maxMessages,
               modelProvider: self.modelProvider,
               modelConfig: modelConfig as import("./types.js").ModelConfig,
-              signal: options.signal,
+              signal: effectiveSignal,
             });
           } else if (strategy !== "none") {
             sessionHistory = trimHistory(sessionHistory, maxMessages);
@@ -427,9 +569,17 @@ export class Runner {
           }
         }
 
+        // For multimodal input, fetch URLs → base64 BEFORE building the
+        // model messages so the AI SDK sees ready-to-send image parts. The
+        // normalized blocks (or original string) are also what we persist to
+        // the session and to InvocationLog.input.
+        const normalizedInput: string | ContentBlock[] = isContentBlockArray(input)
+          ? await normalizeImageBlocks(input)
+          : input;
+
         const messages = buildMessages({
           agent,
-          input,
+          input: normalizedInput,
           sessionHistory,
           contextEntries,
           extraContext: options.extraContext,
@@ -442,10 +592,27 @@ export class Runner {
         let availableTools = await self.resolveToolsForAgent(agent, {
           runRegistry,
           ephemeralTools,
+          replyCollector,
+          effectiveSessionId,
+          runId: effectiveRunId,
+          rootId: effectiveRootId,
+          onReplyAccepted,
+          state,
         });
 
-        const allToolCalls: ToolCallRecord[] = [];
-        const totalUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+        // See invoke() for the rationale. Persist the user turn up-front when
+        // the agent can reply mid-run so reply rows land after the user row
+        // in session history.
+        const replyEnabled = Boolean(agent.reply);
+        if (replyEnabled) {
+          const nowEarly = new Date().toISOString();
+          await self.sessionStore.append(effectiveSessionId, [
+            { role: "user", content: normalizedInput, timestamp: nowEarly },
+          ]);
+        }
+
+        // allToolCalls and totalUsage are hoisted above so a mid-loop cancel
+        // can still produce an audit log entry.
         let finalOutput = "";
         let step = 0;
 
@@ -456,7 +623,7 @@ export class Runner {
         while (step < effectiveMaxSteps) {
           step++;
 
-          if (options.signal?.aborted) {
+          if (effectiveSignal?.aborted) {
             throw new InvocationCancelledError();
           }
 
@@ -477,10 +644,14 @@ export class Runner {
           if (self.modelProvider.streamText) {
             const streamResult = await self.modelProvider.streamText({
               model: modelConfig,
-              messages,
+              // AiSdkMessage union widens content to string | AiMessagePart[];
+              // ModelProvider.generateText was originally typed
+              // content:string. The AI SDK accepts both at runtime — cast
+              // through `unknown` for backward-compatible providers.
+              messages: messages as unknown as Array<{ role: string; content: string }>,
               tools: availableTools.length > 0 ? availableTools : undefined,
               outputSchema,
-              signal: options.signal,
+              signal: effectiveSignal,
             });
 
             // Yield text deltas (both to the local stream and to the registry).
@@ -506,10 +677,10 @@ export class Runner {
             // Fallback for providers without streaming
             const result = await self.modelProvider.generateText({
               model: modelConfig,
-              messages,
+              messages: messages as unknown as Array<{ role: string; content: string }>,
               tools: availableTools.length > 0 ? availableTools : undefined,
               outputSchema,
-              signal: options.signal,
+              signal: effectiveSignal,
             });
 
             resultText = result.text;
@@ -567,7 +738,7 @@ export class Runner {
                       seq: 0,
                     });
                   }
-                  await runRegistry.awaitNextSettled(runId, options.signal);
+                  await runRegistry.awaitNextSettled(runId, effectiveSignal);
                 }
                 continue;
               }
@@ -604,6 +775,7 @@ export class Runner {
               loadedSkills,
               loadedSkillToolDescriptors,
               currentDepth,
+              sessionId: effectiveSessionId,
             });
 
             // Detect a successful use_skill call (returns name+instructions) so
@@ -626,6 +798,22 @@ export class Runner {
                 toolCall: record,
                 seq: 0,
               });
+            }
+
+            // Drain any replies queued during this tool call (the synthetic
+            // `reply` tool's onAccepted callback pushes into the queue from
+            // inside executeToolCall). Yielding here keeps reply events
+            // chronologically attached to the tool call that produced them
+            // and ahead of the next tool's tool-call-start.
+            while (pendingStreamReplies.length > 0) {
+              const r = pendingStreamReplies.shift()!;
+              yield {
+                type: "reply" as const,
+                text: r.text,
+                ts: r.ts,
+                sessionId: r.sessionId,
+                runId: r.runId,
+              };
             }
           }
 
@@ -669,6 +857,12 @@ export class Runner {
             const base = await self.resolveToolsForAgent(agent, {
               runRegistry,
               ephemeralTools,
+              replyCollector,
+              effectiveSessionId,
+              runId: effectiveRunId,
+              rootId: effectiveRootId,
+              onReplyAccepted,
+              state,
             });
             const seen = new Set(base.map((t) => t.name));
             availableTools = base.concat(
@@ -683,18 +877,33 @@ export class Runner {
 
         const duration = Date.now() - startTime;
 
-        // Persist session
-        if (options.sessionId) {
+        // Persist session — but only if this run wasn't cancelled mid-loop.
+        // A cancelled run shouldn't poison the conversation history; the
+        // replacing run will re-persist the user input as part of its own
+        // turn. Persist the normalized form (base64-materialized images) so
+        // replaying the conversation doesn't require re-fetching URLs.
+        //
+        // Reply path: see invoke() — user + replies were persisted earlier,
+        // so we only need the final assistant row here, and skip it when
+        // empty replies already represent the response.
+        if (!effectiveSignal?.aborted) {
           const now = new Date().toISOString();
-          await self.sessionStore.append(options.sessionId, [
-            { role: "user", content: input, timestamp: now },
-            {
+          const newMessages: Message[] = [];
+          if (!replyEnabled) {
+            newMessages.push({ role: "user", content: normalizedInput, timestamp: now });
+          }
+          const skipEmptyAssistant = replyEnabled && !finalOutput && replyCollector.length > 0;
+          if (!skipEmptyAssistant) {
+            newMessages.push({
               role: "assistant",
               content: finalOutput,
               toolCalls: allToolCalls.length > 0 ? allToolCalls : undefined,
               timestamp: now,
-            },
-          ]);
+            });
+          }
+          if (newMessages.length > 0) {
+            await self.sessionStore.append(effectiveSessionId, newMessages);
+          }
         }
 
         // Context write
@@ -710,27 +919,33 @@ export class Runner {
           }
         }
 
-        // Log
+        const cancelled = effectiveSignal?.aborted ?? false;
+
+        // Log — preserve the normalized blocks (or original string) so the
+        // input view rebuilds exactly what was sent to the model.
         await self.logStore.log({
           id: invocationId,
           agentId,
-          sessionId: options.sessionId,
-          input,
+          sessionId: effectiveSessionId,
+          input: normalizedInput,
           output: finalOutput,
           toolCalls: allToolCalls,
           usage: totalUsage,
           duration,
           model: modelStr,
+          status: cancelled ? "cancelled" : "completed",
           timestamp: new Date().toISOString(),
         });
 
         const invokeResult: InvokeResult = {
           output: finalOutput,
           invocationId,
+          sessionId: effectiveSessionId,
           toolCalls: allToolCalls,
           usage: totalUsage,
           duration,
           model: modelStr,
+          ...(replyCollector.length > 0 ? { replies: replyCollector } : {}),
         };
 
         if (runRegistry && runId) {
@@ -740,6 +955,28 @@ export class Runner {
         resolveResult!(invokeResult);
         yield { type: "done" as const, result: invokeResult };
       } catch (err) {
+        // Audit-log the cancellation/failure even when the loop throws mid-flight.
+        const cancelled =
+          err instanceof InvocationCancelledError ||
+          (effectiveSignal?.aborted ?? false);
+        try {
+          await self.logStore.log({
+            id: invocationId,
+            agentId,
+            sessionId: effectiveSessionId,
+            input,
+            output: "",
+            toolCalls: allToolCalls,
+            usage: totalUsage,
+            duration: Date.now() - startTime,
+            model: modelStr,
+            error: err instanceof Error ? err.message : String(err),
+            status: cancelled ? "cancelled" : "failed",
+            timestamp: new Date().toISOString(),
+          });
+        } catch {
+          // Log persistence failure should not mask the original error.
+        }
         if (runRegistry && runId) {
           runRegistry.notifyFailed(runId, err);
         }
@@ -763,7 +1000,11 @@ export class Runner {
   /**
    * Invoke an agent. This is the main entry point for running an agent.
    */
-  async invoke(agentId: string, input: string, options: InvokeOptions = {}): Promise<InvokeResult> {
+  async invoke(
+    agentId: string,
+    input: string | ContentBlock[],
+    options: InvokeOptions = {},
+  ): Promise<InvokeResult> {
     // Check recursion depth for agent-as-tool chains
     const currentDepth = options._recursionDepth ?? 0;
     const maxDepth = this.config.maxRecursionDepth ?? DEFAULT_MAX_RECURSION_DEPTH;
@@ -778,29 +1019,105 @@ export class Runner {
     const invocationId = generateInvocationId();
     const agent = await this.resolveAgent(agentId);
 
-    // ─── Run registry integration ──────────────────────────────────────
-    // If a registry is wired and there is no current Run id, materialize
-    // one for this top-level call. Children always pass runId explicitly via
-    // the spawn_agent tool, so this only fires for top-level invocations.
+    // Always work with a concrete sessionId — auto-allocate if the caller
+    // didn't pass one. The session row is ensured below so the id has a
+    // persistent home before any messages get appended.
+    const effectiveSessionId = options.sessionId ?? generateSessionId();
+    await this.sessionStore.getOrCreateSession(effectiveSessionId);
+
+    // For multimodal input the Run record/telemetry input still need a
+    // string view (used by list UIs and span attributes); the actual blocks
+    // (with base64 image bodies) live on the persisted Message and on
+    // InvocationLog.input.
+    const inputAsString =
+      typeof input === "string" ? input : flattenContentToText(input);
+
+    // ─── Secrets pre-fetch ────────────────────────────────────────────
+    // Walk the agent's HTTP tool entries and pre-resolve every
+    // `{{secrets.<name>}}` reference into a plain map. The decrypted
+    // values live on `state.secrets` for the lifetime of this invocation
+    // only — they go away with `state` when the function returns. This
+    // keeps `interpolate()` synchronous at tool-execute time and means
+    // we hit the secret store at most once per name per run.
+    const state: AgentState = {};
+    const secretNames = collectSecretReferences(agent);
+    if (secretNames.size > 0) {
+      if (!this._secretStore) {
+        throw new Error(
+          `Agent '${agent.id}' references secrets but no SecretStore is wired to the Runner.`,
+        );
+      }
+      const resolved: Record<string, string> = {};
+      for (const name of secretNames) {
+        const value = await this._secretStore.getSecretValue(name);
+        if (value == null) {
+          throw new Error(
+            `Secret '${name}' referenced by agent '${agent.id}' does not exist for this user.`,
+          );
+        }
+        resolved[name] = value;
+      }
+      state.secrets = resolved;
+    }
+
+    // ─── Cancel-and-replace concurrency + Run registration ────────────
+    // The per-session mutex must wrap "check active → cancel → create new",
+    // because publishing this run's id as the session's active run is the
+    // moment a concurrent caller can race. We release the lock as soon as
+    // the new run is created and indexed; the model loop runs outside it.
     const runRegistry = options.runRegistry;
     let runId = options.runId;
     let rootId: string | undefined;
     if (runRegistry) {
       if (!runId) {
-        const root = runRegistry.create({
-          agentId,
-          input,
-          parentRunId: options.parentRunId,
-          userId: options.userId,
-          sessionId: options.sessionId,
-          spanEmitter: options.spanEmitter,
-        });
-        runId = root.id;
-        rootId = root.rootId;
+        // Only top-level invokes (no parentRunId, depth 0) participate in
+        // cancel-and-replace. Children carry their own parent context.
+        const isTopLevel = currentDepth === 0 && !options.parentRunId;
+        if (isTopLevel) {
+          const release = await runRegistry.acquireSessionLock(effectiveSessionId);
+          try {
+            const activeRunId = runRegistry.findActiveBySession(effectiveSessionId);
+            if (activeRunId) {
+              runRegistry.cancel(activeRunId, "superseded");
+              await runRegistry.waitForTerminal(activeRunId);
+            }
+            const root = runRegistry.create({
+              agentId,
+              input: inputAsString,
+              parentRunId: options.parentRunId,
+              userId: options.userId,
+              sessionId: effectiveSessionId,
+              spanEmitter: options.spanEmitter,
+            });
+            runId = root.id;
+            rootId = root.rootId;
+          } finally {
+            release();
+          }
+        } else {
+          const root = runRegistry.create({
+            agentId,
+            input: inputAsString,
+            parentRunId: options.parentRunId,
+            userId: options.userId,
+            sessionId: effectiveSessionId,
+            spanEmitter: options.spanEmitter,
+          });
+          runId = root.id;
+          rootId = root.rootId;
+        }
       } else {
         rootId = runRegistry.get(runId)?.rootId ?? runId;
       }
     }
+
+    // Top-level invokes don't go through registry.start(), so the registry's
+    // AbortController isn't wired into the model call by default. Bridge it
+    // here so cancel-and-replace can interrupt a mid-loop model call.
+    const effectiveSignal = combineSignals(
+      options.signal,
+      runRegistry && runId ? runRegistry.getAbortSignal(runId) : undefined,
+    );
     // Per-invocation ephemeral tools. spawn_agent/check_agents live here,
     // not in the global registry, because their schemas are agent-specific.
     const ephemeralTools = new Map<string, ToolDefinition>();
@@ -808,6 +1125,15 @@ export class Runner {
     // use_skill tool sees a consistent view across turns.
     const loadedSkills = new Set<string>();
     const loadedSkillToolDescriptors: Array<{ name: string; description: string; parameters: Record<string, unknown> }> = [];
+    // Per-invocation reply collector. The synthetic `reply` tool pushes each
+    // accepted reply onto this; we surface it on InvokeResult.replies at the
+    // end of the run. Always allocated — the tool factory only sees it when
+    // the agent declares `reply`. Effective runId is the registry-allocated
+    // runId when one exists, else the invocationId so the Reply still has a
+    // stable identifier.
+    const replyCollector: Reply[] = [];
+    const effectiveRunId = runId ?? invocationId;
+    const effectiveRootId = rootId ?? effectiveRunId;
 
     // Resolve model config (agent model or defaults)
     const modelConfig = {
@@ -822,22 +1148,28 @@ export class Runner {
     // Use the per-request emitter when provided; fall back to the runner-level one.
     const spanEmitter = options.spanEmitter ?? this.telemetry;
 
-    // Start telemetry span
+    // Start telemetry span — span attributes are scalar text, so use the
+    // flattened view (image bytes don't belong in a span attribute).
     const span = spanEmitter.startInvoke({
       agentId,
       invocationId,
       model: modelStr,
       ownerId: options.ownerId,
-      sessionId: options.sessionId,
+      sessionId: effectiveSessionId,
       contextIds: options.contextIds,
-      input,
+      input: inputAsString,
     });
+
+    // Hoisted so the catch block can write an audit log entry even when a
+    // cancel-and-replace abort interrupts the loop mid-flight.
+    const allToolCalls: ToolCallRecord[] = [];
+    const totalUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
     try {
       // Load session history
       let sessionHistory: Message[] = [];
-      if (options.sessionId) {
-        sessionHistory = await this.sessionStore.getMessages(options.sessionId);
+      {
+        sessionHistory = await this.sessionStore.getMessages(effectiveSessionId);
         const maxMessages = this.config.session?.maxMessages ?? 50;
         const strategy = this.config.session?.strategy ?? "sliding";
 
@@ -846,7 +1178,7 @@ export class Runner {
             maxMessages,
             modelProvider: this.modelProvider,
             modelConfig: modelConfig as import("./types.js").ModelConfig,
-            signal: options.signal,
+            signal: effectiveSignal,
           });
         } else if (strategy !== "none") {
           sessionHistory = trimHistory(sessionHistory, maxMessages);
@@ -868,10 +1200,18 @@ export class Runner {
         }
       }
 
+      // For multimodal input, fetch URLs → base64 BEFORE building the model
+      // messages so the AI SDK sees ready-to-send image parts. The normalized
+      // blocks (or original string) are also what we persist to the session
+      // and to InvocationLog.input.
+      const normalizedInput: string | ContentBlock[] = isContentBlockArray(input)
+        ? await normalizeImageBlocks(input)
+        : input;
+
       // Build messages
       const messages = buildMessages({
         agent,
-        input,
+        input: normalizedInput,
         sessionHistory,
         contextEntries,
         extraContext: options.extraContext,
@@ -882,15 +1222,36 @@ export class Runner {
       await this.augmentSystemPromptWithSkills(agent, messages);
 
       // Resolve available tools for this agent (incl. spawn_agent/check_agents
-      // when the agent declares `spawnable` and a runRegistry is provided).
+      // when the agent declares `spawnable`, `reply` when the agent declares
+      // `reply`, and HTTP tools — `state.secrets` was pre-resolved above so
+      // those tools can interpolate `{{secrets.X}}` synchronously at execute
+      // time).
       let availableTools = await this.resolveToolsForAgent(agent, {
         runRegistry,
         ephemeralTools,
+        replyCollector,
+        effectiveSessionId,
+        runId: effectiveRunId,
+        rootId: effectiveRootId,
+        state,
       });
 
-      // Execute the agent loop (model → tools → repeat)
-      const allToolCalls: ToolCallRecord[] = [];
-      const totalUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+      // When the agent can reply mid-run, persist the user input *before* the
+      // model loop. Otherwise the reply tool's at-call-time assistant writes
+      // would land in the session before the user turn, jumbling history.
+      // The end-of-run persistence path below only writes the final assistant
+      // row in that case.
+      const replyEnabled = Boolean(agent.reply);
+      if (replyEnabled) {
+        const now = new Date().toISOString();
+        await this.sessionStore.append(effectiveSessionId, [
+          { role: "user", content: normalizedInput, timestamp: now },
+        ]);
+      }
+
+      // Execute the agent loop (model → tools → repeat). allToolCalls and
+      // totalUsage are hoisted above so a mid-loop cancel can still produce
+      // an audit log entry.
       let finalOutput = "";
       let step = 0;
 
@@ -901,8 +1262,9 @@ export class Runner {
       while (step < effectiveMaxSteps) {
         step++;
 
-        // Check for cancellation
-        if (options.signal?.aborted) {
+        // Check for cancellation (either caller-supplied signal or our own
+        // registry-driven cancel)
+        if (effectiveSignal?.aborted) {
           throw new InvocationCancelledError();
         }
 
@@ -923,17 +1285,21 @@ export class Runner {
 
         let result;
         try {
-          // Call the model (with retry)
+          // Call the model (with retry). effectiveSignal aborts on either
+          // caller cancel or registry-driven cancel-and-replace.
           result = await withRetry(
             () => this.modelProvider.generateText({
               model: modelConfig,
-              messages,
+              // See stream() — AiSdkMessage union widens content to
+              // string | AiMessagePart[]; cast through `unknown` for the
+              // legacy-typed ModelProvider interface.
+              messages: messages as unknown as Array<{ role: string; content: string }>,
               tools: availableTools.length > 0 ? availableTools : undefined,
               outputSchema,
-              signal: options.signal,
+              signal: effectiveSignal,
             }),
             this.config.retry,
-            options.signal,
+            effectiveSignal,
           );
 
           const costUsd = computeCost(result.usage, modelConfig.provider, modelConfig.name);
@@ -986,7 +1352,7 @@ export class Runner {
                     seq: 0,
                   });
                 }
-                await runRegistry.awaitNextSettled(runId, options.signal);
+                await runRegistry.awaitNextSettled(runId, effectiveSignal);
               }
               continue;
             }
@@ -1023,6 +1389,7 @@ export class Runner {
             loadedSkills,
             loadedSkillToolDescriptors,
             currentDepth,
+            sessionId: effectiveSessionId,
           });
           allToolCalls.push(record);
 
@@ -1099,6 +1466,11 @@ export class Runner {
           const base = await this.resolveToolsForAgent(agent, {
             runRegistry,
             ephemeralTools,
+            replyCollector,
+            effectiveSessionId,
+            runId: effectiveRunId,
+            rootId: effectiveRootId,
+            state,
           });
           const seen = new Set(base.map((t) => t.name));
           availableTools = base.concat(
@@ -1118,19 +1490,36 @@ export class Runner {
         stepCount: step,
       });
 
-      // Save to session
-      if (options.sessionId) {
+      // Save to session — but only if this run wasn't cancelled mid-loop.
+      // A cancelled run shouldn't poison the conversation history; the
+      // replacing run will re-persist the user input as part of its own
+      // turn. Tool side effects already executed remain in InvocationLog.
+      // Persist the normalized form (base64-materialized images) so replaying
+      // the conversation doesn't require re-fetching URLs.
+      //
+      // Reply path: when `agent.reply` is set, the user message and each
+      // reply row were already persisted earlier (user up-front, replies at
+      // call time). Only append the final assistant row here, and skip it
+      // entirely when the model produced no final text — the replies are
+      // the agent's response and a trailing empty row just clutters history.
+      if (!effectiveSignal?.aborted) {
         const now = new Date().toISOString();
-        const newMessages: Message[] = [
-          { role: "user", content: input, timestamp: now },
-          {
+        const newMessages: Message[] = [];
+        if (!replyEnabled) {
+          newMessages.push({ role: "user", content: normalizedInput, timestamp: now });
+        }
+        const skipEmptyAssistant = replyEnabled && !finalOutput && replyCollector.length > 0;
+        if (!skipEmptyAssistant) {
+          newMessages.push({
             role: "assistant",
             content: finalOutput,
             toolCalls: allToolCalls.length > 0 ? allToolCalls : undefined,
             timestamp: now,
-          },
-        ];
-        await this.sessionStore.append(options.sessionId, newMessages);
+          });
+        }
+        if (newMessages.length > 0) {
+          await this.sessionStore.append(effectiveSessionId, newMessages);
+        }
       }
 
       // Write to context if agent has contextWrite enabled
@@ -1146,17 +1535,21 @@ export class Runner {
         }
       }
 
-      // Log the invocation
+      // Log the invocation. Record cancellation status for auditability so
+      // the token bill, tool calls, and any partial output are still
+      // attributable even when the run was superseded.
+      const cancelled = effectiveSignal?.aborted ?? false;
       const logEntry: InvocationLog = {
         id: invocationId,
         agentId,
-        sessionId: options.sessionId,
-        input,
+        sessionId: effectiveSessionId,
+        input: normalizedInput,
         output: finalOutput,
         toolCalls: allToolCalls,
         usage: totalUsage,
         duration,
         model: modelStr,
+        status: cancelled ? "cancelled" : "completed",
         timestamp: new Date().toISOString(),
       };
       await this.logStore.log(logEntry);
@@ -1166,10 +1559,12 @@ export class Runner {
       const invokeResult: InvokeResult = {
         output: finalOutput,
         invocationId,
+        sessionId: effectiveSessionId,
         toolCalls: allToolCalls,
         usage: totalUsage,
         duration,
         model: modelStr,
+        ...(replyCollector.length > 0 ? { replies: replyCollector } : {}),
       };
 
       if (runRegistry && runId) {
@@ -1179,6 +1574,29 @@ export class Runner {
       return invokeResult;
     } catch (err) {
       span.error(err instanceof Error ? err : new Error(String(err)));
+      // Write an audit log entry even on cancel/failure so token usage and
+      // tool calls executed before the abort remain attributable.
+      const cancelled =
+        err instanceof InvocationCancelledError ||
+        (effectiveSignal?.aborted ?? false);
+      try {
+        await this.logStore.log({
+          id: invocationId,
+          agentId,
+          sessionId: effectiveSessionId,
+          input,
+          output: "",
+          toolCalls: allToolCalls,
+          usage: totalUsage,
+          duration: Date.now() - startTime,
+          model: modelStr,
+          error: err instanceof Error ? err.message : String(err),
+          status: cancelled ? "cancelled" : "failed",
+          timestamp: new Date().toISOString(),
+        });
+      } catch {
+        // Persistence failure on the audit log shouldn't mask the original.
+      }
       if (runRegistry && runId) {
         runRegistry.notifyFailed(runId, err);
       }
@@ -1198,11 +1616,12 @@ export class Runner {
    */
   private async augmentSystemPromptWithSkills(
     agent: AgentDefinition,
-    messages: Array<{ role: string; content: string }>,
+    messages: AiSdkMessage[],
   ): Promise<void> {
     if (!agent.skills?.length || !this._skillStore) return;
     const sys = messages[0];
     if (!sys || sys.role !== "system") return;
+    if (typeof sys.content !== "string") return;
 
     const lines: string[] = [];
     for (const name of agent.skills) {
@@ -1228,7 +1647,7 @@ export class Runner {
   private injectPendingCompletions(
     registry: RunRegistry,
     runId: string,
-    messages: Array<{ role: string; content: string }>,
+    messages: AiSdkMessage[],
   ): number {
     const pending = registry.consumePending(runId);
     for (const p of pending) {
@@ -1261,6 +1680,8 @@ export class Runner {
     loadedSkills: Set<string>;
     loadedSkillToolDescriptors: Array<{ name: string; description: string; parameters: Record<string, unknown> }>;
     currentDepth: number;
+    /** Effective sessionId (auto-allocated if caller passed none). */
+    sessionId?: string;
   }): Promise<ToolCallRecord> {
     const {
       tc,
@@ -1273,12 +1694,13 @@ export class Runner {
       loadedSkills,
       loadedSkillToolDescriptors,
       currentDepth,
+      sessionId,
     } = params;
 
     const toolStartTime = Date.now();
     const toolCtx: ToolContext = {
       agentId,
-      sessionId: options.sessionId,
+      sessionId: sessionId ?? options.sessionId,
       contextIds: options.contextIds,
       invocationId,
       runId,
@@ -1347,12 +1769,38 @@ export class Runner {
    * also synthesizes per-invocation `spawn_agent` and `check_agents` tools.
    * These live in the supplied `ephemeralTools` map (not the global registry)
    * because their schemas are agent-specific.
+   *
+   * HTTP tools also live in `ephemeralTools` because they close over the
+   * per-invocation `state` (notably `state.secrets`); registering them
+   * globally would either leak secrets across invocations or hit the
+   * "already registered" guard the second time.
    */
   private async resolveToolsForAgent(
     agent: AgentDefinition,
     opts?: {
       runRegistry?: RunRegistry;
       ephemeralTools?: Map<string, ToolDefinition>;
+      /** Buffer the synthetic `reply` tool pushes accepted replies into. */
+      replyCollector?: Reply[];
+      /** Effective session id for the current invocation. */
+      effectiveSessionId?: string;
+      /** Run id for the current invocation. */
+      runId?: string;
+      /** Root run id; defaults to `runId` for top-level runs. */
+      rootId?: string;
+      /**
+       * Optional callback the synthetic `reply` tool fires after each
+       * accepted reply. Used by `Runner.stream` to forward replies to its
+       * async iterator output without re-subscribing to the registry.
+       */
+      onReplyAccepted?: (reply: Reply) => void;
+      /**
+       * Per-invocation template state (carries `secrets`, etc.). Required
+       * for HTTP tool resolution; ignored by other tool kinds. Defaults
+       * to an empty object when omitted so existing call sites that don't
+       * use HTTP tools keep working.
+       */
+      state?: AgentState;
     },
   ): Promise<Array<{
     name: string;
@@ -1363,7 +1811,13 @@ export class Runner {
       Boolean(agent.spawnable?.length) && Boolean(opts?.runRegistry) && Boolean(opts?.ephemeralTools);
     const hasSkills =
       Boolean(agent.skills?.length) && Boolean(this._skillStore) && Boolean(opts?.ephemeralTools);
-    if (!agent.tools?.length && !hasSpawnable && !hasSkills) return [];
+    const hasReply =
+      Boolean(agent.reply) &&
+      Boolean(opts?.ephemeralTools) &&
+      Boolean(opts?.replyCollector) &&
+      Boolean(opts?.effectiveSessionId) &&
+      Boolean(opts?.runId);
+    if (!agent.tools?.length && !hasSpawnable && !hasSkills && !hasReply) return [];
 
     // Ensure every referenced MCP server is connected (resolving registered
     // connection names to urls/headers) before we ask for its tools.
@@ -1384,6 +1838,8 @@ export class Runner {
       parameters: Record<string, unknown>;
     }> = [];
 
+    const state = opts?.state ?? {};
+
     for (const ref of agent.tools ?? []) {
       if (ref.type === "inline") {
         const info = this.toolRegistry.get(ref.name);
@@ -1402,6 +1858,23 @@ export class Runner {
       } else if (ref.type === "mcp") {
         const mcpTools = this.resolveMCPTools(ref.server, ref.tools);
         resolved.push(...mcpTools);
+      } else if (ref.type === "http") {
+        // HTTP tools close over `state` (which carries decrypted secrets),
+        // so they MUST live in the per-invocation ephemeral map. The same
+        // entry called from two concurrent invocations would otherwise
+        // share whichever closure won the registration race.
+        if (!opts?.ephemeralTools) {
+          // No ephemeral map → no place to put this tool. Skip rather
+          // than mutate the global registry.
+          continue;
+        }
+        const httpTool = buildHttpToolDefinition(ref.entry, state);
+        opts.ephemeralTools.set(httpTool.name, httpTool);
+        resolved.push({
+          name: httpTool.name,
+          description: httpTool.description,
+          parameters: zodToJsonSchema(httpTool.input),
+        });
       }
     }
 
@@ -1451,6 +1924,32 @@ export class Runner {
           parameters: zodToJsonSchema(useSkill.input),
         });
       }
+    }
+
+    // Synthesize the per-invocation `reply` tool. Lives in the ephemeral map
+    // because it closes over this invocation's `collector`, `sessionId`, and
+    // `runId`. Registering it globally would leak state across runs.
+    if (hasReply) {
+      const maxPerRun =
+        typeof agent.reply === "object"
+          ? (agent.reply.maxPerRun ?? DEFAULT_REPLY_MAX_PER_RUN)
+          : DEFAULT_REPLY_MAX_PER_RUN;
+      const replyTool = createReplyTool({
+        collector: opts!.replyCollector!,
+        sessionId: opts!.effectiveSessionId!,
+        runId: opts!.runId!,
+        rootId: opts!.rootId,
+        sessionStore: this.sessionStore,
+        runRegistry: opts!.runRegistry,
+        maxPerRun,
+        onAccepted: opts!.onReplyAccepted,
+      });
+      opts!.ephemeralTools!.set(replyTool.name, replyTool);
+      resolved.push({
+        name: replyTool.name,
+        description: replyTool.description,
+        parameters: zodToJsonSchema(replyTool.input),
+      });
     }
 
     return resolved;
@@ -1592,6 +2091,28 @@ export class Runner {
  */
 export function createRunner(config: RunnerConfig = {}): Runner {
   return new Runner(config);
+}
+
+/**
+ * Combine zero or more AbortSignals into one. The returned signal aborts as
+ * soon as any input signal aborts. Returns undefined if no signals were
+ * supplied — callers can pass it through unchanged.
+ */
+function combineSignals(
+  ...signals: Array<AbortSignal | undefined>
+): AbortSignal | undefined {
+  const present = signals.filter((s): s is AbortSignal => Boolean(s));
+  if (present.length === 0) return undefined;
+  if (present.length === 1) return present[0];
+  const ctrl = new AbortController();
+  for (const s of present) {
+    if (s.aborted) {
+      ctrl.abort(s.reason);
+      return ctrl.signal;
+    }
+    s.addEventListener("abort", () => ctrl.abort(s.reason), { once: true });
+  }
+  return ctrl.signal;
 }
 
 /**

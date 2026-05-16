@@ -1,8 +1,15 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import pg from "pg";
-import { defineSkill } from "@agntz/core";
+import {
+  defineSkill,
+  encryptSecret,
+  decryptSecret,
+  getLastFour,
+  INVOCATION_LOG_BLOCKS_PREFIX,
+} from "@agntz/core";
 import type {
   AgentDefinition,
+  ContentBlock,
   ProviderConfig,
   UnifiedStore,
   ApiKeyRecord,
@@ -19,10 +26,13 @@ import type {
   RunStatus,
   RunListFilters,
   RunListResult,
+  SecretDefinition,
+  SecretMetadata,
   SkillDefinition,
   Span,
   TraceSummary,
   TraceFilter,
+  WebhookDelivery,
 } from "@agntz/core";
 
 const { Pool } = pg;
@@ -293,6 +303,64 @@ const MIGRATIONS: string[] = [
 
   UPDATE ar_schema_version SET version = 8;
   `,
+  // v9: GymText integration + HTTP tool + unified secrets.
+  // Four schema changes that ship together as one PR:
+  //   1. ar_invocation_logs.status — terminal state ("completed" |
+  //      "cancelled" | "failed") for billing/audit when a run is
+  //      superseded by cancel-and-replace.
+  //   2. ar_messages.content_blocks — multimodal payload (JSONB) alongside
+  //      the legacy TEXT `content` column. Writes are dual: `content`
+  //      always holds a flattened text view, `content_blocks` is non-null
+  //      only when the message was multimodal.
+  //   3. ar_secrets table — user-scoped encrypted credentials used for
+  //      both HTTP-tool auth tokens and webhook HMAC signing keys.
+  //      `value` is AES-256-GCM ciphertext
+  //      (`base64(iv):base64(tag):base64(ct)`), `last_four` is the last 4
+  //      chars of plaintext for masked-UI display. Rotation is in-place
+  //      via SecretStore.putSecret upsert on (user_id, name).
+  //   4. ar_webhook_deliveries outbox. `secret_name` references the
+  //      active HMAC signing key by name — the dispatcher resolves it at
+  //      each delivery attempt so an out-of-band rotation flows through
+  //      naturally.
+  `
+  ALTER TABLE ar_invocation_logs ADD COLUMN IF NOT EXISTS status TEXT;
+
+  ALTER TABLE ar_messages ADD COLUMN IF NOT EXISTS content_blocks JSONB;
+
+  CREATE TABLE IF NOT EXISTS ar_secrets (
+    user_id      TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    value        TEXT NOT NULL,
+    last_four    TEXT NOT NULL,
+    description  TEXT,
+    created_at   TIMESTAMPTZ NOT NULL,
+    updated_at   TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (user_id, name)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ar_secrets_user ON ar_secrets(user_id);
+
+  CREATE TABLE IF NOT EXISTS ar_webhook_deliveries (
+    id              TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL,
+    run_id          TEXT NOT NULL,
+    callback_url    TEXT NOT NULL,
+    secret_name     TEXT NOT NULL,
+    payload         JSONB NOT NULL,
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at TIMESTAMPTZ,
+    status          TEXT NOT NULL CHECK (status IN ('pending','delivered','failed_permanent')),
+    last_error      TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  CREATE INDEX IF NOT EXISTS idx_ar_webhook_deliveries_user
+    ON ar_webhook_deliveries(user_id);
+  CREATE INDEX IF NOT EXISTS idx_ar_webhook_deliveries_status
+    ON ar_webhook_deliveries(status);
+  CREATE INDEX IF NOT EXISTS idx_ar_webhook_deliveries_run
+    ON ar_webhook_deliveries(user_id, run_id);
+
+  UPDATE ar_schema_version SET version = 9;
+  `,
 ];
 
 export interface PostgresStoreOptions {
@@ -539,7 +607,7 @@ export class PostgresStore implements UnifiedStore {
     await this.ensureMigrated();
     const u = this.requireUser();
     const result = await this.pool.query(
-      `SELECT m.role, m.content, m.tool_calls, m.tool_call_id, m.timestamp
+      `SELECT m.role, m.content, m.content_blocks, m.tool_calls, m.tool_call_id, m.timestamp
        FROM ${this.t("messages")} m
        INNER JOIN ${this.t("sessions")} s ON s.id = m.session_id
        WHERE s.user_id = $1 AND m.session_id = $2
@@ -550,13 +618,24 @@ export class PostgresStore implements UnifiedStore {
     return result.rows.map((r: {
       role: string;
       content: string;
+      content_blocks: unknown;
       tool_calls: unknown;
       tool_call_id: string | null;
       timestamp: Date;
     }) => {
+      // pg returns JSONB as already-parsed JS values; tolerate a raw string
+      // too in case some driver path returns it unparsed.
+      let content: string | ContentBlock[] = r.content;
+      if (r.content_blocks != null) {
+        const raw =
+          typeof r.content_blocks === "string"
+            ? safeJsonParse(r.content_blocks)
+            : r.content_blocks;
+        if (Array.isArray(raw)) content = raw as ContentBlock[];
+      }
       const msg: Message = {
         role: r.role as Message["role"],
-        content: r.content,
+        content,
         timestamp: r.timestamp instanceof Date ? r.timestamp.toISOString() : String(r.timestamp),
       };
       if (r.tool_calls) msg.toolCalls = r.tool_calls as Message["toolCalls"];
@@ -589,13 +668,17 @@ export class PostgresStore implements UnifiedStore {
       );
 
       for (const msg of messages) {
+        // Dual-write: legacy text column always populated (flattened view of
+        // any blocks), content_blocks only when input was multimodal.
+        const { contentText, contentBlocksJson } = serializeContent(msg.content);
         await client.query(
-          `INSERT INTO ${this.t("messages")} (session_id, role, content, tool_calls, tool_call_id, timestamp)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
+          `INSERT INTO ${this.t("messages")} (session_id, role, content, content_blocks, tool_calls, tool_call_id, timestamp)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
           [
             sessionId,
             msg.role,
-            msg.content,
+            contentText,
+            contentBlocksJson,
             msg.toolCalls ? JSON.stringify(msg.toolCalls) : null,
             msg.toolCallId ?? null,
             msg.timestamp,
@@ -618,6 +701,25 @@ export class PostgresStore implements UnifiedStore {
     await this.pool.query(
       `DELETE FROM ${this.t("sessions")} WHERE user_id = $1 AND id = $2`,
       [u, sessionId]
+    );
+  }
+
+  async getOrCreateSession(sessionId: string): Promise<void> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    // Ownership check: avoid silently aliasing the id under a different user.
+    const existing = await this.pool.query(
+      `SELECT user_id FROM ${this.t("sessions")} WHERE id = $1`,
+      [sessionId]
+    );
+    if (existing.rows.length > 0 && existing.rows[0].user_id !== u) {
+      throw new Error(`Session ${sessionId} belongs to a different user`);
+    }
+    await this.pool.query(
+      `INSERT INTO ${this.t("sessions")} (id, user_id, created_at, updated_at)
+       VALUES ($1, $2, NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`,
+      [sessionId, u]
     );
   }
 
@@ -709,17 +811,25 @@ export class PostgresStore implements UnifiedStore {
   async log(entry: InvocationLog): Promise<void> {
     await this.ensureMigrated();
     const u = this.requireUser();
+    // For multimodal input, serialize the blocks JSON into the existing
+    // `input` TEXT column with a sentinel prefix. Keeps the column shape
+    // backward-compatible: legacy readers see the prefix + JSON; the row
+    // helper detects the prefix and rehydrates the blocks.
+    const inputStored =
+      typeof entry.input === "string"
+        ? entry.input
+        : `${INVOCATION_LOG_BLOCKS_PREFIX}${JSON.stringify(entry.input)}`;
     await this.pool.query(
       `INSERT INTO ${this.t("invocation_logs")}
        (user_id, id, agent_id, session_id, input, output, tool_calls,
-        prompt_tokens, completion_tokens, total_tokens, duration, model, error, timestamp)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+        prompt_tokens, completion_tokens, total_tokens, duration, model, error, timestamp, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
       [
         u,
         entry.id,
         entry.agentId,
         entry.sessionId ?? null,
-        entry.input,
+        inputStored,
         entry.output,
         JSON.stringify(entry.toolCalls),
         entry.usage.promptTokens,
@@ -729,6 +839,7 @@ export class PostgresStore implements UnifiedStore {
         entry.model,
         entry.error ?? null,
         entry.timestamp,
+        entry.status ?? null,
       ]
     );
   }
@@ -1360,6 +1471,111 @@ export class PostgresStore implements UnifiedStore {
     );
   }
 
+  // ═══ SecretStore ═══
+
+  async listSecrets(): Promise<SecretMetadata[]> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const { rows } = await this.pool.query(
+      `SELECT name, last_four, description, created_at, updated_at
+       FROM ${this.t("secrets")}
+       WHERE user_id = $1 ORDER BY name ASC`,
+      [u]
+    );
+    return rows.map(
+      (r: {
+        name: string;
+        last_four: string;
+        description: string | null;
+        created_at: Date | string;
+        updated_at: Date | string;
+      }) => pgRowToSecretMetadata(r)
+    );
+  }
+
+  async getSecretMetadata(name: string): Promise<SecretMetadata | null> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const { rows } = await this.pool.query(
+      `SELECT name, last_four, description, created_at, updated_at
+       FROM ${this.t("secrets")}
+       WHERE user_id = $1 AND name = $2`,
+      [u, name]
+    );
+    return rows.length === 0 ? null : pgRowToSecretMetadata(rows[0]);
+  }
+
+  async getSecretValue(name: string): Promise<string | null> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const { rows } = await this.pool.query(
+      `SELECT value FROM ${this.t("secrets")}
+       WHERE user_id = $1 AND name = $2`,
+      [u, name]
+    );
+    if (rows.length === 0) return null;
+    return decryptSecret(rows[0].value as string);
+  }
+
+  async putSecret(secret: SecretDefinition): Promise<void> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    if (!secret.name) {
+      throw new Error("putSecret: name is required");
+    }
+    if (secret.value === undefined || secret.value === null) {
+      throw new Error("putSecret: value is required");
+    }
+    const encrypted = encryptSecret(secret.value);
+    const lastFour = getLastFour(secret.value);
+    const now = this.nextTimestamp();
+    const createdAt = secret.createdAt ?? now;
+    await this.pool.query(
+      `INSERT INTO ${this.t("secrets")}
+         (user_id, name, value, last_four, description, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (user_id, name) DO UPDATE SET
+         value = EXCLUDED.value,
+         last_four = EXCLUDED.last_four,
+         description = EXCLUDED.description,
+         updated_at = EXCLUDED.updated_at`,
+      [
+        u,
+        secret.name,
+        encrypted,
+        lastFour,
+        secret.description ?? null,
+        createdAt,
+        now,
+      ]
+    );
+  }
+
+  async updateSecretDescription(
+    name: string,
+    description: string | undefined,
+  ): Promise<boolean> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const now = this.nextTimestamp();
+    const result = await this.pool.query(
+      `UPDATE ${this.t("secrets")}
+       SET description = $1, updated_at = $2
+       WHERE user_id = $3 AND name = $4`,
+      [description ?? null, now, u, name],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async deleteSecret(name: string): Promise<void> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    await this.pool.query(
+      `DELETE FROM ${this.t("secrets")} WHERE user_id = $1 AND name = $2`,
+      [u, name]
+    );
+  }
+
   // ═══ ApiKeyStore (unscoped admin) ═══
 
   async createApiKey(params: { userId: string; name: string }): Promise<{ record: ApiKeyRecord; rawKey: string }> {
@@ -1411,6 +1627,99 @@ export class PostgresStore implements UnifiedStore {
     return { userId: rows[0].user_id, keyId: rows[0].id };
   }
 
+  // ═══ WebhookDeliveryStore ═══
+
+  async insert(
+    delivery: Omit<WebhookDelivery, "attempts" | "status" | "createdAt"> & {
+      payload: Record<string, unknown>;
+    },
+  ): Promise<string> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const now = new Date().toISOString();
+    await this.pool.query(
+      `INSERT INTO ${this.t("webhook_deliveries")} (
+          id, user_id, run_id, callback_url, secret_name, payload,
+          attempts, status, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, 0, 'pending', $7)`,
+      [
+        delivery.id,
+        u,
+        delivery.runId,
+        delivery.callbackUrl,
+        delivery.secretName,
+        JSON.stringify(delivery.payload),
+        now,
+      ],
+    );
+    return delivery.id;
+  }
+
+  async updateStatus(
+    id: string,
+    status: WebhookDelivery["status"],
+    lastError?: string,
+  ): Promise<void> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    if (lastError !== undefined) {
+      await this.pool.query(
+        `UPDATE ${this.t("webhook_deliveries")} SET status = $1, last_error = $2
+         WHERE user_id = $3 AND id = $4`,
+        [status, lastError, u, id],
+      );
+    } else {
+      await this.pool.query(
+        `UPDATE ${this.t("webhook_deliveries")} SET status = $1
+         WHERE user_id = $2 AND id = $3`,
+        [status, u, id],
+      );
+    }
+  }
+
+  async incrementAttempt(id: string, lastError?: string): Promise<void> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const now = new Date().toISOString();
+    if (lastError !== undefined) {
+      await this.pool.query(
+        `UPDATE ${this.t("webhook_deliveries")}
+         SET attempts = attempts + 1, last_attempt_at = $1, last_error = $2
+         WHERE user_id = $3 AND id = $4`,
+        [now, lastError, u, id],
+      );
+    } else {
+      await this.pool.query(
+        `UPDATE ${this.t("webhook_deliveries")}
+         SET attempts = attempts + 1, last_attempt_at = $1
+         WHERE user_id = $2 AND id = $3`,
+        [now, u, id],
+      );
+    }
+  }
+
+  async listPending(filter?: { olderThan?: string; limit?: number }): Promise<WebhookDelivery[]> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const clauses = [`user_id = $1`, `status = 'pending'`];
+    const args: unknown[] = [u];
+    if (filter?.olderThan) {
+      args.push(filter.olderThan);
+      clauses.push(`created_at < $${args.length}`);
+    }
+    args.push(filter?.limit ?? 1000);
+    const result = await this.pool.query(
+      `SELECT id, user_id, run_id, callback_url, secret_name, payload,
+              attempts, last_attempt_at, status, last_error, created_at
+       FROM ${this.t("webhook_deliveries")}
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY created_at ASC
+       LIMIT $${args.length}`,
+      args,
+    );
+    return result.rows.map(pgRowToWebhookDelivery);
+  }
+
   // ═══ Lifecycle ═══
 
   async close(): Promise<void> {
@@ -1421,6 +1730,38 @@ export class PostgresStore implements UnifiedStore {
 
   get pgPool(): PoolType {
     return this.pool;
+  }
+}
+
+/**
+ * Serialize a `Message.content` for dual-write. Always returns a flattened
+ * text view for the legacy `content` column; the JSON blocks view is set
+ * only when the content was a `ContentBlock[]`. Plain-string content writes
+ * NULL to content_blocks.
+ */
+function serializeContent(content: string | ContentBlock[]): {
+  contentText: string;
+  contentBlocksJson: string | null;
+} {
+  if (typeof content === "string") {
+    return { contentText: content, contentBlocksJson: null };
+  }
+  const pieces: string[] = [];
+  for (const b of content) {
+    if (b.type === "text") pieces.push(b.text);
+    else pieces.push("[image]");
+  }
+  return {
+    contentText: pieces.join(" "),
+    contentBlocksJson: JSON.stringify(content),
+  };
+}
+
+function safeJsonParse(s: string): unknown {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
   }
 }
 
@@ -1438,12 +1779,18 @@ function rowToInvocationLog(r: {
   model: string;
   error: string | null;
   timestamp: Date;
+  status?: string | null;
 }): InvocationLog {
-  return {
+  let input: string | ContentBlock[] = r.input;
+  if (typeof r.input === "string" && r.input.startsWith(INVOCATION_LOG_BLOCKS_PREFIX)) {
+    const parsed = safeJsonParse(r.input.slice(INVOCATION_LOG_BLOCKS_PREFIX.length));
+    if (Array.isArray(parsed)) input = parsed as ContentBlock[];
+  }
+  const log: InvocationLog = {
     id: r.id,
     agentId: r.agent_id,
     sessionId: r.session_id ?? undefined,
-    input: r.input,
+    input,
     output: r.output,
     toolCalls: (typeof r.tool_calls === "string" ? JSON.parse(r.tool_calls) : r.tool_calls) as InvocationLog["toolCalls"],
     usage: {
@@ -1456,6 +1803,8 @@ function rowToInvocationLog(r: {
     error: r.error ?? undefined,
     timestamp: r.timestamp instanceof Date ? r.timestamp.toISOString() : String(r.timestamp),
   };
+  if (r.status) log.status = r.status as InvocationLog["status"];
+  return log;
 }
 
 function rowToConnection(r: {
@@ -1588,6 +1937,24 @@ function pgRowToSkill(r: {
   return skill;
 }
 
+function pgRowToSecretMetadata(r: {
+  name: string;
+  last_four: string;
+  description: string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}): SecretMetadata {
+  const toIso = (v: Date | string) =>
+    v instanceof Date ? v.toISOString() : String(v);
+  return {
+    name: r.name,
+    lastFour: r.last_four,
+    description: r.description ?? undefined,
+    createdAt: toIso(r.created_at),
+    updatedAt: toIso(r.updated_at),
+  };
+}
+
 function pgRowToSummary(r: Record<string, unknown>): TraceSummary {
   return {
     traceId: r.trace_id as string,
@@ -1655,4 +2022,46 @@ function rowToApiKey(r: {
     lastUsedAt: toIso(r.last_used_at),
     revokedAt: toIso(r.revoked_at),
   };
+}
+
+function pgRowToWebhookDelivery(r: {
+  id: string;
+  user_id: string;
+  run_id: string;
+  callback_url: string;
+  secret_name: string;
+  payload: unknown;
+  attempts: number;
+  last_attempt_at: Date | string | null;
+  status: WebhookDelivery["status"];
+  last_error: string | null;
+  created_at: Date | string;
+}): WebhookDelivery {
+  const toIso = (v: Date | string) => (v instanceof Date ? v.toISOString() : String(v));
+  // pg returns JSONB as already-parsed; tolerate raw strings too.
+  let payload: Record<string, unknown>;
+  if (typeof r.payload === "string") {
+    try {
+      payload = JSON.parse(r.payload) as Record<string, unknown>;
+    } catch {
+      payload = {};
+    }
+  } else if (r.payload && typeof r.payload === "object") {
+    payload = r.payload as Record<string, unknown>;
+  } else {
+    payload = {};
+  }
+  const d: WebhookDelivery = {
+    id: r.id,
+    runId: r.run_id,
+    callbackUrl: r.callback_url,
+    secretName: r.secret_name,
+    payload,
+    attempts: r.attempts,
+    status: r.status,
+    createdAt: toIso(r.created_at),
+  };
+  if (r.last_attempt_at) d.lastAttemptAt = toIso(r.last_attempt_at);
+  if (r.last_error) d.lastError = r.last_error;
+  return d;
 }

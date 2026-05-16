@@ -63,6 +63,39 @@ tools:
     }
   });
 
+  it("parses an LLM agent with an HTTP tool entry", () => {
+    const yaml = `
+id: web-agent
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Use the tool."
+tools:
+  - kind: http
+    name: get_user
+    url: "https://api.example.com/users/{userId}?status={status?}"
+    description: "Fetch a user record."
+    params:
+      userId: "{{userId}}"
+    headers:
+      Authorization: "Bearer {{secrets.api_token}}"
+`;
+    const manifest = parseManifest(yaml);
+    if (manifest.kind === "llm") {
+      expect(manifest.tools).toHaveLength(1);
+      const http = manifest.tools![0];
+      expect(http.kind).toBe("http");
+      if (http.kind === "http") {
+        expect(http.name).toBe("get_user");
+        expect(http.url).toBe("https://api.example.com/users/{userId}?status={status?}");
+        expect(http.description).toBe("Fetch a user record.");
+        expect(http.params).toEqual({ userId: "{{userId}}" });
+        expect(http.headers).toEqual({ Authorization: "Bearer {{secrets.api_token}}" });
+      }
+    }
+  });
+
   it("parses a tool agent", () => {
     const yaml = `
 id: send-email

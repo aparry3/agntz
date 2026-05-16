@@ -17,10 +17,24 @@ export {
 } from "./tools/spawn-agent.js";
 export type { SpawnLimits, SpawnableEntry } from "./tools/spawn-agent.js";
 export { createUseSkillTool } from "./tools/use-skill.js";
+export { createReplyTool } from "./tools/reply.js";
+export type { ReplyToolDeps } from "./tools/reply.js";
+export { DEFAULT_REPLY_MAX_PER_RUN } from "./types.js";
+export { buildHttpToolDefinition } from "./http-tool.js";
+export type { HTTPToolEntry as HTTPToolEntryRuntime, AgentState as RuntimeState } from "./http-tool.js";
 
 // Stores
 export { MemoryStore } from "./stores/memory.js";
 export { JsonFileStore } from "./stores/json-file.js";
+
+// ID utilities — exposed so workers/SDKs can pre-allocate session/run ids
+// before invoking the runner (e.g. to include them in immediate responses).
+export {
+  generateId,
+  generateInvocationId,
+  generateRunId,
+  generateSessionId,
+} from "./utils/id.js";
 
 // Model Provider
 export { AISDKModelProvider } from "./model-provider.js";
@@ -58,10 +72,32 @@ export type { TraceSink } from "./types.js";
 export { withRetry } from "./utils/retry.js";
 export type { RetryConfig } from "./utils/retry.js";
 export { summarizeMessages, trimHistoryWithSummary } from "./utils/summarize.js";
+export {
+  encryptSecret,
+  decryptSecret,
+  getLastFour,
+  _resetCryptoKeyCache,
+} from "./utils/crypto.js";
 
 // Eval
 export { runEval } from "./eval.js";
 export type { AssertionResult, EvalRunOptions, CustomAssertionFn } from "./eval.js";
+
+// Webhooks
+export {
+  createWebhookDispatcher,
+  signBody,
+  WEBHOOK_SIGNATURE_HEADER,
+  WEBHOOK_DELIVERY_ID_HEADER,
+  WEBHOOK_IDEMPOTENCY_HEADER,
+  DEFAULT_RETRY_DELAYS_MS,
+  DEFAULT_TIMEOUT_MS,
+} from "./webhooks/dispatcher.js";
+export type {
+  WebhookDispatcher,
+  WebhookDispatcherOptions,
+  WebhookEvent,
+} from "./webhooks/dispatcher.js";
 
 // Errors
 export {
@@ -79,8 +115,22 @@ export {
   SkillNotFoundError,
 } from "./errors.js";
 
+// Multimodal — image content blocks + fetcher
+export { isContentBlockArray } from "./types.js";
+export { normalizeImageBlocks, ImageFetchError } from "./image-fetcher.js";
+export type { NormalizeImageBlocksOptions } from "./image-fetcher.js";
+
+// Sentinel prefix used by SQL stores to encode a ContentBlock[]
+// `InvocationLog.input` inside the legacy `input TEXT` column without a
+// second column. Shared so all stores stay in lockstep.
+export const INVOCATION_LOG_BLOCKS_PREFIX = "__agntz_blocks__:";
+
 // Types
 export type {
+  // Multimodal
+  ContentBlock,
+  ImageMediaType,
+
   // Agent
   AgentDefinition,
   AgentRef,
@@ -142,6 +192,18 @@ export type {
   // Skills
   SkillDefinition,
   SkillStore,
+
+  // Secrets (used for both HTTP-tool auth and webhook HMAC signing keys)
+  SecretDefinition,
+  SecretMetadata,
+  SecretStore,
+
+  // Webhooks
+  WebhookDelivery,
+  WebhookDeliveryStore,
+
+  // Replies
+  Reply,
 
   // Runs
   Run,

@@ -1,9 +1,16 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { listRunsInProcess } from "./list-runs.js";
 import { defineSkill } from "../skill.js";
+import {
+  encryptSecret,
+  decryptSecret,
+  getLastFour,
+} from "../utils/crypto.js";
 import type {
   AgentDefinition,
   ProviderConfig,
+  SecretDefinition,
+  SecretMetadata,
   SkillDefinition,
   UnifiedStore,
   ApiKeyRecord,
@@ -21,6 +28,7 @@ import type {
   Span,
   TraceSummary,
   TraceFilter,
+  WebhookDelivery,
 } from "../types.js";
 
 interface AgentVersion {
@@ -48,6 +56,15 @@ interface ApiKeyRow {
   revokedAt: string | null;
 }
 
+interface SecretRow {
+  /** Encrypted ciphertext as `base64(iv):base64(tag):base64(ct)`. */
+  encrypted: string;
+  lastFour: string;
+  description?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /**
  * Shared backing state across MemoryStore instances created via forUser().
  */
@@ -64,6 +81,8 @@ interface MemoryBackend {
   spans: Map<string, Span>;                                  // spanId -> span
   summaries: Map<string, TraceSummary>;                      // traceId -> summary
   skills: Map<string, Map<string, SkillDefinition>>;         // userId -> name -> skill
+  secrets: Map<string, Map<string, SecretRow>>;              // userId -> name -> row
+  webhookDeliveries: Map<string, WebhookDelivery>;           // id -> delivery
 }
 
 function createBackend(): MemoryBackend {
@@ -80,6 +99,8 @@ function createBackend(): MemoryBackend {
     spans: new Map(),
     summaries: new Map(),
     skills: new Map(),
+    secrets: new Map(),
+    webhookDeliveries: new Map(),
   };
 }
 
@@ -230,6 +251,24 @@ export class MemoryStore implements UnifiedStore {
     if (session && session.userId === u) {
       this.backend.sessions.delete(sessionId);
     }
+  }
+
+  async getOrCreateSession(sessionId: string): Promise<void> {
+    const u = this.requireUser();
+    const existing = this.backend.sessions.get(sessionId);
+    if (existing) {
+      if (existing.userId !== u) {
+        throw new Error(`Session ${sessionId} belongs to a different user`);
+      }
+      return;
+    }
+    const now = new Date().toISOString();
+    this.backend.sessions.set(sessionId, {
+      userId: u,
+      messages: [],
+      createdAt: now,
+      updatedAt: now,
+    });
   }
 
   async listSessions(agentId?: string): Promise<SessionSummary[]> {
@@ -411,6 +450,88 @@ export class MemoryStore implements UnifiedStore {
 
   async deleteSkill(name: string): Promise<void> {
     this.skillMap().delete(name);
+  }
+
+  // ═══ SecretStore ═══
+
+  private secretMap(): Map<string, SecretRow> {
+    const u = this.requireUser();
+    let m = this.backend.secrets.get(u);
+    if (!m) {
+      m = new Map();
+      this.backend.secrets.set(u, m);
+    }
+    return m;
+  }
+
+  async listSecrets(): Promise<SecretMetadata[]> {
+    const map = this.secretMap();
+    return Array.from(map.entries())
+      .map(([name, row]) => ({
+        name,
+        lastFour: row.lastFour,
+        description: row.description,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async getSecretMetadata(name: string): Promise<SecretMetadata | null> {
+    const row = this.secretMap().get(name);
+    if (!row) return null;
+    return {
+      name,
+      lastFour: row.lastFour,
+      description: row.description,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
+  }
+
+  async getSecretValue(name: string): Promise<string | null> {
+    const row = this.secretMap().get(name);
+    if (!row) return null;
+    return decryptSecret(row.encrypted);
+  }
+
+  async putSecret(secret: SecretDefinition): Promise<void> {
+    if (!secret.name) {
+      throw new Error("putSecret: name is required");
+    }
+    if (secret.value === undefined || secret.value === null) {
+      throw new Error("putSecret: value is required");
+    }
+    const map = this.secretMap();
+    const now = this.nextTimestamp();
+    const existing = map.get(secret.name);
+    map.set(secret.name, {
+      encrypted: encryptSecret(secret.value),
+      lastFour: getLastFour(secret.value),
+      description: secret.description,
+      createdAt: existing?.createdAt ?? secret.createdAt ?? now,
+      updatedAt: now,
+    });
+  }
+
+  async updateSecretDescription(
+    name: string,
+    description: string | undefined,
+  ): Promise<boolean> {
+    const map = this.secretMap();
+    const row = map.get(name);
+    if (!row) return false;
+    const now = this.nextTimestamp();
+    map.set(name, {
+      ...row,
+      description,
+      updatedAt: now,
+    });
+    return true;
+  }
+
+  async deleteSecret(name: string): Promise<void> {
+    this.secretMap().delete(name);
   }
 
   // ═══ ApiKeyStore (unscoped admin) ═══
@@ -633,6 +754,59 @@ export class MemoryStore implements UnifiedStore {
       }
     }
     return traceIdsToDelete.length;
+  }
+
+  // ═══ WebhookDeliveryStore ═══
+
+  async insert(
+    delivery: Omit<WebhookDelivery, "attempts" | "status" | "createdAt"> & {
+      payload: Record<string, unknown>;
+    },
+  ): Promise<string> {
+    this.requireUser();
+    const now = new Date().toISOString();
+    const row: WebhookDelivery = {
+      id: delivery.id,
+      runId: delivery.runId,
+      callbackUrl: delivery.callbackUrl,
+      secretName: delivery.secretName,
+      payload: delivery.payload,
+      attempts: 0,
+      status: "pending",
+      createdAt: now,
+    };
+    this.backend.webhookDeliveries.set(delivery.id, row);
+    return delivery.id;
+  }
+
+  async updateStatus(
+    id: string,
+    status: WebhookDelivery["status"],
+    lastError?: string,
+  ): Promise<void> {
+    const row = this.backend.webhookDeliveries.get(id);
+    if (!row) return;
+    row.status = status;
+    if (lastError !== undefined) row.lastError = lastError;
+  }
+
+  async incrementAttempt(id: string, lastError?: string): Promise<void> {
+    const row = this.backend.webhookDeliveries.get(id);
+    if (!row) return;
+    row.attempts += 1;
+    row.lastAttemptAt = new Date().toISOString();
+    if (lastError !== undefined) row.lastError = lastError;
+  }
+
+  async listPending(filter?: { olderThan?: string; limit?: number }): Promise<WebhookDelivery[]> {
+    const rows: WebhookDelivery[] = [];
+    for (const r of this.backend.webhookDeliveries.values()) {
+      if (r.status !== "pending") continue;
+      if (filter?.olderThan && r.createdAt >= filter.olderThan) continue;
+      rows.push({ ...r });
+    }
+    rows.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    return filter?.limit ? rows.slice(0, filter.limit) : rows;
   }
 }
 

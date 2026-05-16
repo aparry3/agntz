@@ -80,7 +80,7 @@ describe("ToolRegistry", () => {
     const ctx = {
       agentId: "test",
       invocationId: "inv_123",
-      invoke: async () => ({ output: "", invocationId: "", toolCalls: [], usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, duration: 0, model: "" }),
+      invoke: async () => ({ output: "", invocationId: "", sessionId: "", toolCalls: [], usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, duration: 0, model: "" }),
     };
 
     const result = await registry.execute("exec-test", { value: "hello" }, ctx);
@@ -92,7 +92,7 @@ describe("ToolRegistry", () => {
     const ctx = {
       agentId: "test",
       invocationId: "inv_123",
-      invoke: async () => ({ output: "", invocationId: "", toolCalls: [], usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, duration: 0, model: "" }),
+      invoke: async () => ({ output: "", invocationId: "", sessionId: "", toolCalls: [], usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, duration: 0, model: "" }),
     };
 
     await expect(registry.execute("nope", {}, ctx)).rejects.toThrow("not found");

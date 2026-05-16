@@ -1,6 +1,7 @@
 import type { ZodSchema } from "zod";
 import type { TelemetryConfig } from "./telemetry.js";
 import type { SpanEmitter } from "./telemetry.js";
+import type { HTTPToolEntry } from "./http-tool.js";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Agent Definition — the core portable data structure
@@ -40,6 +41,15 @@ export interface AgentDefinition {
   /** Skills the agent may load mid-run via the synthetic `use_skill` tool. Names resolve in `SkillStore`. */
   skills?: string[];
 
+  /**
+   * When set, the runner registers a per-invocation `reply` tool the model
+   * can call to deliver intermediate messages to the user. Each call is
+   * persisted to the session immediately, surfaced on `InvokeResult.replies`,
+   * and (when a `RunRegistry` is wired) emitted as a multiplexed `reply`
+   * event. Pass `true` for defaults or an object to override `maxPerRun`.
+   */
+  reply?: boolean | { maxPerRun?: number };
+
   /** Structured output constraint (JSON Schema) */
   outputSchema?: Record<string, unknown>;
 
@@ -75,7 +85,8 @@ export interface ModelConfig {
 export type ToolReference =
   | { type: "inline"; name: string }
   | { type: "mcp"; server: string; tools?: string[] }
-  | { type: "agent"; agentId: string };
+  | { type: "agent"; agentId: string }
+  | { type: "http"; entry: HTTPToolEntry };
 
 /**
  * Reference to an agent that can be spawned as a child Run.
@@ -189,6 +200,14 @@ export type StreamEvent =
   | { type: "tool-call-start"; toolCall: { id: string; name: string } }
   | { type: "tool-call-end"; toolCall: ToolCallRecord }
   | { type: "step-complete"; step: number; toolCalls: ToolCallRecord[] }
+  /**
+   * Intermediate reply delivered via the synthetic `reply` tool. Yielded by
+   * `Runner.stream` in real time as the model invokes the reply tool, so SSE
+   * consumers see partial output mid-loop instead of waiting for `done`. The
+   * same reply is still aggregated onto `InvokeResult.replies` for the final
+   * `done` payload — adding this event is purely additive.
+   */
+  | { type: "reply"; text: string; ts: string; sessionId: string; runId: string }
   | { type: "done"; result: InvokeResult };
 
 export interface InvokeStream extends AsyncIterable<StreamEvent> {
@@ -201,6 +220,12 @@ export interface InvokeResult {
   output: string;
   /** Unique ID for this invocation */
   invocationId: string;
+  /**
+   * Session this invocation ran under. Always set — the runner auto-allocates
+   * one if the caller didn't pass `options.sessionId`. Callers should record
+   * this id to continue the conversation on later invokes.
+   */
+  sessionId: string;
   /** All tool calls made during execution */
   toolCalls: ToolCallRecord[];
   /** Token usage */
@@ -209,7 +234,34 @@ export interface InvokeResult {
   duration: number;
   /** Model used */
   model: string;
+  /**
+   * Intermediate replies the agent delivered during this invocation via the
+   * synthetic `reply` tool. Only present when at least one reply was sent.
+   * Each entry is persisted to the session at the moment of the call so
+   * conversation history reflects partial output even on cancellation.
+   */
+  replies?: Reply[];
 }
+
+/**
+ * One intermediate user-facing message emitted mid-run via the `reply` tool.
+ * Surfaced on `InvokeResult.replies` and (when a RunRegistry is wired) as a
+ * multiplexed `reply` event.
+ */
+export interface Reply {
+  text: string;
+  /** ISO 8601 timestamp the reply was emitted at. */
+  ts: string;
+  sessionId: string;
+  runId: string;
+}
+
+/**
+ * Default `reply` tool rate limit. Caps `InvokeResult.replies.length` and
+ * the number of accepted reply tool calls per invocation. Overridable per
+ * agent via `AgentDefinition.reply.maxPerRun`.
+ */
+export const DEFAULT_REPLY_MAX_PER_RUN = 50;
 
 export interface ToolCallRecord {
   id: string;
@@ -230,9 +282,66 @@ export interface TokenUsage {
 // Messages & Sessions
 // ═══════════════════════════════════════════════════════════════════════
 
+/**
+ * Supported image media types. The image fetcher allow-list is intentionally
+ * narrow — adding a new type requires updating both this union and the fetch
+ * validator in `image-fetcher.ts`.
+ */
+export type ImageMediaType =
+  | "image/jpeg"
+  | "image/png"
+  | "image/gif"
+  | "image/webp";
+
+/**
+ * One block of a multimodal message. Text blocks pass through to the model
+ * as-is; image blocks may reference a URL (fetched lazily by the runner) or
+ * an already-base64-encoded body.
+ */
+export type ContentBlock =
+  | { type: "text"; text: string }
+  | {
+      type: "image";
+      url: string;
+      headers?: Record<string, string>;
+      mediaType?: ImageMediaType;
+    }
+  | { type: "image"; base64: string; mediaType: ImageMediaType };
+
+/**
+ * Type guard for `ContentBlock[]`. Returns true only for non-empty arrays
+ * where every element is a well-formed text/image block. Used by the runner
+ * and message-builder to discriminate between legacy string input and the new
+ * multimodal parts payload.
+ */
+export function isContentBlockArray(input: unknown): input is ContentBlock[] {
+  if (!Array.isArray(input)) return false;
+  if (input.length === 0) return false;
+  for (const block of input) {
+    if (!block || typeof block !== "object") return false;
+    const b = block as Record<string, unknown>;
+    if (b.type === "text") {
+      if (typeof b.text !== "string") return false;
+    } else if (b.type === "image") {
+      const hasUrl = typeof b.url === "string";
+      const hasBase64 = typeof b.base64 === "string";
+      if (!hasUrl && !hasBase64) return false;
+      if (hasBase64 && typeof b.mediaType !== "string") return false;
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
+
 export interface Message {
   role: "system" | "user" | "assistant" | "tool";
-  content: string;
+  /**
+   * Either a plain string (legacy / single-text payload) or a `ContentBlock[]`
+   * for multimodal user messages. Stores persist the blocks array alongside a
+   * flattened text view; readers must accept both shapes.
+   */
+  content: string | ContentBlock[];
   toolCalls?: ToolCallRecord[];
   toolCallId?: string;
   timestamp: string;
@@ -266,13 +375,25 @@ export interface InvocationLog {
   id: string;
   agentId: string;
   sessionId?: string;
-  input: string;
+  /**
+   * Original invocation input. Plain string for legacy/text-only callers; a
+   * `ContentBlock[]` for multimodal (e.g. MMS-image) callers. Readers must
+   * accept both shapes — log views render text and ignore image bodies.
+   */
+  input: string | ContentBlock[];
   output: string;
   toolCalls: ToolCallRecord[];
   usage: TokenUsage;
   duration: number;
   model: string;
   error?: string;
+  /**
+   * Final disposition of this invocation. Recorded for auditability so the
+   * token bill, tool calls, and any partial output of cancelled runs are
+   * still attributable. Optional for backward compat — older log rows that
+   * predate this field are treated as `completed` unless `error` is set.
+   */
+  status?: "completed" | "cancelled" | "failed";
   timestamp: string;
 }
 
@@ -456,11 +577,59 @@ export interface SkillStore {
   deleteSkill(name: string): Promise<void>;
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// Secrets — per-user encrypted credentials referenced by HTTP tools (and
+// other future template consumers) as `{{secrets.<name>}}`. Values are
+// AES-256-GCM encrypted at rest; only the runtime fetches plaintext.
+// ═══════════════════════════════════════════════════════════════════════
+
+export interface SecretDefinition {
+  /** Referenced as `{{secrets.<name>}}` in agent manifests. */
+  name: string;
+  /** Plaintext at the API boundary; encrypted at rest by the store. */
+  value: string;
+  description?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface SecretMetadata {
+  name: string;
+  description?: string;
+  /** Last 4 chars of plaintext for masked-UI display (e.g. `••••5678`). */
+  lastFour: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SecretStore {
+  listSecrets(): Promise<SecretMetadata[]>;
+  getSecretMetadata(name: string): Promise<SecretMetadata | null>;
+  /** Decrypted value — runtime only; never expose via an HTTP API route. */
+  getSecretValue(name: string): Promise<string | null>;
+  putSecret(secret: SecretDefinition): Promise<void>;
+  /**
+   * Update only the description (and updatedAt timestamp) of an existing
+   * secret without touching the encrypted value. Returns false if no secret
+   * with that name exists. Lets API routes implement "edit metadata" flows
+   * without ever needing to decrypt the value.
+   */
+  updateSecretDescription(name: string, description: string | undefined): Promise<boolean>;
+  deleteSecret(name: string): Promise<void>;
+}
+
 export interface SessionStore {
   getMessages(sessionId: string): Promise<Message[]>;
   append(sessionId: string, messages: Message[]): Promise<void>;
   deleteSession(sessionId: string): Promise<void>;
   listSessions(agentId?: string): Promise<SessionSummary[]>;
+  /**
+   * Ensure a session row exists for `sessionId`. No-op if it does. Used by
+   * the runner so the always-allocated sessionId has a persistent home before
+   * any messages are appended — keeps webhooks/replays able to reference the
+   * session even if the run is cancelled before its first turn completes.
+   */
+  getOrCreateSession(sessionId: string): Promise<void>;
 }
 
 export interface ContextStore {
@@ -589,6 +758,11 @@ export type MultiplexedEvent =
   | { type: "tool-call-end"; runId: string; toolCall: ToolCallRecord; seq: number }
   | { type: "step-complete"; runId: string; step: number; toolCalls: ToolCallRecord[]; seq: number }
   | { type: "draining"; runId: string; pendingChildren: string[]; seq: number }
+  /**
+   * Intermediate reply delivered via the synthetic `reply` tool. Phase 4 will
+   * forward these to SSE consumers; the registry already broadcasts them.
+   */
+  | { type: "reply"; runId: string; sessionId: string; text: string; ts: string; seq: number }
   | { type: "run-complete"; runId: string; result: InvokeResult; seq: number }
   | { type: "run-error"; runId: string; error: string; seq: number }
   | { type: "run-cancelled"; runId: string; seq: number };
@@ -657,6 +831,33 @@ export interface RunRegistry {
    * Idempotent.
    */
   notifyFailed(runId: string, err: unknown): void;
+  /**
+   * Return the runId of the currently-active (pre-terminal) Run for the
+   * given sessionId, or undefined if there is none. Used by the runner's
+   * cancel-and-replace logic to detect and supersede an in-flight invoke
+   * on the same session.
+   */
+  findActiveBySession(sessionId: string): string | undefined;
+  /**
+   * Acquire a per-session mutex. The returned function must be called to
+   * release the lock — typically in a `finally` block. Pending acquirers
+   * are served FIFO so cancel-and-replace decisions on the same session
+   * serialize cleanly without TOCTOU races.
+   */
+  acquireSessionLock(sessionId: string): Promise<() => void>;
+  /**
+   * Resolve when the given runId reaches a terminal status (completed,
+   * failed, or cancelled). Resolves immediately if already terminal.
+   * Resolves (does not reject) if the run is unknown to the registry.
+   */
+  waitForTerminal(runId: string): Promise<void>;
+  /**
+   * Return the AbortSignal driving the Run's internal controller. The
+   * runner uses this for top-level invokes — which never go through
+   * `start()` — so that `cancel(runId)` can still abort a mid-loop model
+   * call. Returns undefined for unknown runIds.
+   */
+  getAbortSignal(runId: string): AbortSignal | undefined;
 }
 
 /**
@@ -843,7 +1044,55 @@ export type UnifiedStore = AgentStore &
   RunStore &
   TraceStore &
   SkillStore &
+  SecretStore &
+  WebhookDeliveryStore &
   ScopableStore;
+
+// ═══════════════════════════════════════════════════════════════════════
+// Webhook deliveries — outbox table for outbound webhook POSTs.
+//
+// Webhook signing secrets live in the unified `SecretStore` (per-user,
+// AES-256-GCM encrypted at rest). The dispatcher resolves the active secret
+// by name at each delivery attempt — so an out-of-band rotation (via
+// SecretStore.putSecret) is picked up on the next attempt without any
+// pinning machinery.
+// ═══════════════════════════════════════════════════════════════════════
+
+export interface WebhookDelivery {
+  id: string;
+  runId: string;
+  callbackUrl: string;
+  /** Name of the SecretStore entry whose plaintext is the HMAC signing key. */
+  secretName: string;
+  payload: Record<string, unknown>;
+  attempts: number;
+  lastAttemptAt?: string;
+  status: "pending" | "delivered" | "failed_permanent";
+  lastError?: string;
+  createdAt: string;
+}
+
+export interface WebhookDeliveryStore {
+  /** Insert a new pending delivery; returns the row id. */
+  insert(
+    delivery: Omit<WebhookDelivery, "attempts" | "status" | "createdAt"> & {
+      payload: Record<string, unknown>;
+    },
+  ): Promise<string>;
+  updateStatus(
+    id: string,
+    status: WebhookDelivery["status"],
+    lastError?: string,
+  ): Promise<void>;
+  /** Increment attempts and stamp `lastAttemptAt`; updates `lastError` opportunistically. */
+  incrementAttempt(id: string, lastError?: string): Promise<void>;
+  /**
+   * Return pending deliveries, oldest first. `olderThan` is an ISO timestamp;
+   * when set, rows with `createdAt >= olderThan` are excluded (useful for
+   * future drain workers that re-attempt stale rows).
+   */
+  listPending(filter?: { olderThan?: string; limit?: number }): Promise<WebhookDelivery[]>;
+}
 
 // ═══════════════════════════════════════════════════════════════════════
 // Model Provider
@@ -865,6 +1114,14 @@ export interface ModelStreamResult {
 
 export interface GenerateTextOptions {
   model: ModelConfig;
+  /**
+   * Conversation messages. `content` is declared `string` for back-compat
+   * with existing ModelProvider implementations; at runtime it may also
+   * carry an AI SDK parts array (e.g.
+   * `[{type:"text", text}, {type:"image", image, mediaType}]`) for
+   * multimodal user turns. Callers building parts arrays cast at the call
+   * site; the AI SDK accepts both shapes and validates them itself.
+   */
   messages: Array<{ role: string; content: string }>;
   tools?: Array<{
     name: string;

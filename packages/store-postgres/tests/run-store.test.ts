@@ -102,6 +102,7 @@ describe.skipIf(!hasDb)("PostgresStore RunStore (integration)", () => {
     const result: InvokeResult = {
       output: "done!",
       invocationId: "inv-1",
+      sessionId: "sess-test",
       toolCalls: [
         { id: "tc-1", name: "search", input: { q: "x" }, output: "y", duration: 12 },
       ],

@@ -1,11 +1,21 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { SqliteStore } from "../src/sqlite-store.js";
+import { _resetCryptoKeyCache } from "@agntz/core";
 import type {
   AgentDefinition,
   Message,
   ContextEntry,
   InvocationLog,
+  SecretDefinition,
 } from "@agntz/core";
+
+// 32-byte (64 hex char) test key. Lazy load means simply setting the env
+// var before any encryptSecret call is sufficient; reset between tests for
+// the "wrong key" assertion.
+const TEST_KEY_A =
+  "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const TEST_KEY_B =
+  "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
 
 describe("SqliteStore", () => {
   let admin: SqliteStore;
@@ -13,6 +23,8 @@ describe("SqliteStore", () => {
   const userId = "user_test";
 
   beforeEach(() => {
+    process.env.AGNTZ_SECRET_KEY = TEST_KEY_A;
+    _resetCryptoKeyCache();
     admin = new SqliteStore(":memory:");
     store = admin.forUser(userId);
   });
@@ -225,6 +237,49 @@ describe("SqliteStore", () => {
       const sessions = await store.listSessions();
       expect(sessions).toHaveLength(2);
     });
+
+    it("dual-writes multimodal ContentBlock[] content and reads it back as blocks", async () => {
+      const blocks = [
+        { type: "text", text: "how's my form?" },
+        {
+          type: "image",
+          base64: "QUFBQQ==",
+          mediaType: "image/jpeg" as const,
+        },
+      ];
+      await store.append("sess-mm", [
+        { role: "user", content: blocks, timestamp: now } as Message,
+        { role: "assistant", content: "Great squat!", timestamp: now },
+      ]);
+
+      // Inspect raw rows: legacy content column has flattened text; the new
+      // content_blocks column carries the JSON payload.
+      const raw = admin.database
+        .prepare(
+          `SELECT role, content, content_blocks FROM messages
+           WHERE session_id = ? ORDER BY id`,
+        )
+        .all("sess-mm") as Array<{
+        role: string;
+        content: string;
+        content_blocks: string | null;
+      }>;
+      expect(raw[0].role).toBe("user");
+      expect(raw[0].content).toBe("how's my form? [image]");
+      expect(raw[0].content_blocks).not.toBeNull();
+      expect(JSON.parse(raw[0].content_blocks as string)).toEqual(blocks);
+      // Assistant string content writes NULL to content_blocks.
+      expect(raw[1].content_blocks).toBeNull();
+      expect(raw[1].content).toBe("Great squat!");
+
+      // Reads return the blocks array on the multimodal message and a plain
+      // string on the assistant reply.
+      const out = await store.getMessages("sess-mm");
+      expect(out).toHaveLength(2);
+      expect(Array.isArray(out[0].content)).toBe(true);
+      expect(out[0].content).toEqual(blocks);
+      expect(out[1].content).toBe("Great squat!");
+    });
   });
 
   // ═══════════════════════════════════════════════════════════════════
@@ -406,6 +461,20 @@ describe("SqliteStore", () => {
       expect(result!.error).toBe("Something broke");
     });
 
+    it("should persist status for cancel/fail audit", async () => {
+      await store.log({ ...logEntry, id: "log-cancelled", status: "cancelled" });
+      await store.log({ ...logEntry, id: "log-failed", status: "failed" });
+      await store.log({ ...logEntry, id: "log-default" });
+
+      const cancelled = await store.getLog("log-cancelled");
+      const failed = await store.getLog("log-failed");
+      const defaulted = await store.getLog("log-default");
+
+      expect(cancelled!.status).toBe("cancelled");
+      expect(failed!.status).toBe("failed");
+      expect(defaulted!.status).toBeUndefined();
+    });
+
     it("should return logs newest first", async () => {
       await store.log({
         ...logEntry,
@@ -490,6 +559,116 @@ describe("SqliteStore", () => {
       expect(await store.getMessages("sess-c")).toHaveLength(1);
       expect(await store.getContext("ctx-c")).toHaveLength(1);
       expect(await store.getLog("log-c")).not.toBeNull();
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // SecretStore
+  // ═══════════════════════════════════════════════════════════════════
+
+  describe("SecretStore", () => {
+    const secret: SecretDefinition = {
+      name: "test_token",
+      value: "sk-abcd-12345678",
+      description: "test token",
+    };
+
+    it("puts and gets metadata without exposing the value", async () => {
+      await store.putSecret(secret);
+      const meta = await store.getSecretMetadata("test_token");
+      expect(meta).not.toBeNull();
+      expect(meta!.name).toBe("test_token");
+      expect(meta!.lastFour).toBe("5678");
+      expect(meta!.description).toBe("test token");
+      // The metadata object MUST NOT carry the plaintext or ciphertext.
+      expect(meta as unknown as { value?: unknown }).not.toHaveProperty("value");
+    });
+
+    it("round-trips the value via getSecretValue", async () => {
+      await store.putSecret(secret);
+      const value = await store.getSecretValue("test_token");
+      expect(value).toBe("sk-abcd-12345678");
+    });
+
+    it("returns null for an unknown secret", async () => {
+      expect(await store.getSecretMetadata("nope")).toBeNull();
+      expect(await store.getSecretValue("nope")).toBeNull();
+    });
+
+    it("upserts: writing twice updates updated_at and value", async () => {
+      await store.putSecret(secret);
+      const first = await store.getSecretMetadata("test_token");
+      // Wait long enough for nextTimestamp() to advance (it's monotonic
+      // to the millisecond).
+      await new Promise((r) => setTimeout(r, 5));
+      await store.putSecret({
+        name: "test_token",
+        value: "sk-different-87654321",
+        description: "updated",
+      });
+      const second = await store.getSecretMetadata("test_token");
+      expect(second!.lastFour).toBe("4321");
+      expect(second!.description).toBe("updated");
+      expect(second!.updatedAt > first!.updatedAt).toBe(true);
+      // Value should round-trip the new plaintext.
+      expect(await store.getSecretValue("test_token")).toBe("sk-different-87654321");
+    });
+
+    it("listSecrets returns metadata sorted by name, no values", async () => {
+      await store.putSecret({ name: "alpha", value: "value-aaaa1111" });
+      await store.putSecret({ name: "charlie", value: "value-cccc3333" });
+      await store.putSecret({ name: "bravo", value: "value-bbbb2222" });
+
+      const list = await store.listSecrets();
+      expect(list).toHaveLength(3);
+      expect(list.map((s) => s.name)).toEqual(["alpha", "bravo", "charlie"]);
+      // No leaked values.
+      for (const m of list) {
+        expect(m as unknown as { value?: unknown }).not.toHaveProperty("value");
+        expect(m.lastFour.length).toBe(4);
+      }
+    });
+
+    it("deleteSecret removes the row", async () => {
+      await store.putSecret(secret);
+      await store.deleteSecret("test_token");
+      expect(await store.getSecretMetadata("test_token")).toBeNull();
+      expect(await store.getSecretValue("test_token")).toBeNull();
+    });
+
+    it("scopes secrets by user — userA cannot see userB's secrets", async () => {
+      const storeA = admin.forUser("user_a");
+      const storeB = admin.forUser("user_b");
+      await storeA.putSecret({ name: "shared_name", value: "value-from-A1111" });
+      await storeB.putSecret({ name: "shared_name", value: "value-from-B2222" });
+
+      // Each user sees only their own row in list.
+      const listA = await storeA.listSecrets();
+      const listB = await storeB.listSecrets();
+      expect(listA).toHaveLength(1);
+      expect(listB).toHaveLength(1);
+      expect(listA[0].lastFour).toBe("1111");
+      expect(listB[0].lastFour).toBe("2222");
+
+      // Round-trip values stay isolated.
+      expect(await storeA.getSecretValue("shared_name")).toBe("value-from-A1111");
+      expect(await storeB.getSecretValue("shared_name")).toBe("value-from-B2222");
+
+      // Deleting from A doesn't affect B.
+      await storeA.deleteSecret("shared_name");
+      expect(await storeA.getSecretMetadata("shared_name")).toBeNull();
+      expect(await storeB.getSecretMetadata("shared_name")).not.toBeNull();
+    });
+
+    it("decryption fails loudly when the master key has changed", async () => {
+      await store.putSecret(secret);
+      // Verify normal round-trip first.
+      expect(await store.getSecretValue("test_token")).toBe("sk-abcd-12345678");
+
+      // Swap the key, reset the lazy cache, and assert decryption throws.
+      process.env.AGNTZ_SECRET_KEY = TEST_KEY_B;
+      _resetCryptoKeyCache();
+      await expect(store.getSecretValue("test_token")).rejects.toThrow();
     });
   });
 });

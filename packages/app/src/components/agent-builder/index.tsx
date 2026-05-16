@@ -30,6 +30,19 @@ function asNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+function readStringRecord(value: unknown): Record<string, string> | undefined {
+  if (!isRecord(value)) return undefined;
+  const out: Record<string, string> = {};
+  let saw = false;
+  for (const [k, v] of Object.entries(value)) {
+    if (typeof v === "string") {
+      out[k] = v;
+      saw = true;
+    }
+  }
+  return saw ? out : undefined;
+}
+
 function toolEntriesFromManifest(manifest: Record<string, unknown>): ToolEntryDraft[] {
   const raw = manifest.tools;
   if (!Array.isArray(raw)) return [];
@@ -53,6 +66,18 @@ function toolEntriesFromManifest(manifest: Record<string, unknown>): ToolEntryDr
       const agent = typeof entry.agent === "string" ? entry.agent : undefined;
       return { kind: "agent", tools: [], agent };
     }
+    if (kind === "http") {
+      return {
+        kind: "http",
+        tools: [],
+        name: typeof entry.name === "string" ? entry.name : undefined,
+        url: typeof entry.url === "string" ? entry.url : undefined,
+        method: entry.method === "GET" ? "GET" : undefined,
+        description: typeof entry.description === "string" ? entry.description : undefined,
+        params: readStringRecord(entry.params),
+        headers: readStringRecord(entry.headers),
+      };
+    }
     return { kind: "", tools: [] };
   });
 }
@@ -71,6 +96,18 @@ function toolEntriesToManifest(entries: ToolEntryDraft[]): unknown[] {
       if (entry.kind === "agent") {
         const out: Record<string, unknown> = { kind: "agent" };
         if (entry.agent) out.agent = entry.agent;
+        return out;
+      }
+      if (entry.kind === "http") {
+        const out: Record<string, unknown> = { kind: "http" };
+        if (entry.name) out.name = entry.name;
+        if (entry.url) out.url = entry.url;
+        // Default to GET — omit explicit method since it's the only allowed
+        // value in MVP, keeping the serialised YAML minimal.
+        if (entry.method && entry.method !== "GET") out.method = entry.method;
+        if (entry.description) out.description = entry.description;
+        if (entry.params && Object.keys(entry.params).length > 0) out.params = entry.params;
+        if (entry.headers && Object.keys(entry.headers).length > 0) out.headers = entry.headers;
         return out;
       }
       return {};

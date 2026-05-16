@@ -1,9 +1,16 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import Database from "better-sqlite3";
 import type { Database as DatabaseType } from "better-sqlite3";
-import { defineSkill } from "@agntz/core";
+import {
+  defineSkill,
+  encryptSecret,
+  decryptSecret,
+  getLastFour,
+  INVOCATION_LOG_BLOCKS_PREFIX as BLOCKS_JSON_PREFIX,
+} from "@agntz/core";
 import type {
   AgentDefinition,
+  ContentBlock,
   ProviderConfig,
   UnifiedStore,
   ApiKeyRecord,
@@ -20,10 +27,13 @@ import type {
   RunListFilters,
   RunListResult,
   RunStatus,
+  SecretDefinition,
+  SecretMetadata,
   SkillDefinition,
   Span,
   TraceSummary,
   TraceFilter,
+  WebhookDelivery,
 } from "@agntz/core";
 
 const MIGRATIONS = [
@@ -249,6 +259,62 @@ const MIGRATIONS = [
 
   UPDATE schema_version SET version = 7;
   `,
+  // v8: GymText integration + HTTP tool + unified secrets.
+  // Four schema changes that ship together as one PR:
+  //   1. invocation_logs.status — terminal state ("completed" | "cancelled"
+  //      | "failed") for billing/audit when a run is superseded by
+  //      cancel-and-replace.
+  //   2. messages.content_blocks — multimodal payload (JSON ContentBlock[])
+  //      alongside the legacy text-only `content` column. Writes are dual:
+  //      `content` always holds a flattened text view, `content_blocks` is
+  //      non-null only when the original message was multimodal. Sqlite
+  //      has no native JSONB; TEXT storing JSON is fine.
+  //   3. `secrets` table — user-scoped encrypted credentials used for both
+  //      HTTP-tool auth tokens and webhook HMAC signing keys. `value` is
+  //      AES-256-GCM ciphertext (`base64(iv):base64(tag):base64(ct)`),
+  //      `last_four` is the last 4 chars of plaintext for masked-UI
+  //      display. Rotation is in-place via SecretStore.putSecret upsert
+  //      on (user_id, name).
+  //   4. `webhook_deliveries` outbox. `secret_name` references the active
+  //      HMAC signing key by name — the dispatcher resolves it at each
+  //      delivery attempt so an out-of-band rotation flows through
+  //      naturally.
+  `
+  ALTER TABLE invocation_logs ADD COLUMN status TEXT;
+
+  ALTER TABLE messages ADD COLUMN content_blocks TEXT;
+
+  CREATE TABLE IF NOT EXISTS secrets (
+    user_id      TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    value        TEXT NOT NULL,
+    last_four    TEXT NOT NULL,
+    description  TEXT,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL,
+    PRIMARY KEY (user_id, name)
+  );
+  CREATE INDEX IF NOT EXISTS idx_secrets_user ON secrets(user_id);
+
+  CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    id              TEXT NOT NULL PRIMARY KEY,
+    user_id         TEXT NOT NULL,
+    run_id          TEXT NOT NULL,
+    callback_url    TEXT NOT NULL,
+    secret_name     TEXT NOT NULL,
+    payload         TEXT NOT NULL,
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at TEXT,
+    status          TEXT NOT NULL CHECK (status IN ('pending','delivered','failed_permanent')),
+    last_error      TEXT,
+    created_at      TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_user ON webhook_deliveries(user_id);
+  CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_status ON webhook_deliveries(status);
+  CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_run ON webhook_deliveries(user_id, run_id);
+
+  UPDATE schema_version SET version = 8;
+  `,
 ];
 
 export interface SqliteStoreOptions {
@@ -424,7 +490,7 @@ export class SqliteStore implements UnifiedStore {
     const u = this.requireUser();
     const rows = this.db
       .prepare(
-        `SELECT m.role, m.content, m.tool_calls, m.tool_call_id, m.timestamp
+        `SELECT m.role, m.content, m.content_blocks, m.tool_calls, m.tool_call_id, m.timestamp
          FROM messages m
          INNER JOIN sessions s ON s.id = m.session_id
          WHERE s.user_id = ? AND m.session_id = ?
@@ -433,15 +499,28 @@ export class SqliteStore implements UnifiedStore {
       .all(u, sessionId) as Array<{
       role: string;
       content: string;
+      content_blocks: string | null;
       tool_calls: string | null;
       tool_call_id: string | null;
       timestamp: string;
     }>;
 
     return rows.map((r) => {
+      // Prefer the multimodal blocks payload if present; fall back to the
+      // legacy text-only column.
+      let content: string | ContentBlock[] = r.content;
+      if (r.content_blocks) {
+        try {
+          const parsed = JSON.parse(r.content_blocks);
+          if (Array.isArray(parsed)) content = parsed as ContentBlock[];
+        } catch {
+          // Malformed JSON — surface text fallback rather than throwing.
+        }
+      }
+
       const msg: Message = {
         role: r.role as Message["role"],
-        content: r.content,
+        content,
         timestamp: r.timestamp,
       };
       if (r.tool_calls) msg.toolCalls = JSON.parse(r.tool_calls);
@@ -460,8 +539,8 @@ export class SqliteStore implements UnifiedStore {
        ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at`
     );
     const insertMsg = this.db.prepare(
-      `INSERT INTO messages (session_id, role, content, tool_calls, tool_call_id, timestamp)
-       VALUES (?, ?, ?, ?, ?, ?)`
+      `INSERT INTO messages (session_id, role, content, content_blocks, tool_calls, tool_call_id, timestamp)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
     );
 
     const transaction = this.db.transaction(() => {
@@ -471,10 +550,14 @@ export class SqliteStore implements UnifiedStore {
       }
       upsertSession.run(u, sessionId, now, now);
       for (const msg of messages) {
+        // Dual-write: legacy text column always populated (flattened view of
+        // any blocks), content_blocks only when input was multimodal.
+        const { contentText, contentBlocksJson } = serializeContent(msg.content);
         insertMsg.run(
           sessionId,
           msg.role,
-          msg.content,
+          contentText,
+          contentBlocksJson,
           msg.toolCalls ? JSON.stringify(msg.toolCalls) : null,
           msg.toolCallId ?? null,
           msg.timestamp
@@ -498,6 +581,25 @@ export class SqliteStore implements UnifiedStore {
       this.db.prepare("DELETE FROM sessions WHERE user_id = ? AND id = ?").run(u, sessionId);
     });
     transaction();
+  }
+
+  async getOrCreateSession(sessionId: string): Promise<void> {
+    const u = this.requireUser();
+    // Ownership check: if a row exists for a different user, surface that
+    // rather than silently aliasing the id.
+    const existing = this.db
+      .prepare("SELECT user_id FROM sessions WHERE id = ?")
+      .get(sessionId) as { user_id: string } | undefined;
+    if (existing && existing.user_id !== u) {
+      throw new Error(`Session ${sessionId} belongs to a different user`);
+    }
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO sessions (user_id, id, agent_id, created_at, updated_at)
+         VALUES (?, ?, NULL, ?, ?)`
+      )
+      .run(u, sessionId, now, now);
   }
 
   async listSessions(agentId?: string): Promise<SessionSummary[]> {
@@ -582,18 +684,27 @@ export class SqliteStore implements UnifiedStore {
 
   async log(entry: InvocationLog): Promise<void> {
     const u = this.requireUser();
+    // For multimodal input we serialize the blocks JSON into the existing
+    // `input` TEXT column with a sentinel prefix so the column shape stays
+    // backward-compatible: legacy readers see the prefix + JSON (still a
+    // string); the row helper below detects the prefix and rehydrates the
+    // blocks. Avoids adding a separate input_blocks column.
+    const inputStored =
+      typeof entry.input === "string"
+        ? entry.input
+        : `${BLOCKS_JSON_PREFIX}${JSON.stringify(entry.input)}`;
     this.db
       .prepare(
         `INSERT INTO invocation_logs (user_id, id, agent_id, session_id, input, output, tool_calls,
-          prompt_tokens, completion_tokens, total_tokens, duration, model, error, timestamp)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          prompt_tokens, completion_tokens, total_tokens, duration, model, error, timestamp, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         u,
         entry.id,
         entry.agentId,
         entry.sessionId ?? null,
-        entry.input,
+        inputStored,
         entry.output,
         JSON.stringify(entry.toolCalls),
         entry.usage.promptTokens,
@@ -602,7 +713,8 @@ export class SqliteStore implements UnifiedStore {
         entry.duration,
         entry.model,
         entry.error ?? null,
-        entry.timestamp
+        entry.timestamp,
+        entry.status ?? null
       );
   }
 
@@ -1225,6 +1337,121 @@ export class SqliteStore implements UnifiedStore {
     this.db.prepare("DELETE FROM skills WHERE user_id = ? AND name = ?").run(u, name);
   }
 
+  // ═══ SecretStore ═══
+
+  async listSecrets(): Promise<SecretMetadata[]> {
+    const u = this.requireUser();
+    const rows = this.db
+      .prepare(
+        `SELECT name, last_four, description, created_at, updated_at
+         FROM secrets WHERE user_id = ? ORDER BY name ASC`
+      )
+      .all(u) as Array<{
+        name: string;
+        last_four: string;
+        description: string | null;
+        created_at: string;
+        updated_at: string;
+      }>;
+    return rows.map((r) => ({
+      name: r.name,
+      lastFour: r.last_four,
+      description: r.description ?? undefined,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    }));
+  }
+
+  async getSecretMetadata(name: string): Promise<SecretMetadata | null> {
+    const u = this.requireUser();
+    const row = this.db
+      .prepare(
+        `SELECT name, last_four, description, created_at, updated_at
+         FROM secrets WHERE user_id = ? AND name = ?`
+      )
+      .get(u, name) as
+      | {
+          name: string;
+          last_four: string;
+          description: string | null;
+          created_at: string;
+          updated_at: string;
+        }
+      | undefined;
+    if (!row) return null;
+    return {
+      name: row.name,
+      lastFour: row.last_four,
+      description: row.description ?? undefined,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  async getSecretValue(name: string): Promise<string | null> {
+    const u = this.requireUser();
+    const row = this.db
+      .prepare(
+        `SELECT value FROM secrets WHERE user_id = ? AND name = ?`
+      )
+      .get(u, name) as { value: string } | undefined;
+    if (!row) return null;
+    return decryptSecret(row.value);
+  }
+
+  async putSecret(secret: SecretDefinition): Promise<void> {
+    const u = this.requireUser();
+    if (!secret.name) {
+      throw new Error("putSecret: name is required");
+    }
+    if (secret.value === undefined || secret.value === null) {
+      throw new Error("putSecret: value is required");
+    }
+    const encrypted = encryptSecret(secret.value);
+    const lastFour = getLastFour(secret.value);
+    const now = this.nextTimestamp();
+    const createdAt = secret.createdAt ?? now;
+    this.db
+      .prepare(
+        `INSERT INTO secrets (user_id, name, value, last_four, description, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, name) DO UPDATE SET
+           value = excluded.value,
+           last_four = excluded.last_four,
+           description = excluded.description,
+           updated_at = excluded.updated_at`
+      )
+      .run(
+        u,
+        secret.name,
+        encrypted,
+        lastFour,
+        secret.description ?? null,
+        createdAt,
+        now
+      );
+  }
+
+  async updateSecretDescription(
+    name: string,
+    description: string | undefined,
+  ): Promise<boolean> {
+    const u = this.requireUser();
+    const now = this.nextTimestamp();
+    const info = this.db
+      .prepare(
+        `UPDATE secrets SET description = ?, updated_at = ?
+         WHERE user_id = ? AND name = ?`,
+      )
+      .run(description ?? null, now, u, name);
+    return info.changes > 0;
+  }
+
+  async deleteSecret(name: string): Promise<void> {
+    const u = this.requireUser();
+    this.db.prepare("DELETE FROM secrets WHERE user_id = ? AND name = ?").run(u, name);
+  }
+
   // ═══ ApiKeyStore (unscoped) ═══
 
   async createApiKey(params: { userId: string; name: string }): Promise<{ record: ApiKeyRecord; rawKey: string }> {
@@ -1288,6 +1515,102 @@ export class SqliteStore implements UnifiedStore {
     return { userId: row.user_id, keyId: row.id };
   }
 
+  // ═══ WebhookDeliveryStore ═══
+
+  async insert(
+    delivery: Omit<WebhookDelivery, "attempts" | "status" | "createdAt"> & {
+      payload: Record<string, unknown>;
+    },
+  ): Promise<string> {
+    const u = this.requireUser();
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO webhook_deliveries (
+            id, user_id, run_id, callback_url, secret_name, payload,
+            attempts, status, last_error, last_attempt_at, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, 0, 'pending', NULL, NULL, ?)`,
+      )
+      .run(
+        delivery.id,
+        u,
+        delivery.runId,
+        delivery.callbackUrl,
+        delivery.secretName,
+        JSON.stringify(delivery.payload),
+        now,
+      );
+    return delivery.id;
+  }
+
+  async updateStatus(
+    id: string,
+    status: WebhookDelivery["status"],
+    lastError?: string,
+  ): Promise<void> {
+    const u = this.requireUser();
+    if (lastError !== undefined) {
+      this.db
+        .prepare(
+          `UPDATE webhook_deliveries SET status = ?, last_error = ?
+           WHERE user_id = ? AND id = ?`,
+        )
+        .run(status, lastError, u, id);
+    } else {
+      this.db
+        .prepare(
+          `UPDATE webhook_deliveries SET status = ?
+           WHERE user_id = ? AND id = ?`,
+        )
+        .run(status, u, id);
+    }
+  }
+
+  async incrementAttempt(id: string, lastError?: string): Promise<void> {
+    const u = this.requireUser();
+    const now = new Date().toISOString();
+    if (lastError !== undefined) {
+      this.db
+        .prepare(
+          `UPDATE webhook_deliveries
+           SET attempts = attempts + 1, last_attempt_at = ?, last_error = ?
+           WHERE user_id = ? AND id = ?`,
+        )
+        .run(now, lastError, u, id);
+    } else {
+      this.db
+        .prepare(
+          `UPDATE webhook_deliveries
+           SET attempts = attempts + 1, last_attempt_at = ?
+           WHERE user_id = ? AND id = ?`,
+        )
+        .run(now, u, id);
+    }
+  }
+
+  async listPending(filter?: { olderThan?: string; limit?: number }): Promise<WebhookDelivery[]> {
+    const u = this.requireUser();
+    const clauses = ["user_id = ?", "status = 'pending'"];
+    const args: unknown[] = [u];
+    if (filter?.olderThan) {
+      clauses.push("created_at < ?");
+      args.push(filter.olderThan);
+    }
+    const limit = filter?.limit ?? 1000;
+    args.push(limit);
+    const rows = this.db
+      .prepare(
+        `SELECT id, user_id, run_id, callback_url, secret_name, payload,
+                attempts, last_attempt_at, status, last_error, created_at
+         FROM webhook_deliveries
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY created_at ASC
+         LIMIT ?`,
+      )
+      .all(...args) as Array<WebhookDeliveryRow>;
+    return rows.map(rowToWebhookDelivery);
+  }
+
   // ═══ Lifecycle ═══
 
   close(): void {
@@ -1315,6 +1638,7 @@ interface LogRow {
   model: string;
   error: string | null;
   timestamp: string;
+  status: string | null;
 }
 
 interface ApiKeyRow {
@@ -1355,6 +1679,68 @@ interface SkillRow {
   updated_at: string;
 }
 
+interface WebhookDeliveryRow {
+  id: string;
+  user_id: string;
+  run_id: string;
+  callback_url: string;
+  secret_name: string;
+  payload: string;
+  attempts: number;
+  last_attempt_at: string | null;
+  status: WebhookDelivery["status"];
+  last_error: string | null;
+  created_at: string;
+}
+
+function rowToWebhookDelivery(r: WebhookDeliveryRow): WebhookDelivery {
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(r.payload) as Record<string, unknown>;
+  } catch {
+    payload = {};
+  }
+  const d: WebhookDelivery = {
+    id: r.id,
+    runId: r.run_id,
+    callbackUrl: r.callback_url,
+    secretName: r.secret_name,
+    payload,
+    attempts: r.attempts,
+    status: r.status,
+    createdAt: r.created_at,
+  };
+  if (r.last_attempt_at) d.lastAttemptAt = r.last_attempt_at;
+  if (r.last_error) d.lastError = r.last_error;
+  return d;
+}
+
+/**
+ * Serialize a `Message.content` for dual-write. Always returns a flattened
+ * text view for the legacy `content` column; the JSON blocks view is set
+ * only when the content was a `ContentBlock[]`. Plain-string content writes
+ * NULL to content_blocks so old rows look identical.
+ */
+function serializeContent(content: string | ContentBlock[]): {
+  contentText: string;
+  contentBlocksJson: string | null;
+} {
+  if (typeof content === "string") {
+    return { contentText: content, contentBlocksJson: null };
+  }
+  // Flatten for the text column — image blocks render as a `[image]`
+  // placeholder so logs/UIs that read content TEXT stay sensible.
+  const pieces: string[] = [];
+  for (const b of content) {
+    if (b.type === "text") pieces.push(b.text);
+    else pieces.push("[image]");
+  }
+  return {
+    contentText: pieces.join(" "),
+    contentBlocksJson: JSON.stringify(content),
+  };
+}
+
 function rowToSkill(r: SkillRow): SkillDefinition {
   const skill: SkillDefinition = {
     name: r.name,
@@ -1388,12 +1774,28 @@ function rowToRun(r: RunRow): Run {
   return run;
 }
 
+/**
+ * Sentinel prefix on `invocation_logs.input` that signals "what follows is a
+ * JSON-encoded `ContentBlock[]`". The prefix is non-empty and unlikely to
+ * appear in user-typed input — chosen to be self-documenting in `sqlite3`
+ * shell dumps too.
+ */
+
 function rowToLog(r: LogRow): InvocationLog {
-  return {
+  let input: string | ContentBlock[] = r.input;
+  if (typeof r.input === "string" && r.input.startsWith(BLOCKS_JSON_PREFIX)) {
+    try {
+      const parsed = JSON.parse(r.input.slice(BLOCKS_JSON_PREFIX.length));
+      if (Array.isArray(parsed)) input = parsed as ContentBlock[];
+    } catch {
+      // Malformed sentinel — leave the raw text in place.
+    }
+  }
+  const log: InvocationLog = {
     id: r.id,
     agentId: r.agent_id,
     sessionId: r.session_id ?? undefined,
-    input: r.input,
+    input,
     output: r.output,
     toolCalls: JSON.parse(r.tool_calls),
     usage: {
@@ -1406,6 +1808,8 @@ function rowToLog(r: LogRow): InvocationLog {
     error: r.error ?? undefined,
     timestamp: r.timestamp,
   };
+  if (r.status) log.status = r.status as InvocationLog["status"];
+  return log;
 }
 
 function sqliteRowToConnection(r: {

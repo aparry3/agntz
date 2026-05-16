@@ -25,8 +25,8 @@ function makeClient(fetchImpl: typeof fetch): AgntzClient {
 describe("AgntzClient.agents.stream", () => {
   it("yields start then complete events", async () => {
     const chunks = [
-      'event: run-start\ndata: {"agentId":"a1","kind":"llm"}\n\n',
-      'event: run-complete\ndata: {"output":"hi","state":{"done":true}}\n\n',
+      'event: run-start\ndata: {"agentId":"a1","kind":"llm","sessionId":"s1"}\n\n',
+      'event: run-complete\ndata: {"output":"hi","state":{"done":true},"sessionId":"s1"}\n\n',
     ];
     const mock = mockFetch(() => sseResponse(chunks));
     const client = makeClient(mock.fetch);
@@ -36,8 +36,8 @@ describe("AgntzClient.agents.stream", () => {
       events.push(ev);
     }
     expect(events).toEqual([
-      { type: "start", agentId: "a1", kind: "llm" },
-      { type: "complete", output: "hi", state: { done: true } },
+      { type: "start", agentId: "a1", kind: "llm", sessionId: "s1" },
+      { type: "complete", output: "hi", state: { done: true }, sessionId: "s1" },
     ]);
 
     const call = mock.calls[0]!;
@@ -49,7 +49,7 @@ describe("AgntzClient.agents.stream", () => {
 
   it("yields a run-error event then closes (does not throw)", async () => {
     const chunks = [
-      'event: run-start\ndata: {"agentId":"a1","kind":"llm"}\n\n',
+      'event: run-start\ndata: {"agentId":"a1","kind":"llm","sessionId":"s1"}\n\n',
       'event: run-error\ndata: {"error":"boom"}\n\n',
     ];
     const mock = mockFetch(() => sseResponse(chunks));
@@ -60,15 +60,15 @@ describe("AgntzClient.agents.stream", () => {
       events.push(ev);
     }
     expect(events).toEqual([
-      { type: "start", agentId: "a1", kind: "llm" },
+      { type: "start", agentId: "a1", kind: "llm", sessionId: "s1" },
       { type: "error", error: "boom" },
     ]);
   });
 
   it("closes cleanly when caller breaks out of the iterator", async () => {
     const chunks = [
-      'event: run-start\ndata: {"agentId":"a1","kind":"llm"}\n\n',
-      'event: run-complete\ndata: {"output":"hi","state":{}}\n\n',
+      'event: run-start\ndata: {"agentId":"a1","kind":"llm","sessionId":"s1"}\n\n',
+      'event: run-complete\ndata: {"output":"hi","state":{},"sessionId":"s1"}\n\n',
     ];
     const mock = mockFetch(() => sseResponse(chunks));
     const client = makeClient(mock.fetch);
@@ -84,8 +84,8 @@ describe("AgntzClient.agents.stream", () => {
 
   it("terminates cleanly when the signal is aborted mid-stream", async () => {
     const gated = gatedSseResponse([
-      'event: run-start\ndata: {"agentId":"a1","kind":"llm"}\n\n',
-      'event: run-complete\ndata: {"output":"hi","state":{}}\n\n',
+      'event: run-start\ndata: {"agentId":"a1","kind":"llm","sessionId":"s1"}\n\n',
+      'event: run-complete\ndata: {"output":"hi","state":{},"sessionId":"s1"}\n\n',
     ]);
     const mock = mockFetch(() => gated.response);
     const client = makeClient(mock.fetch);
@@ -104,7 +104,7 @@ describe("AgntzClient.agents.stream", () => {
 
   it("throws StreamError when the stream closes before a terminal frame", async () => {
     const chunks = [
-      'event: run-start\ndata: {"agentId":"a1","kind":"llm"}\n\n',
+      'event: run-start\ndata: {"agentId":"a1","kind":"llm","sessionId":"s1"}\n\n',
     ];
     const mock = mockFetch(() => sseResponse(chunks));
     const client = makeClient(mock.fetch);
@@ -120,5 +120,56 @@ describe("AgntzClient.agents.stream", () => {
     const client = makeClient(mock.fetch);
     const iter = client.agents.stream({ agentId: "a1" });
     await expect(iter.next()).rejects.toBeInstanceOf(AuthenticationError);
+  });
+
+  it("deserializes `reply` SSE events into typed StreamEvent.reply", async () => {
+    const chunks = [
+      'event: run-start\ndata: {"agentId":"a1","kind":"llm","sessionId":"s1"}\n\n',
+      `event: reply\ndata: ${JSON.stringify({
+        type: "reply",
+        text: "still thinking...",
+        ts: "2026-05-16T12:00:00.000Z",
+        sessionId: "s1",
+        runId: "r1",
+        seq: 2,
+      })}\nid: 2\n\n`,
+      `event: reply\ndata: ${JSON.stringify({
+        type: "reply",
+        text: "almost there",
+        ts: "2026-05-16T12:00:01.000Z",
+        sessionId: "s1",
+        runId: "r1",
+        seq: 5,
+      })}\nid: 5\n\n`,
+      'event: run-complete\ndata: {"output":"done","state":{},"sessionId":"s1"}\n\n',
+    ];
+    const mock = mockFetch(() => sseResponse(chunks));
+    const client = makeClient(mock.fetch);
+
+    const events: StreamEvent[] = [];
+    for await (const ev of client.agents.stream({ agentId: "a1" })) {
+      events.push(ev);
+    }
+
+    const replyEvents = events.filter((e) => e.type === "reply");
+    expect(replyEvents).toHaveLength(2);
+    expect(replyEvents[0]).toEqual({
+      type: "reply",
+      text: "still thinking...",
+      ts: "2026-05-16T12:00:00.000Z",
+      sessionId: "s1",
+      runId: "r1",
+      seq: 2,
+    });
+    expect(replyEvents[1]).toMatchObject({
+      type: "reply",
+      text: "almost there",
+      seq: 5,
+    });
+
+    // Reply events sit between `start` and `complete` and don't terminate
+    // the iterator.
+    expect(events[0].type).toBe("start");
+    expect(events[events.length - 1].type).toBe("complete");
   });
 });

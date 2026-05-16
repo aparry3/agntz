@@ -5,9 +5,41 @@ export interface AgntzClientOptions {
   defaultSignal?: AbortSignal;
 }
 
+/**
+ * IANA media types accepted by multimodal image blocks. Mirrors
+ * `@agntz/core`'s `ImageMediaType` — duplicated so the SDK has no runtime
+ * dependency on core.
+ */
+export type ImageMediaType =
+  | "image/jpeg"
+  | "image/png"
+  | "image/gif"
+  | "image/webp";
+
+/**
+ * One block of a multimodal user message. Either a text fragment or an
+ * image referenced by URL (fetched server-side) or already-base64-encoded
+ * body. Mirrors `@agntz/core`'s `ContentBlock`.
+ */
+export type ContentBlock =
+  | { type: "text"; text: string }
+  | {
+      type: "image";
+      url: string;
+      headers?: Record<string, string>;
+      mediaType?: ImageMediaType;
+    }
+  | { type: "image"; base64: string; mediaType: ImageMediaType };
+
 export interface RunInput {
   agentId: string;
-  input?: unknown;
+  /**
+   * Agent input. For LLM agents this is typically a string or a
+   * `ContentBlock[]` (for multimodal MMS-style inputs); for non-LLM
+   * tool/manifest agents it can be any JSON value the manifest is wired to
+   * consume.
+   */
+  input?: unknown | string | ContentBlock[];
   /** Forward-compat: worker accepts but ignores today. */
   sessionId?: string;
   signal?: AbortSignal;
@@ -16,13 +48,55 @@ export interface RunInput {
 export interface RunResult {
   output: unknown;
   state: Record<string, unknown>;
+  /**
+   * Session this run executed under. Always present — the worker auto-allocates
+   * one if the caller didn't pass `sessionId` on the request. Persist this id
+   * client-side to continue the conversation on subsequent /run calls.
+   */
+  sessionId: string;
+  /**
+   * Intermediate replies the agent emitted via the `reply` tool during this
+   * run. Only present when at least one reply was sent. Each entry was also
+   * persisted to the session at the moment of the call, so a later
+   * `getMessages(sessionId)` will see them in conversation history.
+   */
+  replies?: Reply[];
+}
+
+/**
+ * One intermediate user-facing message emitted mid-run via the agent's
+ * `reply` tool. Mirrors `@agntz/core`'s `Reply` — duplicated so the SDK has
+ * no runtime dependency on core.
+ */
+export interface Reply {
+  text: string;
+  /** ISO 8601 timestamp the reply was emitted at. */
+  ts: string;
+  sessionId: string;
+  runId: string;
 }
 
 export type AgentKind = "llm" | "tool" | "sequential" | "parallel";
 
 export type StreamEvent =
-  | { type: "start"; agentId: string; kind: AgentKind }
-  | { type: "complete"; output: unknown; state: Record<string, unknown> }
+  | { type: "start"; agentId: string; kind: AgentKind; sessionId: string }
+  | { type: "complete"; output: unknown; state: Record<string, unknown>; sessionId: string }
+  /**
+   * Intermediate reply delivered via the agent's `reply` tool. Emitted in
+   * real time as the model invokes the tool — the final `complete` event
+   * still carries any `replies` aggregated server-side. `seq` is present on
+   * the multiplexed `/runs/:id/stream` variant; on `/run/stream` it's the
+   * registry-stamped sequence number when one is wired, or undefined when
+   * the worker drives the stream directly.
+   */
+  | {
+      type: "reply";
+      text: string;
+      ts: string;
+      sessionId: string;
+      runId: string;
+      seq?: number;
+    }
   | { type: "error"; error: string };
 
 export interface HealthResult {
@@ -67,6 +141,7 @@ export interface Run {
   result?: {
     output: string;
     invocationId: string;
+    sessionId: string;
     toolCalls: Array<{
       id: string;
       name: string;
@@ -91,9 +166,26 @@ export interface Run {
 
 export interface RunsStartInput {
   agentId: string;
-  input?: unknown;
+  /** See `RunInput.input` for the accepted shapes. */
+  input?: unknown | string | ContentBlock[];
   sessionId?: string;
   signal?: AbortSignal;
+  /**
+   * Per-invocation webhook callback URL. When set, the worker will POST
+   * intermediate `reply` events and a final `complete` event to this URL,
+   * signed with the secret named by `webhookSecretName` (HMAC-SHA256,
+   * `X-Agntz-Signature` header).
+   *
+   * If `callbackUrl` is set, `webhookSecretName` is required.
+   */
+  callbackUrl?: string;
+  /**
+   * Name of the SecretStore entry whose plaintext is the HMAC signing key.
+   * Resolved by name at each delivery attempt, so an out-of-band regenerate
+   * is picked up automatically (the consumer must redeploy with the new
+   * value to verify the new signatures).
+   */
+  webhookSecretName?: string;
 }
 
 export interface RunsStreamInput {
@@ -156,6 +248,20 @@ export type MultiplexedRunEvent =
       seq: number;
     }
   | { type: "draining"; runId: string; pendingChildren: string[]; seq: number }
+  /**
+   * Intermediate reply delivered via the agent's `reply` tool. Surfaced on
+   * the multiplexed subtree feed in real time; same record (text + ts +
+   * sessionId + runId) is also aggregated onto the final `run-complete`
+   * result.replies for clients that prefer batch delivery.
+   */
+  | {
+      type: "reply";
+      runId: string;
+      sessionId: string;
+      text: string;
+      ts: string;
+      seq: number;
+    }
   | { type: "run-complete"; runId: string; result: Run["result"]; seq: number }
   | { type: "run-error"; runId: string; error: string; seq: number }
   | { type: "run-cancelled"; runId: string; seq: number }

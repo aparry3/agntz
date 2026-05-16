@@ -3,10 +3,17 @@ import { join } from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { listRunsInProcess } from "./list-runs.js";
 import { defineSkill } from "../skill.js";
+import {
+  encryptSecret,
+  decryptSecret,
+  getLastFour,
+} from "../utils/crypto.js";
 import type {
   AgentDefinition,
   AgentVersionSummary,
   ProviderConfig,
+  SecretDefinition,
+  SecretMetadata,
   SkillDefinition,
   UnifiedStore,
   ApiKeyRecord,
@@ -23,6 +30,7 @@ import type {
   Span,
   TraceSummary,
   TraceFilter,
+  WebhookDelivery,
 } from "../types.js";
 import { encodeTraceCursor, decodeTraceCursor } from "./memory.js";
 
@@ -90,6 +98,7 @@ export class JsonFileStore implements UnifiedStore {
     await mkdir(join(root, "connections"), { recursive: true });
     await mkdir(join(root, "runs"), { recursive: true });
     await mkdir(join(root, "skills"), { recursive: true });
+    await mkdir(join(root, "secrets"), { recursive: true });
   }
 
   private async readJson<T>(path: string): Promise<T | null> {
@@ -232,6 +241,20 @@ export class JsonFileStore implements UnifiedStore {
   async deleteSession(sessionId: string): Promise<void> {
     await this.ensureUserDirs();
     await unlink(this.sessionPath(sessionId)).catch(() => {});
+  }
+
+  async getOrCreateSession(sessionId: string): Promise<void> {
+    await this.ensureUserDirs();
+    const path = this.sessionPath(sessionId);
+    const existing = await this.readJson<{ messages: Message[]; createdAt: string }>(path);
+    if (existing) return;
+    const now = new Date().toISOString();
+    await this.writeJson(path, {
+      sessionId,
+      messages: [],
+      createdAt: now,
+      updatedAt: now,
+    });
   }
 
   async listSessions(_agentId?: string): Promise<SessionSummary[]> {
@@ -453,6 +476,115 @@ export class JsonFileStore implements UnifiedStore {
   async deleteSkill(name: string): Promise<void> {
     await this.ensureUserDirs();
     await unlink(this.skillPath(name)).catch(() => {});
+  }
+
+  // ═══ SecretStore ═══
+
+  private secretPath(name: string): string {
+    return join(this.userRoot(), "secrets", `${this.sanitizeFilename(name)}.json`);
+  }
+
+  async listSecrets(): Promise<SecretMetadata[]> {
+    await this.ensureUserDirs();
+    const dir = join(this.userRoot(), "secrets");
+    const files = await readdir(dir).catch(() => []);
+    const result: SecretMetadata[] = [];
+    for (const file of files) {
+      if (!file.endsWith(".json")) continue;
+      const row = await this.readJson<{
+        name: string;
+        encrypted: string;
+        lastFour: string;
+        description?: string;
+        createdAt: string;
+        updatedAt: string;
+      }>(join(dir, file));
+      if (!row) continue;
+      result.push({
+        name: row.name,
+        lastFour: row.lastFour,
+        description: row.description,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      });
+    }
+    return result.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async getSecretMetadata(name: string): Promise<SecretMetadata | null> {
+    await this.ensureUserDirs();
+    const row = await this.readJson<{
+      name: string;
+      lastFour: string;
+      description?: string;
+      createdAt: string;
+      updatedAt: string;
+    }>(this.secretPath(name));
+    if (!row) return null;
+    return {
+      name: row.name,
+      lastFour: row.lastFour,
+      description: row.description,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
+  }
+
+  async getSecretValue(name: string): Promise<string | null> {
+    await this.ensureUserDirs();
+    const row = await this.readJson<{ encrypted: string }>(this.secretPath(name));
+    if (!row) return null;
+    return decryptSecret(row.encrypted);
+  }
+
+  async putSecret(secret: SecretDefinition): Promise<void> {
+    if (!secret.name) {
+      throw new Error("putSecret: name is required");
+    }
+    if (secret.value === undefined || secret.value === null) {
+      throw new Error("putSecret: value is required");
+    }
+    await this.ensureUserDirs();
+    const path = this.secretPath(secret.name);
+    const existing = await this.readJson<{ createdAt?: string }>(path);
+    const now = this.nextTimestamp();
+    await this.writeJson(path, {
+      name: secret.name,
+      encrypted: encryptSecret(secret.value),
+      lastFour: getLastFour(secret.value),
+      description: secret.description,
+      createdAt: existing?.createdAt ?? secret.createdAt ?? now,
+      updatedAt: now,
+    });
+  }
+
+  async updateSecretDescription(
+    name: string,
+    description: string | undefined,
+  ): Promise<boolean> {
+    await this.ensureUserDirs();
+    const path = this.secretPath(name);
+    const existing = await this.readJson<{
+      name: string;
+      encrypted: string;
+      lastFour: string;
+      description?: string;
+      createdAt: string;
+      updatedAt: string;
+    }>(path);
+    if (!existing) return false;
+    const now = this.nextTimestamp();
+    await this.writeJson(path, {
+      ...existing,
+      description,
+      updatedAt: now,
+    });
+    return true;
+  }
+
+  async deleteSecret(name: string): Promise<void> {
+    await this.ensureUserDirs();
+    await unlink(this.secretPath(name)).catch(() => {});
   }
 
   // ═══ RunStore ═══
@@ -749,6 +881,76 @@ export class JsonFileStore implements UnifiedStore {
     return { userId: row.userId, keyId: row.id };
   }
 
+  // ═══ WebhookDeliveryStore ═══
+
+  private webhookDeliveriesPath(): string {
+    return join(this.userRoot(), "webhook-deliveries.json");
+  }
+
+  private async readWebhookDeliveries(): Promise<WebhookDelivery[]> {
+    return (await this.readJson<WebhookDelivery[]>(this.webhookDeliveriesPath())) ?? [];
+  }
+
+  private async writeWebhookDeliveries(rows: WebhookDelivery[]): Promise<void> {
+    await mkdir(this.userRoot(), { recursive: true });
+    await this.writeJson(this.webhookDeliveriesPath(), rows);
+  }
+
+  async insert(
+    delivery: Omit<WebhookDelivery, "attempts" | "status" | "createdAt"> & {
+      payload: Record<string, unknown>;
+    },
+  ): Promise<string> {
+    this.requireUser();
+    const rows = await this.readWebhookDeliveries();
+    const now = new Date().toISOString();
+    rows.push({
+      id: delivery.id,
+      runId: delivery.runId,
+      callbackUrl: delivery.callbackUrl,
+      secretName: delivery.secretName,
+      payload: delivery.payload,
+      attempts: 0,
+      status: "pending",
+      createdAt: now,
+    });
+    await this.writeWebhookDeliveries(rows);
+    return delivery.id;
+  }
+
+  async updateStatus(
+    id: string,
+    status: WebhookDelivery["status"],
+    lastError?: string,
+  ): Promise<void> {
+    const rows = await this.readWebhookDeliveries();
+    const row = rows.find((r) => r.id === id);
+    if (!row) return;
+    row.status = status;
+    if (lastError !== undefined) row.lastError = lastError;
+    await this.writeWebhookDeliveries(rows);
+  }
+
+  async incrementAttempt(id: string, lastError?: string): Promise<void> {
+    const rows = await this.readWebhookDeliveries();
+    const row = rows.find((r) => r.id === id);
+    if (!row) return;
+    row.attempts += 1;
+    row.lastAttemptAt = new Date().toISOString();
+    if (lastError !== undefined) row.lastError = lastError;
+    await this.writeWebhookDeliveries(rows);
+  }
+
+  async listPending(filter?: { olderThan?: string; limit?: number }): Promise<WebhookDelivery[]> {
+    const rows = await this.readWebhookDeliveries();
+    let out = rows.filter((r) => r.status === "pending");
+    if (filter?.olderThan) {
+      const cutoff = filter.olderThan;
+      out = out.filter((r) => r.createdAt < cutoff);
+    }
+    out.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    return filter?.limit ? out.slice(0, filter.limit) : out;
+  }
 }
 
 function rowToRecord(row: ApiKeyRow): ApiKeyRecord {
