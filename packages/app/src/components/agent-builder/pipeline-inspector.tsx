@@ -49,6 +49,12 @@ export interface InspectorProps {
   catalog: Catalog;
   setField: (path: PipelinePath, value: unknown) => void;
   idLocked: boolean;
+  /**
+   * Remove the selected node from its parent's `steps` / `branches` array.
+   * Only wired for non-root nodes — the inspector hides the affordance for
+   * the root agent (which has no enclosing array).
+   */
+  onRemove?: (node: PipelineNode) => void;
 }
 
 export function PipelineInspector(props: InspectorProps) {
@@ -70,7 +76,14 @@ export function PipelineInspector(props: InspectorProps) {
         color: NEUTRAL.text,
       }}
     >
-      <Header node={props.selected} />
+      <Header
+        node={props.selected}
+        onRemove={
+          props.onRemove && !props.selected.isRoot
+            ? () => props.onRemove?.(props.selected)
+            : undefined
+        }
+      />
       <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         <InspectorBody {...props} snapshot={snapshot} />
       </div>
@@ -78,7 +91,7 @@ export function PipelineInspector(props: InspectorProps) {
   );
 }
 
-function Header({ node }: { node: PipelineNode }) {
+function Header({ node, onRemove }: { node: PipelineNode; onRemove?: () => void }) {
   const c = KIND_COLORS[node.kind];
   return (
     <div
@@ -145,6 +158,31 @@ function Header({ node }: { node: PipelineNode }) {
           >
             ROOT
           </span>
+        )}
+        {onRemove && (
+          <button
+            type="button"
+            onClick={onRemove}
+            title="Remove this step"
+            aria-label="Remove this step"
+            style={{
+              padding: "3px 9px",
+              borderRadius: 5,
+              background: "#fff",
+              border: "1px solid #fecaca",
+              color: "#dc2626",
+              fontFamily: FONT_SANS,
+              fontSize: 11,
+              fontWeight: 500,
+              cursor: "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 5,
+            }}
+          >
+            <span aria-hidden style={{ fontSize: 12, lineHeight: 1 }}>×</span>
+            Remove
+          </button>
         )}
       </div>
       <div>
