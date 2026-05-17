@@ -17,22 +17,16 @@ import {
   VarHl,
   ag,
 } from "@/components/v3/primitives";
-import type { ProviderCatalogEntry } from "@/lib/use-catalog";
+import type { Catalog } from "@/lib/use-catalog";
 import { GraphPanel, GraphValidates } from "./graph-panel";
 import { NodeIO, Edge } from "@/components/v3/primitives";
 import { PipelineStep, type StepField } from "./pipeline-step";
-import {
-  DashedAdd,
-  FooterHint,
-  InsSection,
-  StateLine,
-  ToolBlock,
-  ToolRow,
-} from "./inspector-bits";
+import { FooterHint, InsSection, StateLine } from "./inspector-bits";
 import { EditableNumber, EditableText, EditableToggle } from "./editable-fields";
 import { ModelPicker } from "./model-picker";
 import { SchemaEditor } from "./schema-editor";
 import { ExamplesEditor, type Example } from "./examples-editor";
+import { ToolsEditor, type ToolEntry } from "./tools-editor";
 
 export type SingleViewMode = "build" | "yaml" | "instruction" | "both";
 
@@ -64,8 +58,7 @@ export function SingleAgentView({
   view,
   onChangeView,
   onChange,
-  providers,
-  providersLoading,
+  catalog,
   rightExtras,
   yamlPanel,
 }: {
@@ -76,8 +69,9 @@ export function SingleAgentView({
   /** Generic patcher — receives a fully-formed next manifest. Phase 2+ editors
    *  call this to commit changes; the parent re-serializes to YAML. */
   onChange?: (next: SingleAgentManifest) => void;
-  providers?: ProviderCatalogEntry[];
-  providersLoading?: boolean;
+  /** Workspace catalog — providers, mcp servers, tools, agents. Used to
+   *  drive the model picker and the tools attachment picker. */
+  catalog?: Catalog;
   rightExtras?: ReactNode;
   yamlPanel?: ReactNode;
 }) {
@@ -204,8 +198,7 @@ export function SingleAgentView({
             manifestId={manifestId}
             inputs={inputs}
             outputs={outputs}
-            providers={providers ?? []}
-            providersLoading={providersLoading}
+            catalog={catalog}
             onChange={onChange}
           />
         )}
@@ -219,16 +212,14 @@ function SingleAgentInspector({
   manifestId,
   inputs,
   outputs,
-  providers,
-  providersLoading,
+  catalog,
   onChange,
 }: {
   manifest: SingleAgentManifest;
   manifestId: string;
   inputs: StepField[];
   outputs: StepField[];
-  providers: ProviderCatalogEntry[];
-  providersLoading?: boolean;
+  catalog?: Catalog;
   onChange?: (next: SingleAgentManifest) => void;
 }) {
   // Single patcher — every editable field calls patch({ field: value }) so the
@@ -368,18 +359,24 @@ function SingleAgentInspector({
             />
             <ModelPicker
               value={{ provider: manifest.model?.provider ?? "", name: manifest.model?.name ?? "" }}
-              providers={providers}
-              loading={providersLoading}
+              providers={catalog?.providers ?? []}
+              loading={catalog?.loading}
               onChange={(next) => patchModel({ provider: next.provider, name: next.name })}
             />
             <InstructionBlock instruction={manifest.instruction ?? ""} onChange={handleInstruction} />
           </InsSection>
 
           <InsSection title="Tools" badge={`${manifest.tools?.length ?? 0} attached`}>
-            <ToolBlock kind="local" label="local">
-              <ToolRow name="No tools wired yet" sub="Add a tool source via the YAML view" />
-            </ToolBlock>
-            <DashedAdd>+ Add tool source</DashedAdd>
+            <ToolsEditor
+              tools={(manifest.tools ?? []) as ToolEntry[]}
+              onChange={(next) => patch({ tools: next as Array<Record<string, unknown>> | undefined })}
+              mcpServers={catalog?.mcpServers ?? []}
+              localTools={catalog?.tools ?? []}
+              agents={catalog?.agents ?? []}
+              loadMcpTools={catalog?.loadMcpTools ?? (async () => [])}
+              mcpToolsByServer={catalog?.mcpToolsByServer ?? {}}
+              currentAgentId={manifest.id}
+            />
           </InsSection>
 
           <InsSection title="Output schema" badge={`${outputs.length} field${outputs.length === 1 ? "" : "s"}`}>

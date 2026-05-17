@@ -326,8 +326,7 @@ export default function NewAgentPage() {
           view={view as SingleViewMode}
           onChangeView={(v) => setView(v)}
           onChange={(next) => handleManifestChange(next as Record<string, unknown>)}
-          providers={catalog.providers}
-          providersLoading={catalog.loading}
+          catalog={catalog}
           yamlPanel={
             <YamlPanel
               manifest={manifest}
