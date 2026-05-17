@@ -1,21 +1,89 @@
 @import "tailwindcss";
 
+/* ─── agntz design system ──────────────────────────────────────────────────
+ * Cream-on-ink developer-tool palette from the V3 redesign. Variables are
+ * exposed both as raw CSS variables and as Tailwind v4 utilities via @theme,
+ * so components can use either `var(--ag-ink)` or `bg-ag-ink`.
+ * ──────────────────────────────────────────────────────────────────────── */
+
 :root {
   color-scheme: light;
-  --font-display: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
-  --font-mono: "IBM Plex Mono", "SFMono-Regular", "SF Mono", Consolas, "Liberation Mono", monospace;
+
+  /* Typography — Geist sans + Geist Mono are injected by next/font on <body>. */
+  --font-sans: var(--font-geist), "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-geist-mono), "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Palette */
+  --ag-bg: #F4F1E9;            /* page background — warm cream */
+  --ag-surface: #FBF9F4;       /* panels / rails */
+  --ag-surface-2: #FFFFFF;     /* cards / inputs */
+  --ag-surface-warm: #FAF7EE;  /* subtle highlight (selected row, expanded node) */
+  --ag-ink: #1A1916;           /* primary text + dark surfaces */
+  --ag-text-2: #52514D;        /* secondary text */
+  --ag-muted: #8C8A82;         /* tertiary / labels */
+  --ag-line: #E2DDD0;          /* hairline borders */
+  --ag-line-2: #EDE9DD;        /* subtle dividers */
+
+  --ag-ok: #1F7A4D;
+  --ag-ok-bg: #E2F0E5;
+  --ag-warn: #A05E15;
+  --ag-warn-bg: #F5E8D2;
+  --ag-blue: #2A4A75;
+  --ag-blue-bg: #E1E8F2;
+  --ag-purple: #4E3677;
+  --ag-purple-bg: #E9E3F0;
+  --ag-danger: #9A2A2A;
+}
+
+/* Tailwind v4 theme bridge — lets us write classes like `bg-ag-bg text-ag-ink`. */
+@theme inline {
+  --color-ag-bg: var(--ag-bg);
+  --color-ag-surface: var(--ag-surface);
+  --color-ag-surface-2: var(--ag-surface-2);
+  --color-ag-surface-warm: var(--ag-surface-warm);
+  --color-ag-ink: var(--ag-ink);
+  --color-ag-text-2: var(--ag-text-2);
+  --color-ag-muted: var(--ag-muted);
+  --color-ag-line: var(--ag-line);
+  --color-ag-line-2: var(--ag-line-2);
+  --color-ag-ok: var(--ag-ok);
+  --color-ag-ok-bg: var(--ag-ok-bg);
+  --color-ag-warn: var(--ag-warn);
+  --color-ag-warn-bg: var(--ag-warn-bg);
+  --color-ag-blue: var(--ag-blue);
+  --color-ag-blue-bg: var(--ag-blue-bg);
+  --color-ag-purple: var(--ag-purple);
+  --color-ag-purple-bg: var(--ag-purple-bg);
+  --color-ag-danger: var(--ag-danger);
+
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
 }
 
 html {
-  background: #f5f5f4;
+  background: var(--ag-bg);
 }
 
 body {
-  background:
-    radial-gradient(circle at top left, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0) 28%),
-    linear-gradient(180deg, #fafaf9 0%, #f5f5f4 100%);
+  background: var(--ag-bg);
+  color: var(--ag-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
 }
 
 ::selection {
-  background: rgba(24, 24, 27, 0.16);
+  background: rgba(26, 25, 22, 0.16);
+}
+
+/* Shared keyframes used by the editor + generating screens. */
+@keyframes agntz-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes agntz-shim {
+  0%   { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+@keyframes agntz-bar {
+  0%   { left: -30%; }
+  100% { left: 100%; }
 }

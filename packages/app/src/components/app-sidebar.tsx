@@ -2,30 +2,63 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { UserButton, useAuth } from "@clerk/nextjs";
-import { useEffect, useState } from "react";
+import { UserButton, useAuth, useUser } from "@clerk/nextjs";
+import { useEffect, useMemo, useState } from "react";
+import type { ComponentType, CSSProperties, ReactNode } from "react";
+import { I } from "@/components/v3/icons";
+import { Avatar, HR, Kbd, ag } from "@/components/v3/primitives";
 
-const primaryLinks = [
-  { href: "/agents", label: "Agents" },
-  { href: "/skills", label: "Skills" },
-  { href: "/sessions", label: "Sessions" },
-  { href: "/runs", label: "Runs" },
-  { href: "/traces", label: "Traces" },
-  { href: "/logs", label: "Logs" },
-  { href: "/tools", label: "Tools" },
+type IconCmp = ComponentType<{ size?: number }>;
+interface NavLink {
+  href: string;
+  label: string;
+  Ic: IconCmp;
+  matches?: (pathname: string) => boolean;
+}
+
+const buildLinks: NavLink[] = [
+  { href: "/agents", label: "Agents", Ic: I.Agents, matches: (p) => p === "/agents" || p.startsWith("/agents/") },
+  { href: "/skills", label: "Skills", Ic: I.Skills, matches: (p) => p === "/skills" || p.startsWith("/skills/") },
+  { href: "/tools", label: "Tools", Ic: I.Tools },
 ];
 
-const secondaryLinks = [
-  { href: "/settings", label: "Settings" },
-  { href: "/settings/api-keys", label: "API Keys" },
-  { href: "/settings/connections", label: "Connections" },
-  { href: "/settings/secrets", label: "Secrets" },
+const observeLinks: NavLink[] = [
+  { href: "/runs", label: "Runs", Ic: I.Runs, matches: (p) => p === "/runs" || p.startsWith("/runs/") },
+  { href: "/traces", label: "Traces", Ic: I.Traces, matches: (p) => p === "/traces" || p.startsWith("/traces/") },
+  { href: "/logs", label: "Logs", Ic: I.Logs },
+  { href: "/sessions", label: "Sessions", Ic: I.Sessions },
 ];
+
+const configureLinks: NavLink[] = [
+  { href: "/settings", label: "Settings", Ic: I.Settings },
+  { href: "/settings/api-keys", label: "API Keys", Ic: I.Key },
+  { href: "/settings/connections", label: "Connections", Ic: I.Link },
+  { href: "/settings/secrets", label: "Secrets", Ic: I.Lock },
+];
+
+const COLLAPSE_STORAGE_KEY = "agntz.sidebar.collapsed";
 
 export function AppSidebar() {
-  const pathname = usePathname();
+  const pathname = usePathname() ?? "";
   const { isSignedIn } = useAuth();
+  const { user } = useUser();
   const [isAdmin, setIsAdmin] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  const [configOpen, setConfigOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  // Persist collapsed state. Edit-style pages can default to collapsed via
+  // the layout, but the user's explicit preference wins after first interaction.
+  useEffect(() => {
+    const stored = typeof window === "undefined" ? null : window.localStorage.getItem(COLLAPSE_STORAGE_KEY);
+    if (stored === "1") setCollapsed(true);
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!mounted) return;
+    window.localStorage.setItem(COLLAPSE_STORAGE_KEY, collapsed ? "1" : "0");
+  }, [collapsed, mounted]);
 
   useEffect(() => {
     if (!isSignedIn) {
@@ -44,87 +77,363 @@ export function AppSidebar() {
     };
   }, [isSignedIn]);
 
+  const W = collapsed ? 56 : 218;
+
+  const isActive = (link: NavLink) =>
+    link.matches ? link.matches(pathname) : pathname === link.href;
+
+  const displayName = useMemo(() => {
+    if (!user) return "Account";
+    return user.fullName || user.firstName || user.username || user.primaryEmailAddress?.emailAddress || "Account";
+  }, [user]);
+
+  const displayEmail = user?.primaryEmailAddress?.emailAddress;
+
   return (
-    <aside className="border-b border-stone-200 bg-white/90 backdrop-blur lg:sticky lg:top-0 lg:flex lg:h-screen lg:w-72 lg:flex-col lg:border-b-0 lg:border-r">
-      <div className="flex h-full flex-col px-4 py-5 sm:px-6 lg:px-5 lg:py-6">
-        <Link href="/" className="mb-6 block px-3">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-zinc-400">
-            Workspace
-          </div>
-          <div className="mt-2 text-xl font-semibold text-zinc-950">agntz</div>
+    <aside
+      style={{
+        width: W,
+        background: ag.surface,
+        borderRight: `1px solid ${ag.line}`,
+        display: "flex",
+        flexDirection: "column",
+        flex: "0 0 auto",
+        transition: "width 160ms ease",
+        position: "sticky",
+        top: 0,
+        height: "100vh",
+      }}
+    >
+      {/* Workspace switcher + collapse toggle */}
+      <div
+        style={{
+          padding: collapsed ? "12px 0 10px" : "14px 12px 10px",
+          borderBottom: `1px solid ${ag.line2}`,
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          justifyContent: collapsed ? "center" : "flex-start",
+        }}
+      >
+        <Link
+          href="/"
+          aria-label="agntz home"
+          style={{
+            width: 26,
+            height: 26,
+            background: ag.ink,
+            color: ag.surface,
+            borderRadius: 4,
+            display: "grid",
+            placeItems: "center",
+            fontWeight: 700,
+            fontSize: 12,
+            fontFamily: "var(--font-mono)",
+            flex: "0 0 auto",
+            textDecoration: "none",
+          }}
+        >
+          a
         </Link>
-
-        <nav className="flex flex-col gap-1">
-          {primaryLinks.map((link) => (
-            <SidebarLink
-              key={link.href}
-              href={link.href}
-              active={
-                pathname === link.href ||
-                (link.href === "/agents" && pathname.startsWith("/agents/")) ||
-                (link.href === "/skills" && pathname.startsWith("/skills/")) ||
-                (link.href === "/traces" && pathname.startsWith("/traces/")) ||
-                (link.href === "/runs" && pathname.startsWith("/runs/"))
-              }
+        {!collapsed && (
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div
+              style={{
+                fontSize: 9.5,
+                marginBottom: 1,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
+                color: ag.muted,
+                fontWeight: 500,
+              }}
             >
-              {link.label}
-            </SidebarLink>
-          ))}
-        </nav>
-
-        <div className="my-6 hidden h-px bg-stone-200 lg:block" />
-
-        <nav className="flex flex-col gap-1">
-          {secondaryLinks.map((link) => (
-            <SidebarLink key={link.href} href={link.href} active={pathname === link.href}>
-              {link.label}
-            </SidebarLink>
-          ))}
-          {isAdmin && (
-            <SidebarLink
-              href="/system"
-              active={pathname === "/system" || pathname.startsWith("/system/")}
-            >
-              <span className="flex items-center gap-2">
-                System Agents
-                <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-900">
-                  Admin
-                </span>
-              </span>
-            </SidebarLink>
-          )}
-        </nav>
-
-        {isSignedIn && (
-          <div className="mt-auto flex items-center gap-3 px-3 pt-6">
-            <UserButton />
-            <span className="text-sm text-zinc-500">Account</span>
+              Workspace
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 600, color: ag.ink }}>agntz</div>
+              <I.Chev size={11} />
+            </div>
           </div>
+        )}
+        {!collapsed && (
+          <button
+            onClick={() => setCollapsed(true)}
+            title="Collapse sidebar"
+            style={iconBtnStyle}
+          >
+            <I.ChevR size={11} style={{ transform: "rotate(180deg)" }} />
+          </button>
+        )}
+      </div>
+
+      {collapsed && (
+        <button
+          onClick={() => setCollapsed(false)}
+          title="Expand sidebar"
+          style={{ ...iconBtnStyle, margin: "8px auto 0" }}
+        >
+          <I.ChevR size={11} />
+        </button>
+      )}
+
+      {/* Search */}
+      <div style={{ padding: collapsed ? "10px 0 4px" : "10px 10px 4px" }}>
+        {collapsed ? (
+          <div
+            title="Search (⌘K)"
+            style={{
+              margin: "0 auto",
+              width: 30,
+              height: 28,
+              display: "grid",
+              placeItems: "center",
+              border: `1px solid ${ag.line}`,
+              background: ag.surface2,
+              borderRadius: 4,
+              color: ag.muted,
+            }}
+          >
+            <I.Search size={13} />
+          </div>
+        ) : (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 7,
+              padding: "5px 8px",
+              border: `1px solid ${ag.line}`,
+              background: ag.surface2,
+              borderRadius: 4,
+              color: ag.muted,
+            }}
+          >
+            <I.Search size={12} />
+            <span style={{ fontSize: 12, flex: 1 }}>Search…</span>
+            <Kbd>⌘K</Kbd>
+          </div>
+        )}
+      </div>
+
+      {/* Sections */}
+      <nav style={{ padding: collapsed ? "4px 8px" : "6px 8px", flex: 1, overflowY: "auto" }}>
+        <NavSection label="Build" collapsed={collapsed} first>
+          {buildLinks.map((link) => (
+            <NavItem key={link.href} {...link} on={isActive(link)} collapsed={collapsed} />
+          ))}
+        </NavSection>
+        <NavSection label="Observe" collapsed={collapsed}>
+          {observeLinks.map((link) => (
+            <NavItem key={link.href} {...link} on={isActive(link)} collapsed={collapsed} />
+          ))}
+        </NavSection>
+
+        {/* Configure — collapsible group */}
+        <div style={{ marginTop: 12 }}>
+          {!collapsed ? (
+            <button
+              onClick={() => setConfigOpen((o) => !o)}
+              style={{
+                width: "100%",
+                border: 0,
+                background: "transparent",
+                padding: "2px 8px 4px",
+                display: "flex",
+                alignItems: "center",
+                gap: 5,
+                fontSize: 9.5,
+                letterSpacing: "0.1em",
+                textTransform: "uppercase",
+                color: ag.muted,
+                fontWeight: 500,
+                cursor: "pointer",
+              }}
+            >
+              <I.ChevR
+                size={9}
+                style={{ transform: configOpen ? "rotate(90deg)" : "none", transition: "transform 120ms" }}
+              />
+              Configure
+            </button>
+          ) : (
+            <HR style={{ margin: "8px 6px" }} />
+          )}
+          {(configOpen || collapsed) &&
+            configureLinks.map((link) => (
+              <NavItem key={link.href} {...link} on={isActive(link)} collapsed={collapsed} />
+            ))}
+        </div>
+      </nav>
+
+      {/* System Agents (admin) */}
+      {isAdmin && (
+        <div style={{ padding: collapsed ? "4px 8px 6px" : "4px 8px 8px" }}>
+          <Link
+            href="/system"
+            title={collapsed ? "System Agents" : undefined}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 9,
+              padding: collapsed ? "6px 0" : "5px 8px",
+              justifyContent: collapsed ? "center" : "flex-start",
+              borderRadius: 4,
+              color: pathname.startsWith("/system") ? ag.surface : ag.text2,
+              background: pathname.startsWith("/system") ? ag.ink : "transparent",
+              fontSize: 12.5,
+              textDecoration: "none",
+            }}
+          >
+            <I.Admin size={13} />
+            {!collapsed && <span style={{ flex: 1 }}>System Agents</span>}
+            {!collapsed && (
+              <span
+                style={{
+                  background: ag.warnBg,
+                  color: ag.warn,
+                  padding: "2px 6px",
+                  borderRadius: 3,
+                  fontSize: 10.5,
+                  fontFamily: "var(--font-mono)",
+                  fontWeight: 500,
+                }}
+              >
+                admin
+              </span>
+            )}
+          </Link>
+        </div>
+      )}
+
+      {/* Account */}
+      <div
+        style={{
+          padding: collapsed ? "10px 0" : "10px 12px",
+          borderTop: `1px solid ${ag.line2}`,
+          display: "flex",
+          alignItems: "center",
+          gap: 9,
+          justifyContent: collapsed ? "center" : "flex-start",
+        }}
+      >
+        {isSignedIn ? (
+          <>
+            <div style={{ flex: "0 0 auto" }}>
+              <UserButton appearance={{ elements: { avatarBox: { width: collapsed ? 24 : 22, height: collapsed ? 24 : 22, borderRadius: 4 } } }} />
+            </div>
+            {!collapsed && (
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 500, color: ag.ink }}>{displayName}</div>
+                {displayEmail && (
+                  <div
+                    style={{
+                      fontSize: 10.5,
+                      color: ag.muted,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {displayEmail}
+                  </div>
+                )}
+              </div>
+            )}
+            {!collapsed && <I.Ellipsis size={14} />}
+          </>
+        ) : (
+          <>
+            <Avatar name="?" size={collapsed ? 24 : 22} square />
+            {!collapsed && (
+              <Link href="/sign-in" style={{ flex: 1, fontSize: 12.5, color: ag.ink, textDecoration: "none" }}>
+                Sign in
+              </Link>
+            )}
+          </>
         )}
       </div>
     </aside>
   );
 }
 
-function SidebarLink({
-  href,
-  active,
+const iconBtnStyle: CSSProperties = {
+  border: `1px solid ${ag.line}`,
+  background: ag.surface2,
+  borderRadius: 3,
+  padding: "3px 4px",
+  cursor: "pointer",
+  color: ag.muted,
+  display: "grid",
+  placeItems: "center",
+};
+
+function NavSection({
+  label,
+  collapsed,
   children,
+  first,
 }: {
-  href: string;
-  active: boolean;
-  children: React.ReactNode;
+  label: string;
+  collapsed: boolean;
+  children: ReactNode;
+  first?: boolean;
+}) {
+  return (
+    <div style={{ marginTop: first ? 4 : 12 }}>
+      {!collapsed && (
+        <div
+          style={{
+            padding: "2px 8px 4px",
+            fontSize: 9.5,
+            letterSpacing: "0.1em",
+            textTransform: "uppercase",
+            color: ag.muted,
+            fontWeight: 500,
+          }}
+        >
+          {label}
+        </div>
+      )}
+      {collapsed && !first && <HR style={{ margin: "8px 6px" }} />}
+      {children}
+    </div>
+  );
+}
+
+function NavItem({
+  href,
+  label,
+  Ic,
+  on,
+  collapsed,
+  badge,
+}: NavLink & {
+  on: boolean;
+  collapsed: boolean;
+  badge?: ReactNode;
 }) {
   return (
     <Link
       href={href}
-      className={`rounded-xl px-3 py-2.5 text-sm font-medium transition ${
-        active
-          ? "bg-zinc-950 text-white shadow-sm"
-          : "text-zinc-600 hover:bg-stone-100 hover:text-zinc-950"
-      }`}
+      title={collapsed ? label : undefined}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 9,
+        padding: collapsed ? "6px 0" : "5px 8px",
+        justifyContent: collapsed ? "center" : "flex-start",
+        borderRadius: 4,
+        marginBottom: 1,
+        background: on ? ag.ink : "transparent",
+        color: on ? ag.surface : ag.text2,
+        fontSize: 12.5,
+        fontWeight: on ? 500 : 400,
+        textDecoration: "none",
+      }}
     >
-      {children}
+      <Ic size={13} />
+      {!collapsed && <span style={{ flex: 1 }}>{label}</span>}
+      {!collapsed && badge}
     </Link>
   );
 }

@@ -1,12 +1,72 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parse as parseYAML } from "yaml";
 import { requireUserContext, AuthRequiredError } from "@/lib/user";
 import { workerValidateManifest } from "@/lib/worker-client";
+
+interface AgentListEntry {
+  id: string;
+  name: string;
+  description?: string;
+  kind?: string;
+  model?: string;
+  updatedAt?: string;
+  createdAt?: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function readManifestSummary(manifestSource: unknown): { kind?: string; model?: string } {
+  if (typeof manifestSource !== "string") return {};
+  try {
+    const parsed = parseYAML(manifestSource);
+    if (!isRecord(parsed)) return {};
+    const out: { kind?: string; model?: string } = {};
+    if (typeof parsed.kind === "string") out.kind = parsed.kind;
+    if (isRecord(parsed.model)) {
+      const provider = typeof parsed.model.provider === "string" ? parsed.model.provider : "";
+      const name = typeof parsed.model.name === "string" ? parsed.model.name : "";
+      if (provider || name) out.model = [provider, name].filter(Boolean).join(" · ");
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
 
 export async function GET() {
   try {
     const { runner } = await requireUserContext();
-    const agents = await runner.agents.listAgents();
-    return NextResponse.json(agents);
+    const summaries = await runner.agents.listAgents();
+
+    // Enrich each summary with kind/model/updatedAt by fetching the full def.
+    // Cheap for small lists; if this list grows, the store should expose a
+    // richer list method instead of paying N round-trips here.
+    const enriched: AgentListEntry[] = await Promise.all(
+      summaries.map(async (summary) => {
+        try {
+          const agent = await runner.agents.getAgent(summary.id);
+          if (!agent) return summary;
+          const manifestSource = isRecord(agent.metadata) ? agent.metadata.manifest : undefined;
+          const { kind, model } = readManifestSummary(manifestSource);
+          const fallbackModel =
+            `${agent.model?.provider ?? ""}${agent.model?.name ? ` · ${agent.model.name}` : ""}`.trim() ||
+            undefined;
+          return {
+            ...summary,
+            kind,
+            model: model ?? fallbackModel,
+            updatedAt: agent.updatedAt,
+            createdAt: agent.createdAt,
+          };
+        } catch {
+          return summary;
+        }
+      })
+    );
+
+    return NextResponse.json(enriched);
   } catch (error) {
     return errorResponse(error);
   }
