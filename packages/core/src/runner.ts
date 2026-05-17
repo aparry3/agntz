@@ -55,12 +55,16 @@ import type { MCPTool } from "./mcp/client-manager.js";
 import { resolveMCPServer as resolveMCPServerHelper } from "./mcp/resolve-server.js";
 import {
   AgentNotFoundError,
+  AgentVersionNotFoundError,
+  InvalidAgentRefError,
   InvocationCancelledError,
   MaxStepsExceededError,
   MaxRecursionDepthError,
   ToolExecutionError,
   ToolNotFoundError,
 } from "./errors.js";
+import { parseAgentRef, formatAgentRef } from "./agent-ref.js";
+import type { ParsedAgentRef } from "./agent-ref.js";
 import { runEval } from "./eval.js";
 import type { EvalRunOptions } from "./eval.js";
 import { withRetry } from "./utils/retry.js";
@@ -68,6 +72,32 @@ import type { RetryConfig } from "./utils/retry.js";
 import { Telemetry } from "./telemetry.js";
 import type { InvokeSpan } from "./telemetry.js";
 import { computeCost } from "./model-pricing.js";
+
+/**
+ * Outcome of resolving an agent reference. The `resolved*` fields are used
+ * to stamp `agent.requested_version` / `agent.resolved_version` /
+ * `agent.resolved_via` on the resulting span(s).
+ */
+export interface ResolvedAgent {
+  agent: AgentDefinition;
+  /** The agent id with any `@version` suffix stripped. */
+  agentId: string;
+  /** What the caller passed (`"latest"`, ISO, or null for bare id). */
+  requestedVersion: string | null;
+  /** The ISO timestamp of the row that ran (null for in-memory registered agents). */
+  resolvedVersion: string | null;
+  resolvedVia: "registered" | "activated" | "latest" | "exact";
+}
+
+/**
+ * Returns the persisted `created_at` of a stored agent if the store
+ * surfaced it. Both bundled stores write this field; defensive against
+ * implementations that don't.
+ */
+function extractCreatedAt(agent: AgentDefinition): string | null {
+  const created = (agent as unknown as { createdAt?: unknown }).createdAt;
+  return typeof created === "string" ? created : null;
+}
 
 /** Maximum tool call iterations to prevent infinite loops */
 const DEFAULT_MAX_STEPS = 10;
@@ -244,16 +274,99 @@ export class Runner {
   }
 
   /**
-   * Resolve an agent by ID — checks registered agents first, then the store.
+   * Resolve an agent by reference — supports `<id>`, `<id>@latest`, and
+   * `<id>@<ISO timestamp>`. Returns the agent plus tracking metadata so
+   * callers can record `agent.requested_version` / `agent.resolved_version`
+   * on spans.
+   *
+   * `resolvedVia`:
+   *  - `"registered"` — found in `registeredAgents` (in-memory; no version)
+   *  - `"activated"`  — bare id; store returned the activated version
+   *  - `"latest"`     — `@latest`; newest by `created_at`, ignoring activation
+   *  - `"exact"`      — `@<ISO>`; exact pinned version
    */
-  private async resolveAgent(agentId: string): Promise<AgentDefinition> {
-    const registered = this.registeredAgents.get(agentId);
-    if (registered) return registered;
+  private async resolveAgent(
+    input: string | ParsedAgentRef,
+  ): Promise<ResolvedAgent> {
+    const ref = typeof input === "string" ? parseAgentRef(input) : input;
 
-    const stored = await this.agentStore.getAgent(agentId);
-    if (stored) return stored;
+    const registered = this.registeredAgents.get(ref.agentId);
+    if (registered) {
+      if (ref.version !== undefined) {
+        throw new InvalidAgentRefError(
+          formatAgentRef(ref),
+          "in-memory registered agents do not have version history; drop the @version suffix or persist the agent to the store first",
+        );
+      }
+      return {
+        agent: registered,
+        agentId: ref.agentId,
+        requestedVersion: null,
+        resolvedVersion: null,
+        resolvedVia: "registered",
+      };
+    }
 
-    throw new AgentNotFoundError(agentId);
+    if (ref.version === undefined) {
+      const stored = await this.agentStore.getAgent(ref.agentId);
+      if (!stored) throw new AgentNotFoundError(ref.agentId);
+      return {
+        agent: stored,
+        agentId: ref.agentId,
+        requestedVersion: null,
+        resolvedVersion: extractCreatedAt(stored),
+        resolvedVia: "activated",
+      };
+    }
+
+    if (ref.version === "latest") {
+      const versions = await this.agentStore.listAgentVersions(ref.agentId);
+      if (versions.length === 0) throw new AgentNotFoundError(ref.agentId);
+      const newest = versions[0].createdAt;
+      const stored = await this.agentStore.getAgentVersion(ref.agentId, newest);
+      if (!stored) {
+        // Race between listAgentVersions and getAgentVersion. Surface as
+        // version-not-found rather than masking the inconsistency.
+        throw new AgentVersionNotFoundError(ref.agentId, newest);
+      }
+      return {
+        agent: stored,
+        agentId: ref.agentId,
+        requestedVersion: "latest",
+        resolvedVersion: newest,
+        resolvedVia: "latest",
+      };
+    }
+
+    // Exact ISO timestamp pin.
+    const stored = await this.agentStore.getAgentVersion(ref.agentId, ref.version);
+    if (stored) {
+      return {
+        agent: stored,
+        agentId: ref.agentId,
+        requestedVersion: ref.version,
+        resolvedVersion: ref.version,
+        resolvedVia: "exact",
+      };
+    }
+    // Distinguish "agent missing" from "version missing" with one extra read.
+    const exists = await this.agentStore.getAgent(ref.agentId);
+    if (!exists) throw new AgentNotFoundError(ref.agentId);
+    throw new AgentVersionNotFoundError(ref.agentId, ref.version);
+  }
+
+  /**
+   * Public, error-swallowing wrapper around `resolveAgent`. Returns the
+   * agent definition or `null`. Used by the worker/bridge to pre-resolve
+   * sub-agent references without throwing through their resolution paths.
+   */
+  async resolveAgentRef(input: string): Promise<AgentDefinition | null> {
+    try {
+      const result = await this.resolveAgent(input);
+      return result.agent;
+    } catch {
+      return null;
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -358,7 +471,7 @@ export class Runner {
       onProgress?: (completed: number, total: number, testCase: string) => void;
     } = {}
   ): Promise<import("./types.js").EvalResult> {
-    const agent = await this.resolveAgent(agentId);
+    const { agent } = await this.resolveAgent(agentId);
 
     return runEval(agent, {
       testCases: options.testCases,
@@ -409,7 +522,7 @@ export class Runner {
 
       const startTime = Date.now();
       const invocationId = generateInvocationId();
-      const agent = await self.resolveAgent(agentId);
+      const { agent } = await self.resolveAgent(agentId);
 
       // Always work with a concrete sessionId — symmetric with invoke().
       const effectiveSessionId = options.sessionId ?? generateSessionId();
@@ -1022,7 +1135,7 @@ export class Runner {
 
     const startTime = Date.now();
     const invocationId = generateInvocationId();
-    const agent = await this.resolveAgent(agentId);
+    const { agent } = await this.resolveAgent(agentId);
 
     // Always work with a concrete sessionId — auto-allocate if the caller
     // didn't pass one. The session row is ensured below so the id has a
@@ -1897,11 +2010,7 @@ export class Runner {
     // same Runner were used for multiple agents with different spawnable lists.
     if (hasSpawnable) {
       const entries: SpawnableEntry[] = await resolveSpawnable(agent.spawnable!, {
-        resolveStored: async (id: string) => {
-          const reg = this.registeredAgents.get(id);
-          if (reg) return reg;
-          return this.agentStore.getAgent(id);
-        },
+        resolveStored: (id: string) => this.resolveAgentRef(id),
         registerInline: (def: AgentDefinition) => this.registerAgent(def),
       });
 
@@ -2050,12 +2159,23 @@ export class Runner {
    * Resolve an agent-as-tool reference. Creates a synthetic tool in the registry
    * that invokes the target agent when called.
    */
-  private resolveAgentAsTool(agentId: string): {
+  private resolveAgentAsTool(agentRef: string): {
     name: string;
     description: string;
     parameters: Record<string, unknown>;
   } | null {
-    const toolName = `invoke_${agentId}`;
+    // agentRef may include an `@version` suffix; the tool name shown to the
+    // LLM strips disallowed characters, but the ref is preserved verbatim so
+    // the synthesized tool invokes the exact pinned version.
+    let parsed: ParsedAgentRef;
+    try {
+      parsed = parseAgentRef(agentRef);
+    } catch {
+      return null;
+    }
+    const sanitized = `${parsed.agentId}${parsed.version ? `__${parsed.version}` : ""}`
+      .replace(/[^a-zA-Z0-9_]/g, "_");
+    const toolName = `invoke_${sanitized}`;
 
     // If already registered (from a previous resolve), just return the info
     const existing = this.toolRegistry.get(toolName);
@@ -2068,16 +2188,15 @@ export class Runner {
     }
 
     // Look up the target agent to get its description
-    const targetAgent = this.registeredAgents.get(agentId);
+    const targetAgent = this.registeredAgents.get(parsed.agentId);
     const description = targetAgent
       ? `Invoke the "${targetAgent.name}" agent: ${targetAgent.description ?? targetAgent.systemPrompt.slice(0, 100)}`
-      : `Invoke the "${agentId}" agent`;
+      : `Invoke the "${agentRef}" agent`;
 
     // Dynamically import zod to create the schema
     // We use a simple schema: { input: string }
     const { z } = require("zod");
 
-    const self = this;
     const agentTool: ToolDefinition = {
       name: toolName,
       description,
@@ -2087,7 +2206,7 @@ export class Runner {
       async execute(input: { input: string }, ctx: ToolContext) {
         // Pass recursion depth through to prevent infinite agent chains
         const parentDepth = (ctx as any)._recursionDepth ?? 0;
-        const result = await ctx.invoke(agentId, input.input, {
+        const result = await ctx.invoke(agentRef, input.input, {
           _recursionDepth: parentDepth + 1,
         });
         return { output: result.output, toolCalls: result.toolCalls.length };
