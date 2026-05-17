@@ -58,6 +58,7 @@ import {
   AgentVersionNotFoundError,
   InvalidAgentRefError,
   InvocationCancelledError,
+  InvocationTimeoutError,
   MaxStepsExceededError,
   TokenBudgetExceededError,
   MaxRecursionDepthError,
@@ -690,10 +691,22 @@ export class Runner {
 
       // Top-level invokes never go through registry.start(); bridge the
       // registry's AbortController so cancel-and-replace can interrupt
-      // mid-loop model calls.
+      // mid-loop model calls. The wall-clock timeout signal is folded in so a
+      // timer-driven abort is distinguishable from a user-initiated cancel —
+      // the abort check below branches on `timeoutSignal.aborted` to throw
+      // InvocationTimeoutError instead of InvocationCancelledError.
+      const effectiveTimeoutMs = resolveCallerTightensLimit(
+        agent.timeoutMs,
+        options.timeoutMs,
+      );
+      const timeoutSignal =
+        effectiveTimeoutMs !== undefined
+          ? AbortSignal.timeout(effectiveTimeoutMs)
+          : undefined;
       const effectiveSignal = combineSignals(
         options.signal,
         runRegistry && runId ? runRegistry.getAbortSignal(runId) : undefined,
+        timeoutSignal,
       );
 
       // Hoisted so the catch block can write an audit log entry even when a
@@ -802,6 +815,9 @@ export class Runner {
           step++;
 
           if (effectiveSignal?.aborted) {
+            if (timeoutSignal?.aborted && effectiveTimeoutMs !== undefined) {
+              throw new InvocationTimeoutError(agentId, effectiveTimeoutMs);
+            }
             throw new InvocationCancelledError();
           }
 
@@ -1139,9 +1155,22 @@ export class Runner {
         resolveResult!(invokeResult);
         yield { type: "done" as const, result: invokeResult };
       } catch (err) {
+        // Surface mid-call timeouts as InvocationTimeoutError. When the timer
+        // fires during a model call (vs. between iterations), the AI SDK
+        // rejects with an AbortError that the top-of-iteration check never
+        // sees — translate it here so callers always observe a timeout as
+        // InvocationTimeoutError rather than a generic abort.
+        const surfacedErr: unknown =
+          timeoutSignal?.aborted &&
+          effectiveTimeoutMs !== undefined &&
+          !(err instanceof InvocationTimeoutError)
+            ? new InvocationTimeoutError(agentId, effectiveTimeoutMs)
+            : err;
+
         // Audit-log the cancellation/failure even when the loop throws mid-flight.
         const cancelled =
-          err instanceof InvocationCancelledError ||
+          surfacedErr instanceof InvocationCancelledError ||
+          surfacedErr instanceof InvocationTimeoutError ||
           (effectiveSignal?.aborted ?? false);
         try {
           await self.logStore.log({
@@ -1154,7 +1183,7 @@ export class Runner {
             usage: totalUsage,
             duration: Date.now() - startTime,
             model: modelStr,
-            error: err instanceof Error ? err.message : String(err),
+            error: surfacedErr instanceof Error ? surfacedErr.message : String(surfacedErr),
             status: cancelled ? "cancelled" : "failed",
             timestamp: new Date().toISOString(),
           });
@@ -1162,10 +1191,10 @@ export class Runner {
           // Log persistence failure should not mask the original error.
         }
         if (runRegistry && runId) {
-          runRegistry.notifyFailed(runId, err);
+          runRegistry.notifyFailed(runId, surfacedErr);
         }
-        rejectResult!(err);
-        throw err;
+        rejectResult!(surfacedErr);
+        throw surfacedErr;
       }
     }
 
@@ -1302,10 +1331,22 @@ export class Runner {
 
     // Top-level invokes don't go through registry.start(), so the registry's
     // AbortController isn't wired into the model call by default. Bridge it
-    // here so cancel-and-replace can interrupt a mid-loop model call.
+    // here so cancel-and-replace can interrupt a mid-loop model call. The
+    // wall-clock timeout signal is folded in alongside; the abort check inside
+    // the loop discriminates `timeoutSignal.aborted` to throw
+    // InvocationTimeoutError instead of InvocationCancelledError.
+    const effectiveTimeoutMs = resolveCallerTightensLimit(
+      agent.timeoutMs,
+      options.timeoutMs,
+    );
+    const timeoutSignal =
+      effectiveTimeoutMs !== undefined
+        ? AbortSignal.timeout(effectiveTimeoutMs)
+        : undefined;
     const effectiveSignal = combineSignals(
       options.signal,
       runRegistry && runId ? runRegistry.getAbortSignal(runId) : undefined,
+      timeoutSignal,
     );
     // Per-invocation ephemeral tools. spawn_agent/check_agents live here,
     // not in the global registry, because their schemas are agent-specific.
@@ -1467,9 +1508,13 @@ export class Runner {
       while (step < effectiveMaxSteps) {
         step++;
 
-        // Check for cancellation (either caller-supplied signal or our own
-        // registry-driven cancel)
+        // Check for cancellation (either caller-supplied signal, registry-
+        // driven cancel, or wall-clock timeout). Timeout aborts surface as a
+        // distinct error so logs/UI can tell the failure modes apart.
         if (effectiveSignal?.aborted) {
+          if (timeoutSignal?.aborted && effectiveTimeoutMs !== undefined) {
+            throw new InvocationTimeoutError(agentId, effectiveTimeoutMs);
+          }
           throw new InvocationCancelledError();
         }
 
@@ -1785,11 +1830,23 @@ export class Runner {
 
       return invokeResult;
     } catch (err) {
-      span.error(err instanceof Error ? err : new Error(String(err)));
+      // Surface mid-call timeouts as InvocationTimeoutError. See the matching
+      // comment in stream() — the top-of-iteration check only fires between
+      // model calls, so timer aborts during a model call need explicit
+      // translation here.
+      const surfacedErr: unknown =
+        timeoutSignal?.aborted &&
+        effectiveTimeoutMs !== undefined &&
+        !(err instanceof InvocationTimeoutError)
+          ? new InvocationTimeoutError(agentId, effectiveTimeoutMs)
+          : err;
+
+      span.error(surfacedErr instanceof Error ? surfacedErr : new Error(String(surfacedErr)));
       // Write an audit log entry even on cancel/failure so token usage and
       // tool calls executed before the abort remain attributable.
       const cancelled =
-        err instanceof InvocationCancelledError ||
+        surfacedErr instanceof InvocationCancelledError ||
+        surfacedErr instanceof InvocationTimeoutError ||
         (effectiveSignal?.aborted ?? false);
       try {
         await this.logStore.log({
@@ -1802,7 +1859,7 @@ export class Runner {
           usage: totalUsage,
           duration: Date.now() - startTime,
           model: modelStr,
-          error: err instanceof Error ? err.message : String(err),
+          error: surfacedErr instanceof Error ? surfacedErr.message : String(surfacedErr),
           status: cancelled ? "cancelled" : "failed",
           timestamp: new Date().toISOString(),
         });
@@ -1810,9 +1867,9 @@ export class Runner {
         // Persistence failure on the audit log shouldn't mask the original.
       }
       if (runRegistry && runId) {
-        runRegistry.notifyFailed(runId, err);
+        runRegistry.notifyFailed(runId, surfacedErr);
       }
-      throw err;
+      throw surfacedErr;
     }
   }
 
