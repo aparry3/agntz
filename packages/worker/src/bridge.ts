@@ -1,4 +1,5 @@
 import type { Runner, AgentDefinition, AgentRef as CoreAgentRef, Reply, RunRegistry } from "@agntz/core";
+import { buildHttpToolDefinition } from "@agntz/core";
 import type {
   ExecutionContext,
   AgentManifest,
@@ -166,6 +167,40 @@ export function createExecutionContext(
     },
 
     invokeTool: async (config: ToolCallConfig, state: AgentState) => {
+      // HTTP tool steps don't go through the runner's tool registry — build
+      // the definition inline from the config and execute it against state.
+      // params/headers are interpolated against state by buildHttpToolDefinition
+      // (params already pre-resolved by executeTool — re-interpolation is a
+      // no-op on plain strings).
+      if (config.kind === "http") {
+        if (!config.url) throw new Error("HTTP tool config missing url");
+        const start = Date.now();
+        const label = `http__${config.name}`;
+        console.log(`[tool] ${label} start url=${config.url}`);
+        try {
+          const tool = buildHttpToolDefinition(
+            {
+              kind: "http",
+              name: config.name,
+              url: config.url,
+              method: config.method,
+              description: config.description,
+              params: config.params,
+              headers: config.headers,
+            },
+            state,
+          );
+          // The HTTP tool's execute ignores ToolContext — pipeline tool steps
+          // have no surrounding LLM invocation to supply one.
+          const result = await (tool.execute as (args: unknown) => Promise<unknown>)({});
+          console.log(`[tool] ${label} done ${Date.now() - start}ms`);
+          return result;
+        } catch (err) {
+          console.error(`[tool] ${label} failed ${Date.now() - start}ms: ${(err as Error).message}`);
+          throw err;
+        }
+      }
+
       // Resolve the tool name (MCP tools are namespaced as "serverName:toolName")
       const toolName = config.kind === "mcp" && config.server
         ? `${config.server}:${config.name}`

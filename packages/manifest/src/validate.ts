@@ -239,14 +239,53 @@ function validateToolStructural(
     errors.push({ level: "structural", path: p(path, "tool"), message: "Tool agent must have a tool configuration" });
     return;
   }
-  if (!manifest.tool.kind || !["mcp", "local"].includes(manifest.tool.kind)) {
-    errors.push({ level: "structural", path: p(path, "tool.kind"), message: "tool.kind must be 'mcp' or 'local'" });
+  if (!manifest.tool.kind || !["mcp", "local", "http"].includes(manifest.tool.kind)) {
+    errors.push({ level: "structural", path: p(path, "tool.kind"), message: "tool.kind must be 'mcp', 'local', or 'http'" });
   }
   if (!manifest.tool.name) {
     errors.push({ level: "structural", path: p(path, "tool.name"), message: "tool.name is required" });
+  } else if (manifest.tool.kind === "http" && !HTTP_TOOL_NAME_RE.test(manifest.tool.name)) {
+    errors.push({
+      level: "structural",
+      path: p(path, "tool.name"),
+      message: `HTTP tool name '${manifest.tool.name}' must match ${HTTP_TOOL_NAME_RE.source}`,
+    });
   }
   if (manifest.tool.kind === "mcp" && !manifest.tool.server) {
     errors.push({ level: "structural", path: p(path, "tool.server"), message: "MCP tool must have a server URL" });
+  }
+  if (manifest.tool.kind === "http") {
+    if (!manifest.tool.url || typeof manifest.tool.url !== "string") {
+      errors.push({ level: "structural", path: p(path, "tool.url"), message: "HTTP tool must have a url string" });
+    } else {
+      const stub = manifest.tool.url.replace(/\{[^}]+\}/g, "_");
+      try {
+        new URL(stub);
+      } catch {
+        errors.push({
+          level: "structural",
+          path: p(path, "tool.url"),
+          message: `HTTP tool url is not a valid URL: '${manifest.tool.url}'`,
+        });
+      }
+    }
+    const method = manifest.tool.method ?? "GET";
+    if (method !== "GET") {
+      errors.push({
+        level: "structural",
+        path: p(path, "tool.method"),
+        message: `HTTP tool method must be 'GET' — only GET is supported in this release.`,
+      });
+    }
+    if (manifest.tool.headers) {
+      for (const [key, val] of Object.entries(manifest.tool.headers)) {
+        if (typeof val !== "string") {
+          errors.push({ level: "structural", path: p(path, `tool.headers.${key}`), message: "Header values must be strings (template expressions)" });
+        } else {
+          validateTemplatesSyntax(val, p(path, `tool.headers.${key}`), errors);
+        }
+      }
+    }
   }
   if (manifest.tool.params) {
     for (const [key, val] of Object.entries(manifest.tool.params)) {

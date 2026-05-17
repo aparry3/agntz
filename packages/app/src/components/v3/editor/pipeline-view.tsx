@@ -8,7 +8,7 @@
 
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { I } from "@/components/v3/icons";
 import {
@@ -40,11 +40,11 @@ import {
   removeStepAt,
   type RootManifest,
 } from "./pipeline-mutations";
-import { EditableNumber, EditableText } from "./editable-fields";
+import { EditableNumber, EditableSelect, EditableText } from "./editable-fields";
 import { ModelPicker } from "./model-picker";
 import { SchemaEditor } from "./schema-editor";
 import { ExamplesEditor, type Example } from "./examples-editor";
-import { ParamsEditor, ToolsEditor, type ToolEntry } from "./tools-editor";
+import { HTTP_METHODS, ParamsEditor, ToolsEditor, type ToolEntry } from "./tools-editor";
 import { getIn, isRecord } from "@/components/agent-builder/pipeline-types";
 import { Popover } from "./editable-fields";
 import { StepPicker, type StepRefPayload } from "./step-picker";
@@ -786,6 +786,7 @@ function PipelineInspector({
             <ToolStepEditor
               agentPath={selected.agentPath}
               rootManifest={rootManifest}
+              catalog={catalog}
               onPatchAgent={onPatchAgent}
             />
           ) : selected.kind === "sequential" && onPatchAgent ? (
@@ -1197,14 +1198,18 @@ function LLMStepEditor({
 }
 
 /* ── ToolStepEditor — editable Tool config for a kind=tool step.
- *    Backing shape is ToolCallConfig: { kind: "local" | "mcp"; server?; name; params? }. */
+ *    Backing shape is ToolCallConfig: { kind: "local" | "mcp" | "http"; ... }.
+ *    When kind=mcp and server matches a catalog entry, the tool name resolves
+ *    from `loadMcpTools()` so users pick from a real list instead of typing. */
 function ToolStepEditor({
   agentPath,
   rootManifest,
+  catalog,
   onPatchAgent,
 }: {
   agentPath: PipelinePath;
   rootManifest: Record<string, unknown>;
+  catalog?: Catalog;
   onPatchAgent: (agentPath: PipelinePath, partial: Record<string, unknown>) => void;
 }) {
   const liveAgent = (() => {
@@ -1213,11 +1218,18 @@ function ToolStepEditor({
   })();
   const description = (liveAgent.description as string | undefined) ?? "";
   const tool = isRecord(liveAgent.tool) ? liveAgent.tool : {};
-  const toolKind: "local" | "mcp" = tool.kind === "mcp" ? "mcp" : "local";
+  const toolKind: "local" | "mcp" | "http" =
+    tool.kind === "mcp" ? "mcp" : tool.kind === "http" ? "http" : "local";
   const toolName = (tool.name as string | undefined) ?? "";
   const toolServer = (tool.server as string | undefined) ?? "";
+  const toolUrl = (tool.url as string | undefined) ?? "";
+  const toolMethod = (tool.method as "GET" | undefined) ?? "GET";
+  const toolDescription = (tool.description as string | undefined) ?? "";
   const toolParams = isRecord(tool.params)
     ? (tool.params as Record<string, string>)
+    : undefined;
+  const toolHeaders = isRecord(tool.headers)
+    ? (tool.headers as Record<string, string>)
     : undefined;
 
   const patchTool = (next: Partial<Record<string, unknown>>) => {
@@ -1228,6 +1240,38 @@ function ToolStepEditor({
     }
     onPatchAgent(agentPath, { tool: merged });
   };
+
+  // Switching kinds clears stale fields so the persisted manifest stays clean.
+  const switchKind = (next: "local" | "mcp" | "http") => {
+    if (next === toolKind) return;
+    patchTool({
+      kind: next,
+      // mcp-only
+      server: next === "mcp" ? toolServer || undefined : undefined,
+      // http-only
+      url: next === "http" ? toolUrl || "" : undefined,
+      method: undefined,
+      description: next === "http" ? toolDescription || undefined : undefined,
+      headers: next === "http" ? toolHeaders : undefined,
+    });
+  };
+
+  // MCP tool resolution — fetch tool list when the server matches a catalog entry.
+  const matchedMcpServer = useMemo(() => {
+    if (toolKind !== "mcp" || !toolServer || !catalog) return null;
+    return catalog.mcpServers.find((s) => s.id === toolServer) ?? null;
+  }, [catalog, toolKind, toolServer]);
+
+  useEffect(() => {
+    if (matchedMcpServer && catalog) {
+      void catalog.loadMcpTools(matchedMcpServer.id);
+    }
+  }, [matchedMcpServer, catalog]);
+
+  const availableMcpTools = matchedMcpServer
+    ? catalog?.mcpToolsByServer[matchedMcpServer.id]
+    : undefined;
+  const mcpToolsLoading = matchedMcpServer != null && availableMcpTools === undefined;
 
   return (
     <InsSection
@@ -1267,18 +1311,13 @@ function ToolStepEditor({
             width: "fit-content",
           }}
         >
-          {(["local", "mcp"] as const).map((k) => {
+          {(["local", "mcp", "http"] as const).map((k) => {
             const on = toolKind === k;
             return (
               <button
                 key={k}
                 type="button"
-                onClick={() =>
-                  patchTool({
-                    kind: k,
-                    server: k === "mcp" ? toolServer || undefined : undefined,
-                  })
-                }
+                onClick={() => switchKind(k)}
                 style={{
                   padding: "4px 10px",
                   borderRadius: 3,
@@ -1298,14 +1337,6 @@ function ToolStepEditor({
         </div>
       </div>
 
-      <EditableText
-        label="Name"
-        value={toolName}
-        onChange={(v) => patchTool({ name: v })}
-        placeholder="tool_name"
-        mono
-      />
-
       {toolKind === "mcp" && (
         <EditableText
           label="Server"
@@ -1316,13 +1347,107 @@ function ToolStepEditor({
         />
       )}
 
+      {toolKind === "mcp" && matchedMcpServer ? (
+        mcpToolsLoading ? (
+          <div>
+            <div
+              style={{
+                fontSize: 10.5,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
+                color: ag.muted,
+                fontWeight: 500,
+                marginBottom: 6,
+              }}
+            >
+              Tool
+            </div>
+            <div style={{ fontSize: 11.5, color: ag.muted }}>Loading tools…</div>
+          </div>
+        ) : availableMcpTools && availableMcpTools.length > 0 ? (
+          <EditableSelect
+            label="Tool"
+            value={toolName}
+            options={[
+              ["", "— pick a tool —"] as const,
+              ...availableMcpTools.map((t) => [t, t] as const),
+            ]}
+            onChange={(v) => patchTool({ name: v })}
+          />
+        ) : (
+          <div>
+            <div
+              style={{
+                fontSize: 10.5,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
+                color: ag.muted,
+                fontWeight: 500,
+                marginBottom: 6,
+              }}
+            >
+              Tool
+            </div>
+            <div style={{ fontSize: 11.5, color: ag.muted }}>
+              This server exposes no tools.
+            </div>
+          </div>
+        )
+      ) : (
+        <EditableText
+          label="Name"
+          value={toolName}
+          onChange={(v) => patchTool({ name: v })}
+          placeholder={toolKind === "http" ? "tool_label" : "tool_name"}
+          mono
+        />
+      )}
+
+      {toolKind === "http" && (
+        <>
+          <EditableText
+            label="URL"
+            value={toolUrl}
+            onChange={(v) => patchTool({ url: v })}
+            placeholder="https://api.example.com/things/{id}"
+            mono
+          />
+          <EditableSelect
+            label="Method"
+            value={toolMethod}
+            options={HTTP_METHODS}
+            onChange={(v) => patchTool({ method: v === "GET" ? undefined : v })}
+          />
+          <EditableText
+            label="Description (shown to the model)"
+            value={toolDescription}
+            onChange={(v) => patchTool({ description: v || undefined })}
+            placeholder="optional"
+            multiline
+            rows={2}
+          />
+          <ParamsEditor
+            label="Headers"
+            value={toolHeaders}
+            onChange={(next) => patchTool({ headers: next })}
+            keyPlaceholder="X-Header-Name"
+            valuePlaceholder="{{secrets.token}}"
+            hint="values support {{secrets.X}}"
+          />
+        </>
+      )}
+
       <ParamsEditor
         label="Pinned params"
         value={toolParams}
         onChange={(next) => patchTool({ params: next })}
         keyPlaceholder="placeholder"
-        valuePlaceholder="{{user_id}}"
-        hint="placeholder → state template"
+        valuePlaceholder={toolKind === "http" ? "{{state.value}}" : "{{user_id}}"}
+        hint={
+          toolKind === "http"
+            ? "URL/query placeholders → state templates"
+            : "placeholder → state template"
+        }
       />
     </InsSection>
   );

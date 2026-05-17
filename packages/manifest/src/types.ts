@@ -129,10 +129,19 @@ export interface ToolAgentManifest extends AgentManifestBase {
 }
 
 export interface ToolCallConfig {
-  kind: "mcp" | "local";
-  server?: string;
+  kind: "mcp" | "local" | "http";
   name: string;
   params?: Record<string, string>;
+  /** mcp only — server id or URL */
+  server?: string;
+  /** http only — endpoint URL; may contain `{X}` / `{X?}` placeholders */
+  url?: string;
+  /** http only — MVP supports GET; typed permissive for future verbs */
+  method?: "GET";
+  /** http only — optional description shown to operators */
+  description?: string;
+  /** http only — header values are state-templated; supports `{{secrets.X}}` */
+  headers?: Record<string, string>;
 }
 
 // ═══════════════════════════════════════════════════════════════════════

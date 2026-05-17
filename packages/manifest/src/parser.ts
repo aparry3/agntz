@@ -132,10 +132,14 @@ function normalizeTool(base: Record<string, unknown>, raw: Record<string, unknow
     ...base,
     kind: "tool",
     tool: {
-      kind: tool.kind as "mcp" | "local",
-      server: tool.server as string | undefined,
+      kind: tool.kind as "mcp" | "local" | "http",
       name: requireString(tool, "name"),
       params: tool.params as Record<string, string> | undefined,
+      server: tool.server as string | undefined,
+      url: tool.url as string | undefined,
+      method: tool.method as "GET" | undefined,
+      description: tool.description as string | undefined,
+      headers: tool.headers as Record<string, string> | undefined,
     },
   } as ToolAgentManifest;
 }
