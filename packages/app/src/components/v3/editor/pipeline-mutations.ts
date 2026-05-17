@@ -9,8 +9,53 @@ import {
   setIn,
   type PipelinePath,
 } from "@/components/agent-builder/pipeline-types";
+import type { SingleAgentManifest } from "./single-agent-view";
 
 export type RootManifest = Record<string, unknown>;
+
+/* ── Convert a single-LLM manifest into a 1-step sequential pipeline ───── */
+
+/**
+ * Wrap a kind=llm manifest in a sequential pipeline with exactly one step.
+ *
+ * The pipeline keeps the original id, name, description, and inputSchema so
+ * the agent's external contract is unchanged. The inner step inherits every
+ * LLM-specific field (model, instruction, prompt, examples, tools, etc.)
+ * and gets a fresh id (`step_1` by default). Each declared input is mapped
+ * verbatim to the new step's input map so templates keep resolving.
+ */
+export function convertSingleAgentToPipeline(
+  manifest: SingleAgentManifest,
+  stepId = "step_1"
+): RootManifest {
+  const stepAgent: Record<string, unknown> = { id: stepId, kind: "llm" };
+  if (manifest.model) stepAgent.model = manifest.model;
+  if (manifest.instruction) stepAgent.instruction = manifest.instruction;
+  if (manifest.prompt) stepAgent.prompt = manifest.prompt;
+  if (manifest.examples?.length) stepAgent.examples = manifest.examples;
+  if (manifest.tools?.length) stepAgent.tools = manifest.tools;
+  if (manifest.outputSchema) stepAgent.outputSchema = manifest.outputSchema;
+  if (manifest.skills?.length) stepAgent.skills = manifest.skills;
+  if (manifest.reply !== undefined) stepAgent.reply = manifest.reply;
+  if (manifest.inputSchema) stepAgent.inputSchema = manifest.inputSchema;
+
+  const step: Record<string, unknown> = { agent: stepAgent };
+  const inputKeys = Object.keys(manifest.inputSchema ?? {});
+  if (inputKeys.length > 0) {
+    const inputMap: Record<string, string> = {};
+    for (const key of inputKeys) inputMap[key] = `{{${key}}}`;
+    step.input = inputMap;
+  }
+
+  const pipeline: RootManifest = { kind: "sequential" };
+  if (manifest.id) pipeline.id = manifest.id;
+  if (manifest.name) pipeline.name = manifest.name;
+  if (manifest.description) pipeline.description = manifest.description;
+  if (manifest.inputSchema) pipeline.inputSchema = manifest.inputSchema;
+  pipeline.steps = [step];
+
+  return pipeline;
+}
 
 /** Container key for root steps — `steps` for sequential, `branches` for parallel. */
 export function containerKeyForKind(kind: unknown): "steps" | "branches" {

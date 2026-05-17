@@ -7,7 +7,9 @@
 
 "use client";
 
-import type { CSSProperties, ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import { convertSingleAgentToPipeline } from "./pipeline-mutations";
 import { I } from "@/components/v3/icons";
 import {
   Btn,
@@ -81,6 +83,16 @@ export function SingleAgentView({
   const counts = `${inputs.length} input${inputs.length === 1 ? "" : "s"} · ${outputs.length} output${
     outputs.length === 1 ? "" : "s"
   } · ${manifest.examples?.length ?? 0} example${manifest.examples?.length === 1 ? "" : "s"}`;
+  const [confirmConvert, setConfirmConvert] = useState(false);
+  const handleConvert = () => {
+    if (!onChange) return;
+    const next = convertSingleAgentToPipeline(manifest);
+    // Cast through unknown — the result is a pipeline manifest but onChange's
+    // typing is keyed to the single-agent shape. The parent re-parses it from
+    // YAML on the next render and the editor swaps to PipelineView.
+    onChange(next as unknown as SingleAgentManifest);
+    setConfirmConvert(false);
+  };
 
   return (
     <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
@@ -162,6 +174,8 @@ export function SingleAgentView({
                 variant="secondary"
                 size="sm"
                 icon={<I.Plus size={11} style={{ marginRight: 5 }} />}
+                onClick={onChange ? () => setConfirmConvert(true) : undefined}
+                disabled={!onChange}
               >
                 Convert to pipeline
               </Btn>
@@ -203,6 +217,14 @@ export function SingleAgentView({
           />
         )}
       </div>
+      <ConfirmDialog
+        open={confirmConvert}
+        title="Convert to a pipeline?"
+        message={`The "${manifest.name ?? manifestId}" agent will become a sequential pipeline with a single inner LLM step. You can then add more steps, fan-out branches, or insert tool calls between them. The agent's id and external inputs stay the same.`}
+        confirmLabel="Convert"
+        onConfirm={handleConvert}
+        onCancel={() => setConfirmConvert(false)}
+      />
     </div>
   );
 }
