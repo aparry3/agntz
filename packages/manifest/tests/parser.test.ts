@@ -318,6 +318,8 @@ spawnable:
   });
 
   it("rejects spawnable ref with malformed version", () => {
+    // Aliases must start with an alphanumeric and contain only [A-Za-z0-9._-];
+    // a leading hyphen is rejected at parse time.
     const yaml = `
 id: orchestrator
 kind: llm
@@ -328,7 +330,7 @@ instruction: "Coordinate."
 spawnable:
   - kind: ref
     agentId: a
-    version: v2
+    version: "-bad"
 `;
     expect(() => parseManifest(yaml)).toThrow(/version/);
   });
@@ -388,7 +390,7 @@ model:
 instruction: "Coordinate."
 tools:
   - kind: agent
-    agent: "helper@v2"
+    agent: "helper@-bad"
 `;
     expect(() => parseManifest(yaml)).toThrow(/agent is invalid/);
   });

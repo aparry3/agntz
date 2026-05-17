@@ -770,6 +770,7 @@ spawnable:
   it("rejects spawnable ref with invalid version string", () => {
     // Malformed version is caught by the parser (during normalizeManifest),
     // which propagates as a structural error with the parser's message.
+    // Aliases may not start with a hyphen.
     const result = validateManifest(`
 id: orchestrator
 kind: llm
@@ -780,7 +781,7 @@ instruction: "Coordinate."
 spawnable:
   - kind: ref
     agentId: a
-    version: not-a-real-version
+    version: "-bad"
 `);
     expect(result.valid).toBe(false);
     expect(result.errors.some(e =>
