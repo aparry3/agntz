@@ -1,34 +1,25 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { parse as parseYAML, stringify as stringifyYAML } from "yaml";
-import { AgentBuilder } from "@/components/agent-builder";
-import { Breadcrumb } from "@/components/breadcrumb";
-import { PanelToggle, type PanelMode } from "@/components/panel-toggle";
-import { ValidationBanner } from "@/components/validation-banner";
+import { CreateLanding } from "@/components/v3/create/landing";
+import { CreateGenerating, type GenerateStep } from "@/components/v3/create/generating";
+import { EditorShell } from "@/components/v3/editor/editor-shell";
+import {
+  SingleAgentView,
+  type SingleAgentManifest,
+  type SingleViewMode,
+} from "@/components/v3/editor/single-agent-view";
+import { PipelineView, type PipelineViewMode } from "@/components/v3/editor/pipeline-view";
 import { YamlEditor } from "@/components/yaml-editor";
 import { useCatalog } from "@/lib/use-catalog";
+import { ag, Mono, Tag } from "@/components/v3/primitives";
+import { I } from "@/components/v3/icons";
 
-interface ValidationError {
-  level: string;
-  path: string;
-  message: string;
-}
+type Phase = "landing" | "generating" | "editor";
 
-interface ValidationWarning {
-  path: string;
-  message: string;
-}
-
-interface ExampleEntry {
-  input: string;
-  output: string;
-}
-
-type EditorMode = PanelMode;
-
-const DEFAULT_MANIFEST = `id: my-agent
+const BLANK_LLM = `id: my-agent
 name: My Agent
 kind: llm
 
@@ -40,578 +31,367 @@ instruction: |
   You are a helpful assistant.
 `;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+const STARTER_TEMPLATES: Record<string, string> = {
+  "blank-llm": BLANK_LLM,
+  rag: `id: rag-agent
+name: RAG over docs
+kind: llm
+
+model:
+  provider: openai
+  name: gpt-5.4
+
+inputSchema:
+  question: string
+
+instruction: |
+  Answer the user's question using the provided context.
+
+  Question: {{question}}
+`,
+  "tool-calling": `id: tool-agent
+name: Tool-calling agent
+kind: llm
+
+model:
+  provider: openai
+  name: gpt-5.4
+
+instruction: |
+  You are a helpful assistant with access to tools.
+`,
+  "multi-agent": `id: multi-agent
+name: Multi-agent pipeline
+kind: sequential
+
+inputSchema:
+  topic: string
+
+steps:
+  - agent:
+      id: planner
+      kind: llm
+      model:
+        provider: openai
+        name: gpt-5.4
+      instruction: |
+        Plan the work for {{topic}}.
+
+  - agent:
+      id: executor
+      kind: llm
+      model:
+        provider: openai
+        name: gpt-5.4
+      instruction: |
+        Execute the plan: {{planner.output}}
+`,
+};
+
+const SIM_STEPS: GenerateStep[] = [
+  { label: "Parsed description", sub: "extracting purpose, inputs, output" },
+  { label: "Choosing agent kind", sub: "single LLM vs pipeline" },
+  { label: "Drafting manifest", sub: "model, instruction, schema" },
+  { label: "Wiring tools and examples", sub: "if applicable" },
+  { label: "Validating draft", sub: "running schema checks" },
+];
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null;
 }
 
 export default function NewAgentPage() {
   const router = useRouter();
-
-  const [manifest, setManifest] = useState("");
-  const [instruction, setInstruction] = useState("");
-  const [agentId, setAgentId] = useState("");
-  const [agentName, setAgentName] = useState("New Agent");
-  const [supportsInstruction, setSupportsInstruction] = useState(false);
-  const [editorMode, setEditorMode] = useState<EditorMode>("build");
   const catalog = useCatalog();
 
-  const [aiPrompt, setAiPrompt] = useState("");
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiError, setAiError] = useState<string | null>(null);
+  const [phase, setPhase] = useState<Phase>("landing");
+  const [prompt, setPrompt] = useState("");
+  const [manifest, setManifest] = useState("");
+  const [view, setView] = useState<SingleViewMode | PipelineViewMode>("build");
+  const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
-  const [errors, setErrors] = useState<ValidationError[]>([]);
-  const [warnings, setWarnings] = useState<ValidationWarning[]>([]);
-  const [status, setStatus] = useState<string | null>(null);
+  // Generating-screen state
+  const [genSteps, setGenSteps] = useState<GenerateStep[]>(SIM_STEPS.map((s) => ({ ...s })));
+  const [genElapsed, setGenElapsed] = useState(0);
+  const startedAtRef = useRef<number>(0);
+  const simIntervalRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
 
-  const [examples, setExamples] = useState<ExampleEntry[]>([]);
-  const [editingExample, setEditingExample] = useState<number | null>(null);
-  const [draftExample, setDraftExample] = useState<ExampleEntry>({ input: "", output: "" });
-  const [newExample, setNewExample] = useState<ExampleEntry | null>(null);
-
-  const applyParsedManifest = useCallback((yaml: string) => {
+  const parsed = useMemo(() => {
+    if (!manifest.trim()) return null;
     try {
-      const parsed = parseYAML(yaml);
-      if (!isRecord(parsed)) return;
-
-      setAgentId(typeof parsed.id === "string" ? parsed.id : "");
-      setAgentName(typeof parsed.name === "string" && parsed.name.trim() ? parsed.name : "New Agent");
-      setInstruction(typeof parsed.instruction === "string" ? parsed.instruction : "");
-      setSupportsInstruction(parsed.kind === "llm");
-
-      if (Array.isArray(parsed.examples)) {
-        setExamples(
-          parsed.examples
-            .filter(isRecord)
-            .map((entry) => ({
-              input: typeof entry.input === "string" ? entry.input : "",
-              output: typeof entry.output === "string" ? entry.output : "",
-            }))
-        );
-      } else {
-        setExamples([]);
-      }
-
-      if (parsed.kind !== "llm") {
-        setEditorMode((mode) => (mode === "instruction" || mode === "both" ? "build" : mode));
-      }
+      const value = parseYAML(manifest);
+      return isRecord(value) ? value : null;
     } catch {
-      // Ignore partial drafts while the YAML is being edited.
+      return null;
     }
+  }, [manifest]);
+
+  const isPipeline = parsed?.kind === "sequential" || parsed?.kind === "parallel";
+  const manifestId = typeof parsed?.id === "string" ? parsed.id : "";
+  const manifestName = typeof parsed?.name === "string" ? parsed.name : manifestId || "New Agent";
+
+  const stopGenerationTimers = useCallback(() => {
+    if (simIntervalRef.current) clearInterval(simIntervalRef.current);
+    simIntervalRef.current = undefined;
   }, []);
 
-  const validateManifest = useCallback(async (yaml: string) => {
-    if (!yaml.trim()) {
-      setErrors([]);
-      setWarnings([]);
-      return;
-    }
+  useEffect(() => stopGenerationTimers, [stopGenerationTimers]);
 
-    try {
-      const res = await fetch("/api/agents/validate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ manifest: yaml }),
+  const startSimulation = useCallback(() => {
+    startedAtRef.current = Date.now();
+    setGenElapsed(0);
+    setGenSteps(SIM_STEPS.map((s, i) => ({ ...s, active: i === 0 })));
+    simIntervalRef.current = setInterval(() => {
+      const elapsed = (Date.now() - startedAtRef.current) / 1000;
+      setGenElapsed(elapsed);
+      // Auto-advance the active step every ~1.2s so the user sees life
+      // even before the API response lands.
+      setGenSteps((current) => {
+        const activeIdx = current.findIndex((s) => s.active);
+        if (activeIdx < 0) return current;
+        if (elapsed > (activeIdx + 1) * 1.2 && activeIdx < current.length - 1) {
+          const next = current.map((s, i) => ({
+            ...s,
+            done: i <= activeIdx,
+            active: i === activeIdx + 1,
+          }));
+          return next;
+        }
+        return current;
       });
-
-      const result = await res.json();
-      setErrors(result.errors ?? []);
-      setWarnings(result.warnings ?? []);
-    } catch {
-      // Ignore validation failures while editing.
-    }
+    }, 200);
   }, []);
-
-  useEffect(() => {
-    if (!manifest) return;
-    const timeout = setTimeout(() => {
-      validateManifest(manifest);
-    }, 400);
-
-    return () => clearTimeout(timeout);
-  }, [manifest, validateManifest]);
-
-  const updateExamplesInManifest = (nextExamples: ExampleEntry[]) => {
-    setExamples(nextExamples);
-    setStatus(null);
-
-    try {
-      const parsed = parseYAML(manifest);
-      if (!isRecord(parsed)) return;
-
-      if (nextExamples.length > 0) {
-        parsed.examples = nextExamples;
-      } else {
-        delete parsed.examples;
-      }
-
-      setManifest(stringifyYAML(parsed, { lineWidth: 0 }));
-    } catch {
-      // Ignore invalid YAML.
-    }
-  };
 
   const handleGenerate = async () => {
-    if (!aiPrompt.trim()) return;
-
-    setAiLoading(true);
-    setAiError(null);
+    if (!prompt.trim()) return;
+    setError(null);
+    setManifest("");
+    setPhase("generating");
+    startSimulation();
 
     try {
       const res = await fetch("/api/agents/build", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ description: aiPrompt }),
+        body: JSON.stringify({ description: prompt }),
       });
-
       const data = await res.json();
       if (!res.ok) {
-        setAiError(data.error ?? "Failed to generate agent");
+        stopGenerationTimers();
+        setError(data.error ?? "Generation failed");
+        setPhase("landing");
         return;
       }
-
-      if (typeof data.yaml === "string") {
-        setManifest(data.yaml);
-        applyParsedManifest(data.yaml);
-        setStatus("Draft generated from AI prompt");
+      if (typeof data.yaml !== "string") {
+        stopGenerationTimers();
+        setError("No manifest returned from the builder");
+        setPhase("landing");
+        return;
       }
-    } catch (error) {
-      setAiError(String(error));
-    } finally {
-      setAiLoading(false);
+      // Finalize all sim steps then hand off to editor.
+      setGenSteps((current) =>
+        current.map((s) => ({ ...s, done: true, active: false }))
+      );
+      stopGenerationTimers();
+      setManifest(data.yaml);
+      setPhase("editor");
+    } catch (err) {
+      stopGenerationTimers();
+      setError(String(err));
+      setPhase("landing");
     }
   };
 
-  const handleUseStarter = () => {
-    setManifest(DEFAULT_MANIFEST);
-    applyParsedManifest(DEFAULT_MANIFEST);
-    setStatus("Starter manifest loaded");
+  const handleBuildManually = () => {
+    setManifest(BLANK_LLM);
+    setPhase("editor");
   };
 
-  const handleInstructionChange = (value: string) => {
-    setInstruction(value);
-    setStatus(null);
+  const handlePickTemplate = (key: string) => {
+    setManifest(STARTER_TEMPLATES[key] ?? BLANK_LLM);
+    setPhase("editor");
+  };
 
+  const handleCancelGenerating = () => {
+    stopGenerationTimers();
+    setPhase("landing");
+  };
+
+  const handleInstructionChange = (next: string) => {
+    if (!parsed) return;
+    const updated = { ...parsed, instruction: next };
     try {
-      const parsed = parseYAML(manifest);
-      if (!isRecord(parsed)) return;
-      parsed.instruction = value;
-      setManifest(stringifyYAML(parsed, { lineWidth: 0 }));
+      setManifest(stringifyYAML(updated, { lineWidth: 0 }));
     } catch {
-      // Ignore invalid YAML while editing instruction text.
+      // Ignore; the YAML pane is the canonical source if this fails.
     }
-  };
-
-  const handleEditExample = (index: number) => {
-    setEditingExample(index);
-    setDraftExample(examples[index]);
-  };
-
-  const handleSaveExample = () => {
-    if (editingExample === null) return;
-    const next = [...examples];
-    next[editingExample] = draftExample;
-    updateExamplesInManifest(next);
-    setEditingExample(null);
-  };
-
-  const handleAddExample = () => {
-    if (!newExample || !newExample.input.trim() || !newExample.output.trim()) return;
-    updateExamplesInManifest([...examples, newExample]);
-    setNewExample(null);
   };
 
   const handleCreate = async () => {
-    const structuralErrors = errors.filter((error) => error.level === "structural");
-    if (!agentId.trim() || !manifest.trim() || structuralErrors.length > 0) {
-      setStatus("Fix validation errors before creating the agent");
+    if (!parsed || !manifestId.trim()) {
+      setError("Manifest needs an id before saving.");
       return;
     }
-
     setCreating(true);
-    setStatus(null);
-
+    setError(null);
     try {
       const res = await fetch("/api/agents", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: agentId.trim(),
-          name: agentName === "New Agent" ? agentId.trim() : agentName,
-          manifest,
-        }),
+        body: JSON.stringify({ id: manifestId, name: manifestName, manifest }),
       });
-
       if (!res.ok) {
         const data = await res.json();
-        setStatus(`Error: ${data.error ?? "Failed to create agent"}`);
+        setError(data.error ?? "Failed to create agent");
         return;
       }
-
-      router.push(`/agents/${agentId.trim()}`);
-    } catch (error) {
-      setStatus(`Error: ${String(error)}`);
+      router.push(`/agents/${manifestId}`);
+    } catch (err) {
+      setError(String(err));
     } finally {
       setCreating(false);
     }
   };
 
-  const hasErrors = errors.length > 0;
-  const currentMode: EditorMode =
-    !supportsInstruction && (editorMode === "instruction" || editorMode === "both")
-      ? "build"
-      : editorMode;
+  if (phase === "landing") {
+    return (
+      <CreateLanding
+        prompt={prompt}
+        onChangePrompt={setPrompt}
+        onGenerate={handleGenerate}
+        onBuildManually={handleBuildManually}
+        onPickTemplate={handlePickTemplate}
+        onCancel={() => router.push("/agents")}
+        error={error}
+      />
+    );
+  }
 
+  if (phase === "generating") {
+    return (
+      <CreateGenerating
+        description={prompt}
+        onStop={handleCancelGenerating}
+        steps={genSteps}
+        elapsedSeconds={genElapsed}
+      />
+    );
+  }
+
+  // phase === "editor"
   return (
-    <div className="mx-auto max-w-6xl">
-      <Breadcrumb items={[{ label: "Agents", href: "/agents" }, { label: "New Agent" }]} />
-
-      <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <h1 className="text-4xl font-semibold tracking-tight text-zinc-950">Create Agent</h1>
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-600">
-            Start with an AI description or a starter manifest, then refine the YAML, instruction text, and examples before creating the agent.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3">
-          {status && (
-            <span
-              className={`rounded-full px-3 py-1.5 text-sm font-medium ${
-                status.startsWith("Error") || status.startsWith("Fix")
-                  ? "bg-red-50 text-red-700"
-                  : "bg-emerald-50 text-emerald-700"
-              }`}
-            >
-              {status}
-            </span>
-          )}
-          <button
-            onClick={handleCreate}
-            disabled={creating || hasErrors || !manifest.trim() || !agentId.trim()}
-            className="rounded-xl bg-zinc-950 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
-          >
-            {creating ? "Creating…" : "Create agent"}
-          </button>
-        </div>
-      </div>
-
-      <div className="space-y-6">
-        <section className="rounded-3xl border border-stone-200 bg-white p-6 shadow-sm">
-          <div className="mb-4">
-            <h2 className="text-sm font-semibold uppercase tracking-[0.24em] text-zinc-500">Make Edits</h2>
-            <p className="mt-2 text-sm text-zinc-600">
-              Describe the agent you want, then generate a first draft. If you prefer, start from the default template instead.
-            </p>
-          </div>
-
-          <textarea
-            value={aiPrompt}
-            onChange={(event) => setAiPrompt(event.target.value)}
-            placeholder="An agent that classifies support tickets by urgency, summarizes the request, and proposes a follow-up..."
-            className="h-32 w-full rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-zinc-400 focus:bg-white"
-          />
-
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={handleGenerate}
-                disabled={aiLoading || !aiPrompt.trim()}
-                className="rounded-xl bg-zinc-950 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
-              >
-                {aiLoading ? "Generating…" : "Generate draft"}
-              </button>
-              <button
-                onClick={handleUseStarter}
-                className="rounded-xl border border-stone-200 bg-white px-4 py-2.5 text-sm font-medium text-zinc-700 transition hover:border-stone-300 hover:bg-stone-50"
-              >
-                Use starter manifest
-              </button>
-            </div>
-
-            {aiError && <p className="text-sm text-red-600">{aiError}</p>}
-          </div>
-        </section>
-
-        <section className="rounded-3xl border border-stone-200 bg-white p-6 shadow-sm">
-          <div className="mb-4">
-            <h2 className="text-sm font-semibold uppercase tracking-[0.24em] text-zinc-500">Status</h2>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <StatusPill label="Validation" value={hasErrors ? "Errors" : warnings.length > 0 ? "Warnings" : "Ready"} tone={hasErrors ? "danger" : warnings.length > 0 ? "warning" : "success"} />
-              <StatusPill label="Panels" value={supportsInstruction ? currentMode : "yaml"} />
-              <StatusPill label="Examples" value={String(examples.length)} />
-            </div>
-          </div>
-
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
-            <div>
-              {manifest ? (
-                <ValidationBanner errors={errors} warnings={warnings} />
-              ) : (
-                <div className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-zinc-500">
-                  Generate or load a starter manifest to begin editing.
-                </div>
-              )}
-            </div>
-
-            <label className="block">
-              <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">Agent ID</span>
-              <input
-                value={agentId}
-                onChange={(event) => setAgentId(event.target.value)}
-                placeholder="my-agent-id"
-                className="w-full rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3 font-mono text-sm outline-none transition focus:border-zinc-400 focus:bg-white"
-              />
-            </label>
-          </div>
-        </section>
-
-        <section className="rounded-3xl border border-stone-200 bg-white p-6 shadow-sm">
-          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="text-sm font-semibold uppercase tracking-[0.24em] text-zinc-500">Agent Definition</h2>
-              <p className="mt-2 text-sm text-zinc-600">
-                Use the form-based builder, edit YAML directly, or work in the instruction panel for LLM agents.
-              </p>
-            </div>
-            <PanelToggle
-              value={currentMode}
-              onChange={(mode) => setEditorMode(mode)}
-              hideInstruction={!supportsInstruction}
+    <EditorShell
+      breadcrumb={["agntz", "Agents", manifestName]}
+      title={manifestName}
+      manifestId={manifestId || "—"}
+      kindTag={
+        <Tag bg={isPipeline ? ag.purpleBg : ag.blueBg} color={isPipeline ? ag.purple : ag.blue} mono>
+          {isPipeline ? (typeof parsed?.kind === "string" ? parsed.kind : "Pipeline") : "LLM"}
+        </Tag>
+      }
+      statusTag={
+        <Tag bg={ag.warnBg} color={ag.warn}>
+          <I.Dot size={6} color={ag.warn} />
+          Draft
+        </Tag>
+      }
+      metaRight={
+        <Mono size={11} color={ag.muted}>
+          unsaved
+        </Mono>
+      }
+      onSave={handleCreate}
+      saving={creating}
+      saveLabel="Create agent"
+    >
+      {error && <ErrorStrip>{error}</ErrorStrip>}
+      {isPipeline ? (
+        <PipelineView
+          rootManifest={parsed!}
+          manifestId={manifestId || "new"}
+          view={view as PipelineViewMode}
+          onChangeView={(v) => setView(v)}
+          yamlPanel={
+            <YamlPanel
+              manifest={manifest}
+              setManifest={setManifest}
+              catalog={catalog}
             />
-          </div>
+          }
+        />
+      ) : (
+        <SingleAgentView
+          manifest={(parsed ?? {}) as SingleAgentManifest}
+          manifestId={manifestId || "new"}
+          view={view as SingleViewMode}
+          onChangeView={(v) => setView(v)}
+          onChangeInstruction={handleInstructionChange}
+          yamlPanel={
+            <YamlPanel
+              manifest={manifest}
+              setManifest={setManifest}
+              catalog={catalog}
+            />
+          }
+        />
+      )}
+    </EditorShell>
+  );
+}
 
-          <div className={currentMode === "both" ? "grid gap-4 xl:grid-cols-2" : "grid gap-4"}>
-            {currentMode === "build" && (
-              <AgentBuilder
-                manifest={manifest}
-                onChange={(nextValue) => {
-                  setManifest(nextValue);
-                  applyParsedManifest(nextValue);
-                  setStatus(null);
-                }}
-                catalog={catalog}
-                idLocked={false}
-              />
-            )}
-
-            {(currentMode === "yaml" || currentMode === "both") && (
-              <div className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
-                <YamlEditor
-                  value={manifest}
-                  onChange={(nextValue) => {
-                    setManifest(nextValue);
-                    applyParsedManifest(nextValue);
-                    setStatus(null);
-                  }}
-                  catalog={catalog}
-                  placeholder="# Write your agent manifest here..."
-                  className={`${
-                    hasErrors
-                      ? "border-red-300"
-                      : warnings.length > 0
-                        ? "border-amber-300"
-                        : "border-stone-200"
-                  }`}
-                />
-              </div>
-            )}
-
-            {(currentMode === "instruction" || currentMode === "both") && supportsInstruction && (
-              <div className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
-                <div className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
-                  Instruction Template
-                </div>
-                <textarea
-                  value={instruction}
-                  onChange={(event) => handleInstructionChange(event.target.value)}
-                  spellCheck={false}
-                  className="h-[32rem] w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 text-sm leading-6 outline-none transition focus:border-zinc-400"
-                />
-              </div>
-            )}
-          </div>
-        </section>
-
-        <section className="rounded-3xl border border-stone-200 bg-white p-6 shadow-sm">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <div>
-              <h2 className="text-sm font-semibold uppercase tracking-[0.24em] text-zinc-500">Examples</h2>
-              <p className="mt-2 text-sm text-zinc-600">
-                Add example conversations or structured input/output pairs before saving the agent.
-              </p>
-            </div>
-            <button
-              onClick={() => setNewExample({ input: "", output: "" })}
-              className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm font-medium text-zinc-700 transition hover:border-stone-300 hover:bg-stone-50"
-            >
-              Add example
-            </button>
-          </div>
-
-          <div className="space-y-3">
-            {examples.length === 0 && !newExample && (
-              <div className="rounded-2xl border border-dashed border-stone-300 bg-stone-50 px-4 py-5 text-sm text-zinc-500">
-                No examples yet.
-              </div>
-            )}
-
-            {examples.map((example, index) => (
-              <div key={`${example.input}-${index}`} className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div className="text-sm font-medium text-zinc-900">Example {index + 1}</div>
-                  <div className="flex gap-2">
-                    {editingExample === index ? (
-                      <>
-                        <button
-                          onClick={handleSaveExample}
-                          className="rounded-lg bg-zinc-950 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-zinc-800"
-                        >
-                          Save
-                        </button>
-                        <button
-                          onClick={() => setEditingExample(null)}
-                          className="rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-white"
-                        >
-                          Cancel
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <button
-                          onClick={() => handleEditExample(index)}
-                          className="rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-white"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => updateExamplesInManifest(examples.filter((_, currentIndex) => currentIndex !== index))}
-                          className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 transition hover:bg-red-50"
-                        >
-                          Delete
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-
-                {editingExample === index ? (
-                  <div className="grid gap-3 lg:grid-cols-2">
-                    <ExampleEditor
-                      label="Input"
-                      value={draftExample.input}
-                      onChange={(value) => setDraftExample((current) => ({ ...current, input: value }))}
-                    />
-                    <ExampleEditor
-                      label="Output"
-                      value={draftExample.output}
-                      onChange={(value) => setDraftExample((current) => ({ ...current, output: value }))}
-                    />
-                  </div>
-                ) : (
-                  <div className="grid gap-3 lg:grid-cols-2">
-                    <ExamplePreview label="Input" value={example.input} />
-                    <ExamplePreview label="Output" value={example.output} />
-                  </div>
-                )}
-              </div>
-            ))}
-
-            {newExample && (
-              <div className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
-                <div className="mb-3 text-sm font-medium text-zinc-900">New example</div>
-                <div className="grid gap-3 lg:grid-cols-2">
-                  <ExampleEditor
-                    label="Input"
-                    value={newExample.input}
-                    onChange={(value) => setNewExample((current) => (current ? { ...current, input: value } : current))}
-                  />
-                  <ExampleEditor
-                    label="Output"
-                    value={newExample.output}
-                    onChange={(value) => setNewExample((current) => (current ? { ...current, output: value } : current))}
-                  />
-                </div>
-                <div className="mt-3 flex gap-2">
-                  <button
-                    onClick={handleAddExample}
-                    disabled={!newExample.input.trim() || !newExample.output.trim()}
-                    className="rounded-lg bg-zinc-950 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
-                  >
-                    Add example
-                  </button>
-                  <button
-                    onClick={() => setNewExample(null)}
-                    className="rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-zinc-600 transition hover:bg-white"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </section>
-
-        <section className="rounded-3xl border border-stone-200 bg-white p-6 shadow-sm">
-          <h2 className="text-sm font-semibold uppercase tracking-[0.24em] text-zinc-500">Versions</h2>
-          <p className="mt-3 text-sm text-zinc-600">
-            Version history appears after the agent is created. Each save on the edit page adds a new version to the top of the list.
-          </p>
-        </section>
-      </div>
+function ErrorStrip({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        padding: "8px 28px",
+        background: "#FBEFEA",
+        borderBottom: `1px solid ${ag.line2}`,
+        color: ag.danger,
+        fontSize: 12,
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+      }}
+    >
+      <I.X size={11} />
+      {children}
     </div>
   );
 }
 
-function StatusPill({
-  label,
-  value,
-  tone = "neutral",
+function YamlPanel({
+  manifest,
+  setManifest,
+  catalog,
 }: {
-  label: string;
-  value: string;
-  tone?: "neutral" | "success" | "warning" | "danger";
-}) {
-  const toneClasses = {
-    neutral: "bg-stone-100 text-zinc-700",
-    success: "bg-emerald-50 text-emerald-700",
-    warning: "bg-amber-50 text-amber-700",
-    danger: "bg-red-50 text-red-700",
-  };
-
-  return (
-    <span className={`rounded-full px-3 py-1.5 text-xs font-medium ${toneClasses[tone]}`}>
-      {label}: {value}
-    </span>
-  );
-}
-
-function ExampleEditor({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
+  manifest: string;
+  setManifest: (v: string) => void;
+  catalog: ReturnType<typeof useCatalog>;
 }) {
   return (
-    <label className="block">
-      <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">{label}</span>
-      <textarea
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="h-32 w-full rounded-2xl border border-stone-200 bg-white px-4 py-3 font-mono text-sm outline-none transition focus:border-zinc-400"
-      />
-    </label>
-  );
-}
-
-function ExamplePreview({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-2xl border border-stone-200 bg-white p-4">
-      <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">{label}</div>
-      <pre className="whitespace-pre-wrap break-words font-mono text-sm leading-6 text-zinc-700">{value}</pre>
+    <div
+      style={{
+        padding: 16,
+        background: ag.surface,
+        borderRight: `1px solid ${ag.line2}`,
+        minHeight: 0,
+        overflow: "auto",
+      }}
+    >
+      <div
+        style={{
+          fontSize: 10.5,
+          letterSpacing: "0.08em",
+          textTransform: "uppercase",
+          color: ag.muted,
+          fontWeight: 500,
+          marginBottom: 8,
+        }}
+      >
+        Manifest
+      </div>
+      <YamlEditor value={manifest} onChange={setManifest} catalog={catalog} />
     </div>
   );
 }

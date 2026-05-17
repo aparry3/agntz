@@ -1,8 +1,21 @@
 import type { Metadata } from "next";
+import { Geist, Geist_Mono } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { auth } from "@clerk/nextjs/server";
 import "./globals.css";
 import { AppSidebar } from "@/components/app-sidebar";
+
+const geist = Geist({
+  subsets: ["latin"],
+  variable: "--font-geist",
+  weight: ["300", "400", "500", "600", "700"],
+});
+
+const geistMono = Geist_Mono({
+  subsets: ["latin"],
+  variable: "--font-geist-mono",
+  weight: ["400", "500", "600"],
+});
 
 export const metadata: Metadata = {
   title: "agntz",
@@ -18,16 +31,12 @@ export default async function RootLayout({
 
   return (
     <ClerkProvider>
-      <html lang="en">
-        <body className="min-h-screen bg-stone-100 text-zinc-900 antialiased">
+      <html lang="en" className={`${geist.variable} ${geistMono.variable}`}>
+        <body className="min-h-screen bg-ag-bg text-ag-ink antialiased">
           {userId ? (
             <div className="min-h-screen lg:flex">
               <AppSidebar />
-              <main className="flex-1">
-                <div className="mx-auto min-h-screen max-w-7xl px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
-                  {children}
-                </div>
-              </main>
+              <main className="flex-1 min-w-0">{children}</main>
             </div>
           ) : (
             children
