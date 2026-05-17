@@ -6,10 +6,30 @@ import { Btn, Label, Mono, Tag, ag } from "@/components/v3/primitives";
 import { EditorShell } from "@/components/v3/editor/editor-shell";
 import { Field, InsSection, ToolBlock, ToolRow } from "@/components/v3/editor/inspector-bits";
 
+export type HTTPMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
+
+/** Structural mirror of @agntz/manifest's HTTPToolEntry. Defined locally to
+ *  avoid pulling the manifest package into the app bundle. */
+export interface HTTPToolEntry {
+  kind: "http";
+  /** Becomes `http__<name>` for the model. Must be a programming identifier. */
+  name: string;
+  /** Endpoint URL. May contain `{X}` (required) or `{X?}` (optional) placeholders. */
+  url: string;
+  /** Method. MVP runtime accepts GET only; the others are stored for forward-compat. */
+  method?: HTTPMethod;
+  description?: string;
+  /** Pinned URL placeholders (state templates). */
+  params?: Record<string, string>;
+  /** HTTP headers. Values may reference `{{secrets.X}}`. */
+  headers?: Record<string, string>;
+}
+
 export type ToolRef =
   | { type: "inline"; name: string }
   | { type: "mcp"; server: string; tools?: string[] }
-  | { type: "agent"; agentId: string };
+  | { type: "agent"; agentId: string }
+  | { type: "http"; entry: HTTPToolEntry };
 
 export interface SkillDraft {
   name: string;
@@ -80,6 +100,12 @@ export function SkillEditor({
       if (t.type === "inline" && !t.name.trim()) return `Tool #${i + 1}: name required.`;
       if (t.type === "mcp" && !t.server.trim()) return `Tool #${i + 1}: server required.`;
       if (t.type === "agent" && !t.agentId.trim()) return `Tool #${i + 1}: agentId required.`;
+      if (t.type === "http") {
+        if (!t.entry.name.trim()) return `Tool #${i + 1}: HTTP tool name required.`;
+        if (!/^https?:\/\//.test(t.entry.url.trim())) {
+          return `Tool #${i + 1}: HTTP url must start with http:// or https://.`;
+        }
+      }
     }
     return null;
   };
@@ -509,7 +535,9 @@ function Inspector({
         ? { type: "inline", name: "" }
         : kind === "mcp"
         ? { type: "mcp", server: "", tools: [] }
-        : { type: "agent", agentId: "" };
+        : kind === "agent"
+        ? { type: "agent", agentId: "" }
+        : { type: "http", entry: { kind: "http", name: "", url: "" } };
     onToolsChange([...tools, blank]);
   };
 
@@ -673,7 +701,14 @@ function EditableToolBlock({
     inline: { kind: "local" as const, label: "local" },
     mcp: { kind: "mcp" as const, label: "MCP" },
     agent: { kind: "agent" as const, label: "agent" },
+    http: { kind: "http" as const, label: "HTTP" },
   }[tool.type];
+  const palette = {
+    local: { bg: ag.blueBg, fg: ag.blue },
+    mcp: { bg: ag.purpleBg, fg: ag.purple },
+    agent: { bg: ag.okBg, fg: ag.ok },
+    http: { bg: ag.warnBg, fg: ag.warn },
+  }[kindMeta.kind];
 
   const headerRight = (
     <button
@@ -710,18 +745,8 @@ function EditableToolBlock({
       >
         <span
           style={{
-            background:
-              kindMeta.kind === "mcp"
-                ? ag.purpleBg
-                : kindMeta.kind === "agent"
-                ? ag.okBg
-                : ag.blueBg,
-            color:
-              kindMeta.kind === "mcp"
-                ? ag.purple
-                : kindMeta.kind === "agent"
-                ? ag.ok
-                : ag.blue,
+            background: palette.bg,
+            color: palette.fg,
             padding: "2px 6px",
             borderRadius: 3,
             fontSize: 10.5,
@@ -731,6 +756,21 @@ function EditableToolBlock({
         >
           {kindMeta.label}
         </span>
+        {tool.type === "http" && tool.entry.url && (
+          <Mono
+            size={10.5}
+            color={ag.muted}
+            style={{
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              flex: 1,
+              minWidth: 0,
+            }}
+          >
+            {`${tool.entry.method ?? "GET"} ${tool.entry.url}`}
+          </Mono>
+        )}
         <div style={{ flex: 1 }} />
         {headerRight}
       </div>
@@ -778,7 +818,233 @@ function EditableToolBlock({
             style={inputStyle({ mono: true, small: true })}
           />
         )}
+        {tool.type === "http" && (
+          <HTTPToolFields
+            entry={tool.entry}
+            onChange={(next) => onChange({ type: "http", entry: next })}
+          />
+        )}
       </div>
+    </div>
+  );
+}
+
+const HTTP_METHODS: HTTPMethod[] = ["GET", "POST", "PUT", "DELETE", "PATCH"];
+
+function HTTPToolFields({
+  entry,
+  onChange,
+}: {
+  entry: HTTPToolEntry;
+  onChange: (next: HTTPToolEntry) => void;
+}) {
+  const patch = (partial: Partial<HTTPToolEntry>) => onChange({ ...entry, ...partial });
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <FieldLabel>Name</FieldLabel>
+      <input
+        value={entry.name}
+        onChange={(e) => patch({ name: e.target.value })}
+        placeholder="my_tool_name"
+        style={inputStyle({ mono: true, small: true })}
+      />
+
+      <div style={{ display: "grid", gridTemplateColumns: "82px 1fr", gap: 6 }}>
+        <div>
+          <FieldLabel>Method</FieldLabel>
+          <select
+            value={entry.method ?? "GET"}
+            onChange={(e) =>
+              patch({
+                method: e.target.value === "GET" ? undefined : (e.target.value as HTTPMethod),
+              })
+            }
+            style={{ ...inputStyle({ mono: true, small: true }), paddingRight: 4 }}
+          >
+            {HTTP_METHODS.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <FieldLabel>URL</FieldLabel>
+          <input
+            value={entry.url}
+            onChange={(e) => patch({ url: e.target.value })}
+            placeholder="https://api.example.com/things/{id}"
+            style={inputStyle({ mono: true, small: true })}
+          />
+        </div>
+      </div>
+
+      <FieldLabel hint="Shown to the model">Description</FieldLabel>
+      <input
+        value={entry.description ?? ""}
+        onChange={(e) => patch({ description: e.target.value || undefined })}
+        placeholder="optional"
+        style={inputStyle({ small: true })}
+      />
+
+      <KeyValueEditor
+        label="Headers"
+        hint="values may reference {{secrets.X}}"
+        addLabel="+ Add header"
+        keyPlaceholder="Authorization"
+        valuePlaceholder="Bearer {{secrets.api_key}}"
+        value={entry.headers}
+        onChange={(next) => patch({ headers: next })}
+      />
+
+      <KeyValueEditor
+        label="Pinned params"
+        hint="placeholder name → state template"
+        addLabel="+ Pin param"
+        keyPlaceholder="id"
+        valuePlaceholder="{{user_id}}"
+        value={entry.params}
+        onChange={(next) => patch({ params: next })}
+      />
+    </div>
+  );
+}
+
+function FieldLabel({ children, hint }: { children: ReactNode; hint?: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginTop: 2 }}>
+      <Mono size={10} color={ag.muted} style={{ textTransform: "uppercase", letterSpacing: "0.08em" }}>
+        {children}
+      </Mono>
+      {hint && (
+        <Mono size={10} color={ag.muted}>
+          · {hint}
+        </Mono>
+      )}
+    </div>
+  );
+}
+
+function KeyValueEditor({
+  label,
+  hint,
+  addLabel,
+  keyPlaceholder,
+  valuePlaceholder,
+  value,
+  onChange,
+}: {
+  label: string;
+  hint?: string;
+  addLabel: string;
+  keyPlaceholder: string;
+  valuePlaceholder: string;
+  value: Record<string, string> | undefined;
+  onChange: (next: Record<string, string> | undefined) => void;
+}) {
+  const entries = useMemo(() => Object.entries(value ?? {}), [value]);
+
+  const commit = (rows: Array<[string, string]>) => {
+    // Drop empty-key rows entirely on commit. Allow blank values (header
+    // values can be templated later); but a missing key is unusable.
+    const obj: Record<string, string> = {};
+    let hasAny = false;
+    for (const [k, v] of rows) {
+      const key = k.trim();
+      if (!key) continue;
+      obj[key] = v;
+      hasAny = true;
+    }
+    onChange(hasAny ? obj : undefined);
+  };
+
+  const updateKey = (idx: number, key: string) => {
+    const next = entries.map(([k, v], i): [string, string] => (i === idx ? [key, v] : [k, v]));
+    commit(next);
+  };
+  const updateVal = (idx: number, val: string) => {
+    const next = entries.map(([k, v], i): [string, string] => (i === idx ? [k, val] : [k, v]));
+    commit(next);
+  };
+  const removeRow = (idx: number) => {
+    commit(entries.filter((_, i) => i !== idx));
+  };
+  const addRow = () => {
+    // Avoid duplicate empty keys — only append a new blank if there isn't one already.
+    if (entries.some(([k]) => k === "")) return;
+    commit([...entries, ["", ""]]);
+  };
+
+  return (
+    <div>
+      <FieldLabel hint={hint}>{label}</FieldLabel>
+      {entries.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
+          {entries.map(([k, v], i) => (
+            <div
+              key={i}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.4fr) 22px",
+                gap: 4,
+                alignItems: "center",
+              }}
+            >
+              <input
+                value={k}
+                onChange={(e) => updateKey(i, e.target.value)}
+                placeholder={keyPlaceholder}
+                style={inputStyle({ mono: true, small: true })}
+              />
+              <input
+                value={v}
+                onChange={(e) => updateVal(i, e.target.value)}
+                placeholder={valuePlaceholder}
+                style={inputStyle({ mono: true, small: true })}
+              />
+              <button
+                type="button"
+                onClick={() => removeRow(i)}
+                title="Remove"
+                style={{
+                  border: "1px solid transparent",
+                  background: "transparent",
+                  color: ag.muted,
+                  cursor: "pointer",
+                  borderRadius: 3,
+                  padding: 2,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontFamily: "inherit",
+                }}
+              >
+                <I.X size={10} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={addRow}
+        style={{
+          marginTop: 4,
+          padding: "4px 8px",
+          border: `1px dashed ${ag.line}`,
+          borderRadius: 4,
+          background: "transparent",
+          color: ag.text2,
+          fontSize: 11,
+          fontFamily: "var(--font-mono)",
+          cursor: "pointer",
+          textAlign: "left",
+          width: "100%",
+        }}
+      >
+        {addLabel}
+      </button>
     </div>
   );
 }
@@ -829,6 +1095,7 @@ function AddToolMenu({ onAdd }: { onAdd: (kind: ToolRef["type"]) => void }) {
               ["inline", "Inline / local tool"],
               ["mcp", "MCP server"],
               ["agent", "Agent as tool"],
+              ["http", "HTTP endpoint"],
             ] as Array<[ToolRef["type"], string]>
           ).map(([kind, label]) => (
             <button
