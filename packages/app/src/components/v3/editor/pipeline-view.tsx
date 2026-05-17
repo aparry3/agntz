@@ -2,13 +2,13 @@
 // graph shows each step (numbered), a loop badge when relevant, and the
 // inspector switches its contents based on the selected step.
 //
-// Like SingleAgentView, this is largely display + simple inline-edit of the
-// selected step's instruction. Heavier wiring (drag-to-reorder, full input
-// mapping edit, etc.) is deferred to a follow-up.
+// Phase 5 added step add/remove/move at the root level and interactive
+// input-map chips for child steps. Deeper-nested steps still navigate-only
+// and require YAML for structural edits.
 
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { I } from "@/components/v3/icons";
 import {
@@ -17,25 +17,30 @@ import {
   Mono,
   NodeIO,
   Tag,
+  VarHl,
   ag,
 } from "@/components/v3/primitives";
+import type { Catalog } from "@/lib/use-catalog";
 import { GraphPanel, GraphValidates } from "./graph-panel";
 import { PipelineStep, type StepField } from "./pipeline-step";
-import {
-  BindRow,
-  DashedAdd,
-  Field,
-  FooterHint,
-  InsSection,
-  StateLine,
-  SubBlock,
-} from "./inspector-bits";
+import { Field, FooterHint, InsSection, StateLine, SubBlock } from "./inspector-bits";
 import {
   computeAvailableStateAt,
   nodeFromAgent,
   type PipelineNode,
+  type PipelinePath,
   type StateRef,
 } from "@/components/agent-builder/pipeline-types";
+import {
+  appendStepAtRoot,
+  containerKeyForKind,
+  moveStepAt,
+  patchStepInputMap,
+  removeStepAt,
+  type RootManifest,
+} from "./pipeline-mutations";
+import { Popover } from "./editable-fields";
+import { StepPicker, type StepRefPayload } from "./step-picker";
 
 export type PipelineViewMode = "build" | "yaml" | "instruction" | "both";
 
@@ -45,6 +50,7 @@ export function PipelineView({
   view,
   onChangeView,
   onChange,
+  catalog,
   yamlPanel,
 }: {
   rootManifest: Record<string, unknown>;
@@ -54,6 +60,8 @@ export function PipelineView({
   /** Generic patcher — receives a fully-formed next root manifest. Used by
    *  Phase 2+ pipeline editors (root description/model, step add/delete, etc.). */
   onChange?: (next: Record<string, unknown>) => void;
+  /** Workspace catalog — passed to the step picker for agent references. */
+  catalog?: Catalog;
   yamlPanel?: ReactNode;
 }) {
   const root = useMemo<PipelineNode>(
@@ -71,6 +79,31 @@ export function PipelineView({
     () => computeAvailableStateAt(root, selectedNode.id),
     [root, selectedNode.id]
   );
+
+  const handleAddStep = (payload: StepRefPayload) => {
+    if (!onChange) return;
+    const next = appendStepAtRoot(rootManifest as RootManifest, payload as Record<string, unknown>);
+    onChange(next);
+  };
+
+  const handleRemoveSelected = () => {
+    if (!onChange || !selectedNode.stepPath) return;
+    const next = removeStepAt(rootManifest as RootManifest, selectedNode.stepPath);
+    onChange(next);
+    setSelectedId(root.id);
+  };
+
+  const handleMoveSelected = (delta: -1 | 1) => {
+    if (!onChange || !selectedNode.stepPath) return;
+    const next = moveStepAt(rootManifest as RootManifest, selectedNode.stepPath, delta);
+    onChange(next);
+  };
+
+  const handleInputMap = (stepPath: PipelinePath, key: string, value: string | undefined) => {
+    if (!onChange) return;
+    const next = patchStepInputMap(rootManifest as RootManifest, stepPath, key, value);
+    onChange(next);
+  };
 
   return (
     <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
@@ -154,9 +187,12 @@ export function PipelineView({
         {(view === "build" || view === "instruction" || view === "both") && (
           <PipelineGraph
             root={root}
+            rootManifest={rootManifest}
             selectedId={selectedId}
             onSelect={setSelectedId}
             flatSteps={flatSteps}
+            catalog={catalog}
+            onAddStep={handleAddStep}
           />
         )}
 
@@ -167,6 +203,11 @@ export function PipelineView({
             root={root}
             selected={selectedNode}
             availableState={availableState.keys}
+            onRemoveSelected={onChange && selectedNode.stepPath ? handleRemoveSelected : undefined}
+            onMoveSelected={onChange && selectedNode.stepPath ? handleMoveSelected : undefined}
+            onPatchInputMap={onChange ? handleInputMap : undefined}
+            canMoveUp={canMove(rootManifest, selectedNode, -1)}
+            canMoveDown={canMove(rootManifest, selectedNode, 1)}
           />
         )}
       </div>
@@ -181,21 +222,44 @@ function flatten(node: PipelineNode): PipelineNode[] {
   return out;
 }
 
+function canMove(rootManifest: Record<string, unknown>, node: PipelineNode, delta: -1 | 1): boolean {
+  if (!node.stepPath || node.stepPath.length === 0) return false;
+  const lastSeg = node.stepPath[node.stepPath.length - 1];
+  if (typeof lastSeg !== "number") return false;
+  const containerKey = node.stepPath.length === 2 ? containerKeyForKind(rootManifest.kind) : null;
+  // We only support moving within the root container in this round. Nested
+  // steps fall through and disable the arrows.
+  if (!containerKey) return false;
+  const container = rootManifest[containerKey];
+  if (!Array.isArray(container)) return false;
+  const newIdx = lastSeg + delta;
+  return newIdx >= 0 && newIdx < container.length;
+}
+
 /* ── Graph panel populated with the parsed step tree ───────────────────── */
 function PipelineGraph({
   root,
+  rootManifest,
   selectedId,
   onSelect,
   flatSteps,
+  catalog,
+  onAddStep,
 }: {
   root: PipelineNode;
+  rootManifest: Record<string, unknown>;
   selectedId: string;
   onSelect: (id: string) => void;
   flatSteps: PipelineNode[];
+  catalog?: Catalog;
+  onAddStep: (step: StepRefPayload) => void;
 }) {
   const children = root.steps ?? root.branches ?? [];
   const inputs = (root.inputSchema ?? []).map((f) => f.key);
   const childIds = children.map((c) => c.id);
+
+  const addRef = useRef<HTMLButtonElement>(null);
+  const [addOpen, setAddOpen] = useState(false);
 
   const loopBadge = root.isLoop && root.loop?.until ? (
     <div
@@ -218,22 +282,22 @@ function PipelineGraph({
     </div>
   ) : null;
 
+  const containerKey = containerKeyForKind(rootManifest.kind);
+  const nextStepIndex = (rootManifest[containerKey] as unknown[] | undefined)?.length ?? 0;
+
   return (
     <GraphPanel
       topLeftExtra={loopBadge}
       topRight={
-        <>
-          <Btn
-            variant="secondary"
-            size="sm"
-            icon={<I.Plus size={11} style={{ marginRight: 5 }} />}
-          >
-            Add step
-          </Btn>
-          <Btn variant="secondary" size="sm">
-            Layout: vertical
-          </Btn>
-        </>
+        <Btn
+          ref={addRef}
+          variant="secondary"
+          size="sm"
+          icon={<I.Plus size={11} style={{ marginRight: 5 }} />}
+          onClick={() => setAddOpen((o) => !o)}
+        >
+          Add step
+        </Btn>
       }
       status={
         <>
@@ -267,6 +331,18 @@ function PipelineGraph({
         ))
       )}
       <NodeIO label="OUTPUT" sub={childIds.length ? `composed from ${childIds.join(" · ")}` : "—"} />
+      <Popover open={addOpen} onClose={() => setAddOpen(false)} anchorRef={addRef} width={320}>
+        <StepPicker
+          agents={catalog?.agents ?? []}
+          currentAgentId={typeof rootManifest.id === "string" ? rootManifest.id : undefined}
+          nextStepIndex={nextStepIndex + 1}
+          onCancel={() => setAddOpen(false)}
+          onAdd={(payload) => {
+            onAddStep(payload);
+            setAddOpen(false);
+          }}
+        />
+      </Popover>
     </GraphPanel>
   );
 }
@@ -315,10 +391,20 @@ function PipelineInspector({
   root,
   selected,
   availableState,
+  onRemoveSelected,
+  onMoveSelected,
+  onPatchInputMap,
+  canMoveUp,
+  canMoveDown,
 }: {
   root: PipelineNode;
   selected: PipelineNode;
   availableState: StateRef[];
+  onRemoveSelected?: () => void;
+  onMoveSelected?: (delta: -1 | 1) => void;
+  onPatchInputMap?: (stepPath: PipelinePath, key: string, value: string | undefined) => void;
+  canMoveUp?: boolean;
+  canMoveDown?: boolean;
 }) {
   const inputs = (selected.inputSchema ?? []).map((f) => ({
     name: f.key,
@@ -366,6 +452,48 @@ function PipelineInspector({
             {selected.id}
           </Mono>
         </div>
+        {selected.id !== root.id && (onRemoveSelected || onMoveSelected) && (
+          <div style={{ display: "flex", gap: 6, marginTop: 8, alignItems: "center" }}>
+            <StepHeaderBtn
+              title="Move step up"
+              disabled={!canMoveUp}
+              onClick={() => onMoveSelected?.(-1)}
+            >
+              <I.Chev size={11} style={{ transform: "rotate(180deg)" }} />
+            </StepHeaderBtn>
+            <StepHeaderBtn
+              title="Move step down"
+              disabled={!canMoveDown}
+              onClick={() => onMoveSelected?.(1)}
+            >
+              <I.Chev size={11} />
+            </StepHeaderBtn>
+            <div style={{ flex: 1 }} />
+            {onRemoveSelected && (
+              <button
+                type="button"
+                onClick={onRemoveSelected}
+                title="Remove step"
+                style={{
+                  border: `1px solid ${ag.line}`,
+                  background: ag.surface2,
+                  color: ag.danger,
+                  cursor: "pointer",
+                  borderRadius: 4,
+                  padding: "3px 8px",
+                  fontSize: 11.5,
+                  fontFamily: "inherit",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 4,
+                }}
+              >
+                <I.X size={10} />
+                Remove
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       <div style={{ flex: 1, overflow: "auto" }}>
@@ -406,28 +534,32 @@ function PipelineInspector({
             ) : (
               inputs.map((f, i) => {
                 const wired = inputMap[f.name];
-                const binding = wired
-                  ? {
-                      kind: "var" as const,
-                      label: wired.replace(/^\{\{|\}\}$/g, ""),
-                    }
-                  : selected.id === root.id
-                    ? { kind: "caller" as const, label: "from caller" }
-                    : { kind: "literal" as const, label: "unbound" };
+                const isRoot = selected.id === root.id;
                 return (
-                  <BindRow
+                  <PipelineBindRow
                     key={f.name}
                     target={f.name}
                     type={f.type}
                     required={f.required}
-                    binding={binding}
+                    wired={wired}
+                    isRoot={isRoot}
+                    availableState={availableState}
                     last={i === inputs.length - 1}
+                    onBind={
+                      onPatchInputMap && !isRoot && selected.stepPath
+                        ? (value) => onPatchInputMap(selected.stepPath!, f.name, value)
+                        : undefined
+                    }
                   />
                 );
               })
             )}
           </div>
-          <DashedAdd>+ Map input</DashedAdd>
+          {selected.id !== root.id && (
+            <Mono size={10.5} color={ag.muted} style={{ marginTop: 6, display: "inline-block" }}>
+              Click any binding chip to wire it to upstream state.
+            </Mono>
+          )}
         </div>
 
         {/* Available state */}
@@ -452,7 +584,7 @@ function PipelineInspector({
               Available state
             </div>
             <Mono size={10} color={ag.muted}>
-              click to map →
+              click a chip above →
             </Mono>
           </div>
           <div
@@ -536,3 +668,221 @@ function PipelineInspector({
     </aside>
   );
 }
+
+function StepHeaderBtn({
+  title,
+  disabled,
+  onClick,
+  children,
+}: {
+  title: string;
+  disabled?: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      disabled={disabled}
+      onClick={onClick}
+      style={{
+        border: `1px solid ${ag.line}`,
+        background: ag.surface2,
+        color: disabled ? ag.muted : ag.text2,
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.5 : 1,
+        borderRadius: 4,
+        width: 22,
+        height: 22,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 0,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+/* ── Interactive input-mapping row for the pipeline inspector ──────────── */
+
+function PipelineBindRow({
+  target,
+  type,
+  required,
+  wired,
+  isRoot,
+  availableState,
+  last,
+  onBind,
+}: {
+  target: string;
+  type: string;
+  required?: boolean;
+  wired: string | undefined;
+  isRoot: boolean;
+  availableState: StateRef[];
+  last?: boolean;
+  onBind?: (value: string | undefined) => void;
+}) {
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+
+  const interactive = !!onBind && !isRoot;
+  const chip = wired
+    ? { label: wired.replace(/^\{\{|\}\}$/g, ""), bg: ag.warnBg, fg: ag.warn, isVar: true }
+    : isRoot
+      ? { label: "from caller", bg: ag.line2, fg: ag.text2, isVar: false }
+      : { label: "unbound", bg: ag.bg, fg: ag.text2, isVar: false };
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "minmax(80px, 1fr) auto 1fr",
+        padding: "7px 10px",
+        gap: 8,
+        alignItems: "center",
+        fontSize: 12,
+        borderBottom: last ? "0" : `1px solid ${ag.line2}`,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+        <Mono size={12}>{target}</Mono>
+        {required && (
+          <span title="required" style={{ color: ag.warn, fontSize: 10 }}>
+            •
+          </span>
+        )}
+        <Mono size={10.5} color={ag.muted}>
+          {type}
+        </Mono>
+      </div>
+      <I.ArrowR size={11} style={{ color: ag.muted, transform: "rotate(180deg)" }} />
+      <button
+        ref={triggerRef}
+        type="button"
+        disabled={!interactive}
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 5,
+          padding: "2px 6px",
+          background: chip.bg,
+          border: "1px solid transparent",
+          borderRadius: 3,
+          cursor: interactive ? "pointer" : "default",
+          minWidth: 0,
+          overflow: "hidden",
+          fontFamily: "inherit",
+          opacity: interactive ? 1 : 0.85,
+        }}
+      >
+        {chip.isVar ? (
+          <VarHl>
+            <Mono size={11}>{chip.label}</Mono>
+          </VarHl>
+        ) : (
+          <Mono
+            size={10.5}
+            color={chip.fg}
+            style={{
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              fontWeight: 500,
+            }}
+          >
+            {chip.label}
+          </Mono>
+        )}
+        {interactive && (
+          <I.Chev size={9} style={{ color: chip.fg, marginLeft: "auto", flex: "0 0 auto", opacity: 0.7 }} />
+        )}
+      </button>
+      {interactive && (
+        <Popover open={open} onClose={() => setOpen(false)} anchorRef={triggerRef} width={260}>
+          <div style={{ padding: 6 }}>
+            <div style={{ padding: "4px 8px 6px", fontSize: 10.5, color: ag.muted, fontFamily: "var(--font-mono)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+              Available state
+            </div>
+            {availableState.length === 0 ? (
+              <div style={{ padding: 10, fontSize: 11.5, color: ag.muted, textAlign: "center" }}>
+                Nothing in scope yet.
+              </div>
+            ) : (
+              availableState.map((s) => (
+                <button
+                  key={s.key}
+                  type="button"
+                  onClick={() => {
+                    onBind?.(`{{${s.key}}}`);
+                    setOpen(false);
+                  }}
+                  style={{
+                    display: "flex",
+                    width: "100%",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "5px 8px",
+                    border: 0,
+                    background: "transparent",
+                    cursor: "pointer",
+                    borderRadius: 3,
+                    fontFamily: "var(--font-mono)",
+                    fontSize: 11.5,
+                    color: ag.ink,
+                    textAlign: "left",
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = ag.surfaceWarm)}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                >
+                  <span style={{ background: ag.warnBg, color: ag.warn, borderRadius: 2, padding: "0 4px" }}>
+                    {`{{${s.key}}}`}
+                  </span>
+                  <span style={{ flex: 1 }} />
+                  <Mono size={10} color={ag.muted}>
+                    {s.type}
+                  </Mono>
+                </button>
+              ))
+            )}
+            {wired && (
+              <>
+                <div style={{ height: 1, background: ag.line2, margin: "6px 4px" }} />
+                <button
+                  type="button"
+                  onClick={() => {
+                    onBind?.(undefined);
+                    setOpen(false);
+                  }}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    padding: "5px 8px",
+                    border: 0,
+                    background: "transparent",
+                    cursor: "pointer",
+                    borderRadius: 3,
+                    fontSize: 11.5,
+                    color: ag.danger,
+                    textAlign: "left",
+                    fontFamily: "inherit",
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = ag.surfaceWarm)}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                >
+                  Unbind
+                </button>
+              </>
+            )}
+          </div>
+        </Popover>
+      )}
+    </div>
+  );
+}
+

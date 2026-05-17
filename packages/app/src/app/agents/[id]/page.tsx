@@ -186,6 +186,7 @@ export default function AgentEditorPage() {
           view={view as PipelineViewMode}
           onChangeView={(v) => setView(v)}
           onChange={handleManifestChange}
+          catalog={catalog}
           yamlPanel={<YamlPanel manifest={manifest} setManifest={setManifest} catalog={catalog} />}
         />
       ) : (

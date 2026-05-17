@@ -311,6 +311,7 @@ export default function NewAgentPage() {
           view={view as PipelineViewMode}
           onChangeView={(v) => setView(v)}
           onChange={handleManifestChange}
+          catalog={catalog}
           yamlPanel={
             <YamlPanel
               manifest={manifest}
