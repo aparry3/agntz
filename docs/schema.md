@@ -107,7 +107,10 @@ model:
   topP: 1.0                         # optional
 
 instruction: |
-  Analyze the sentiment of the following text: {{text}}
+  Analyze the sentiment of the following text. Be precise and concise.
+
+prompt: |                            # optional user-message template
+  Classify the sentiment of: {{text}}
 
 examples:                            # few-shot examples (optional)
   - input: "I love this product!"
@@ -134,6 +137,21 @@ tools:
   - kind: agent
     agent: researcher
 
+  - kind: http
+    name: weather_lookup
+    url: "https://api.weather.com/v1/{location}"
+    headers:
+      Authorization: "Bearer {{secrets.WEATHER_TOKEN}}"
+
+skills:                              # mid-run skill loading (optional)
+  - citation-style
+
+spawnable:                           # children spawnable concurrently (optional)
+  - kind: ref
+    agentId: fact-checker
+
+reply: true                          # enable streaming reply tool (optional)
+
 outputSchema:
   sentiment:
     type: string
@@ -153,8 +171,68 @@ model:
   name: gpt-5.4
 
 instruction: |
-  You are a helpful assistant. Answer the user's question: {{userQuery}}
+  You are a helpful assistant. Answer the user's question concisely.
 ```
+
+### `instruction` vs `prompt`
+
+Two roles, kept separate:
+
+- **`instruction`** (required) — the **system prompt**. Describes the agent's role and behavior. Rendered with `{{}}` template substitution against state.
+- **`prompt`** (optional) — the **user-message template**. When present, rendered with full state and sent as the user message. When absent, the agent's raw input (`{{userQuery}}` when no `inputSchema`, otherwise the input object stringified) is sent verbatim.
+
+Use `prompt` when you want to wrap or reshape the user's input with state-derived context. Both fields share the same template grammar documented in [Instruction Templates](#instruction-templates).
+
+```yaml
+instruction: |
+  You are a math tutor. Explain each step clearly.
+
+prompt: |
+  Solve carefully: {{userQuery}}
+```
+
+### `skills`
+
+Names of skills this agent may load mid-run via the synthetic `use_skill` tool. Names must match `^[a-z][a-z0-9-]*$` and are resolved against the runtime's SkillStore.
+
+```yaml
+skills:
+  - citation-style
+  - markdown-rendering
+```
+
+### `spawnable`
+
+Sub-agents this LLM is allowed to spawn concurrently at runtime via the synthetic `spawn_agent` tool. Predefined per agent — the LLM cannot invent agents to spawn. Each entry is either a reference to a stored agent or an inline definition:
+
+```yaml
+spawnable:
+  - kind: ref
+    agentId: fact-checker
+
+  - kind: inline
+    definition:
+      id: adhoc-helper
+      kind: llm
+      model: { provider: openai, name: gpt-5.4-mini }
+      instruction: "Extract dates from the input"
+```
+
+Inline definitions must be `kind: llm`. Templated `instruction` is not allowed in spawnable children — they are pre-registered with a static system prompt at parent-invoke time.
+
+### `reply`
+
+When set, registers a per-invocation `reply` tool the model can call to deliver intermediate messages. Replies are surfaced as SSE events on the `/runs/:id/stream` endpoint.
+
+```yaml
+reply: true              # defaults: maxPerRun = 50
+
+# or override the rate limit
+reply:
+  maxPerRun: 5
+```
+
+Omit (or set `false`) to disable.
 
 ---
 
@@ -448,7 +526,7 @@ instruction: |
 
 ## Tools
 
-Tools are declared as an array on the agent. Three kinds:
+Tools are declared as an array on the agent. Four kinds:
 
 ### MCP tools
 
@@ -483,6 +561,31 @@ tools:
   - kind: agent
     agent: researcher
 ```
+
+### HTTP tools
+
+A single GET endpoint exposed to the model as one tool. URL placeholders derive the LLM-facing schema; `params:` pins placeholders to state templates (hidden from the LLM); header values are templated and may reference secrets.
+
+```yaml
+tools:
+  - kind: http
+    name: weather_lookup                              # programming identifier; LLM sees `http__weather_lookup`
+    url: "https://api.weather.com/v1/forecast/{location}{?units}"
+    method: GET                                       # only GET supported in MVP
+    description: "Look up weather forecast for a location"
+    params:
+      units: "metric"                                 # pin the optional query param
+    headers:
+      Authorization: "Bearer {{secrets.WEATHER_TOKEN}}"
+```
+
+**URL placeholders:**
+- `{X}` — required (allowed in path or query)
+- `{X?}` — optional (query string only)
+
+**`params:`** — pinned placeholders. Same convention as MCP tool wrapping: keys must correspond to URL placeholders; values are state templates and are hidden from the LLM.
+
+**`headers:`** — header values are state-templated. Auth tokens are referenced via `{{secrets.<name>}}`, resolved at invocation time from the host's SecretStore.
 
 ### Tool wrapping
 

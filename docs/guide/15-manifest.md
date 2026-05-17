@@ -54,6 +54,8 @@ model:
   temperature: 0.4
 instruction: |
   You research topics thoroughly. Return findings as bullet points.
+prompt: |
+  Research request: {{userQuery}}
 tools:
   - kind: mcp
     server: web-search
@@ -78,6 +80,8 @@ Cross-references:
 - `outputSchema` — flat property map; constrains structured output
 
 The `instruction` field is what `AgentDefinition.systemPrompt` is to a core SDK agent. It supports template substitution from runtime state (`{{state.fieldName}}`) when run inside a pipeline.
+
+The optional `prompt` field is a user-message template — also rendered against full state, but sent as the user message rather than the system prompt. When omitted, the agent's raw input is sent verbatim. See [schema reference](/schema#instruction-vs-prompt) for the full split.
 
 ## Tool agent
 
@@ -199,7 +203,7 @@ const manifest = parseManifest(yaml);
         │           │
         │     calls ctx.invokeTool(config, state) → bridge
         │
-        └─→ ctx.invokeLLM(manifest, instruction, state)
+        └─→ ctx.invokeLLM(manifest, instruction, prompt, state)
                 └─→ bridge calls core runner.invoke()
                     → core agent loop runs (model + tools + MCP)
 ```
@@ -211,15 +215,22 @@ The four executors live in `packages/manifest/src/pipeline/{llm,tool,sequential,
 The executor needs three things from the host:
 
 ```typescript
-// packages/manifest/src/types.ts:213-227
+// packages/manifest/src/types.ts
 interface ExecutionContext {
   resolveAgent: (id: string) => Promise<AgentManifest>;
-  invokeLLM: (manifest: LLMAgentManifest, input: string, state: AgentState) => Promise<unknown>;
+  invokeLLM: (
+    manifest: LLMAgentManifest,
+    renderedInstruction: string,
+    renderedPrompt: string | undefined,
+    state: AgentState,
+  ) => Promise<unknown>;
   invokeTool: (config: ToolCallConfig, state: AgentState) => Promise<unknown>;
   spanEmitter?: SpanEmitter;
   ownerId?: string;
 }
 ```
+
+`renderedInstruction` becomes the system prompt. `renderedPrompt` (when set) is sent as the user message; otherwise the bridge derives the user message from `state.userQuery`.
 
 This is intentionally minimal so the manifest package has no dependency on the core runner. The actual wiring — turning an LLM manifest into a temp `AgentDefinition` and calling `runner.invoke()` — lives in `packages/worker/src/bridge.ts`'s `createExecutionContext()`.
 
