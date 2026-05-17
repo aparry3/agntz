@@ -84,7 +84,7 @@ export interface ModelConfig {
 
 export type ToolReference =
   | { type: "inline"; name: string }
-  | { type: "mcp"; server: string; tools?: string[] }
+  | { type: "mcp"; server: string; tools?: string[]; headers?: Record<string, string> }
   | { type: "agent"; agentId: string }
   | { type: "http"; entry: HTTPToolEntry };
 

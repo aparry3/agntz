@@ -464,8 +464,10 @@ function SingleAgentInspector({
               localTools={catalog?.tools ?? []}
               agents={catalog?.agents ?? []}
               loadMcpTools={catalog?.loadMcpTools ?? (async () => [])}
+              loadMcpToolsForUrl={catalog?.loadMcpToolsForUrl}
               mcpToolsByServer={catalog?.mcpToolsByServer ?? {}}
               currentAgentId={manifest.id}
+              rootManifest={manifest as unknown}
             />
           </InsSection>
 

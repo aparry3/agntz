@@ -1185,8 +1185,10 @@ function LLMStepEditor({
           localTools={catalog?.tools ?? []}
           agents={catalog?.agents ?? []}
           loadMcpTools={catalog?.loadMcpTools ?? (async () => [])}
+          loadMcpToolsForUrl={catalog?.loadMcpToolsForUrl}
           mcpToolsByServer={catalog?.mcpToolsByServer ?? {}}
           currentAgentId={currentAgentId}
+          rootManifest={rootManifest}
         />
       </InsSection>
 

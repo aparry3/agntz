@@ -1820,16 +1820,17 @@ export class Runner {
     if (!agent.tools?.length && !hasSpawnable && !hasSkills && !hasReply) return [];
 
     // Ensure every referenced MCP server is connected (resolving registered
-    // connection names to urls/headers) before we ask for its tools.
-    const mcpRefs = Array.from(
-      new Set(
-        (agent.tools ?? [])
-          .filter((r): r is Extract<typeof r, { type: "mcp" }> => r.type === "mcp")
-          .map((r) => r.server),
-      ),
+    // connection names to urls/headers) before we ask for its tools. Headers
+    // come from the entry when present so URL-based servers can authenticate.
+    const mcpEntries = (agent.tools ?? []).filter(
+      (r): r is Extract<typeof r, { type: "mcp" }> => r.type === "mcp",
     );
-    for (const ref of mcpRefs) {
-      await this.ensureMCPServerRegistered(ref);
+    const mcpRefs = new Map<string, Record<string, string> | undefined>();
+    for (const e of mcpEntries) {
+      if (!mcpRefs.has(e.server)) mcpRefs.set(e.server, e.headers);
+    }
+    for (const [ref, headers] of mcpRefs) {
+      await this.ensureMCPServerRegistered(ref, headers);
     }
 
     const resolved: Array<{
@@ -1960,16 +1961,22 @@ export class Runner {
    * in the user's ConnectionStore (registered name → url/headers); falls back
    * to treating the ref as a URL. Keyed by the raw ref so resolveMCPTools can
    * look up tools by `entry.server` unchanged.
+   *
+   * `entryHeaders` lets URL-based entries supply auth headers from the
+   * manifest. They're merged onto any registered headers for the same ref.
    */
-  private async ensureMCPServerRegistered(ref: string): Promise<void> {
+  private async ensureMCPServerRegistered(
+    ref: string,
+    entryHeaders?: Record<string, string>,
+  ): Promise<void> {
     if (!this.mcpManager) {
       this.mcpManager = new MCPClientManager({});
     }
     if (this.mcpManager.hasServer(ref)) return;
 
     const resolved = this._connectionStore
-      ? await resolveMCPServerHelper(ref, this._connectionStore)
-      : { url: ref, headers: undefined as Record<string, string> | undefined };
+      ? await resolveMCPServerHelper(ref, this._connectionStore, entryHeaders)
+      : { url: ref, headers: entryHeaders };
 
     await this.mcpManager.addServer(ref, {
       url: resolved.url,

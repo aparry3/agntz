@@ -411,6 +411,7 @@ function manifestToolsToToolRefs(tools: LLMAgentManifest["tools"]) {
           tools: entry.tools
             ? entry.tools.map((t) => (typeof t === "string" ? t : t.tool))
             : undefined,
+          headers: entry.headers,
         });
         break;
       case "local":

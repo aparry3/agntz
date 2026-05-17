@@ -496,6 +496,42 @@ tools:
     expect(result.errors.some(e => e.message.includes("nonExistentTool"))).toBe(true);
   });
 
+  it("accepts MCP entry with templated headers", async () => {
+    const result = await validateManifestFull(`
+id: test
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: test
+tools:
+  - kind: mcp
+    server: https://mcp.example.com/sse
+    tools: [toolA]
+    headers:
+      Authorization: "Bearer {{secrets.linear_token}}"
+`, mockCtx());
+    expect(result.errors.filter(e => e.path.includes("headers"))).toEqual([]);
+  });
+
+  it("errors when MCP header value is not a string", async () => {
+    const result = await validateManifestFull(`
+id: test
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: test
+tools:
+  - kind: mcp
+    server: https://mcp.example.com/sse
+    tools: [toolA]
+    headers:
+      X-Numeric: 42
+`, mockCtx());
+    expect(result.errors.some(e => e.path.includes("headers.X-Numeric"))).toBe(true);
+  });
+
   it("errors on non-existent local tool", async () => {
     const result = await validateManifestFull(`
 id: test

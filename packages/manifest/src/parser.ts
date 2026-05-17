@@ -213,6 +213,7 @@ function normalizeTools(raw: unknown[]): ManifestToolEntry[] {
           kind: "mcp" as const,
           server: requireString(e, "server"),
           tools: e.tools ? normalizeMCPToolRefs(e.tools as unknown[]) : undefined,
+          headers: e.headers as Record<string, string> | undefined,
         };
       case "local":
         return {

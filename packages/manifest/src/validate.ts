@@ -498,6 +498,21 @@ export function validateToolEntries(
           }
         }
       }
+      // headers — only meaningful when `server` is a raw URL; values must be
+      // strings with syntactically valid templates ({{secrets.X}} etc.).
+      if (entry.headers) {
+        for (const [key, val] of Object.entries(entry.headers)) {
+          if (typeof val !== "string") {
+            errors.push({
+              level: "structural",
+              path: p(epath, `headers.${key}`),
+              message: "Header values must be strings (template expressions)",
+            });
+          } else {
+            validateTemplatesSyntax(val, p(epath, `headers.${key}`), errors);
+          }
+        }
+      }
     }
 
     if (entry.kind === "local") {

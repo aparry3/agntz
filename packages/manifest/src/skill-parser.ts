@@ -43,9 +43,13 @@ export function manifestEntryToToolReferences(entry: ManifestToolEntry): ToolRef
       return (entry.tools ?? []).map((name) => ({ type: "inline" as const, name }));
     case "mcp": {
       const tools = entry.tools && entry.tools.length > 0 ? entry.tools.map(toolNameOfRef) : undefined;
-      const ref: ToolReference = tools
-        ? { type: "mcp", server: entry.server, tools }
-        : { type: "mcp", server: entry.server };
+      const headers = entry.headers;
+      const ref: ToolReference = {
+        type: "mcp",
+        server: entry.server,
+        ...(tools ? { tools } : {}),
+        ...(headers ? { headers } : {}),
+      };
       return [ref];
     }
     case "agent":

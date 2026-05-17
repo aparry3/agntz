@@ -195,8 +195,16 @@ export type ManifestToolEntry =
 
 export interface MCPToolEntry {
   kind: "mcp";
+  /** Registered connection id OR raw URL. Resolver tries registry first. */
   server: string;
   tools?: MCPToolRef[];
+  /**
+   * Optional headers sent on every MCP request. Values may reference secrets
+   * via `{{secrets.<NAME>}}` and are substituted at runtime. Only meaningful
+   * when `server` is a raw URL — registered connections supply their own
+   * headers from the connection store.
+   */
+  headers?: Record<string, string>;
 }
 
 /** An item in the tools array: either a plain tool name or a wrapped tool */

@@ -28,6 +28,36 @@ describe("resolveMCPServer", () => {
     expect(resolved).toEqual({ url: "https://example.com/mcp", source: "url" });
   });
 
+  it("forwards entry headers for URL-based refs", async () => {
+    const store = new MemoryStore().forUser("u1");
+    const resolved = await resolveMCPServer(
+      "https://example.com/mcp",
+      store,
+      { Authorization: "Bearer xyz" },
+    );
+    expect(resolved).toEqual({
+      url: "https://example.com/mcp",
+      headers: { Authorization: "Bearer xyz" },
+      source: "url",
+    });
+  });
+
+  it("merges entry headers onto registered headers (entry wins on conflict)", async () => {
+    const store = new MemoryStore().forUser("u1");
+    await store.putConnection({
+      id: "gymtext",
+      kind: "mcp",
+      displayName: "GymText",
+      config: { url: "https://gymtex.co/mcp", headers: { Authorization: "Bearer base", "X-Trace": "1" } },
+      createdAt: "2026-04-15T00:00:00.000Z",
+      updatedAt: "2026-04-15T00:00:00.000Z",
+    });
+
+    const resolved = await resolveMCPServer("gymtext", store, { Authorization: "Bearer override" });
+    expect(resolved.headers).toEqual({ Authorization: "Bearer override", "X-Trace": "1" });
+    expect(resolved.source).toBe("registered");
+  });
+
   it("scopes registrations to the current user", async () => {
     const root = new MemoryStore();
     const alice = root.forUser("alice");

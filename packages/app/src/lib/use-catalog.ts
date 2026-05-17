@@ -41,8 +41,15 @@ export interface Catalog {
   mcpServers: McpServerCatalogEntry[];
   secrets: SecretCatalogEntry[];
   loading: boolean;
+  /** Tool lists keyed by either registered server id or raw URL. */
   mcpToolsByServer: Record<string, string[] | undefined>;
   loadMcpTools: (serverId: string) => Promise<string[]>;
+  /**
+   * Fetch tools from an arbitrary MCP URL (POST /api/mcp-tools). Used by the
+   * inline picker before the URL has been persisted to a manifest. Cached
+   * under the URL itself in `mcpToolsByServer`.
+   */
+  loadMcpToolsForUrl: (url: string, headers?: Record<string, string>) => Promise<string[]>;
 }
 
 interface ToolInfoFromApi {
@@ -152,6 +159,42 @@ export function useCatalog(): Catalog {
     return promise;
   }, [mcpToolsByServer]);
 
+  const loadMcpToolsForUrl = useCallback(
+    async (url: string, headers?: Record<string, string>): Promise<string[]> => {
+      // Cache key is the URL itself — headers affect auth, not the tool list
+      // shape. If the URL is already in the cache (e.g., set by a previous
+      // call for the same manifest), reuse it.
+      const cached = mcpToolsByServer[url];
+      if (cached) return cached;
+
+      const inflight = inflightMcpTools.current[url];
+      if (inflight) return inflight;
+
+      const promise = (async () => {
+        try {
+          const res = await fetch("/api/mcp-tools", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url, headers }),
+          });
+          const data = await res.json();
+          const list: string[] = Array.isArray(data?.tools) ? data.tools : [];
+          setMcpToolsByServer((current) => ({ ...current, [url]: list }));
+          return list;
+        } catch {
+          setMcpToolsByServer((current) => ({ ...current, [url]: [] }));
+          return [];
+        } finally {
+          inflightMcpTools.current[url] = undefined;
+        }
+      })();
+
+      inflightMcpTools.current[url] = promise;
+      return promise;
+    },
+    [mcpToolsByServer],
+  );
+
   return {
     providers,
     tools,
@@ -161,5 +204,6 @@ export function useCatalog(): Catalog {
     loading,
     mcpToolsByServer,
     loadMcpTools,
+    loadMcpToolsForUrl,
   };
 }

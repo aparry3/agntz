@@ -31,7 +31,6 @@ const observeLinks: NavLink[] = [
 const configureLinks: NavLink[] = [
   { href: "/settings", label: "Settings", Ic: I.Settings },
   { href: "/settings/api-keys", label: "API Keys", Ic: I.Key },
-  { href: "/settings/connections", label: "Connections", Ic: I.Link },
   { href: "/settings/secrets", label: "Secrets", Ic: I.Lock },
 ];
 

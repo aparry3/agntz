@@ -18,6 +18,7 @@ import { I } from "@/components/v3/icons";
 import { Btn, Mono, Spinner, ag } from "@/components/v3/primitives";
 import { DashedAdd, ToolBlock } from "./inspector-bits";
 import { EditableSelect, EditableText, Popover } from "./editable-fields";
+import { scanMcpEntries, type ScannedMcpEntry } from "./scan-mcp-entries";
 
 /* ── Wire types — match `@agntz/manifest` ManifestToolEntry ────────────── */
 
@@ -33,7 +34,7 @@ export interface WrappedMcpTool {
 export type McpToolRef = string | WrappedMcpTool;
 
 export type ToolEntry =
-  | { kind: "mcp"; server: string; tools?: McpToolRef[] }
+  | { kind: "mcp"; server: string; tools?: McpToolRef[]; headers?: Record<string, string> }
   | { kind: "local"; tools: string[] }
   | { kind: "agent"; agent: string }
   | {
@@ -53,10 +54,14 @@ interface ToolsEditorProps {
   localTools: ToolCatalogEntry[];
   agents: AgentCatalogEntry[];
   loadMcpTools: (serverId: string) => Promise<string[]>;
+  loadMcpToolsForUrl?: (url: string, headers?: Record<string, string>) => Promise<string[]>;
   mcpToolsByServer: Record<string, string[] | undefined>;
   /** ID of the current agent — excluded from the agent-tool picker so an
    *  agent can't accidentally call itself. */
   currentAgentId?: string;
+  /** Parsed root manifest — scanned to surface in-manifest MCP entries as
+   *  quick-picks in the MCP picker (reuse a URL another LLM already wired). */
+  rootManifest?: unknown;
 }
 
 export function ToolsEditor({
@@ -66,8 +71,10 @@ export function ToolsEditor({
   localTools,
   agents,
   loadMcpTools,
+  loadMcpToolsForUrl,
   mcpToolsByServer,
   currentAgentId,
+  rootManifest,
 }: ToolsEditorProps) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
@@ -118,15 +125,17 @@ export function ToolsEditor({
           </span>
         </DashedAdd>
       </div>
-      <Popover open={open} onClose={() => setOpen(false)} anchorRef={triggerRef} width={340}>
+      <Popover open={open} onClose={() => setOpen(false)} anchorRef={triggerRef} width={360}>
         <ToolPicker
           mcpServers={mcpServers}
           localTools={localTools}
           agents={agents}
           loadMcpTools={loadMcpTools}
+          loadMcpToolsForUrl={loadMcpToolsForUrl}
           mcpToolsByServer={mcpToolsByServer}
           currentAgentId={currentAgentId}
           existing={tools}
+          rootManifest={rootManifest}
           onAdd={append}
           onCancel={() => setOpen(false)}
         />
@@ -735,9 +744,11 @@ function ToolPicker(props: {
   localTools: ToolCatalogEntry[];
   agents: AgentCatalogEntry[];
   loadMcpTools: (serverId: string) => Promise<string[]>;
+  loadMcpToolsForUrl?: (url: string, headers?: Record<string, string>) => Promise<string[]>;
   mcpToolsByServer: Record<string, string[] | undefined>;
   currentAgentId?: string;
   existing: ToolEntry[];
+  rootManifest?: unknown;
   onAdd: (entry: ToolEntry) => void;
   onCancel: () => void;
 }) {
@@ -755,7 +766,9 @@ function ToolPicker(props: {
         <MCPSubPicker
           mcpServers={props.mcpServers}
           loadMcpTools={props.loadMcpTools}
+          loadMcpToolsForUrl={props.loadMcpToolsForUrl}
           mcpToolsByServer={props.mcpToolsByServer}
+          rootManifest={props.rootManifest}
           onAdd={props.onAdd}
         />
       )}
@@ -888,190 +901,270 @@ function KindGrid({ onPick }: { onPick: (kind: PickerStep) => void }) {
 function MCPSubPicker({
   mcpServers,
   loadMcpTools,
+  loadMcpToolsForUrl,
   mcpToolsByServer,
+  rootManifest,
   onAdd,
 }: {
   mcpServers: McpServerCatalogEntry[];
   loadMcpTools: (id: string) => Promise<string[]>;
+  loadMcpToolsForUrl?: (url: string, headers?: Record<string, string>) => Promise<string[]>;
   mcpToolsByServer: Record<string, string[] | undefined>;
+  rootManifest?: unknown;
   onAdd: (entry: ToolEntry) => void;
 }) {
-  const [selectedServer, setSelectedServer] = useState<string | null>(null);
+  const [url, setUrl] = useState<string>("");
+  const [committedUrl, setCommittedUrl] = useState<string>("");
+  const [headers, setHeaders] = useState<Record<string, string> | undefined>(undefined);
   const [picked, setPicked] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
-    if (selectedServer) void loadMcpTools(selectedServer);
-  }, [selectedServer, loadMcpTools]);
-
-  if (!selectedServer) {
-    if (mcpServers.length === 0) {
-      return (
-        <EmptyHint
-          message="No MCP servers connected."
-          link={{ href: "/settings/connections", label: "Add a server" }}
-        />
-      );
+  // Quick-picks: distinct MCP entries scanned from the current manifest tree,
+  // plus registered servers from the catalog. In-manifest entries win on
+  // duplicate URLs because they carry headers the user already chose.
+  const quickPicks = useMemo<ScannedMcpEntry[]>(() => {
+    const seen = new Map<string, ScannedMcpEntry>();
+    if (rootManifest) {
+      for (const entry of scanMcpEntries(rootManifest)) seen.set(entry.server, entry);
     }
-    return (
-      <div style={{ padding: 6 }}>
-        {mcpServers.map((server) => (
-          <button
-            key={server.id}
-            type="button"
-            onClick={() => {
-              setSelectedServer(server.id);
-              setPicked(new Set());
-            }}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              width: "100%",
-              padding: "7px 10px",
-              border: 0,
-              background: "transparent",
-              cursor: "pointer",
-              borderRadius: 4,
-              gap: 6,
-              fontFamily: "inherit",
-              textAlign: "left",
-            }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = ag.surfaceWarm)}
-            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-          >
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 12.5, color: ag.ink, fontWeight: 500 }}>
-                {server.displayName || server.id}
-              </div>
-              <Mono size={10.5} color={ag.muted}>
-                {server.url ?? server.description ?? server.id}
-              </Mono>
-            </div>
-            <I.ChevR size={11} style={{ color: ag.muted }} />
-          </button>
-        ))}
-      </div>
-    );
-  }
+    for (const s of mcpServers) {
+      const key = s.url ?? s.id;
+      if (key && !seen.has(key)) seen.set(key, { server: key });
+    }
+    return Array.from(seen.values());
+  }, [rootManifest, mcpServers]);
 
-  const availableTools = mcpToolsByServer[selectedServer];
-  const loading = availableTools === undefined;
+  // Auto-load tools when the URL is committed (blur / quick-pick click) and
+  // looks like an MCP endpoint we can hit. We fall back to the registered-id
+  // loader for entries that match an existing connection so backward-compat
+  // works without typing the URL.
+  useEffect(() => {
+    if (!committedUrl) return;
+    const matchedRegistered = mcpServers.find(
+      (s) => s.id === committedUrl || s.url === committedUrl,
+    );
+    if (matchedRegistered) {
+      void loadMcpTools(matchedRegistered.id);
+      return;
+    }
+    if (loadMcpToolsForUrl) {
+      void loadMcpToolsForUrl(committedUrl, headers);
+    }
+  }, [committedUrl, headers, loadMcpTools, loadMcpToolsForUrl, mcpServers]);
+
+  // The cache key is the registered id (for backward-compat) or the URL.
+  const cacheKey = useMemo(() => {
+    const matched = mcpServers.find((s) => s.id === committedUrl || s.url === committedUrl);
+    return matched ? matched.id : committedUrl;
+  }, [committedUrl, mcpServers]);
+  const availableTools = cacheKey ? mcpToolsByServer[cacheKey] : undefined;
+  const loading = !!committedUrl && availableTools === undefined;
+
+  const headerCount = headers ? Object.keys(headers).length : 0;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", maxHeight: 360 }}>
-      <div
-        style={{
-          padding: "6px 10px",
-          borderBottom: `1px solid ${ag.line2}`,
-          background: ag.bg,
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-        }}
-      >
-        <button
-          type="button"
-          onClick={() => setSelectedServer(null)}
-          style={{
-            border: 0,
-            background: "transparent",
-            color: ag.muted,
-            cursor: "pointer",
-            padding: 0,
-            display: "inline-flex",
+    <div style={{ display: "flex", flexDirection: "column", maxHeight: 460 }}>
+      <div style={{ padding: 10, overflow: "auto", flex: 1 }}>
+        <EditableText
+          label="MCP URL"
+          value={url}
+          onChange={(v) => {
+            setUrl(v);
+            setCommittedUrl(v.trim());
+            setPicked(new Set());
           }}
-        >
-          <I.ChevR size={11} style={{ transform: "rotate(180deg)" }} />
-        </button>
-        <Mono size={11}>{selectedServer}</Mono>
-      </div>
-      <div style={{ overflow: "auto", padding: 6, flex: 1 }}>
-        {loading ? (
-          <div
-            style={{
-              padding: 14,
-              textAlign: "center",
-              color: ag.muted,
-              fontSize: 12,
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              width: "100%",
-              justifyContent: "center",
-            }}
-          >
-            <Spinner size={11} /> Loading tools…
-          </div>
-        ) : availableTools.length === 0 ? (
-          <div style={{ padding: 14, textAlign: "center", color: ag.muted, fontSize: 12 }}>
-            This server exposes no tools.
-          </div>
-        ) : (
-          availableTools.map((toolName) => {
-            const checked = picked.has(toolName);
-            return (
-              <label
-                key={toolName}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "5px 8px",
-                  borderRadius: 3,
-                  cursor: "pointer",
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 11.5,
-                  color: ag.ink,
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = ag.surfaceWarm)}
-                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-              >
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={(e) => {
-                    const next = new Set(picked);
-                    if (e.target.checked) next.add(toolName);
-                    else next.delete(toolName);
-                    setPicked(next);
+          placeholder="https://mcp.example.com/sse"
+          mono
+        />
+
+        <div style={{ marginTop: 10 }}>
+          <ParamsEditor
+            label={headerCount > 0 ? `Headers (${headerCount})` : "Headers (optional)"}
+            value={headers}
+            onChange={setHeaders}
+            keyPlaceholder="X-Header-Name"
+            valuePlaceholder="{{secrets.token}}"
+            hint="values support {{secrets.X}}"
+          />
+        </div>
+
+        {quickPicks.length > 0 && (
+          <div style={{ marginTop: 14 }}>
+            <Mono
+              size={10}
+              color={ag.muted}
+              style={{ textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6, display: "block" }}
+            >
+              Reuse from this agent or workspace
+            </Mono>
+            <div
+              style={{
+                border: `1px solid ${ag.line}`,
+                borderRadius: 4,
+                background: ag.surface2,
+                overflow: "hidden",
+              }}
+            >
+              {quickPicks.map((pick, i) => (
+                <button
+                  key={pick.server}
+                  type="button"
+                  onClick={() => {
+                    setUrl(pick.server);
+                    setCommittedUrl(pick.server.trim());
+                    setHeaders(pick.headers);
+                    setPicked(new Set());
                   }}
-                  style={{ margin: 0, cursor: "pointer" }}
-                />
-                {toolName}
-              </label>
-            );
-          })
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    width: "100%",
+                    padding: "6px 9px",
+                    border: 0,
+                    background: "transparent",
+                    cursor: "pointer",
+                    gap: 6,
+                    fontFamily: "inherit",
+                    textAlign: "left",
+                    borderBottom: i === quickPicks.length - 1 ? "0" : `1px solid ${ag.line2}`,
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = ag.surfaceWarm)}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                >
+                  <Mono size={11.5} color={ag.ink} style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {pick.server}
+                  </Mono>
+                  {pick.headers && Object.keys(pick.headers).length > 0 && (
+                    <Mono size={10} color={ag.muted}>
+                      headers
+                    </Mono>
+                  )}
+                  <I.ChevR size={11} style={{ color: ag.muted }} />
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {committedUrl && (
+          <div style={{ marginTop: 14 }}>
+            <Mono
+              size={10}
+              color={ag.muted}
+              style={{ textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6, display: "block" }}
+            >
+              Tools
+            </Mono>
+            <div
+              style={{
+                border: `1px solid ${ag.line}`,
+                borderRadius: 4,
+                background: ag.surface2,
+                overflow: "hidden",
+              }}
+            >
+              {loading ? (
+                <div
+                  style={{
+                    padding: 14,
+                    textAlign: "center",
+                    color: ag.muted,
+                    fontSize: 12,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    width: "100%",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Spinner size={11} /> Listing tools…
+                </div>
+              ) : availableTools && availableTools.length === 0 ? (
+                <div style={{ padding: 14, textAlign: "center", color: ag.muted, fontSize: 12 }}>
+                  No tools listed. Check URL / auth and try again.
+                </div>
+              ) : availableTools ? (
+                availableTools.map((toolName) => {
+                  const checked = picked.has(toolName);
+                  return (
+                    <label
+                      key={toolName}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        padding: "5px 10px",
+                        cursor: "pointer",
+                        fontFamily: "var(--font-mono)",
+                        fontSize: 11.5,
+                        color: ag.ink,
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = ag.surfaceWarm)}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => {
+                          const next = new Set(picked);
+                          if (e.target.checked) next.add(toolName);
+                          else next.delete(toolName);
+                          setPicked(next);
+                        }}
+                        style={{ margin: 0, cursor: "pointer" }}
+                      />
+                      {toolName}
+                    </label>
+                  );
+                })
+              ) : null}
+            </div>
+          </div>
         )}
       </div>
-      <PickerFooter
-        disabled={picked.size === 0}
-        primaryLabel={
-          picked.size === 0
-            ? "Pick at least one"
-            : `Attach ${picked.size} tool${picked.size === 1 ? "" : "s"}`
-        }
-        onPrimary={() => {
-          onAdd({ kind: "mcp", server: selectedServer, tools: Array.from(picked) });
-        }}
-        extraLeft={
-          <button
-            type="button"
-            onClick={() => onAdd({ kind: "mcp", server: selectedServer })}
-            title="Attach the server with all tools exposed"
-            style={{
-              border: `1px solid ${ag.line}`,
-              background: ag.surface2,
-              color: ag.text2,
-              cursor: "pointer",
-              borderRadius: 4,
-              padding: "4px 9px",
-              fontSize: 11.5,
-              fontFamily: "inherit",
-            }}
-          >
-            Attach all
-          </button>
-        }
-      />
+
+      {committedUrl && availableTools && availableTools.length > 0 && (
+        <PickerFooter
+          disabled={picked.size === 0}
+          primaryLabel={
+            picked.size === 0
+              ? "Pick at least one"
+              : `Attach ${picked.size} tool${picked.size === 1 ? "" : "s"}`
+          }
+          onPrimary={() => {
+            onAdd({
+              kind: "mcp",
+              server: committedUrl,
+              tools: Array.from(picked),
+              ...(headers && Object.keys(headers).length > 0 ? { headers } : {}),
+            });
+          }}
+          extraLeft={
+            <button
+              type="button"
+              onClick={() =>
+                onAdd({
+                  kind: "mcp",
+                  server: committedUrl,
+                  ...(headers && Object.keys(headers).length > 0 ? { headers } : {}),
+                })
+              }
+              title="Attach the server with all tools exposed"
+              style={{
+                border: `1px solid ${ag.line}`,
+                background: ag.surface2,
+                color: ag.text2,
+                cursor: "pointer",
+                borderRadius: 4,
+                padding: "4px 9px",
+                fontSize: 11.5,
+                fontFamily: "inherit",
+              }}
+            >
+              Attach all
+            </button>
+          }
+        />
+      )}
     </div>
   );
 }
