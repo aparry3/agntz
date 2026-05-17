@@ -9,7 +9,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { I } from "@/components/v3/icons";
 import {
   Btn,
@@ -649,6 +649,12 @@ function PipelineInspector({
               currentAgentId={selected.id}
               outputSchemaCount={selected.outputSchemaKeys?.length ?? 0}
             />
+          ) : selected.kind === "tool" && onPatchAgent ? (
+            <ToolStepEditor
+              agentPath={selected.agentPath}
+              rootManifest={rootManifest}
+              onPatchAgent={onPatchAgent}
+            />
           ) : (
             <InsSection
               title="Agent settings"
@@ -1050,3 +1056,266 @@ function LLMStepEditor({
   );
 }
 
+/* ── ToolStepEditor — editable Tool config for a kind=tool step.
+ *    Backing shape is ToolCallConfig: { kind: "local" | "mcp"; server?; name; params? }. */
+function ToolStepEditor({
+  agentPath,
+  rootManifest,
+  onPatchAgent,
+}: {
+  agentPath: PipelinePath;
+  rootManifest: Record<string, unknown>;
+  onPatchAgent: (agentPath: PipelinePath, partial: Record<string, unknown>) => void;
+}) {
+  const liveAgent = (() => {
+    const raw = getIn(rootManifest, agentPath);
+    return isRecord(raw) ? raw : {};
+  })();
+  const description = (liveAgent.description as string | undefined) ?? "";
+  const tool = isRecord(liveAgent.tool) ? liveAgent.tool : {};
+  const toolKind: "local" | "mcp" = tool.kind === "mcp" ? "mcp" : "local";
+  const toolName = (tool.name as string | undefined) ?? "";
+  const toolServer = (tool.server as string | undefined) ?? "";
+  const toolParams = isRecord(tool.params)
+    ? (tool.params as Record<string, string>)
+    : undefined;
+
+  const patchTool = (next: Partial<Record<string, unknown>>) => {
+    const merged: Record<string, unknown> = { ...tool };
+    for (const [k, v] of Object.entries(next)) {
+      if (v === undefined) delete merged[k];
+      else merged[k] = v;
+    }
+    onPatchAgent(agentPath, { tool: merged });
+  };
+
+  return (
+    <InsSection
+      title="Tool"
+      badge={`${toolKind} · ${toolName || "(unnamed)"}`}
+      defaultOpen
+    >
+      <EditableText
+        label="Description"
+        value={description}
+        onChange={(v) => onPatchAgent(agentPath, { description: v || undefined })}
+        placeholder="What does this step do?"
+        multiline
+        rows={2}
+      />
+
+      <div>
+        <div
+          style={{
+            fontSize: 10.5,
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+            color: ag.muted,
+            fontWeight: 500,
+            marginBottom: 6,
+          }}
+        >
+          Kind
+        </div>
+        <div
+          style={{
+            display: "flex",
+            padding: 2,
+            background: ag.surface2,
+            border: `1px solid ${ag.line}`,
+            borderRadius: 4,
+            width: "fit-content",
+          }}
+        >
+          {(["local", "mcp"] as const).map((k) => {
+            const on = toolKind === k;
+            return (
+              <button
+                key={k}
+                type="button"
+                onClick={() =>
+                  patchTool({
+                    kind: k,
+                    server: k === "mcp" ? toolServer || undefined : undefined,
+                  })
+                }
+                style={{
+                  padding: "4px 10px",
+                  borderRadius: 3,
+                  fontSize: 12,
+                  background: on ? ag.bg : "transparent",
+                  color: on ? ag.ink : ag.text2,
+                  border: "none",
+                  cursor: "pointer",
+                  fontWeight: 500,
+                  fontFamily: "var(--font-mono)",
+                }}
+              >
+                {k}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <EditableText
+        label="Name"
+        value={toolName}
+        onChange={(v) => patchTool({ name: v })}
+        placeholder="tool_name"
+        mono
+      />
+
+      {toolKind === "mcp" && (
+        <EditableText
+          label="Server"
+          value={toolServer}
+          onChange={(v) => patchTool({ server: v || undefined })}
+          placeholder="server-id or https://mcp.example.com/sse"
+          mono
+        />
+      )}
+
+      <ToolParamsEditor
+        value={toolParams}
+        onChange={(next) => patchTool({ params: next })}
+      />
+    </InsSection>
+  );
+}
+
+function ToolParamsEditor({
+  value,
+  onChange,
+}: {
+  value: Record<string, string> | undefined;
+  onChange: (next: Record<string, string> | undefined) => void;
+}) {
+  const entries = Object.entries(value ?? {});
+  const commit = (rows: Array<[string, string]>) => {
+    const obj: Record<string, string> = {};
+    let any = false;
+    for (const [k, v] of rows) {
+      const key = k.trim();
+      if (!key) continue;
+      obj[key] = v;
+      any = true;
+    }
+    onChange(any ? obj : undefined);
+  };
+  const updateKey = (idx: number, key: string) =>
+    commit(entries.map(([k, v], i): [string, string] => (i === idx ? [key, v] : [k, v])));
+  const updateVal = (idx: number, val: string) =>
+    commit(entries.map(([k, v], i): [string, string] => (i === idx ? [k, val] : [k, v])));
+  const removeRow = (idx: number) => commit(entries.filter((_, i) => i !== idx));
+  const addRow = () => {
+    if (entries.some(([k]) => k === "")) return;
+    commit([...entries, ["", ""]]);
+  };
+
+  return (
+    <div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          gap: 6,
+          marginBottom: 6,
+        }}
+      >
+        <div
+          style={{
+            fontSize: 10.5,
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+            color: ag.muted,
+            fontWeight: 500,
+          }}
+        >
+          Pinned params
+        </div>
+        <Mono size={10} color={ag.muted}>
+          · placeholder → state template
+        </Mono>
+      </div>
+      {entries.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 6 }}>
+          {entries.map(([k, v], i) => (
+            <div
+              key={i}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.4fr) 22px",
+                gap: 4,
+                alignItems: "center",
+              }}
+            >
+              <input
+                value={k}
+                onChange={(e) => updateKey(i, e.target.value)}
+                placeholder="placeholder"
+                style={paramInputStyle}
+              />
+              <input
+                value={v}
+                onChange={(e) => updateVal(i, e.target.value)}
+                placeholder="{{user_id}}"
+                style={paramInputStyle}
+              />
+              <button
+                type="button"
+                onClick={() => removeRow(i)}
+                title="Remove"
+                style={{
+                  border: "1px solid transparent",
+                  background: "transparent",
+                  color: ag.muted,
+                  cursor: "pointer",
+                  borderRadius: 3,
+                  padding: 2,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontFamily: "inherit",
+                }}
+              >
+                <I.X size={10} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={addRow}
+        style={{
+          padding: "4px 8px",
+          border: `1px dashed ${ag.line}`,
+          borderRadius: 4,
+          background: "transparent",
+          color: ag.text2,
+          fontSize: 11,
+          fontFamily: "var(--font-mono)",
+          cursor: "pointer",
+          textAlign: "left",
+          width: "100%",
+        }}
+      >
+        + Pin param
+      </button>
+    </div>
+  );
+}
+
+const paramInputStyle: CSSProperties = {
+  width: "100%",
+  padding: "5px 8px",
+  border: `1px solid ${ag.line}`,
+  borderRadius: 4,
+  background: ag.surface2,
+  color: ag.ink,
+  fontFamily: "var(--font-mono)",
+  fontSize: 12,
+  outline: 0,
+  boxSizing: "border-box",
+};
