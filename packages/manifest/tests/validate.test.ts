@@ -747,6 +747,46 @@ spawnable:
     expect(result.errors).toHaveLength(0);
     expect(result.valid).toBe(true);
   });
+
+  it("accepts spawnable ref with valid version (latest + ISO)", () => {
+    const result = validateManifest(`
+id: orchestrator
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Coordinate."
+spawnable:
+  - kind: ref
+    agentId: a
+    version: latest
+  - kind: ref
+    agentId: b
+    version: "2026-05-17T15:30:00.000Z"
+`);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("rejects spawnable ref with invalid version string", () => {
+    // Malformed version is caught by the parser (during normalizeManifest),
+    // which propagates as a structural error with the parser's message.
+    const result = validateManifest(`
+id: orchestrator
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Coordinate."
+spawnable:
+  - kind: ref
+    agentId: a
+    version: not-a-real-version
+`);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e =>
+      e.level === "structural" && /version/i.test(e.message),
+    )).toBe(true);
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════

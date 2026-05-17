@@ -161,6 +161,29 @@ export class MaxStepsExceededError extends AgntzError {
 }
 
 /**
+ * Thrown when an invocation's cumulative model token usage exceeds the
+ * configured budget. The budget is resolved as
+ * `min(AgentDefinition.tokenBudget, InvokeOptions.tokenBudget)` — callers can
+ * tighten an agent's ceiling but not raise it.
+ */
+export class TokenBudgetExceededError extends AgntzError {
+  readonly tokenBudget: number;
+  readonly tokensUsed: number;
+  readonly agentId: string;
+
+  constructor(agentId: string, tokenBudget: number, tokensUsed: number) {
+    super(
+      "TOKEN_BUDGET_EXCEEDED",
+      `Agent "${agentId}" exceeded token budget (${tokensUsed}/${tokenBudget} tokens). Raise the limit via AgentDefinition.tokenBudget or InvokeOptions.tokenBudget.`,
+    );
+    this.name = "TokenBudgetExceededError";
+    this.agentId = agentId;
+    this.tokenBudget = tokenBudget;
+    this.tokensUsed = tokensUsed;
+  }
+}
+
+/**
  * Thrown when agent-as-tool recursion exceeds the max depth.
  */
 export class MaxRecursionDepthError extends AgntzError {

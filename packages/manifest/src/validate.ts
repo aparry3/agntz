@@ -1,4 +1,5 @@
 import { parse as parseYAML } from "yaml";
+import { parseAgentRef } from "@agntz/core";
 import { normalizeManifest } from "./parser.js";
 import { normalizeId } from "./state.js";
 import { parseUrlPlaceholders } from "./http-url.js";
@@ -363,6 +364,12 @@ function validateStep(
 
   if (step.ref && typeof step.ref !== "string") {
     errors.push({ level: "structural", path: p(path, "ref"), message: "ref must be a string (agent ID)" });
+  } else if (typeof step.ref === "string" && step.ref.includes("@")) {
+    try {
+      parseAgentRef(step.ref);
+    } catch (err) {
+      errors.push({ level: "structural", path: p(path, "ref"), message: (err as Error).message });
+    }
   }
 
   if (step.agent) {
@@ -412,6 +419,17 @@ function validateSpawnableStructural(
         warnings.push({ path: p(epath, "agentId"), message: `duplicate spawnable agentId '${ref.agentId}'` });
       }
       seenIds.add(ref.agentId);
+      if (ref.version !== undefined) {
+        if (typeof ref.version !== "string") {
+          errors.push({ level: "structural", path: p(epath, "version"), message: "version must be a string" });
+        } else {
+          try {
+            parseAgentRef(`${ref.agentId}@${ref.version}`);
+          } catch (err) {
+            errors.push({ level: "structural", path: p(epath, "version"), message: (err as Error).message });
+          }
+        }
+      }
     } else {
       const def = ref.definition;
       if (!def) {
@@ -524,6 +542,28 @@ export function validateToolEntries(
     if (entry.kind === "agent") {
       if (!entry.agent) {
         errors.push({ level: "structural", path: p(epath, "agent"), message: "Agent tool entry must reference an agent ID" });
+      } else if (entry.version !== undefined) {
+        if (typeof entry.version !== "string") {
+          errors.push({ level: "structural", path: p(epath, "version"), message: "version must be a string" });
+        } else if (entry.agent.includes("@")) {
+          errors.push({
+            level: "structural",
+            path: p(epath, "version"),
+            message: "agent tool entry must not combine an '@version' suffix in 'agent' with a separate 'version' field",
+          });
+        } else {
+          try {
+            parseAgentRef(`${entry.agent}@${entry.version}`);
+          } catch (err) {
+            errors.push({ level: "structural", path: p(epath, "version"), message: (err as Error).message });
+          }
+        }
+      } else if (entry.agent.includes("@")) {
+        try {
+          parseAgentRef(entry.agent);
+        } catch (err) {
+          errors.push({ level: "structural", path: p(epath, "agent"), message: (err as Error).message });
+        }
       }
     }
 

@@ -1,4 +1,5 @@
 import { parse as parseYAML } from "yaml";
+import { parseAgentRef } from "@agntz/core";
 import type {
   AgentManifest,
   AgentRef,
@@ -89,7 +90,26 @@ function normalizeSpawnable(raw: unknown[]): AgentRef[] {
     const kind = e.kind as string;
 
     if (kind === "ref") {
-      return { kind: "ref" as const, agentId: requireString(e, "agentId") };
+      const out: AgentRef = {
+        kind: "ref" as const,
+        agentId: requireString(e, "agentId"),
+      };
+      if (e.version !== undefined) {
+        if (typeof e.version !== "string") {
+          throw new Error(`spawnable[${i}].version must be a string`);
+        }
+        try {
+          // Reuse the core parser's validation rules. The agentId itself is
+          // already structured, so we only need to validate the version shape.
+          parseAgentRef(`${out.agentId}@${e.version}`);
+        } catch (err) {
+          throw new Error(
+            `spawnable[${i}].version is invalid: ${(err as Error).message}`,
+          );
+        }
+        out.version = e.version;
+      }
+      return out;
     }
     if (kind === "inline") {
       const def = e.definition;
@@ -220,11 +240,43 @@ function normalizeTools(raw: unknown[]): ManifestToolEntry[] {
           kind: "local" as const,
           tools: e.tools as string[],
         };
-      case "agent":
-        return {
+      case "agent": {
+        const agentField = requireString(e, "agent");
+        const out: ManifestToolEntry = {
           kind: "agent" as const,
-          agent: requireString(e, "agent"),
+          agent: agentField,
         };
+        if (e.version !== undefined) {
+          if (typeof e.version !== "string") {
+            throw new Error("tools[*].version must be a string");
+          }
+          if (agentField.includes("@")) {
+            throw new Error(
+              "tools[*] for kind 'agent' must not combine an '@version' suffix in 'agent' with a separate 'version' field",
+            );
+          }
+          try {
+            parseAgentRef(`${agentField}@${e.version}`);
+          } catch (err) {
+            throw new Error(
+              `tools[*].version is invalid: ${(err as Error).message}`,
+            );
+          }
+          out.version = e.version;
+        } else if (agentField.includes("@")) {
+          // Validate the suffix shape eagerly so callers see errors at parse
+          // time. The runner will re-parse later — this is purely a friendly
+          // failure-mode change.
+          try {
+            parseAgentRef(agentField);
+          } catch (err) {
+            throw new Error(
+              `tools[*].agent is invalid: ${(err as Error).message}`,
+            );
+          }
+        }
+        return out;
+      }
       case "http":
         return {
           kind: "http" as const,

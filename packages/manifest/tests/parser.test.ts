@@ -288,4 +288,123 @@ spawnable:
 `;
     expect(() => parseManifest(yaml)).toThrow("must be 'ref' or 'inline'");
   });
+
+  it("parses spawnable ref with version: latest and ISO timestamp", () => {
+    const yaml = `
+id: orchestrator
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Coordinate."
+spawnable:
+  - kind: ref
+    agentId: a
+    version: latest
+  - kind: ref
+    agentId: b
+    version: "2026-05-17T15:30:00.000Z"
+  - kind: ref
+    agentId: c
+`;
+    const manifest = parseManifest(yaml);
+    if (manifest.kind === "llm") {
+      const [a, b, c] = manifest.spawnable!;
+      if (a.kind === "ref") expect(a.version).toBe("latest");
+      if (b.kind === "ref")
+        expect(b.version).toBe("2026-05-17T15:30:00.000Z");
+      if (c.kind === "ref") expect(c.version).toBeUndefined();
+    }
+  });
+
+  it("rejects spawnable ref with malformed version", () => {
+    const yaml = `
+id: orchestrator
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Coordinate."
+spawnable:
+  - kind: ref
+    agentId: a
+    version: v2
+`;
+    expect(() => parseManifest(yaml)).toThrow(/version/);
+  });
+
+  it("parses agent tool with @version suffix in agent field", () => {
+    const yaml = `
+id: orchestrator
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Coordinate."
+tools:
+  - kind: agent
+    agent: "helper@latest"
+  - kind: agent
+    agent: "other"
+    version: "2026-05-17T15:30:00.000Z"
+`;
+    const manifest = parseManifest(yaml);
+    if (manifest.kind === "llm") {
+      const [a, b] = manifest.tools!;
+      if (a.kind === "agent") {
+        expect(a.agent).toBe("helper@latest");
+        expect(a.version).toBeUndefined();
+      }
+      if (b.kind === "agent") {
+        expect(b.agent).toBe("other");
+        expect(b.version).toBe("2026-05-17T15:30:00.000Z");
+      }
+    }
+  });
+
+  it("rejects agent tool combining @suffix and version field", () => {
+    const yaml = `
+id: orchestrator
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Coordinate."
+tools:
+  - kind: agent
+    agent: "helper@latest"
+    version: latest
+`;
+    expect(() => parseManifest(yaml)).toThrow(/'@version'/);
+  });
+
+  it("rejects agent tool with malformed @suffix", () => {
+    const yaml = `
+id: orchestrator
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Coordinate."
+tools:
+  - kind: agent
+    agent: "helper@v2"
+`;
+    expect(() => parseManifest(yaml)).toThrow(/agent is invalid/);
+  });
+
+  it("parses step.ref with @latest", () => {
+    const yaml = `
+id: pipeline
+kind: sequential
+steps:
+  - ref: "child@latest"
+  - ref: "other@2026-05-17T15:30:00.000Z"
+`;
+    const manifest = parseManifest(yaml);
+    if (manifest.kind === "sequential") {
+      expect(manifest.steps[0].ref).toBe("child@latest");
+      expect(manifest.steps[1].ref).toBe("other@2026-05-17T15:30:00.000Z");
+    }
+  });
 });

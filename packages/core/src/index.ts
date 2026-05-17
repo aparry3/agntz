@@ -111,6 +111,7 @@ export {
   ProviderNotFoundError,
   InvocationCancelledError,
   MaxStepsExceededError,
+  TokenBudgetExceededError,
   MaxRecursionDepthError,
   RetryExhaustedError,
   ValidationError,

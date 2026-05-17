@@ -100,10 +100,11 @@ export interface LLMAgentManifest extends AgentManifestBase {
 /**
  * Reference to an agent the parent is allowed to spawn. Mirrors
  * `AgentRef` in `@agntz/core` so manifest YAML and `AgentDefinition`
- * round-trip 1:1.
+ * round-trip 1:1. `version` is `"latest"`, an ISO 8601 timestamp, or
+ * undefined (use the activated version).
  */
 export type AgentRef =
-  | { kind: "ref"; agentId: string }
+  | { kind: "ref"; agentId: string; version?: string }
   | { kind: "inline"; definition: LLMAgentManifest };
 
 export interface ModelConfig {
@@ -224,7 +225,15 @@ export interface LocalToolEntry {
 
 export interface AgentToolEntry {
   kind: "agent";
+  /**
+   * Agent reference. May be a bare id (`"reviewer"`), an `@version`-suffixed
+   * ref (`"reviewer@latest"`, `"reviewer@2026-05-17T15:30:00.000Z"`), OR a
+   * bare id paired with the structured `version` field below. Manifests must
+   * not specify both an `@`-suffix and `version`.
+   */
   agent: string;
+  /** Optional structured version (`"latest"` or ISO 8601 timestamp). */
+  version?: string;
 }
 
 /**
