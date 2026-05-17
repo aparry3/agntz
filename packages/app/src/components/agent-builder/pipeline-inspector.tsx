@@ -221,6 +221,7 @@ function InspectorBody(props: InspectorProps & { snapshot: StateSnapshot }) {
         <>
           <ModelSection {...props} />
           <InstructionSection {...props} />
+          <PromptTemplateSection {...props} />
           <ToolsSection {...props} />
           <SpawnableSection {...props} />
           <SkillsSection {...props} />
@@ -974,6 +975,22 @@ function InstructionSection({ selected, parsedManifest, setField }: InspectorPro
         onChange={(v) => setField([...selected.agentPath, "instruction"], v || undefined)}
         placeholder="You are a helpful assistant."
         rows={9}
+        mono
+      />
+    </Section>
+  );
+}
+
+function PromptTemplateSection({ selected, parsedManifest, setField }: InspectorProps) {
+  const agent = (getAtPath(parsedManifest, selected.agentPath) as Record<string, unknown>) ?? {};
+  const prompt = asString(agent.prompt) ?? "";
+  return (
+    <Section title="PROMPT TEMPLATE">
+      <TextArea
+        value={prompt}
+        onChange={(v) => setField([...selected.agentPath, "prompt"], v || undefined)}
+        placeholder="Optional. User asked: {{userQuery}}"
+        rows={5}
         mono
       />
     </Section>

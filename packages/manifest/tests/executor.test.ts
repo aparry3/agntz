@@ -29,8 +29,49 @@ describe("execute - LLM agent", () => {
     expect(ctx.invokeLLM).toHaveBeenCalledWith(
       manifest,
       "Answer: What is 2+2?",
+      undefined,
       { userQuery: "What is 2+2?" }
     );
+  });
+
+  it("renders the optional prompt template with full state", async () => {
+    const manifest: LLMAgentManifest = {
+      id: "test",
+      kind: "llm",
+      model: { provider: "openai", name: "gpt-5.4" },
+      instruction: "You are a math tutor.",
+      prompt: "Solve carefully: {{userQuery}}",
+    };
+
+    const ctx = createMockCtx({
+      invokeLLM: vi.fn().mockResolvedValue("46"),
+    });
+
+    const result = await execute(manifest, "What is 23 * 2?", ctx);
+    expect(result.output).toBe("46");
+    expect(ctx.invokeLLM).toHaveBeenCalledWith(
+      manifest,
+      "You are a math tutor.",
+      "Solve carefully: What is 23 * 2?",
+      { userQuery: "What is 23 * 2?" }
+    );
+  });
+
+  it("passes undefined for prompt when not set on the manifest", async () => {
+    const manifest: LLMAgentManifest = {
+      id: "test",
+      kind: "llm",
+      model: { provider: "openai", name: "gpt-5.4" },
+      instruction: "You are helpful.",
+    };
+
+    const ctx = createMockCtx({
+      invokeLLM: vi.fn().mockResolvedValue("ok"),
+    });
+
+    await execute(manifest, "hi", ctx);
+    const call = (ctx.invokeLLM as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call[2]).toBeUndefined();
   });
 });
 

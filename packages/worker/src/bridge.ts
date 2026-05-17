@@ -74,7 +74,12 @@ export function createExecutionContext(
       return manifest;
     },
 
-    invokeLLM: async (manifest: LLMAgentManifest, renderedInstruction: string, state: AgentState) => {
+    invokeLLM: async (
+      manifest: LLMAgentManifest,
+      renderedInstruction: string,
+      renderedPrompt: string | undefined,
+      state: AgentState,
+    ) => {
       // For ref-kind spawnable children, the agent store only holds a placeholder
       // AgentDefinition (real config lives in metadata.manifest). Pre-register
       // each ref child as a real AgentDefinition under its actual id so that
@@ -85,8 +90,13 @@ export function createExecutionContext(
         await preregisterSpawnableRefs(runner, manifest.spawnable);
       }
 
-      // Build a temporary agent definition for the core runner
+      // Build a temporary agent definition for the core runner. The manifest
+      // layer has already rendered the prompt with full state; we pass that
+      // rendered text in as the user input directly, so the AgentDefinition's
+      // `userPromptTemplate` must be cleared to prevent core from re-wrapping
+      // (or sending the unrendered template literally).
       const agentDef = manifestToAgentDefinition(manifest, renderedInstruction);
+      agentDef.userPromptTemplate = undefined;
 
       // Register it temporarily (or use inline invoke)
       const tempId = `__temp_${manifest.id}_${Date.now()}`;
@@ -103,10 +113,11 @@ export function createExecutionContext(
       );
 
       try {
-        // Build user input from state
-        const userInput = state.userQuery
-          ? String(state.userQuery)
-          : JSON.stringify(state);
+        // Build user input. If the manifest defines a `prompt` template, the
+        // executor has already rendered it with full state — use it verbatim
+        // as the user message. Otherwise fall back to the raw user query.
+        const userInput = renderedPrompt
+          ?? (state.userQuery ? String(state.userQuery) : JSON.stringify(state));
 
         const result = await runner.invoke(tempId, userInput, {
           ...(runRegistry ? { runRegistry, parentRunId } : {}),
@@ -201,12 +212,21 @@ function resolveManifestFromAgent(agentDef: Record<string, unknown>): AgentManif
 
 /**
  * Convert a LLMAgentManifest into a core AgentDefinition for the Runner.
+ *
+ * `userPromptTemplate` is set from `manifest.prompt` when present so that
+ * spawnable children (which bypass `executeLLM` and go directly through the
+ * core runner) get template behavior via core's `{{input}}` substitution. For
+ * top-level invocations (called from `invokeLLM`), the manifest layer has
+ * already rendered the prompt with full state — the caller passes the rendered
+ * string as the user input directly, so `userPromptTemplate` is a no-op there
+ * (no `{{input}}` markers remain in rendered text).
  */
 function manifestToAgentDefinition(manifest: LLMAgentManifest, renderedInstruction: string) {
   return {
     id: manifest.id,
     name: manifest.name ?? manifest.id,
     systemPrompt: renderedInstruction,
+    userPromptTemplate: manifest.prompt,
     model: {
       provider: manifest.model.provider,
       name: manifest.model.name,
