@@ -1,10 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Breadcrumb } from "@/components/breadcrumb";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { SkillEditor, type SkillDraft, type ToolRef } from "@/components/skill-editor";
+import { ag } from "@/components/v3/primitives";
 
 interface SkillResponse {
   name: string;
@@ -68,51 +69,55 @@ export default function SkillDetailPage({
     router.push("/skills");
   };
 
+  if (loading) {
+    return (
+      <div style={{ padding: 32, color: ag.muted, fontSize: 13 }}>Loading skill…</div>
+    );
+  }
+  if (error) {
+    return (
+      <div
+        style={{
+          margin: 32,
+          padding: "12px 14px",
+          border: `1px solid ${ag.danger}`,
+          background: ag.warnBg,
+          color: ag.danger,
+          borderRadius: 4,
+          fontSize: 13,
+        }}
+      >
+        {error}
+      </div>
+    );
+  }
+  if (!skill) return null;
+
   return (
-    <div className="mx-auto max-w-4xl">
-      <Breadcrumb items={[{ label: "Skills", href: "/skills" }, { label: skillName }]} />
-
-      {loading ? (
-        <div className="rounded-[2rem] border border-stone-200 bg-white px-6 py-10 text-sm text-zinc-500 shadow-sm">
-          Loading skill...
-        </div>
-      ) : error ? (
-        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
-        </div>
-      ) : skill ? (
-        <>
-          <div className="mb-6 flex items-start justify-between gap-4">
-            <div>
-              <h1 className="font-mono text-3xl font-semibold tracking-tight text-zinc-950">{skill.name}</h1>
-              {skill.updatedAt && (
-                <p className="mt-2 text-xs text-zinc-500">
-                  Updated {new Date(skill.updatedAt).toLocaleString()}
-                </p>
-              )}
-            </div>
-            <button
-              onClick={() => setConfirmDelete(true)}
-              className="rounded-xl border border-stone-200 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600"
-            >
-              Delete
-            </button>
-          </div>
-
-          <SkillEditor
-            initial={{
-              name: skill.name,
-              description: skill.description,
-              instructions: skill.instructions,
-              tools: skill.tools ?? [],
-            }}
-            lockName
-            submitLabel="Save changes"
-            submittingLabel="Saving..."
-            onSubmit={handleSubmit}
-          />
-        </>
-      ) : null}
+    <>
+      <SkillEditor
+        breadcrumb={[
+          "agntz",
+          <Link key="skills" href="/skills" style={{ color: "inherit", textDecoration: "none" }}>
+            Skills
+          </Link>,
+          skill.name,
+        ]}
+        initial={{
+          name: skill.name,
+          description: skill.description,
+          instructions: skill.instructions,
+          tools: skill.tools ?? [],
+        }}
+        lockName
+        submitLabel="Save"
+        submittingLabel="Saving…"
+        onSubmit={handleSubmit}
+        onDelete={() => setConfirmDelete(true)}
+        metaInfo={{
+          updatedAt: skill.updatedAt ? formatRelative(skill.updatedAt) : undefined,
+        }}
+      />
 
       <ConfirmDialog
         open={confirmDelete}
@@ -121,6 +126,20 @@ export default function SkillDetailPage({
         onConfirm={handleDelete}
         onCancel={() => setConfirmDelete(false)}
       />
-    </div>
+    </>
   );
+}
+
+function formatRelative(timestamp: string): string {
+  const date = new Date(timestamp);
+  const now = Date.now();
+  const diff = Math.max(0, now - date.getTime());
+  const minute = 60_000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  if (diff < minute) return "just now";
+  if (diff < hour) return `${Math.floor(diff / minute)}m ago`;
+  if (diff < day) return `${Math.floor(diff / hour)}h ago`;
+  if (diff < 7 * day) return `${Math.floor(diff / day)}d ago`;
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
