@@ -17,20 +17,23 @@ import {
   VarHl,
   ag,
 } from "@/components/v3/primitives";
+import type { ProviderCatalogEntry } from "@/lib/use-catalog";
 import { GraphPanel, GraphValidates } from "./graph-panel";
 import { NodeIO, Edge } from "@/components/v3/primitives";
 import { PipelineStep, type StepField } from "./pipeline-step";
 import {
   BindRow,
   DashedAdd,
-  Field,
   FooterHint,
   InsSection,
   StateLine,
-  SubBlock,
   ToolBlock,
   ToolRow,
 } from "./inspector-bits";
+import { EditableNumber, EditableText, EditableToggle } from "./editable-fields";
+import { ModelPicker } from "./model-picker";
+import { SchemaEditor } from "./schema-editor";
+import { ExamplesEditor, type Example } from "./examples-editor";
 
 export type SingleViewMode = "build" | "yaml" | "instruction" | "both";
 
@@ -39,12 +42,21 @@ export interface SingleAgentManifest {
   name?: string;
   description?: string;
   kind?: string;
-  model?: { provider?: string; name?: string; temperature?: number; maxTokens?: number };
+  model?: {
+    provider?: string;
+    name?: string;
+    temperature?: number;
+    maxTokens?: number;
+    topP?: number;
+  };
   instruction?: string;
+  prompt?: string;
   inputSchema?: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
-  examples?: Array<{ input: string; output: string }>;
+  examples?: Example[];
   tools?: Array<Record<string, unknown>>;
+  reply?: boolean | { maxPerRun?: number };
+  skills?: string[];
 }
 
 export function SingleAgentView({
@@ -53,6 +65,8 @@ export function SingleAgentView({
   view,
   onChangeView,
   onChange,
+  providers,
+  providersLoading,
   rightExtras,
   yamlPanel,
 }: {
@@ -63,6 +77,8 @@ export function SingleAgentView({
   /** Generic patcher — receives a fully-formed next manifest. Phase 2+ editors
    *  call this to commit changes; the parent re-serializes to YAML. */
   onChange?: (next: SingleAgentManifest) => void;
+  providers?: ProviderCatalogEntry[];
+  providersLoading?: boolean;
   rightExtras?: ReactNode;
   yamlPanel?: ReactNode;
 }) {
@@ -189,7 +205,8 @@ export function SingleAgentView({
             manifestId={manifestId}
             inputs={inputs}
             outputs={outputs}
-            modelLine={modelLine}
+            providers={providers ?? []}
+            providersLoading={providersLoading}
             onChange={onChange}
           />
         )}
@@ -203,19 +220,28 @@ function SingleAgentInspector({
   manifestId,
   inputs,
   outputs,
-  modelLine,
+  providers,
+  providersLoading,
   onChange,
 }: {
   manifest: SingleAgentManifest;
   manifestId: string;
   inputs: StepField[];
   outputs: StepField[];
-  modelLine: string;
+  providers: ProviderCatalogEntry[];
+  providersLoading?: boolean;
   onChange?: (next: SingleAgentManifest) => void;
 }) {
-  const handleInstruction = onChange
-    ? (next: string) => onChange({ ...manifest, instruction: next })
-    : undefined;
+  // Single patcher — every editable field calls patch({ field: value }) so the
+  // inspector never sees stale closure values.
+  const patch = (next: Partial<SingleAgentManifest>) => onChange?.({ ...manifest, ...next });
+  const patchModel = (next: Partial<NonNullable<SingleAgentManifest["model"]>>) =>
+    patch({ model: stripUndefined({ ...(manifest.model ?? {}), ...next }) });
+
+  const handleInstruction = onChange ? (next: string) => patch({ instruction: next }) : undefined;
+  const replyEnabled = manifest.reply === true || (typeof manifest.reply === "object" && manifest.reply !== null);
+  const skillsText = (manifest.skills ?? []).join(", ");
+
   return (
     <aside
       style={{
@@ -352,10 +378,20 @@ function SingleAgentInspector({
         {/* Agent settings */}
         <div style={{ borderTop: `1px solid ${ag.line2}` }}>
           <InsSection title="Agent settings" badge="model · instruction" defaultOpen>
-            {manifest.description && (
-              <SubBlock label="Description" value={manifest.description} multiline />
-            )}
-            <SubBlock label="Model" value={modelLine || "—"} mono select />
+            <EditableText
+              label="Description"
+              value={manifest.description ?? ""}
+              onChange={onChange ? (description) => patch({ description: description || undefined }) : () => {}}
+              placeholder="What does this agent do?"
+              multiline
+              rows={2}
+            />
+            <ModelPicker
+              value={{ provider: manifest.model?.provider ?? "", name: manifest.model?.name ?? "" }}
+              providers={providers}
+              loading={providersLoading}
+              onChange={(next) => patchModel({ provider: next.provider, name: next.name })}
+            />
             <InstructionBlock instruction={manifest.instruction ?? ""} onChange={handleInstruction} />
           </InsSection>
 
@@ -367,40 +403,79 @@ function SingleAgentInspector({
           </InsSection>
 
           <InsSection title="Output schema" badge={`${outputs.length} field${outputs.length === 1 ? "" : "s"}`}>
-            {outputs.length === 0 ? (
-              <Mono size={11} color={ag.muted}>
-                No output schema declared.
-              </Mono>
-            ) : (
-              outputs.map((o) => <SubBlock key={o.name} label={o.name} value={o.type} mono />)
-            )}
+            <SchemaEditor
+              kind="output"
+              schema={manifest.outputSchema}
+              onChange={(next) => patch({ outputSchema: next })}
+            />
           </InsSection>
 
           <InsSection
             title="Examples"
             badge={`${manifest.examples?.length ?? 0} pinned`}
           >
-            {manifest.examples?.length ? (
-              manifest.examples.slice(0, 3).map((ex, i) => (
-                <SubBlock
-                  key={i}
-                  label={`#${i + 1}`}
-                  value={ex.input.slice(0, 80) + (ex.input.length > 80 ? "…" : "")}
-                  mono
-                />
-              ))
-            ) : (
-              <Mono size={11} color={ag.muted}>
-                No examples yet.
-              </Mono>
-            )}
+            <ExamplesEditor
+              examples={manifest.examples ?? []}
+              onChange={(next) => patch({ examples: next })}
+            />
           </InsSection>
 
           <InsSection title="Advanced">
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-              <Field inline label="Run timeout" value="30s" mono />
-              <Field inline label="Visibility" value="workspace" mono select />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <EditableNumber
+                label="Temperature"
+                value={manifest.model?.temperature}
+                onChange={(v) => patchModel({ temperature: v })}
+                min={0}
+                max={2}
+                step={0.1}
+                placeholder="—"
+                hint="0–2, blank = provider default"
+              />
+              <EditableNumber
+                label="Max tokens"
+                value={manifest.model?.maxTokens}
+                onChange={(v) => patchModel({ maxTokens: v })}
+                min={1}
+                step={1}
+                placeholder="—"
+              />
+              <EditableNumber
+                label="Top P"
+                value={manifest.model?.topP}
+                onChange={(v) => patchModel({ topP: v })}
+                min={0}
+                max={1}
+                step={0.05}
+                placeholder="—"
+                hint="0–1"
+              />
+              <div />
             </div>
+            <EditableToggle
+              label="Reply tool — model can stream intermediate messages"
+              value={replyEnabled}
+              onChange={(enabled) =>
+                patch({ reply: enabled ? true : undefined })
+              }
+              hint={
+                typeof manifest.reply === "object"
+                  ? `maxPerRun: ${manifest.reply.maxPerRun ?? "default"} (edit in YAML to change)`
+                  : undefined
+              }
+            />
+            <EditableText
+              label="Skills"
+              value={skillsText}
+              onChange={(text) => {
+                const parts = text
+                  .split(",")
+                  .map((s) => s.trim())
+                  .filter(Boolean);
+                patch({ skills: parts.length ? parts : undefined });
+              }}
+              placeholder="comma-separated skill names"
+            />
           </InsSection>
         </div>
       </div>
@@ -527,6 +602,16 @@ function formatModel(model: SingleAgentManifest["model"]): string {
   const temp = typeof model.temperature === "number" ? ` · temp ${model.temperature}` : "";
   const max = typeof model.maxTokens === "number" ? ` · max ${model.maxTokens}` : "";
   return [provider, name].filter(Boolean).join(" · ") + temp + max;
+}
+
+/** Drop keys whose value is `undefined`. Used when patching nested objects so
+ *  the YAML serializer doesn't emit explicit nulls for fields the user cleared. */
+function stripUndefined<T extends Record<string, unknown>>(obj: T): T {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== undefined) out[k] = v;
+  }
+  return out as T;
 }
 
 function inferBinding(name: string) {
