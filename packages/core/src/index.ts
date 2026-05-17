@@ -103,6 +103,8 @@ export type {
 export {
   AgntzError,
   AgentNotFoundError,
+  AgentVersionNotFoundError,
+  InvalidAgentRefError,
   ToolNotFoundError,
   ToolExecutionError,
   ModelError,
@@ -114,6 +116,10 @@ export {
   ValidationError,
   SkillNotFoundError,
 } from "./errors.js";
+
+// Agent references — `<id>[@<version|latest>]`
+export { parseAgentRef, formatAgentRef, isIsoTimestamp } from "./agent-ref.js";
+export type { ParsedAgentRef } from "./agent-ref.js";
 
 // Multimodal — image content blocks + fetcher
 export { isContentBlockArray } from "./types.js";

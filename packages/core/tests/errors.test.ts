@@ -5,7 +5,9 @@ import { defineTool } from "../src/tool.js";
 import { z } from "zod";
 import {
   AgentNotFoundError,
+  AgentVersionNotFoundError,
   AgntzError,
+  InvalidAgentRefError,
   InvocationCancelledError,
   MaxStepsExceededError,
 } from "../src/errors.js";
@@ -98,5 +100,26 @@ describe("Typed Errors", () => {
     expect(err.code).toBe("MAX_STEPS_EXCEEDED");
     expect(err.message).toContain("my-agent");
     expect(err.message).toContain("5");
+  });
+
+  it("AgentVersionNotFoundError exposes agentId and version", () => {
+    const err = new AgentVersionNotFoundError("reviewer", "2026-05-17T15:30:00.000Z");
+    expect(err).toBeInstanceOf(AgntzError);
+    expect(err.code).toBe("AGENT_VERSION_NOT_FOUND");
+    expect(err.name).toBe("AgentVersionNotFoundError");
+    expect(err.agentId).toBe("reviewer");
+    expect(err.version).toBe("2026-05-17T15:30:00.000Z");
+    expect(err.message).toContain("reviewer");
+    expect(err.message).toContain("2026-05-17T15:30:00.000Z");
+  });
+
+  it("InvalidAgentRefError carries the input verbatim", () => {
+    const err = new InvalidAgentRefError("foo@bogus", "version must be ISO");
+    expect(err).toBeInstanceOf(AgntzError);
+    expect(err.code).toBe("INVALID_AGENT_REF");
+    expect(err.name).toBe("InvalidAgentRefError");
+    expect(err.input).toBe("foo@bogus");
+    expect(err.message).toContain("foo@bogus");
+    expect(err.message).toContain("version must be ISO");
   });
 });

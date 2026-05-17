@@ -33,6 +33,38 @@ export class AgentNotFoundError extends AgntzError {
 }
 
 /**
+ * Thrown when an agent exists but the requested version does not.
+ */
+export class AgentVersionNotFoundError extends AgntzError {
+  readonly agentId: string;
+  readonly version: string;
+
+  constructor(agentId: string, version: string) {
+    super(
+      "AGENT_VERSION_NOT_FOUND",
+      `Version "${version}" of agent "${agentId}" not found. List versions via the /versions API to see available timestamps.`,
+    );
+    this.name = "AgentVersionNotFoundError";
+    this.agentId = agentId;
+    this.version = version;
+  }
+}
+
+/**
+ * Thrown when an agent reference string is malformed.
+ * The accepted forms are `<id>`, `<id>@latest`, and `<id>@<ISO timestamp>`.
+ */
+export class InvalidAgentRefError extends AgntzError {
+  readonly input: string;
+
+  constructor(input: string, detail: string) {
+    super("INVALID_AGENT_REF", `Invalid agent reference "${input}": ${detail}`);
+    this.name = "InvalidAgentRefError";
+    this.input = input;
+  }
+}
+
+/**
  * Thrown when a tool is not found in the registry.
  */
 export class ToolNotFoundError extends AgntzError {
