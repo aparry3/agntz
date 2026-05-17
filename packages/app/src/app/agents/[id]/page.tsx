@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { parse as parseYAML, stringify as stringifyYAML } from "yaml";
 import { EditorShell } from "@/components/v3/editor/editor-shell";
+import { VersionsPanel } from "@/components/v3/editor/versions-panel";
 import {
   SingleAgentView,
   type SingleAgentManifest,
@@ -34,6 +35,7 @@ export default function AgentEditorPage() {
   const [view, setView] = useState<SingleViewMode | PipelineViewMode>("build");
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const [showDelete, setShowDelete] = useState(false);
+  const [showVersions, setShowVersions] = useState(false);
 
   const parsed = useMemo(() => {
     if (!manifest.trim()) return null;
@@ -156,6 +158,20 @@ export default function AgentEditorPage() {
           Delete
         </Btn>
       }
+      secondaryActions={
+        <>
+          <Btn
+            variant="secondary"
+            icon={<I.Hist size={12} style={{ marginRight: 6 }} />}
+            onClick={() => setShowVersions(true)}
+          >
+            History
+          </Btn>
+          <Btn variant="secondary" icon={<I.Play size={11} style={{ marginRight: 6 }} />}>
+            Playground
+          </Btn>
+        </>
+      }
       onSave={handleSave}
       saving={saving}
       dirty={dirty}
@@ -207,6 +223,11 @@ export default function AgentEditorPage() {
         message={`Permanently delete "${manifestName}" and all versions?`}
         onConfirm={handleDelete}
         onCancel={() => setShowDelete(false)}
+      />
+      <VersionsPanel
+        open={showVersions}
+        agentId={manifestId}
+        onClose={() => setShowVersions(false)}
       />
     </EditorShell>
   );

@@ -93,6 +93,7 @@ export function EditorShell({
               }}
             >
               <CopyIdButton manifestId={manifestId} />
+              <CopyRefButton manifestId={manifestId} suffix="@latest" />
               {kindTag}
               {statusTag ?? (
                 <Tag bg={ag.okBg} color={ag.ok}>
@@ -166,6 +167,55 @@ function CopyIdButton({ manifestId }: { manifestId: string }) {
       }}
     >
       <Mono size={11.5}>{manifestId}</Mono>
+      {copied ? (
+        <I.Check size={11} style={{ color: ag.ok }} />
+      ) : (
+        <I.Copy size={11} style={{ color: ag.muted }} />
+      )}
+    </button>
+  );
+}
+
+// Copy a versioned agent reference (e.g. "<id>@latest") to the clipboard.
+// Shorthand affordance so SDK callers can paste a working ref directly.
+function CopyRefButton({ manifestId, suffix }: { manifestId: string; suffix: string }) {
+  const [copied, setCopied] = useState(false);
+  const ref = `${manifestId}${suffix}`;
+
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 1200);
+    return () => clearTimeout(t);
+  }, [copied]);
+
+  const handleCopy = async () => {
+    if (typeof navigator === "undefined" || !navigator.clipboard) return;
+    try {
+      await navigator.clipboard.writeText(ref);
+      setCopied(true);
+    } catch {
+      // ignore
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      title={copied ? "Copied" : `Copy ${ref}`}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        border: `1px solid ${ag.line}`,
+        borderRadius: 4,
+        padding: "3px 8px",
+        background: ag.surface2,
+        cursor: "pointer",
+        fontFamily: "inherit",
+      }}
+    >
+      <Mono size={11.5} color={ag.muted}>{suffix}</Mono>
       {copied ? (
         <I.Check size={11} style={{ color: ag.ok }} />
       ) : (
