@@ -19,7 +19,6 @@ interface NavLink {
 const buildLinks: NavLink[] = [
   { href: "/agents", label: "Agents", Ic: I.Agents, matches: (p) => p === "/agents" || p.startsWith("/agents/") },
   { href: "/skills", label: "Skills", Ic: I.Skills, matches: (p) => p === "/skills" || p.startsWith("/skills/") },
-  { href: "/tools", label: "Tools", Ic: I.Tools },
 ];
 
 const observeLinks: NavLink[] = [

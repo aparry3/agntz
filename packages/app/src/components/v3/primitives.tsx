@@ -4,7 +4,7 @@
 // Avatar, HR, VarHl, VarChip, Spinner, Shimmer) but as typed React components
 // that read colors from the CSS variables defined in globals.css.
 
-import type { CSSProperties, ReactNode, ButtonHTMLAttributes } from "react";
+import type { CSSProperties, ReactNode, ButtonHTMLAttributes, Ref } from "react";
 import { I } from "./icons";
 
 /* ── Color tokens for inline-styled components ─────────────────────────── */
@@ -138,11 +138,13 @@ export function Btn({
   variant = "primary",
   size = "md",
   style,
+  ref,
   ...rest
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   icon?: ReactNode;
   variant?: BtnVariant;
   size?: BtnSize;
+  ref?: Ref<HTMLButtonElement>;
 }) {
   const sizes: Record<BtnSize, CSSProperties> = {
     sm: { padding: "4px 9px", fontSize: 12, gap: 5 },
@@ -157,6 +159,7 @@ export function Btn({
   };
   return (
     <button
+      ref={ref}
       {...rest}
       style={{
         ...sizes[size],

@@ -1,7 +1,9 @@
 // EditorShell — V3 page header (breadcrumb, title, id chip, kind/status tags,
 // History/Playground/Save buttons). The body is plugged in by the parent.
 
-import type { ReactNode } from "react";
+"use client";
+
+import { useEffect, useState, type ReactNode } from "react";
 import { I } from "@/components/v3/icons";
 import { Btn, Crumbs, Mono, Tag, ag } from "@/components/v3/primitives";
 
@@ -13,9 +15,12 @@ export function EditorShell({
   statusTag,
   metaRight,
   actionsLeft,
+  secondaryActions,
   onSave,
   saving,
+  dirty,
   saveLabel = "Save",
+  saveLabelDirty,
   children,
 }: {
   breadcrumb: Array<string | ReactNode>;
@@ -25,11 +30,24 @@ export function EditorShell({
   statusTag?: ReactNode;
   metaRight?: ReactNode;
   actionsLeft?: ReactNode;
+  /** Overrides the default History + Playground buttons when provided. */
+  secondaryActions?: ReactNode;
   onSave?: () => void;
   saving?: boolean;
+  /** When false, Save is disabled. When undefined, Save is always enabled (legacy behavior). */
+  dirty?: boolean;
   saveLabel?: string;
+  /** Optional override label shown when dirty=true (e.g. "Save changes"). */
+  saveLabelDirty?: string;
   children: ReactNode;
 }) {
+  const saveDisabled = saving || (dirty === false);
+  const effectiveLabel = saving
+    ? "Saving…"
+    : dirty && saveLabelDirty
+    ? saveLabelDirty
+    : saveLabel;
+
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, height: "100vh" }}>
       {/* Header */}
@@ -74,20 +92,7 @@ export function EditorShell({
                 flexWrap: "wrap",
               }}
             >
-              <div
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                  border: `1px solid ${ag.line}`,
-                  borderRadius: 4,
-                  padding: "3px 8px",
-                  background: ag.surface2,
-                }}
-              >
-                <Mono size={11.5}>{manifestId}</Mono>
-                <I.Copy size={11} style={{ color: ag.muted }} />
-              </div>
+              <CopyIdButton manifestId={manifestId} />
               {kindTag}
               {statusTag ?? (
                 <Tag bg={ag.okBg} color={ag.ok}>
@@ -100,15 +105,19 @@ export function EditorShell({
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flex: "0 0 auto" }}>
             {actionsLeft}
-            <Btn variant="secondary" icon={<I.Hist size={12} style={{ marginRight: 6 }} />}>
-              History
-            </Btn>
-            <Btn variant="secondary" icon={<I.Play size={11} style={{ marginRight: 6 }} />}>
-              Playground
-            </Btn>
+            {secondaryActions ?? (
+              <>
+                <Btn variant="secondary" icon={<I.Hist size={12} style={{ marginRight: 6 }} />}>
+                  History
+                </Btn>
+                <Btn variant="secondary" icon={<I.Play size={11} style={{ marginRight: 6 }} />}>
+                  Playground
+                </Btn>
+              </>
+            )}
             {onSave && (
-              <Btn variant="primary" onClick={onSave} disabled={saving}>
-                {saving ? "Saving…" : saveLabel}
+              <Btn variant="primary" onClick={onSave} disabled={saveDisabled}>
+                {effectiveLabel}
               </Btn>
             )}
           </div>
@@ -117,5 +126,51 @@ export function EditorShell({
 
       {children}
     </div>
+  );
+}
+
+function CopyIdButton({ manifestId }: { manifestId: string }) {
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 1200);
+    return () => clearTimeout(t);
+  }, [copied]);
+
+  const handleCopy = async () => {
+    if (typeof navigator === "undefined" || !navigator.clipboard) return;
+    try {
+      await navigator.clipboard.writeText(manifestId);
+      setCopied(true);
+    } catch {
+      // ignore — older browsers / blocked clipboard
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      title={copied ? "Copied" : "Copy agent id"}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        border: `1px solid ${ag.line}`,
+        borderRadius: 4,
+        padding: "3px 8px",
+        background: ag.surface2,
+        cursor: "pointer",
+        fontFamily: "inherit",
+      }}
+    >
+      <Mono size={11.5}>{manifestId}</Mono>
+      {copied ? (
+        <I.Check size={11} style={{ color: ag.ok }} />
+      ) : (
+        <I.Copy size={11} style={{ color: ag.muted }} />
+      )}
+    </button>
   );
 }
