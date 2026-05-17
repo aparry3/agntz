@@ -9,6 +9,7 @@ import {
   AgntzError,
   InvalidAgentRefError,
   InvocationCancelledError,
+  InvocationTimeoutError,
   MaxStepsExceededError,
   TokenBudgetExceededError,
 } from "../src/errors.js";
@@ -135,6 +136,17 @@ describe("Typed Errors", () => {
     expect(err.message).toContain("my-agent");
     expect(err.message).toContain("142/100");
   });
+
+  it("InvocationTimeoutError exposes agentId and timeoutMs", () => {
+    const err = new InvocationTimeoutError("slow-agent", 250);
+    expect(err).toBeInstanceOf(AgntzError);
+    expect(err.code).toBe("INVOCATION_TIMEOUT");
+    expect(err.name).toBe("InvocationTimeoutError");
+    expect(err.agentId).toBe("slow-agent");
+    expect(err.timeoutMs).toBe(250);
+    expect(err.message).toContain("slow-agent");
+    expect(err.message).toContain("250");
+  });
 });
 
 describe("Resource limits", () => {
@@ -166,7 +178,7 @@ describe("Resource limits", () => {
     },
   });
 
-  function registerLoopAgent(runner: ReturnType<typeof createRunner>, opts: { maxSteps?: number; tokenBudget?: number } = {}) {
+  function registerLoopAgent(runner: ReturnType<typeof createRunner>, opts: { maxSteps?: number; tokenBudget?: number; timeoutMs?: number } = {}) {
     runner.registerAgent(
       defineAgent({
         id: "looper",
@@ -271,5 +283,126 @@ describe("Resource limits", () => {
 
     await runner.invoke("capped", "go");
     expect(provider.lastOptions?.maxTokens).toBe(1234);
+  });
+
+  // ─── Wall-clock timeout ─────────────────────────────────────────────────
+  // Provider returns a tool call every turn; the `sleep` tool delays each
+  // iteration just long enough that an AbortSignal.timeout fires before the
+  // next model call. The top-of-iteration abort check catches it and throws
+  // InvocationTimeoutError.
+  const sleepTool = defineTool({
+    name: "sleep",
+    description: "Delay the loop so the timeout timer can fire.",
+    input: z.object({ ms: z.number() }),
+    async execute({ ms }: { ms: number }) {
+      await new Promise((r) => setTimeout(r, ms));
+      return "slept";
+    },
+  });
+
+  class SleepLoopProvider implements ModelProvider {
+    async generateText(_options: GenerateTextOptions): Promise<GenerateTextResult> {
+      return {
+        text: "",
+        toolCalls: [{ id: `c_${Date.now()}_${Math.random()}`, name: "sleep", args: { ms: 40 } }],
+        usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        finishReason: "tool-calls",
+      };
+    }
+  }
+
+  function registerSleeper(
+    runner: ReturnType<typeof createRunner>,
+    opts: { timeoutMs?: number } = {},
+  ) {
+    runner.registerAgent(
+      defineAgent({
+        id: "sleeper",
+        name: "Sleeper",
+        systemPrompt: "loop with sleep tool",
+        model: { provider: "openai", name: "gpt-5.4" },
+        tools: [{ type: "inline", name: "sleep" }],
+        maxSteps: 50,
+        ...opts,
+      }),
+    );
+  }
+
+  it("throws InvocationTimeoutError when wall-clock budget elapses", async () => {
+    const runner = createRunner({ modelProvider: new SleepLoopProvider(), tools: [sleepTool] });
+    registerSleeper(runner);
+
+    try {
+      await runner.invoke("sleeper", "go", { timeoutMs: 20 });
+      expect.fail("Should have thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(InvocationTimeoutError);
+      const ite = err as InvocationTimeoutError;
+      expect(ite.code).toBe("INVOCATION_TIMEOUT");
+      expect(ite.timeoutMs).toBe(20);
+      expect(ite.agentId).toBe("sleeper");
+    }
+  });
+
+  it("AgentDefinition.timeoutMs alone triggers InvocationTimeoutError", async () => {
+    const runner = createRunner({ modelProvider: new SleepLoopProvider(), tools: [sleepTool] });
+    registerSleeper(runner, { timeoutMs: 20 });
+
+    await expect(runner.invoke("sleeper", "go")).rejects.toBeInstanceOf(InvocationTimeoutError);
+  });
+
+  it("caller-tightens-only: InvokeOptions.timeoutMs below agent.timeoutMs wins", async () => {
+    const runner = createRunner({ modelProvider: new SleepLoopProvider(), tools: [sleepTool] });
+    registerSleeper(runner, { timeoutMs: 10_000 });
+
+    try {
+      await runner.invoke("sleeper", "go", { timeoutMs: 15 });
+      expect.fail("Should have thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(InvocationTimeoutError);
+      // Effective timeout is min(agent=10_000, options=15) = 15.
+      expect((err as InvocationTimeoutError).timeoutMs).toBe(15);
+    }
+  });
+
+  it("caller-tightens-only: InvokeOptions.timeoutMs above agent.timeoutMs is clamped", async () => {
+    const runner = createRunner({ modelProvider: new SleepLoopProvider(), tools: [sleepTool] });
+    registerSleeper(runner, { timeoutMs: 25 });
+
+    try {
+      await runner.invoke("sleeper", "go", { timeoutMs: 60_000 });
+      expect.fail("Should have thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(InvocationTimeoutError);
+      expect((err as InvocationTimeoutError).timeoutMs).toBe(25);
+    }
+  });
+
+  it("user-cancel still throws InvocationCancelledError (not timeout)", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    const runner = createRunner({ modelProvider: new SleepLoopProvider(), tools: [sleepTool] });
+    registerSleeper(runner, { timeoutMs: 10_000 });
+
+    try {
+      await runner.invoke("sleeper", "go", { signal: controller.signal });
+      expect.fail("Should have thrown");
+    } catch (err) {
+      // Pre-aborted user signal must NOT be misattributed to the timeout path,
+      // even though both share the AbortSignal mechanism.
+      expect(err).toBeInstanceOf(InvocationCancelledError);
+      expect(err).not.toBeInstanceOf(InvocationTimeoutError);
+    }
+  });
+
+  it("does not throw when the run finishes before the timeout fires", async () => {
+    // Provider returns no tool calls → loop exits in 1 step, before the 1s timer.
+    const provider = new LoopingProvider(5, null);
+    const runner = createRunner({ modelProvider: provider, tools: [noopTool] });
+    registerLoopAgent(runner, { timeoutMs: 1000 });
+
+    const result = await runner.invoke("looper", "go");
+    expect(result.output).toBe("");
   });
 });
