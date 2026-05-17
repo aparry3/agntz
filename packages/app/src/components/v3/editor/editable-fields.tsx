@@ -281,7 +281,12 @@ export function Popover({
   children: ReactNode;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
-  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
+  const [position, setPosition] = useState<{
+    top?: number;
+    bottom?: number;
+    left: number;
+    maxHeight: number;
+  } | null>(null);
 
   useEffect(() => {
     if (!open) {
@@ -290,10 +295,42 @@ export function Popover({
     }
     const anchor = anchorRef.current;
     if (!anchor) return;
-    const rect = anchor.getBoundingClientRect();
-    const viewportRight = window.innerWidth - 8;
-    const left = Math.min(rect.left, viewportRight - width);
-    setPosition({ top: rect.bottom + 4, left });
+
+    const margin = 8;
+    const gap = 4;
+    const minBelow = 140;
+    const cap = Math.min(Math.floor(window.innerHeight * 0.6), 520);
+
+    const place = () => {
+      const rect = anchor.getBoundingClientRect();
+      const left = Math.max(margin, Math.min(rect.left, window.innerWidth - width - margin));
+      const spaceBelow = window.innerHeight - rect.bottom - gap - margin;
+      const spaceAbove = rect.top - gap - margin;
+
+      if (spaceBelow >= minBelow || spaceBelow >= spaceAbove) {
+        setPosition({
+          top: rect.bottom + gap,
+          left,
+          maxHeight: Math.min(cap, Math.max(spaceBelow, minBelow)),
+        });
+      } else {
+        // Flip above — anchor to bottom so the panel hugs the trigger even when
+        // content is shorter than maxHeight.
+        setPosition({
+          bottom: window.innerHeight - rect.top + gap,
+          left,
+          maxHeight: Math.min(cap, Math.max(spaceAbove, minBelow)),
+        });
+      }
+    };
+
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
   }, [open, anchorRef, width]);
 
   useEffect(() => {
@@ -324,9 +361,10 @@ export function Popover({
       style={{
         position: "fixed",
         top: position.top,
+        bottom: position.bottom,
         left: position.left,
         width,
-        maxHeight: "60vh",
+        maxHeight: position.maxHeight,
         overflow: "auto",
         background: ag.surface2,
         border: `1px solid ${ag.line}`,
