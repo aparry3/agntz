@@ -22,7 +22,6 @@ import { GraphPanel, GraphValidates } from "./graph-panel";
 import { NodeIO, Edge } from "@/components/v3/primitives";
 import { PipelineStep, type StepField } from "./pipeline-step";
 import {
-  BindRow,
   DashedAdd,
   FooterHint,
   InsSection,
@@ -279,7 +278,7 @@ function SingleAgentInspector({
       <div style={{ flex: 1, overflow: "auto" }}>
         {/* Inputs */}
         <div style={{ padding: "16px 16px 8px" }}>
-          <div style={{ marginBottom: 4 }}>
+          <div style={{ marginBottom: 10 }}>
             <div
               style={{
                 fontSize: 11,
@@ -292,36 +291,17 @@ function SingleAgentInspector({
               Inputs
             </div>
             <div style={{ fontSize: 11.5, color: ag.muted, marginTop: 4 }}>
-              The agent&apos;s declared inputs and where each one&apos;s value is bound from.
+              Fields the caller passes in. Each one is available as{" "}
+              <span style={{ fontFamily: "var(--font-mono)" }}>{`{{name}}`}</span> in the
+              instruction.
             </div>
           </div>
-          <div
-            style={{
-              marginTop: 10,
-              border: `1px solid ${ag.line}`,
-              borderRadius: 4,
-              background: ag.surface2,
-              overflow: "hidden",
-            }}
-          >
-            {inputs.length === 0 ? (
-              <div style={{ padding: 12, fontSize: 11.5, color: ag.muted, textAlign: "center" }}>
-                No inputs declared.
-              </div>
-            ) : (
-              inputs.map((f, i) => (
-                <BindRow
-                  key={f.name}
-                  target={f.name}
-                  type={f.type}
-                  required={f.required}
-                  binding={inferBinding(f.name)}
-                  last={i === inputs.length - 1}
-                />
-              ))
-            )}
-          </div>
-          <DashedAdd>+ Add input</DashedAdd>
+          <SchemaEditor
+            kind="input"
+            schema={manifest.inputSchema}
+            onChange={(next) => patch({ inputSchema: next })}
+            emptyMessage="No inputs declared. The agent will use the caller's raw message."
+          />
         </div>
 
         {/* Available state */}
@@ -612,13 +592,6 @@ function stripUndefined<T extends Record<string, unknown>>(obj: T): T {
     if (v !== undefined) out[k] = v;
   }
   return out as T;
-}
-
-function inferBinding(name: string) {
-  if (name === "user_id" || name === "userId" || name === "session_id" || name === "sessionId") {
-    return { kind: "session" as const, label: `session.${name}` };
-  }
-  return { kind: "caller" as const, label: "from caller" };
 }
 
 /* ── Re-export: editor shell uses this style on header chips ──────────── */
