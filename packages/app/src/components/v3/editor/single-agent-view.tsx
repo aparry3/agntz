@@ -29,6 +29,7 @@ import { ModelPicker } from "./model-picker";
 import { SchemaEditor } from "./schema-editor";
 import { ExamplesEditor, type Example } from "./examples-editor";
 import { ToolsEditor, type ToolEntry } from "./tools-editor";
+import { findBrokenRefs } from "./ref-drift";
 
 export type SingleViewMode = "build" | "yaml" | "instruction" | "both";
 
@@ -254,6 +255,13 @@ function SingleAgentInspector({
   const replyEnabled = manifest.reply === true || (typeof manifest.reply === "object" && manifest.reply !== null);
   const skillsText = (manifest.skills ?? []).join(", ");
 
+  // Reference-drift: list any `{{var}}` refs in instruction/prompt that aren't
+  // declared inputs. `userQuery` is built-in and always allowed.
+  const inScope = inputs.map((i) => i.name);
+  const brokenInstructionRefs = findBrokenRefs(manifest.instruction ?? "", inScope);
+  const brokenPromptRefs = findBrokenRefs(manifest.prompt ?? "", inScope);
+  const allBrokenRefs = Array.from(new Set([...brokenInstructionRefs, ...brokenPromptRefs]));
+
   return (
     <aside
       style={{
@@ -289,6 +297,38 @@ function SingleAgentInspector({
       </div>
 
       <div style={{ flex: 1, overflow: "auto" }}>
+        {allBrokenRefs.length > 0 && (
+          <div
+            style={{
+              margin: "12px 16px 0",
+              padding: "8px 10px",
+              border: `1px solid ${ag.warn}`,
+              borderRadius: 4,
+              background: ag.warnBg,
+              color: ag.warn,
+              fontSize: 11.5,
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 8,
+            }}
+          >
+            <I.X size={11} style={{ marginTop: 2, flex: "0 0 auto" }} />
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontWeight: 600 }}>
+                {allBrokenRefs.length} unresolved reference
+                {allBrokenRefs.length === 1 ? "" : "s"}
+              </div>
+              <div style={{ marginTop: 2, fontFamily: "var(--font-mono)", fontSize: 10.5 }}>
+                {allBrokenRefs.map((ref) => `{{${ref}}}`).join(", ")}
+              </div>
+              <div style={{ marginTop: 4, color: ag.text2 }}>
+                These names aren&apos;t declared as inputs. Add them to the schema below or
+                remove the references. (Saving still works — runtime templates will leave
+                them empty.)
+              </div>
+            </div>
+          </div>
+        )}
         {/* Inputs */}
         <div style={{ padding: "16px 16px 8px" }}>
           <div style={{ marginBottom: 10 }}>
@@ -385,7 +425,11 @@ function SingleAgentInspector({
               loading={catalog?.loading}
               onChange={(next) => patchModel({ provider: next.provider, name: next.name })}
             />
-            <InstructionBlock instruction={manifest.instruction ?? ""} onChange={handleInstruction} />
+            <InstructionBlock
+              instruction={manifest.instruction ?? ""}
+              onChange={handleInstruction}
+              brokenRefs={brokenInstructionRefs}
+            />
           </InsSection>
 
           <InsSection title="Tools" badge={`${manifest.tools?.length ?? 0} attached`}>
@@ -490,9 +534,11 @@ function SingleAgentInspector({
 function InstructionBlock({
   instruction,
   onChange,
+  brokenRefs,
 }: {
   instruction: string;
   onChange?: (next: string) => void;
+  brokenRefs?: string[];
 }) {
   return (
     <div>
@@ -543,6 +589,32 @@ function InstructionBlock({
           }}
         >
           <HighlightInstruction text={instruction} />
+        </div>
+      )}
+      {brokenRefs && brokenRefs.length > 0 && (
+        <div
+          style={{
+            marginTop: 6,
+            padding: "5px 8px",
+            border: `1px solid ${ag.warn}`,
+            borderRadius: 3,
+            background: ag.warnBg,
+            color: ag.warn,
+            fontSize: 11,
+            fontFamily: "var(--font-mono)",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+          }}
+          title="These refs aren't in the agent's input scope."
+        >
+          <I.X size={10} />
+          {brokenRefs.length === 1
+            ? `${brokenRefs[0]} isn't declared as an input`
+            : `${brokenRefs.length} refs aren't declared inputs:`}
+          {brokenRefs.length > 1 && (
+            <span style={{ fontWeight: 500 }}>{brokenRefs.join(", ")}</span>
+          )}
         </div>
       )}
     </div>
