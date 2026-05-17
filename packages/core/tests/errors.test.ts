@@ -10,6 +10,7 @@ import {
   InvalidAgentRefError,
   InvocationCancelledError,
   MaxStepsExceededError,
+  TokenBudgetExceededError,
 } from "../src/errors.js";
 import type { ModelProvider, GenerateTextOptions, GenerateTextResult } from "../src/types.js";
 

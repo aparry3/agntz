@@ -2,12 +2,33 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireUserContext, AuthRequiredError } from "@/lib/user";
 import { workerValidateManifest } from "@/lib/worker-client";
 
+/**
+ * The agent id in this route addresses an agent *record*, not a specific
+ * version. `@version` syntax belongs on the run path (POST /api/run with
+ * `agentId: "foo@latest"`) and the versions subresource — reject it here so
+ * a CRUD call against `foo@latest` doesn't silently target whatever record
+ * happens to match.
+ */
+function rejectVersionSuffix(id: string): NextResponse | null {
+  if (id.includes("@")) {
+    return NextResponse.json(
+      {
+        error: `Agent id "${id}" must not contain '@'. Version syntax is supported on POST /api/run and the /versions subresource, not on this endpoint.`,
+      },
+      { status: 400 },
+    );
+  }
+  return null;
+}
+
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
+    const bad = rejectVersionSuffix(id);
+    if (bad) return bad;
     const { runner } = await requireUserContext();
     const agent = await runner.agents.getAgent(id);
 
@@ -27,6 +48,8 @@ export async function PUT(
 ) {
   try {
     const { id } = await params;
+    const bad = rejectVersionSuffix(id);
+    if (bad) return bad;
     const { userId, runner } = await requireUserContext();
     const body = await req.json();
     const { name, manifest, ...rest } = body;
@@ -63,6 +86,8 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
+    const bad = rejectVersionSuffix(id);
+    if (bad) return bad;
     const { runner } = await requireUserContext();
     await runner.agents.deleteAgent(id);
     return NextResponse.json({ id, deleted: true });

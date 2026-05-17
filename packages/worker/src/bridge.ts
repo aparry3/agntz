@@ -65,7 +65,9 @@ export function createExecutionContext(
     spanEmitter,
     ownerId,
     resolveAgent: async (id: string) => {
-      const agentDef = await runner.agents.getAgent(id);
+      // `id` may be a plain agent id or carry an `@<version|latest>` suffix.
+      // `resolveAgentRef` parses and dispatches; returns null on any failure.
+      const agentDef = await runner.resolveAgentRef(id);
       if (!agentDef) {
         throw new Error(`Agent "${id}" not found`);
       }
@@ -291,7 +293,11 @@ function manifestToAgentDefinition(manifest: LLMAgentManifest, renderedInstructi
  */
 function manifestSpawnableToCore(spawnable: AgentRef[]): CoreAgentRef[] {
   return spawnable.map((ref) => {
-    if (ref.kind === "ref") return { kind: "ref", agentId: ref.agentId };
+    if (ref.kind === "ref") {
+      return ref.version
+        ? { kind: "ref", agentId: ref.agentId, version: ref.version }
+        : { kind: "ref", agentId: ref.agentId };
+    }
     // Inline LLM children: validator forbids template variables in the
     // instruction, so we use it verbatim as the systemPrompt.
     return {
@@ -319,9 +325,12 @@ async function preregisterSpawnableRefs(
 ): Promise<void> {
   for (const ref of spawnable) {
     if (ref.kind !== "ref") continue;
-    const stored = await runner.agents.getAgent(ref.agentId);
+    // Honor `@version` pinning so the pre-registered child reflects the
+    // manifest author's pin, not whatever happens to be activated today.
+    const lookup = ref.version ? `${ref.agentId}@${ref.version}` : ref.agentId;
+    const stored = await runner.resolveAgentRef(lookup);
     if (!stored) {
-      console.warn(`[spawn] skip ref '${ref.agentId}': not in agent store`);
+      console.warn(`[spawn] skip ref '${lookup}': not in agent store`);
       continue;
     }
     let childManifest: AgentManifest;

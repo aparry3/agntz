@@ -886,6 +886,15 @@ async function resolveRunnerAndManifest(
   };
 
   if (isSystemAgentId(agentId)) {
+    // System agents are repo-bundled YAML; they have no version history.
+    // Reject `@version` suffixes explicitly so callers don't silently get
+    // the activated/latest behavior that doesn't apply here.
+    if (agentId.includes("@")) {
+      throw Object.assign(
+        new Error(`System agent "${agentId}" cannot be version-pinned`),
+        { code: "INVALID_AGENT_REF" },
+      );
+    }
     const manifest = await loadSystemAgent(agentId);
     // System agents run with an ephemeral store — they don't need persistence
     // and shouldn't see or write the calling user's agents/sessions.
@@ -901,7 +910,8 @@ async function resolveRunnerAndManifest(
 }
 
 async function resolveStoredManifest(agentId: string, runner: Runner): Promise<AgentManifest> {
-  const agentDef = await runner.agents.getAgent(agentId);
+  // `agentId` may carry an `@<version|latest>` suffix; the runner parses it.
+  const agentDef = await runner.resolveAgentRef(agentId);
   if (!agentDef) {
     throw Object.assign(new Error(`Agent "${agentId}" not found`), { code: "NOT_FOUND" });
   }
