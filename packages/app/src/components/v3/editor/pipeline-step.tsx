@@ -5,7 +5,7 @@
 // not selected, it collapses to a one-line summary so a 3+ step pipeline
 // stays scannable.
 
-import type { ReactNode } from "react";
+import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { I } from "@/components/v3/icons";
 import { Mono, ag } from "@/components/v3/primitives";
 
@@ -38,12 +38,12 @@ export function PipelineStep({
   model?: string;
   inputs?: StepField[];
   outputs?: StepField[];
-  onClick?: () => void;
+  onClick?: (event?: ReactMouseEvent) => void;
 }) {
   const palette = kindPalette(kind);
   return (
     <div
-      onClick={onClick}
+      onClick={onClick ? (e) => onClick(e) : undefined}
       style={{
         width: 380,
         background: ag.surface2,
