@@ -44,12 +44,16 @@ export function PipelineView({
   manifestId,
   view,
   onChangeView,
+  onChange,
   yamlPanel,
 }: {
   rootManifest: Record<string, unknown>;
   manifestId: string;
   view: PipelineViewMode;
   onChangeView: (v: PipelineViewMode) => void;
+  /** Generic patcher — receives a fully-formed next root manifest. Used by
+   *  Phase 2+ pipeline editors (root description/model, step add/delete, etc.). */
+  onChange?: (next: Record<string, unknown>) => void;
   yamlPanel?: ReactNode;
 }) {
   const root = useMemo<PipelineNode>(

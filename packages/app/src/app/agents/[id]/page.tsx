@@ -26,6 +26,7 @@ export default function AgentEditorPage() {
   const catalog = useCatalog();
 
   const [manifest, setManifest] = useState("");
+  const [originalManifest, setOriginalManifest] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -47,6 +48,7 @@ export default function AgentEditorPage() {
   const isPipeline = parsed?.kind === "sequential" || parsed?.kind === "parallel";
   const manifestId = typeof parsed?.id === "string" ? parsed.id : id;
   const manifestName = typeof parsed?.name === "string" ? parsed.name : manifestId;
+  const dirty = manifest !== originalManifest;
 
   useEffect(() => {
     fetch(`/api/agents/${id}`)
@@ -54,27 +56,28 @@ export default function AgentEditorPage() {
       .then((agent) => {
         const yaml = agent?.metadata?.manifest ?? "";
         setManifest(yaml);
+        setOriginalManifest(yaml);
         setUpdatedAt(agent?.updatedAt ?? null);
       })
       .catch(() => setError("Failed to load agent"))
       .finally(() => setLoading(false));
   }, [id]);
 
-  const handleInstructionChange = useCallback(
-    (next: string) => {
-      if (!parsed) return;
-      const updated = { ...parsed, instruction: next };
-      try {
-        setManifest(stringifyYAML(updated, { lineWidth: 0 }));
-        setStatus(null);
-      } catch {
-        // ignore
-      }
-    },
-    [parsed]
-  );
+  // Generic patcher: receives a fully-formed next manifest object (already
+  // composed by the inspector — e.g. {...prev, description: newValue}) and
+  // re-serializes to YAML. The YAML string remains the canonical persistence
+  // format so the YAML view stays in sync automatically.
+  const handleManifestChange = useCallback((next: Record<string, unknown>) => {
+    try {
+      setManifest(stringifyYAML(next, { lineWidth: 0 }));
+      setStatus(null);
+    } catch {
+      // Should be unreachable for plain JS objects coming from inspector edits.
+    }
+  }, []);
 
   const handleSave = async () => {
+    if (!dirty || saving) return;
     setSaving(true);
     setError(null);
     setStatus(null);
@@ -89,6 +92,7 @@ export default function AgentEditorPage() {
         setError(data.error ?? "Failed to save agent");
         return;
       }
+      setOriginalManifest(manifest);
       setStatus("Saved");
       setUpdatedAt(new Date().toISOString());
     } catch (err) {
@@ -134,6 +138,14 @@ export default function AgentEditorPage() {
           {isPipeline ? (typeof parsed?.kind === "string" ? parsed.kind : "Pipeline") : "LLM"}
         </Tag>
       }
+      statusTag={
+        dirty ? (
+          <Tag bg={ag.warnBg} color={ag.warn}>
+            <I.Dot size={6} color={ag.warn} />
+            Unsaved
+          </Tag>
+        ) : undefined
+      }
       metaRight={
         <Mono size={11} color={ag.muted}>
           {status ?? formatUpdated(updatedAt)}
@@ -146,6 +158,8 @@ export default function AgentEditorPage() {
       }
       onSave={handleSave}
       saving={saving}
+      dirty={dirty}
+      saveLabelDirty="Save changes"
     >
       {error && (
         <div
@@ -171,6 +185,7 @@ export default function AgentEditorPage() {
           manifestId={manifestId}
           view={view as PipelineViewMode}
           onChangeView={(v) => setView(v)}
+          onChange={handleManifestChange}
           yamlPanel={<YamlPanel manifest={manifest} setManifest={setManifest} catalog={catalog} />}
         />
       ) : (
@@ -179,7 +194,7 @@ export default function AgentEditorPage() {
           manifestId={manifestId}
           view={view as SingleViewMode}
           onChangeView={(v) => setView(v)}
-          onChangeInstruction={handleInstructionChange}
+          onChange={(next) => handleManifestChange(next as Record<string, unknown>)}
           yamlPanel={<YamlPanel manifest={manifest} setManifest={setManifest} catalog={catalog} />}
         />
       )}

@@ -218,15 +218,13 @@ export default function NewAgentPage() {
     setPhase("landing");
   };
 
-  const handleInstructionChange = (next: string) => {
-    if (!parsed) return;
-    const updated = { ...parsed, instruction: next };
+  const handleManifestChange = useCallback((next: Record<string, unknown>) => {
     try {
-      setManifest(stringifyYAML(updated, { lineWidth: 0 }));
+      setManifest(stringifyYAML(next, { lineWidth: 0 }));
     } catch {
       // Ignore; the YAML pane is the canonical source if this fails.
     }
-  };
+  }, []);
 
   const handleCreate = async () => {
     if (!parsed || !manifestId.trim()) {
@@ -312,6 +310,7 @@ export default function NewAgentPage() {
           manifestId={manifestId || "new"}
           view={view as PipelineViewMode}
           onChangeView={(v) => setView(v)}
+          onChange={handleManifestChange}
           yamlPanel={
             <YamlPanel
               manifest={manifest}
@@ -326,7 +325,7 @@ export default function NewAgentPage() {
           manifestId={manifestId || "new"}
           view={view as SingleViewMode}
           onChangeView={(v) => setView(v)}
-          onChangeInstruction={handleInstructionChange}
+          onChange={(next) => handleManifestChange(next as Record<string, unknown>)}
           yamlPanel={
             <YamlPanel
               manifest={manifest}

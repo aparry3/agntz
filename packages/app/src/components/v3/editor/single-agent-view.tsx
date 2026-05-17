@@ -52,7 +52,7 @@ export function SingleAgentView({
   manifestId,
   view,
   onChangeView,
-  onChangeInstruction,
+  onChange,
   rightExtras,
   yamlPanel,
 }: {
@@ -60,7 +60,9 @@ export function SingleAgentView({
   manifestId: string;
   view: SingleViewMode;
   onChangeView: (v: SingleViewMode) => void;
-  onChangeInstruction?: (next: string) => void;
+  /** Generic patcher — receives a fully-formed next manifest. Phase 2+ editors
+   *  call this to commit changes; the parent re-serializes to YAML. */
+  onChange?: (next: SingleAgentManifest) => void;
   rightExtras?: ReactNode;
   yamlPanel?: ReactNode;
 }) {
@@ -188,7 +190,7 @@ export function SingleAgentView({
             inputs={inputs}
             outputs={outputs}
             modelLine={modelLine}
-            onChangeInstruction={onChangeInstruction}
+            onChange={onChange}
           />
         )}
       </div>
@@ -202,15 +204,18 @@ function SingleAgentInspector({
   inputs,
   outputs,
   modelLine,
-  onChangeInstruction,
+  onChange,
 }: {
   manifest: SingleAgentManifest;
   manifestId: string;
   inputs: StepField[];
   outputs: StepField[];
   modelLine: string;
-  onChangeInstruction?: (v: string) => void;
+  onChange?: (next: SingleAgentManifest) => void;
 }) {
+  const handleInstruction = onChange
+    ? (next: string) => onChange({ ...manifest, instruction: next })
+    : undefined;
   return (
     <aside
       style={{
@@ -351,7 +356,7 @@ function SingleAgentInspector({
               <SubBlock label="Description" value={manifest.description} multiline />
             )}
             <SubBlock label="Model" value={modelLine || "—"} mono select />
-            <InstructionBlock instruction={manifest.instruction ?? ""} onChange={onChangeInstruction} />
+            <InstructionBlock instruction={manifest.instruction ?? ""} onChange={handleInstruction} />
           </InsSection>
 
           <InsSection title="Tools" badge={`${manifest.tools?.length ?? 0} attached`}>
