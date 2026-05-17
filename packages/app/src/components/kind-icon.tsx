@@ -1,19 +1,28 @@
 import type { SpanKind } from "@agntz/core";
+import { ag } from "@/components/v3/primitives";
 
-const GLYPHS: Record<SpanKind, { glyph: string; color: string; label: string }> = {
-  run: { glyph: "◉", color: "text-violet-600", label: "Run" },
-  manifest: { glyph: "▣", color: "text-indigo-600", label: "Manifest" },
-  step: { glyph: "▶", color: "text-blue-600", label: "Step" },
-  invoke: { glyph: "✦", color: "text-cyan-600", label: "Invoke" },
-  model: { glyph: "✺", color: "text-amber-600", label: "Model" },
-  tool: { glyph: "⚙", color: "text-emerald-600", label: "Tool" },
+const PALETTE: Record<SpanKind, { glyph: string; bg: string; fg: string; label: string }> = {
+  run:      { glyph: "◉", bg: ag.purpleBg, fg: ag.purple, label: "Run" },
+  manifest: { glyph: "▣", bg: ag.line2,    fg: ag.text2,  label: "Manifest" },
+  step:     { glyph: "▶", bg: ag.blueBg,   fg: ag.blue,   label: "Step" },
+  invoke:   { glyph: "✦", bg: ag.blueBg,   fg: ag.blue,   label: "Invoke" },
+  model:    { glyph: "✺", bg: ag.warnBg,   fg: ag.warn,   label: "Model" },
+  tool:     { glyph: "⚙", bg: ag.okBg,     fg: ag.ok,     label: "Tool" },
 };
 
-export function KindIcon({ kind }: { kind: SpanKind }) {
-  const g = GLYPHS[kind];
+export function KindIcon({ kind, size = 12 }: { kind: SpanKind; size?: number }) {
+  const g = PALETTE[kind];
   return (
     <span
-      className={`inline-block w-4 text-center font-mono ${g.color}`}
+      style={{
+        fontFamily: "var(--font-mono)",
+        color: g.fg,
+        fontSize: size,
+        width: 14,
+        display: "inline-block",
+        textAlign: "center",
+        lineHeight: 1,
+      }}
       title={g.label}
       aria-label={g.label}
     >
@@ -22,20 +31,33 @@ export function KindIcon({ kind }: { kind: SpanKind }) {
   );
 }
 
-/** Background color for a span kind, used by the Gantt bars. */
+export function KindChip({ kind }: { kind: SpanKind }) {
+  const g = PALETTE[kind];
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        background: g.bg,
+        color: g.fg,
+        padding: "2px 7px",
+        borderRadius: 3,
+        fontSize: 10.5,
+        fontWeight: 500,
+        fontFamily: "var(--font-mono)",
+        letterSpacing: 0,
+      }}
+    >
+      {g.glyph} {kind}
+    </span>
+  );
+}
+
+export function kindColor(kind: SpanKind): string {
+  return PALETTE[kind].fg;
+}
+
 export function kindBgColor(kind: SpanKind): string {
-  switch (kind) {
-    case "run":
-      return "bg-violet-500";
-    case "manifest":
-      return "bg-indigo-500";
-    case "step":
-      return "bg-blue-500";
-    case "invoke":
-      return "bg-cyan-500";
-    case "model":
-      return "bg-amber-500";
-    case "tool":
-      return "bg-emerald-500";
-  }
+  return PALETTE[kind].bg;
 }

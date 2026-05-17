@@ -2,9 +2,8 @@
 
 import { use, useEffect, useState } from "react";
 import Link from "next/link";
-import type { Span, TraceSummary } from "@agntz/core";
-import { StatusBadge } from "@/components/status-badge";
-import { RelativeTime } from "@/components/relative-time";
+import type { Span, SpanStatus, TraceSummary } from "@agntz/core";
+import { Crumbs, Mono, ag } from "@/components/v3/primitives";
 import { GanttStrip } from "@/components/traces/gantt-strip";
 import { SpanTree } from "@/components/traces/span-tree";
 import { SpanDetailPanel } from "@/components/traces/span-detail-panel";
@@ -40,7 +39,6 @@ export default function TraceDetailPage({
       .then((d) => {
         if (cancelled) return;
         setData(d);
-        // Auto-select the root span so the detail panel isn't blank on load.
         const root = d.spans.find((s) => s.parentId === null) ?? d.spans[0] ?? null;
         if (root) setSelectedSpanId(root.spanId);
       })
@@ -64,11 +62,9 @@ export default function TraceDetailPage({
     es.addEventListener("span-start", (e) => {
       try {
         const payload = JSON.parse((e as MessageEvent).data) as { span: Span };
-        setData((prev) =>
-          prev ? { ...prev, spans: [...prev.spans, payload.span] } : prev,
-        );
+        setData((prev) => (prev ? { ...prev, spans: [...prev.spans, payload.span] } : prev));
       } catch {
-        // Best-effort parsing; skip malformed frames.
+        /* skip malformed */
       }
     });
 
@@ -89,7 +85,7 @@ export default function TraceDetailPage({
             : prev,
         );
       } catch {
-        // skip malformed
+        /* skip malformed */
       }
     });
 
@@ -98,81 +94,111 @@ export default function TraceDetailPage({
         const payload = JSON.parse((e as MessageEvent).data) as { summary: TraceSummary };
         setData((prev) => (prev ? { ...prev, summary: payload.summary } : prev));
       } catch {
-        // skip malformed
+        /* skip malformed */
       }
       es.close();
     });
 
     es.addEventListener("snapshot", () => {
-      // Already loaded via /api/traces/:id during initial fetch.
       es.close();
     });
 
     es.onerror = () => {
-      // Network/disconnect — close so we don't hold the connection open.
       es.close();
     };
 
     return () => es.close();
   }, [data?.summary.status, data?.summary.traceId, traceId]);
 
-  if (loading) {
-    return <CardMessage>Loading trace...</CardMessage>;
-  }
-  if (error) {
-    return <CardMessage>Failed to load trace: {error}</CardMessage>;
-  }
-  if (!data) {
-    return <CardMessage>Trace not found.</CardMessage>;
-  }
+  if (loading) return <CardMessage>Loading trace…</CardMessage>;
+  if (error) return <CardMessage>Failed to load trace: {error}</CardMessage>;
+  if (!data) return <CardMessage>Trace not found.</CardMessage>;
 
   const { summary, spans } = data;
   const selectedSpan = spans.find((s) => s.spanId === selectedSpanId) ?? null;
 
   return (
-    <div className="mx-auto max-w-7xl space-y-4">
-      <div>
-        <Link href="/traces" className="text-xs text-zinc-500 hover:text-zinc-900">
-          ← All traces
-        </Link>
-        <div className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-2">
-          <h1 className="font-mono text-2xl font-semibold text-zinc-950">{summary.traceId}</h1>
-          <StatusBadge status={summary.status} />
-          {summary.status === "running" && (
-            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600">
-              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-blue-500" />
-              Live
-            </span>
-          )}
+    <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
+      <div style={{ padding: "20px 32px 18px", borderBottom: `1px solid ${ag.line2}`, background: ag.bg }}>
+        <div style={{ marginBottom: 8 }}>
+          <Crumbs
+            trail={[
+              <Link key="ws" href="/agents" style={{ color: "inherit", textDecoration: "none" }}>
+                agntz
+              </Link>,
+              <Link key="tr" href="/traces" style={{ color: "inherit", textDecoration: "none" }}>
+                Traces
+              </Link>,
+              <Mono key="id" size={11.5} color={ag.ink}>
+                {summary.traceId}
+              </Mono>,
+            ]}
+          />
         </div>
-        <dl className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-xs text-zinc-600">
-          <Meta label="Agent" value={summary.agentId ?? "—"} />
-          <Meta label="Started" value={<RelativeTime iso={summary.startedAt} />} />
-          <Meta
-            label="Duration"
-            value={summary.durationMs === null ? "—" : `${(summary.durationMs / 1000).toFixed(2)}s`}
-          />
-          <Meta label="Spans" value={String(summary.spanCount)} />
-          <Meta label="Tokens" value={summary.totalTokens.toLocaleString()} />
-          <Meta
-            label="Cost"
-            value={summary.totalCostUsd === null ? "—" : `$${summary.totalCostUsd.toFixed(4)}`}
-          />
-        </dl>
+        <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 24 }}>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <Mono
+                size={22}
+                color={ag.ink}
+                style={{ fontWeight: 600, letterSpacing: "-0.01em" }}
+              >
+                {summary.traceId}
+              </Mono>
+              <StatusChip status={summary.status} />
+            </div>
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 18,
+                marginTop: 10,
+                fontSize: 11.5,
+              }}
+            >
+              <MetaPair k="agent" v={summary.agentId ?? "—"} />
+              <MetaPair k="started" v={new Date(summary.startedAt).toLocaleString()} />
+              <MetaPair
+                k="duration"
+                v={summary.durationMs === null ? "—" : `${(summary.durationMs / 1000).toFixed(2)}s`}
+              />
+              <MetaPair k="spans" v={String(summary.spanCount)} />
+              <MetaPair k="tokens" v={summary.totalTokens.toLocaleString()} />
+              <MetaPair
+                k="cost"
+                v={summary.totalCostUsd === null ? "—" : `$${summary.totalCostUsd.toFixed(4)}`}
+              />
+            </div>
+          </div>
+        </div>
       </div>
 
-      <GanttStrip
-        spans={spans}
-        summary={summary}
-        selectedSpanId={selectedSpanId}
-        onSelect={setSelectedSpanId}
-      />
+      <div
+        style={{
+          padding: "16px 32px 32px",
+          flex: 1,
+          overflow: "auto",
+          display: "flex",
+          flexDirection: "column",
+          gap: 16,
+        }}
+      >
+        <GanttStrip
+          spans={spans}
+          summary={summary}
+          selectedSpanId={selectedSpanId}
+          onSelect={setSelectedSpanId}
+        />
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="lg:col-span-1">
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "minmax(260px, 360px) 1fr",
+            gap: 16,
+            alignItems: "start",
+          }}
+        >
           <SpanTree spans={spans} selectedSpanId={selectedSpanId} onSelect={setSelectedSpanId} />
-        </div>
-        <div className="lg:col-span-2">
           <SpanDetailPanel span={selectedSpan} />
         </div>
       </div>
@@ -180,21 +206,69 @@ export default function TraceDetailPage({
   );
 }
 
-function CardMessage({ children }: { children: React.ReactNode }) {
+function MetaPair({ k, v }: { k: string; v: string }) {
   return (
-    <div className="mx-auto max-w-7xl">
-      <div className="flex items-center justify-center rounded-[2rem] border border-stone-200 bg-white py-20 shadow-sm">
-        <p className="text-zinc-500">{children}</p>
-      </div>
-    </div>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+      <span style={{ color: ag.muted, fontSize: 11, letterSpacing: "0.04em" }}>{k}</span>
+      <Mono size={11.5} color={ag.ink}>
+        {v}
+      </Mono>
+    </span>
   );
 }
 
-function Meta({ label, value }: { label: string; value: React.ReactNode }) {
+function StatusChip({ status }: { status: SpanStatus }) {
+  const M: Record<SpanStatus, { bg: string; fg: string; label: string; pulse?: boolean }> = {
+    ok:        { bg: ag.okBg, fg: ag.ok, label: "OK" },
+    error:     { bg: "#F2DCDE", fg: ag.danger, label: "Error" },
+    cancelled: { bg: ag.line2, fg: ag.text2, label: "Cancelled" },
+    running:   { bg: ag.blueBg, fg: ag.blue, label: "Running", pulse: true },
+  };
+  const m = M[status] ?? { bg: ag.line2, fg: ag.text2, label: status };
   return (
-    <div className="flex items-center gap-1.5">
-      <span className="text-zinc-400">{label}:</span>
-      <span className="font-mono text-zinc-900">{value}</span>
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        background: m.bg,
+        color: m.fg,
+        padding: "2px 8px",
+        borderRadius: 3,
+        fontSize: 11,
+        fontWeight: 500,
+      }}
+    >
+      <span
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: 999,
+          background: m.fg,
+          animation: m.pulse ? "agntz-pulse 1.4s ease-in-out infinite" : undefined,
+        }}
+      />
+      {m.label}
+    </span>
+  );
+}
+
+function CardMessage({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ padding: "32px" }}>
+      <div
+        style={{
+          background: ag.surface2,
+          border: `1px solid ${ag.line}`,
+          borderRadius: 5,
+          padding: "60px 24px",
+          textAlign: "center",
+          color: ag.muted,
+          fontSize: 13,
+        }}
+      >
+        {children}
+      </div>
     </div>
   );
 }
