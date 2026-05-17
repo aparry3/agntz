@@ -66,6 +66,12 @@ export interface LLMAgentManifest extends AgentManifestBase {
   kind: "llm";
   model: ModelConfig;
   instruction: string;
+  /**
+   * Optional user-message template. Rendered with full state via
+   * `renderTemplate` (same as `instruction`). When absent, the user's input
+   * (`state.userQuery`) is sent verbatim as the user message.
+   */
+  prompt?: string;
   examples?: Example[];
   tools?: ManifestToolEntry[];
   outputSchema?: OutputSchema;
@@ -246,8 +252,18 @@ export type AgentState = Record<string, unknown>;
 export interface ExecutionContext {
   /** Resolve an agent ID to its manifest */
   resolveAgent: (id: string) => Promise<AgentManifest>;
-  /** Execute an LLM agent via the core runner */
-  invokeLLM: (manifest: LLMAgentManifest, input: string, state: AgentState) => Promise<unknown>;
+  /**
+   * Execute an LLM agent via the core runner.
+   * `renderedInstruction` becomes the system prompt. `renderedPrompt`, when
+   * provided, is used as the user message; otherwise the bridge derives the
+   * user message from `state.userQuery`.
+   */
+  invokeLLM: (
+    manifest: LLMAgentManifest,
+    renderedInstruction: string,
+    renderedPrompt: string | undefined,
+    state: AgentState,
+  ) => Promise<unknown>;
   /** Execute a tool call */
   invokeTool: (config: ToolCallConfig, state: AgentState) => Promise<unknown>;
 

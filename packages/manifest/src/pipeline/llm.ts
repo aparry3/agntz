@@ -2,19 +2,18 @@ import type { LLMAgentManifest, AgentState, ExecutionContext, ExecutionResult } 
 import { renderTemplate } from "../template.js";
 
 /**
- * Execute an LLM agent: render the instruction template, call the LLM via core runner.
+ * Execute an LLM agent: render the instruction (system prompt) and optional
+ * user prompt template, then call the LLM via the core runner.
  */
 export async function executeLLM(
   manifest: LLMAgentManifest,
   state: AgentState,
   ctx: ExecutionContext
 ): Promise<ExecutionResult> {
-  // Render instruction with state
   const instruction = renderTemplate(manifest.instruction, state);
+  const prompt = manifest.prompt ? renderTemplate(manifest.prompt, state) : undefined;
 
-  // Build a user prompt from the state (the "input" to the LLM)
-  // For LLM agents, we pass the rendered instruction + state to the core runner
-  const output = await ctx.invokeLLM(manifest, instruction, state);
+  const output = await ctx.invokeLLM(manifest, instruction, prompt, state);
 
   return {
     output,

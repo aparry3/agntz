@@ -193,6 +193,14 @@ function validateLLMStructural(
     validateTemplatesSyntax(manifest.instruction, p(path, "instruction"), errors);
   }
 
+  if (manifest.prompt !== undefined) {
+    if (typeof manifest.prompt !== "string") {
+      errors.push({ level: "structural", path: p(path, "prompt"), message: "LLM agent 'prompt' must be a string when present" });
+    } else {
+      validateTemplatesSyntax(manifest.prompt, p(path, "prompt"), errors);
+    }
+  }
+
   if (manifest.outputSchema) {
     validatePropertySchema(manifest.outputSchema, p(path, "outputSchema"), errors);
   }
@@ -679,6 +687,9 @@ function validateReferences(
   switch (manifest.kind) {
     case "llm":
       validateTemplateRefs(manifest.instruction, availableVars, p(path, "instruction"), errors, warnings);
+      if (manifest.prompt) {
+        validateTemplateRefs(manifest.prompt, availableVars, p(path, "prompt"), errors, warnings);
+      }
       break;
     case "tool":
       if (manifest.tool.params) {

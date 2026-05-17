@@ -54,6 +54,7 @@ function normalizeLLM(base: Record<string, unknown>, raw: Record<string, unknown
     kind: "llm",
     model: normalizeModel(raw.model),
     instruction: requireString(raw, "instruction"),
+    prompt: typeof raw.prompt === "string" ? raw.prompt : undefined,
     examples: raw.examples as LLMAgentManifest["examples"],
     tools: raw.tools ? normalizeTools(raw.tools as unknown[]) : undefined,
     outputSchema: raw.outputSchema as Record<string, unknown> | undefined,
