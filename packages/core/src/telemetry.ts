@@ -127,12 +127,30 @@ export class SpanEmitter {
     return this.tracer !== null || this.config.traceSink !== undefined;
   }
 
-  startRun(params: { ownerId: string; runId: string; sessionId?: string | null; agentId: string }): RunSpan {
+  startRun(params: {
+    ownerId: string;
+    runId: string;
+    sessionId?: string | null;
+    agentId: string;
+    /** What the caller passed (`"latest"`, ISO, or null/undefined for bare id). */
+    requestedVersion?: string | null;
+    /** ISO timestamp of the row that ran (null/undefined for in-memory agents). */
+    resolvedVersion?: string | null;
+    resolvedVia?: "registered" | "activated" | "latest" | "exact";
+  }): RunSpan {
+    const attrs: Record<string, string | number | boolean> = {
+      "agent.id": params.agentId,
+      "agent.run.id": params.runId,
+    };
+    if (params.requestedVersion != null) attrs["agent.requested_version"] = params.requestedVersion;
+    if (params.resolvedVersion != null) attrs["agent.resolved_version"] = params.resolvedVersion;
+    if (params.resolvedVia) attrs["agent.resolved_via"] = params.resolvedVia;
+
     const span = this.openSpan("run", "agent.run", {
       ownerId: params.ownerId,
       runId: params.runId,
       sessionId: params.sessionId ?? null,
-      attrs: { "agent.id": params.agentId, "agent.run.id": params.runId },
+      attrs,
     });
     return {
       end: () => this.closeSpan(span, "ok"),
@@ -140,12 +158,29 @@ export class SpanEmitter {
     };
   }
 
-  startManifest(params: { ownerId: string; agentId: string; kind: string; runId?: string | null; sessionId?: string | null }): ManifestSpan {
+  startManifest(params: {
+    ownerId: string;
+    agentId: string;
+    kind: string;
+    runId?: string | null;
+    sessionId?: string | null;
+    requestedVersion?: string | null;
+    resolvedVersion?: string | null;
+    resolvedVia?: "registered" | "activated" | "latest" | "exact";
+  }): ManifestSpan {
+    const attrs: Record<string, string | number | boolean> = {
+      "agent.id": params.agentId,
+      "manifest.kind": params.kind,
+    };
+    if (params.requestedVersion != null) attrs["agent.requested_version"] = params.requestedVersion;
+    if (params.resolvedVersion != null) attrs["agent.resolved_version"] = params.resolvedVersion;
+    if (params.resolvedVia) attrs["agent.resolved_via"] = params.resolvedVia;
+
     const span = this.openSpan("manifest", "agent.manifest", {
       ownerId: params.ownerId,
       runId: params.runId ?? null,
       sessionId: params.sessionId ?? null,
-      attrs: { "agent.id": params.agentId, "manifest.kind": params.kind },
+      attrs,
     });
     return {
       step: (sp) => this.startStepInternal(sp, span),
@@ -176,6 +211,9 @@ export class SpanEmitter {
     runId?: string | null;
     contextIds?: string[];
     input?: string;
+    requestedVersion?: string | null;
+    resolvedVersion?: string | null;
+    resolvedVia?: "registered" | "activated" | "latest" | "exact";
   }): InvokeSpan {
     const ownerId = params.ownerId ?? "unknown";
     const attrs: Record<string, string | number | boolean> = {
@@ -188,6 +226,9 @@ export class SpanEmitter {
     if (params.runId) attrs["agent.run.id"] = params.runId;
     if (params.contextIds?.length) attrs["agent.context.ids"] = params.contextIds.join(",");
     if (this.config.recordIO && params.input) attrs["agent.input"] = params.input.slice(0, 4096);
+    if (params.requestedVersion != null) attrs["agent.requested_version"] = params.requestedVersion;
+    if (params.resolvedVersion != null) attrs["agent.resolved_version"] = params.resolvedVersion;
+    if (params.resolvedVia) attrs["agent.resolved_via"] = params.resolvedVia;
 
     const span = this.openSpan("invoke", "agent.invoke", {
       ownerId,

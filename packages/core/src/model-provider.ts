@@ -46,6 +46,7 @@ export class AISDKModelProvider implements ModelProvider {
       messages,
       tools: Object.keys(tools).length > 0 ? tools : undefined,
       experimental_output,
+      maxOutputTokens: options.maxTokens,
       abortSignal: options.signal,
     });
 
@@ -104,6 +105,7 @@ export class AISDKModelProvider implements ModelProvider {
       messages,
       tools: Object.keys(tools).length > 0 ? tools : undefined,
       experimental_output,
+      maxOutputTokens: options.maxTokens,
       abortSignal: options.signal,
     });
 

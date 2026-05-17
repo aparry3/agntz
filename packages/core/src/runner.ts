@@ -59,6 +59,7 @@ import {
   InvalidAgentRefError,
   InvocationCancelledError,
   MaxStepsExceededError,
+  TokenBudgetExceededError,
   MaxRecursionDepthError,
   ToolExecutionError,
   ToolNotFoundError,
@@ -110,6 +111,27 @@ const DEFAULT_MAX_RECURSION_DEPTH = 3;
  * outstanding children doesn't immediately exhaust `maxSteps`.
  */
 const DRAIN_BUDGET = 16;
+
+/**
+ * Caller-tightens-only resource resolution. The agent definition's value acts
+ * as a ceiling; `InvokeOptions` can lower it but never raise above it. Returns
+ * `fallback` when neither side specifies a positive limit, so callers get a
+ * sensible default (e.g. `DEFAULT_MAX_STEPS`) without one being baked into the
+ * agent record. A non-positive value on either side is ignored — treat zero or
+ * negative as "unset" so accidentally clearing a field doesn't silently set
+ * the cap to 0.
+ */
+function resolveCallerTightensLimit(
+  agentVal: number | undefined,
+  optionVal: number | undefined,
+  fallback?: number,
+): number | undefined {
+  const candidates: number[] = [];
+  if (typeof agentVal === "number" && agentVal > 0) candidates.push(agentVal);
+  if (typeof optionVal === "number" && optionVal > 0) candidates.push(optionVal);
+  if (candidates.length === 0) return fallback;
+  return Math.min(...candidates);
+}
 
 /**
  * Matches a `{{secrets.<name>}}` template reference. Used to walk an
@@ -522,7 +544,8 @@ export class Runner {
 
       const startTime = Date.now();
       const invocationId = generateInvocationId();
-      const { agent } = await self.resolveAgent(agentId);
+      const resolved = await self.resolveAgent(agentId);
+      const agent = resolved.agent;
 
       // Always work with a concrete sessionId — symmetric with invoke().
       const effectiveSessionId = options.sessionId ?? generateSessionId();
@@ -577,7 +600,9 @@ export class Runner {
                 await runRegistry.waitForTerminal(activeRunId);
               }
               const root = runRegistry.create({
-                agentId,
+                agentId: resolved.agentId,
+                agentVersion: resolved.resolvedVersion ?? undefined,
+                requestedAgentVersion: resolved.requestedVersion ?? undefined,
                 input: inputAsString,
                 parentRunId: options.parentRunId,
                 userId: options.userId,
@@ -591,7 +616,9 @@ export class Runner {
             }
           } else {
             const root = runRegistry.create({
-              agentId,
+              agentId: resolved.agentId,
+              agentVersion: resolved.resolvedVersion ?? undefined,
+              requestedAgentVersion: resolved.requestedVersion ?? undefined,
               input: inputAsString,
               parentRunId: options.parentRunId,
               userId: options.userId,
@@ -734,7 +761,15 @@ export class Runner {
         let finalOutput = "";
         let step = 0;
 
-        const baseMaxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS;
+        const baseMaxSteps = resolveCallerTightensLimit(
+          agent.maxSteps,
+          options.maxSteps,
+          DEFAULT_MAX_STEPS,
+        )!;
+        const tokenBudget = resolveCallerTightensLimit(
+          agent.tokenBudget,
+          options.tokenBudget,
+        );
         let inDrainPhase = false;
         let effectiveMaxSteps = baseMaxSteps;
 
@@ -743,6 +778,10 @@ export class Runner {
 
           if (effectiveSignal?.aborted) {
             throw new InvocationCancelledError();
+          }
+
+          if (tokenBudget !== undefined && totalUsage.totalTokens >= tokenBudget) {
+            throw new TokenBudgetExceededError(agentId, tokenBudget, totalUsage.totalTokens);
           }
 
           // Inject deferred child completions at the top of each iteration.
@@ -769,6 +808,7 @@ export class Runner {
               messages: messages as unknown as Array<{ role: string; content: string }>,
               tools: availableTools.length > 0 ? availableTools : undefined,
               outputSchema,
+              maxTokens: modelConfig.maxTokens,
               signal: effectiveSignal,
             });
 
@@ -798,6 +838,7 @@ export class Runner {
               messages: messages as unknown as Array<{ role: string; content: string }>,
               tools: availableTools.length > 0 ? availableTools : undefined,
               outputSchema,
+              maxTokens: modelConfig.maxTokens,
               signal: effectiveSignal,
             });
 
@@ -1135,7 +1176,8 @@ export class Runner {
 
     const startTime = Date.now();
     const invocationId = generateInvocationId();
-    const { agent } = await this.resolveAgent(agentId);
+    const resolved = await this.resolveAgent(agentId);
+    const agent = resolved.agent;
 
     // Always work with a concrete sessionId — auto-allocate if the caller
     // didn't pass one. The session row is ensured below so the id has a
@@ -1200,7 +1242,9 @@ export class Runner {
               await runRegistry.waitForTerminal(activeRunId);
             }
             const root = runRegistry.create({
-              agentId,
+              agentId: resolved.agentId,
+              agentVersion: resolved.resolvedVersion ?? undefined,
+              requestedAgentVersion: resolved.requestedVersion ?? undefined,
               input: inputAsString,
               parentRunId: options.parentRunId,
               userId: options.userId,
@@ -1214,7 +1258,9 @@ export class Runner {
           }
         } else {
           const root = runRegistry.create({
-            agentId,
+            agentId: resolved.agentId,
+            agentVersion: resolved.resolvedVersion ?? undefined,
+            requestedAgentVersion: resolved.requestedVersion ?? undefined,
             input: inputAsString,
             parentRunId: options.parentRunId,
             userId: options.userId,
@@ -1269,13 +1315,16 @@ export class Runner {
     // Start telemetry span — span attributes are scalar text, so use the
     // flattened view (image bytes don't belong in a span attribute).
     const span = spanEmitter.startInvoke({
-      agentId,
+      agentId: resolved.agentId,
       invocationId,
       model: modelStr,
       ownerId: options.ownerId,
       sessionId: effectiveSessionId,
       contextIds: options.contextIds,
       input: inputAsString,
+      requestedVersion: resolved.requestedVersion ?? undefined,
+      resolvedVersion: resolved.resolvedVersion ?? undefined,
+      resolvedVia: resolved.resolvedVia,
     });
 
     // Hoisted so the catch block can write an audit log entry even when a
@@ -1378,7 +1427,15 @@ export class Runner {
       let finalOutput = "";
       let step = 0;
 
-      const baseMaxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS;
+      const baseMaxSteps = resolveCallerTightensLimit(
+        agent.maxSteps,
+        options.maxSteps,
+        DEFAULT_MAX_STEPS,
+      )!;
+      const tokenBudget = resolveCallerTightensLimit(
+        agent.tokenBudget,
+        options.tokenBudget,
+      );
       let inDrainPhase = false;
       let effectiveMaxSteps = baseMaxSteps;
 
@@ -1389,6 +1446,10 @@ export class Runner {
         // registry-driven cancel)
         if (effectiveSignal?.aborted) {
           throw new InvocationCancelledError();
+        }
+
+        if (tokenBudget !== undefined && totalUsage.totalTokens >= tokenBudget) {
+          throw new TokenBudgetExceededError(agentId, tokenBudget, totalUsage.totalTokens);
         }
 
         // Inject any deferred child completions at the top of each iteration.
@@ -1419,6 +1480,7 @@ export class Runner {
               messages: messages as unknown as Array<{ role: string; content: string }>,
               tools: availableTools.length > 0 ? availableTools : undefined,
               outputSchema,
+              maxTokens: modelConfig.maxTokens,
               signal: effectiveSignal,
             }),
             this.config.retry,

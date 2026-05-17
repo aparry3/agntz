@@ -741,6 +741,18 @@ export interface Run {
   rootId: string;
   parentId?: string;
   agentId: string;
+  /**
+   * ISO timestamp of the agent version that ran. Null/undefined when the
+   * Run executed against an in-memory registered agent (no version history).
+   */
+  agentVersion?: string;
+  /**
+   * What the caller passed as a version suffix (`"latest"`, an ISO string,
+   * or undefined for bare ids that resolve to the activated version).
+   * Preserved alongside `agentVersion` so traces can show *why* a particular
+   * version ran (`@latest` vs explicit pin vs activated default).
+   */
+  requestedAgentVersion?: string;
   userId?: string;
   sessionId?: string;
   /** Parent's tool_use_id that spawned this Run (for spawned children). */
@@ -797,6 +809,10 @@ export type MultiplexedEvent =
 
 export interface SpawnRunOptions {
   agentId: string;
+  /** ISO timestamp of the resolved version (set by the runner / bridge). */
+  agentVersion?: string;
+  /** What the caller passed as the version suffix, preserved on the Run. */
+  requestedAgentVersion?: string;
   input: string;
   parentRunId?: string;
   spawnToolUseId?: string;

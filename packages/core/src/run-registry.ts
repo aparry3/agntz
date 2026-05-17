@@ -133,6 +133,8 @@ export class InMemoryRunRegistry implements RunRegistry {
       rootId,
       parentId: opts.parentRunId,
       agentId: opts.agentId,
+      agentVersion: opts.agentVersion,
+      requestedAgentVersion: opts.requestedAgentVersion,
       userId: opts.userId,
       sessionId: opts.sessionId,
       spawnToolUseId: opts.spawnToolUseId,
@@ -206,6 +208,15 @@ export class InMemoryRunRegistry implements RunRegistry {
         runId: run.id,
         sessionId: run.sessionId,
         agentId: run.agentId,
+        requestedVersion: internal.requestedAgentVersion,
+        resolvedVersion: internal.agentVersion,
+        resolvedVia: internal.agentVersion
+          ? (internal.requestedAgentVersion === "latest"
+              ? "latest"
+              : internal.requestedAgentVersion
+                ? "exact"
+                : "activated")
+          : "registered",
       }));
     }
 

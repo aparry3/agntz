@@ -12,6 +12,8 @@ import type {
   GenerateTextOptions,
   GenerateTextResult,
   ModelProvider,
+  Span,
+  TraceSink,
 } from "../src/types.js";
 
 class StubProvider implements ModelProvider {
@@ -136,5 +138,42 @@ describe("Runner reference syntax", () => {
     expect(await runner.resolveAgentRef("ghost")).toBeNull();
     expect(await runner.resolveAgentRef("ghost@latest")).toBeNull();
     expect(await runner.resolveAgentRef("foo@bogus")).toBeNull();
+  });
+
+  it("stamps version attrs on the invoke span", async () => {
+    const v1Ts = await putAndCapture(store, makeAgent("v1"));
+    await new Promise((r) => setTimeout(r, 5));
+    await putAndCapture(store, makeAgent("v2"));
+
+    const spans: Span[] = [];
+    const sink: TraceSink = (event) => {
+      if (event.type === "span-start") spans.push(event.span);
+    };
+    const tracedRunner = createRunner({
+      modelProvider: new StubProvider(),
+      agentStore: store,
+      telemetry: { traceSink: sink },
+    });
+
+    await tracedRunner.invoke("reviewer@latest", "hi");
+    const invokeSpan = spans.find((s) => s.kind === "invoke");
+    expect(invokeSpan).toBeDefined();
+    expect(invokeSpan!.attributes["agent.id"]).toBe("reviewer");
+    expect(invokeSpan!.attributes["agent.requested_version"]).toBe("latest");
+    expect(invokeSpan!.attributes["agent.resolved_version"]).toBeTypeOf("string");
+    expect(invokeSpan!.attributes["agent.resolved_via"]).toBe("latest");
+
+    spans.length = 0;
+    await tracedRunner.invoke(`reviewer@${v1Ts}`, "hi");
+    const pinnedSpan = spans.find((s) => s.kind === "invoke");
+    expect(pinnedSpan!.attributes["agent.requested_version"]).toBe(v1Ts);
+    expect(pinnedSpan!.attributes["agent.resolved_version"]).toBe(v1Ts);
+    expect(pinnedSpan!.attributes["agent.resolved_via"]).toBe("exact");
+
+    spans.length = 0;
+    await tracedRunner.invoke("reviewer", "hi");
+    const bareSpan = spans.find((s) => s.kind === "invoke");
+    expect(bareSpan!.attributes["agent.requested_version"]).toBeUndefined();
+    expect(bareSpan!.attributes["agent.resolved_via"]).toBe("activated");
   });
 });
