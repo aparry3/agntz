@@ -73,6 +73,13 @@ export interface AgentDefinition {
    * throws `TokenBudgetExceededError`.
    */
   tokenBudget?: number;
+  /**
+   * Wall-clock budget in milliseconds for one invocation. When the timer
+   * fires, the in-flight model call aborts and the runner throws
+   * `InvocationTimeoutError` — distinguishable from a user-cancel. Omit for
+   * no timeout.
+   */
+  timeoutMs?: number;
 
   /** Arbitrary tags for categorization */
   tags?: string[];
@@ -193,6 +200,13 @@ export interface InvokeOptions {
    * throws `TokenBudgetExceededError`.
    */
   tokenBudget?: number;
+  /**
+   * Wall-clock budget in milliseconds. Clamped against
+   * `AgentDefinition.timeoutMs` if set; callers can tighten only. When the
+   * timer fires, the in-flight model call aborts and the runner throws
+   * `InvocationTimeoutError` — distinct from `InvocationCancelledError`.
+   */
+  timeoutMs?: number;
   /** @internal Recursion depth tracker for agent-as-tool chains */
   _recursionDepth?: number;
   /**

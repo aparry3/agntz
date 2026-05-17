@@ -143,6 +143,27 @@ export class InvocationCancelledError extends AgntzError {
 }
 
 /**
+ * Thrown when an invocation exceeds its wall-clock budget. Distinguished from
+ * `InvocationCancelledError` so logs and UI can tell user-initiated cancel
+ * apart from timer-driven termination. The budget is resolved as
+ * `min(AgentDefinition.timeoutMs, InvokeOptions.timeoutMs)`.
+ */
+export class InvocationTimeoutError extends AgntzError {
+  readonly agentId: string;
+  readonly timeoutMs: number;
+
+  constructor(agentId: string, timeoutMs: number) {
+    super(
+      "INVOCATION_TIMEOUT",
+      `Agent "${agentId}" exceeded wall-clock timeout (${timeoutMs} ms). Raise the limit via AgentDefinition.timeoutMs or InvokeOptions.timeoutMs.`,
+    );
+    this.name = "InvocationTimeoutError";
+    this.agentId = agentId;
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+/**
  * Thrown when the agent execution loop exceeds the max step limit.
  */
 export class MaxStepsExceededError extends AgntzError {

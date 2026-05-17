@@ -110,6 +110,7 @@ export {
   ModelError,
   ProviderNotFoundError,
   InvocationCancelledError,
+  InvocationTimeoutError,
   MaxStepsExceededError,
   TokenBudgetExceededError,
   MaxRecursionDepthError,
