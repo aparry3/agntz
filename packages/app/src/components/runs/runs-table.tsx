@@ -52,7 +52,7 @@ export function RunsList({ rows }: { rows: Run[] }) {
 function RunRow({ row, isLast }: { row: Run; isLast: boolean }) {
   const durMs = row.endedAt && row.startedAt ? row.endedAt - row.startedAt : null;
   const tokens = row.result?.usage?.totalTokens;
-  const model = (row.result?.usage as { model?: string } | undefined)?.model ?? null;
+  const model = row.result?.usage?.model ?? null;
 
   return (
     <Link

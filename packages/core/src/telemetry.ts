@@ -1,4 +1,5 @@
 import type { TokenUsage, ToolCallRecord, Span, SpanKind, TraceSink } from "./types.js";
+import type { AiSdkMessage, AiMessagePart } from "./message-builder.js";
 
 // ───────────────────────────────────────────────────────────────────────
 // OTel passthrough — unchanged from prior slice
@@ -76,7 +77,14 @@ export interface InvokeSpan {
   error(err: Error | string): void;
 }
 export interface ModelCallSpan {
-  setResult(result: { usage: TokenUsage; finishReason?: string; toolCallCount: number; costUsd?: number }): void;
+  setResult(result: {
+    usage: TokenUsage;
+    finishReason?: string;
+    toolCallCount: number;
+    costUsd?: number;
+    prompt?: AiSdkMessage[];
+    completion?: string;
+  }): void;
   end(): void;
   error(err: Error | string): void;
 }
@@ -318,13 +326,32 @@ export class SpanEmitter {
     }
   }
 
-  private setModelResult(state: SpanState, r: { usage: TokenUsage; finishReason?: string; toolCallCount: number; costUsd?: number }): void {
+  private setModelResult(
+    state: SpanState,
+    r: {
+      usage: TokenUsage;
+      finishReason?: string;
+      toolCallCount: number;
+      costUsd?: number;
+      prompt?: AiSdkMessage[];
+      completion?: string;
+    },
+  ): void {
     state.attrs["agent.usage.prompt_tokens"] = r.usage.promptTokens;
     state.attrs["agent.usage.completion_tokens"] = r.usage.completionTokens;
     state.attrs["agent.usage.total_tokens"] = r.usage.totalTokens;
     state.attrs["agent.tool_call_count"] = r.toolCallCount;
+    if (r.usage.model) state.attrs["agent.model"] = r.usage.model;
     if (r.finishReason) state.attrs["agent.finish_reason"] = r.finishReason;
     if (typeof r.costUsd === "number") state.attrs["agent.cost_usd"] = r.costUsd;
+    if (this.config.recordIO) {
+      if (r.prompt) {
+        state.attrs["agent.prompt"] = JSON.stringify(sanitizeMessagesForTrace(r.prompt));
+      }
+      if (r.completion) {
+        state.attrs["agent.completion"] = r.completion.slice(0, 4096);
+      }
+    }
     if (state.otel) {
       for (const [k, v] of Object.entries(state.attrs)) state.otel.setAttribute(k, v as string | number | boolean);
     }
@@ -405,4 +432,48 @@ function stateToSpan(s: SpanState, status: "running" | "ok" | "error" | "cancell
 // ULID — short, sortable, URL-safe ID.
 function ulid(): string {
   return Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
+}
+
+const PROMPT_PER_MESSAGE_CAP = 4096;
+
+function sanitizeMessagesForTrace(messages: AiSdkMessage[]): Array<{
+  role: string;
+  content: string | Array<{ type: string; text?: string; mediaType?: string; size?: number }>;
+}> {
+  return messages.map((m) => ({
+    role: m.role,
+    content: sanitizeContent(m.content),
+  }));
+}
+
+function sanitizeContent(
+  content: string | AiMessagePart[],
+): string | Array<{ type: string; text?: string; mediaType?: string; size?: number }> {
+  if (typeof content === "string") {
+    return content.length > PROMPT_PER_MESSAGE_CAP
+      ? content.slice(0, PROMPT_PER_MESSAGE_CAP)
+      : content;
+  }
+  return content.map((part) => sanitizePart(part));
+}
+
+function sanitizePart(
+  part: AiMessagePart,
+): { type: string; text?: string; mediaType?: string; size?: number } {
+  if (part.type === "text") {
+    return {
+      type: "text",
+      text:
+        part.text.length > PROMPT_PER_MESSAGE_CAP
+          ? part.text.slice(0, PROMPT_PER_MESSAGE_CAP)
+          : part.text,
+    };
+  }
+  // image — drop the base64 payload, keep the metadata so the trace shows
+  // that the model saw an image without ballooning the attribute.
+  return {
+    type: "image",
+    mediaType: part.mediaType,
+    size: part.image.length,
+  };
 }

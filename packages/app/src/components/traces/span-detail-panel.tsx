@@ -38,6 +38,8 @@ export function SpanDetailPanel({ span }: { span: Span | null }) {
   const agentOutput = readString(attrs, "agent.output");
   const toolInputRaw = readString(attrs, "agent.tool.input");
   const toolOutputRaw = readString(attrs, "agent.tool.output");
+  const modelPromptRaw = readString(attrs, "agent.prompt");
+  const modelCompletion = readString(attrs, "agent.completion");
   const tokens = readTokens(attrs);
 
   return (
@@ -111,6 +113,8 @@ export function SpanDetailPanel({ span }: { span: Span | null }) {
           toolInputRaw,
           toolOutputRaw,
           toolError,
+          modelPromptRaw,
+          modelCompletion,
         })}
 
         {Object.keys(attrs).length > 0 && (
@@ -173,6 +177,8 @@ function renderIO(
     toolInputRaw: string | null;
     toolOutputRaw: string | null;
     toolError: string | null;
+    modelPromptRaw: string | null;
+    modelCompletion: string | null;
   },
 ) {
   if (kind === "run" || kind === "invoke") {
@@ -192,8 +198,18 @@ function renderIO(
       <>
         <SectionLabel>Prompt · Completion</SectionLabel>
         <IOGrid>
-          <IOPanel title="Prompt" body={null} placeholder="(prompt not recorded — set recordIO on the tracer)" mono />
-          <IOPanel title="Completion" body={null} placeholder="(completion not recorded)" mono />
+          <IOPanel
+            title="Prompt"
+            body={prettyJsonString(io.modelPromptRaw)}
+            placeholder="(prompt not recorded — set recordIO on the tracer)"
+            mono
+          />
+          <IOPanel
+            title="Completion"
+            body={io.modelCompletion}
+            placeholder="(completion not recorded)"
+            mono
+          />
         </IOGrid>
       </>
     );
@@ -485,8 +501,8 @@ function readNumber(attrs: Record<string, unknown>, key: string): number | null 
 }
 
 function readTokens(attrs: Record<string, unknown>): { prompt: number; completion: number } | null {
-  const prompt = attrs["agent.tokens.prompt"];
-  const completion = attrs["agent.tokens.completion"];
+  const prompt = attrs["agent.usage.prompt_tokens"];
+  const completion = attrs["agent.usage.completion_tokens"];
   if (typeof prompt === "number" && typeof completion === "number") {
     return { prompt, completion };
   }

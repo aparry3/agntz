@@ -534,7 +534,12 @@ export class Runner {
       // Hoisted so the catch block can write an audit log entry even when a
       // cancel-and-replace abort interrupts the loop mid-flight.
       const allToolCalls: ToolCallRecord[] = [];
-      const totalUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+      const totalUsage: TokenUsage = {
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        model: modelConfig.name,
+      };
 
       try {
         // Load session history
@@ -1163,7 +1168,12 @@ export class Runner {
     // Hoisted so the catch block can write an audit log entry even when a
     // cancel-and-replace abort interrupts the loop mid-flight.
     const allToolCalls: ToolCallRecord[] = [];
-    const totalUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    const totalUsage: TokenUsage = {
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      model: modelConfig.name,
+    };
 
     try {
       // Load session history
@@ -1304,10 +1314,12 @@ export class Runner {
 
           const costUsd = computeCost(result.usage, modelConfig.provider, modelConfig.name);
           modelSpan.setResult({
-            usage: result.usage,
+            usage: { ...result.usage, model: modelConfig.name },
             finishReason: result.finishReason,
             toolCallCount: result.toolCalls?.length ?? 0,
             costUsd: costUsd ?? undefined,
+            prompt: messages,
+            completion: result.text,
           });
           modelSpan.end();
         } catch (err) {
