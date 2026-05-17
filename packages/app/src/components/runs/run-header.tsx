@@ -34,7 +34,9 @@ export function RunHeader({ run }: { run: Run }) {
             <span className="font-mono text-xs">{formatDurationMs(dur)}</span>
           </div>
         </div>
-        {run.status === "running" && <CancelButton runId={run.id} />}
+        {(run.status === "pending" ||
+          run.status === "running" ||
+          run.status === "draining") && <CancelButton runId={run.id} />}
       </div>
     </header>
   );
