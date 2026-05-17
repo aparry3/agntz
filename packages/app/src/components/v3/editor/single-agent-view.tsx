@@ -30,6 +30,7 @@ import { SchemaEditor } from "./schema-editor";
 import { ExamplesEditor, type Example } from "./examples-editor";
 import { ToolsEditor, type ToolEntry } from "./tools-editor";
 import { findBrokenRefs } from "./ref-drift";
+import { InstructionPanel } from "./instruction-panel";
 
 export type SingleViewMode = "build" | "yaml" | "instruction" | "both";
 
@@ -167,7 +168,21 @@ export function SingleAgentView({
       </div>
 
       {/* Body */}
-      <div style={{ flex: 1, display: "grid", gridTemplateColumns: view === "yaml" ? "1fr" : view === "both" ? "1fr 1fr 420px" : "1fr 420px", minHeight: 0 }}>
+      <div
+        style={{
+          flex: 1,
+          display: "grid",
+          gridTemplateColumns:
+            view === "yaml"
+              ? "1fr"
+              : view === "both"
+                ? "1fr 1fr 420px"
+                : view === "instruction"
+                  ? "1fr 1fr"
+                  : "1fr 420px",
+          minHeight: 0,
+        }}
+      >
         {(view === "build" || view === "both" || view === "instruction") && (
           <GraphPanel
             topRight={
@@ -207,7 +222,16 @@ export function SingleAgentView({
 
         {(view === "yaml" || view === "both") && yamlPanel}
 
-        {view !== "yaml" && (
+        {view === "instruction" ? (
+          <InstructionPanel
+            agentName={manifest.name ?? manifestId}
+            agentId={manifestId}
+            instruction={manifest.instruction ?? ""}
+            prompt={manifest.prompt ?? ""}
+            onChangeInstruction={onChange ? (v) => onChange({ ...manifest, instruction: v || undefined }) : undefined}
+            onChangePrompt={onChange ? (v) => onChange({ ...manifest, prompt: v || undefined }) : undefined}
+          />
+        ) : view !== "yaml" ? (
           <SingleAgentInspector
             manifest={manifest}
             manifestId={manifestId}
@@ -216,7 +240,7 @@ export function SingleAgentView({
             catalog={catalog}
             onChange={onChange}
           />
-        )}
+        ) : null}
       </div>
       <ConfirmDialog
         open={confirmConvert}

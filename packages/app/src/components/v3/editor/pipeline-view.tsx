@@ -48,6 +48,7 @@ import { HTTP_METHODS, ParamsEditor, ToolsEditor, type ToolEntry } from "./tools
 import { getIn, isRecord } from "@/components/agent-builder/pipeline-types";
 import { Popover } from "./editable-fields";
 import { StepPicker, type StepRefPayload } from "./step-picker";
+import { InstructionPanel, InstructionEmptyState } from "./instruction-panel";
 
 export type PipelineViewMode = "build" | "yaml" | "instruction" | "both";
 
@@ -193,7 +194,13 @@ export function PipelineView({
           flex: 1,
           display: "grid",
           gridTemplateColumns:
-            view === "yaml" ? "1fr" : view === "both" ? "1fr 1fr 420px" : "1fr 420px",
+            view === "yaml"
+              ? "1fr"
+              : view === "both"
+                ? "1fr 1fr 420px"
+                : view === "instruction"
+                  ? "1fr 1fr"
+                  : "1fr 420px",
           minHeight: 0,
         }}
       >
@@ -212,7 +219,23 @@ export function PipelineView({
 
         {(view === "yaml" || view === "both") && yamlPanel}
 
-        {view !== "yaml" && (
+        {view === "instruction" ? (
+          selectedNode.kind === "llm" ? (
+            <PipelineInstructionPanel
+              selectedNode={selectedNode}
+              rootManifest={rootManifest}
+              onPatchAgent={onChange ? handlePatchAgent : undefined}
+            />
+          ) : (
+            <InstructionEmptyState
+              hint={
+                selectedNode.id === root.id
+                  ? "Select an LLM step in the pipeline to edit its instructions."
+                  : `${selectedNode.kind === "tool" ? "Tool" : "Sub-pipeline"} steps don't have instructions. Pick an LLM step.`
+              }
+            />
+          )
+        ) : view !== "yaml" ? (
           <PipelineInspector
             root={root}
             selected={selectedNode}
@@ -226,7 +249,7 @@ export function PipelineView({
             canMoveUp={canMove(rootManifest, selectedNode, -1)}
             canMoveDown={canMove(rootManifest, selectedNode, 1)}
           />
-        )}
+        ) : null}
       </div>
     </div>
   );
@@ -652,7 +675,7 @@ function PipelineInspector({
       </div>
 
       <div style={{ flex: 1, overflow: "auto" }}>
-        {/* Input mapping */}
+        {/* Input mapping (non-root) / Input schema (root) */}
         <div style={{ padding: "16px 16px 8px" }}>
           <div style={{ marginBottom: 4 }}>
             <div
@@ -664,56 +687,70 @@ function PipelineInspector({
                 textTransform: "uppercase",
               }}
             >
-              {selected.id === root.id ? "Inputs" : "Input mapping"}
+              {selected.id === root.id ? "Input schema" : "Input mapping"}
             </div>
             <div style={{ fontSize: 11.5, color: ag.muted, marginTop: 4 }}>
               {selected.id === root.id
-                ? "The pipeline's inputs. Each one is bound from the caller."
+                ? "Fields the caller passes in. Available as {{name}} in any step's input map."
                 : `Pipeline state → ${selected.name}'s declared inputs.`}
             </div>
           </div>
 
-          <div
-            style={{
-              marginTop: 10,
-              border: `1px solid ${ag.line}`,
-              borderRadius: 4,
-              background: ag.surface2,
-              overflow: "hidden",
-            }}
-          >
-            {inputs.length === 0 ? (
-              <div style={{ padding: 12, fontSize: 11.5, color: ag.muted, textAlign: "center" }}>
-                No inputs declared on this step.
+          {selected.id === root.id ? (
+            <div style={{ marginTop: 10 }}>
+              <SchemaEditor
+                kind="input"
+                schema={rootManifest.inputSchema as Record<string, unknown> | undefined}
+                onChange={
+                  onPatchAgent
+                    ? (next) => onPatchAgent([], { inputSchema: next })
+                    : () => {}
+                }
+                emptyMessage="No inputs declared. The pipeline will use the caller's raw message."
+              />
+            </div>
+          ) : (
+            <>
+              <div
+                style={{
+                  marginTop: 10,
+                  border: `1px solid ${ag.line}`,
+                  borderRadius: 4,
+                  background: ag.surface2,
+                  overflow: "hidden",
+                }}
+              >
+                {inputs.length === 0 ? (
+                  <div style={{ padding: 12, fontSize: 11.5, color: ag.muted, textAlign: "center" }}>
+                    No inputs declared on this step.
+                  </div>
+                ) : (
+                  inputs.map((f, i) => {
+                    const wired = inputMap[f.name];
+                    return (
+                      <PipelineBindRow
+                        key={f.name}
+                        target={f.name}
+                        type={f.type}
+                        required={f.required}
+                        wired={wired}
+                        isRoot={false}
+                        availableState={availableState}
+                        last={i === inputs.length - 1}
+                        onBind={
+                          onPatchInputMap && selected.stepPath
+                            ? (value) => onPatchInputMap(selected.stepPath!, f.name, value)
+                            : undefined
+                        }
+                      />
+                    );
+                  })
+                )}
               </div>
-            ) : (
-              inputs.map((f, i) => {
-                const wired = inputMap[f.name];
-                const isRoot = selected.id === root.id;
-                return (
-                  <PipelineBindRow
-                    key={f.name}
-                    target={f.name}
-                    type={f.type}
-                    required={f.required}
-                    wired={wired}
-                    isRoot={isRoot}
-                    availableState={availableState}
-                    last={i === inputs.length - 1}
-                    onBind={
-                      onPatchInputMap && !isRoot && selected.stepPath
-                        ? (value) => onPatchInputMap(selected.stepPath!, f.name, value)
-                        : undefined
-                    }
-                  />
-                );
-              })
-            )}
-          </div>
-          {selected.id !== root.id && (
-            <Mono size={10.5} color={ag.muted} style={{ marginTop: 6, display: "inline-block" }}>
-              Click any binding chip to wire it to upstream state.
-            </Mono>
+              <Mono size={10.5} color={ag.muted} style={{ marginTop: 6, display: "inline-block" }}>
+                Click any binding chip to wire it to upstream state.
+              </Mono>
+            </>
           )}
         </div>
 
@@ -789,8 +826,8 @@ function PipelineInspector({
               catalog={catalog}
               onPatchAgent={onPatchAgent}
             />
-          ) : selected.kind === "sequential" && onPatchAgent ? (
-            <SequentialStepEditor
+          ) : (selected.kind === "sequential" || selected.kind === "parallel") && onPatchAgent ? (
+            <PipelineKindEditor
               node={selected}
               rootManifest={rootManifest}
               onPatchAgent={onPatchAgent}
@@ -1453,10 +1490,47 @@ function ToolStepEditor({
   );
 }
 
-/* ── SequentialStepEditor — description + loop config for a kind=sequential
- *    node. The loop part flips the agent between "plain sequential" and
- *    "loop" by setting/clearing the `until` field on the same agent. */
-function SequentialStepEditor({
+/* ── PipelineInstructionPanel — thin wrapper that resolves the selected
+ *    LLM step's live agent record from rootManifest and binds the
+ *    InstructionPanel's onChange handlers to patchAgentAt at that path. */
+function PipelineInstructionPanel({
+  selectedNode,
+  rootManifest,
+  onPatchAgent,
+}: {
+  selectedNode: PipelineNode;
+  rootManifest: Record<string, unknown>;
+  onPatchAgent?: (agentPath: PipelinePath, partial: Record<string, unknown>) => void;
+}) {
+  const liveAgent = (() => {
+    const raw = getIn(rootManifest, selectedNode.agentPath);
+    return isRecord(raw) ? raw : {};
+  })();
+  const instruction = (liveAgent.instruction as string | undefined) ?? "";
+  const prompt = (liveAgent.prompt as string | undefined) ?? "";
+
+  return (
+    <InstructionPanel
+      agentName={selectedNode.name}
+      agentId={selectedNode.id}
+      instruction={instruction}
+      prompt={prompt}
+      onChangeInstruction={
+        onPatchAgent ? (v) => onPatchAgent(selectedNode.agentPath, { instruction: v || undefined }) : undefined
+      }
+      onChangePrompt={
+        onPatchAgent ? (v) => onPatchAgent(selectedNode.agentPath, { prompt: v || undefined }) : undefined
+      }
+    />
+  );
+}
+
+/* ── PipelineKindEditor — description, kind toggle (sequential↔parallel),
+ *    and loop config (sequential only) for a container node. Switching
+ *    kinds renames the child container (steps↔branches) and drops the
+ *    sequential-only loop fields (until/maxIterations) on the way to
+ *    parallel. */
+function PipelineKindEditor({
   node,
   rootManifest,
   onPatchAgent,
@@ -1471,11 +1545,34 @@ function SequentialStepEditor({
     const raw = getIn(rootManifest, node.agentPath);
     return isRecord(raw) ? raw : {};
   })();
+  const currentKind: "sequential" | "parallel" =
+    liveAgent.kind === "parallel" ? "parallel" : "sequential";
   const description = (liveAgent.description as string | undefined) ?? "";
   const until = (liveAgent.until as string | undefined) ?? "";
   const maxIterations =
     typeof liveAgent.maxIterations === "number" ? (liveAgent.maxIterations as number) : undefined;
-  const isLoop = until.trim().length > 0;
+  const isLoop = currentKind === "sequential" && until.trim().length > 0;
+
+  // Convert seq↔par by moving the child container under its new key and
+  // clearing fields that don't apply to the next kind.
+  const switchKind = (next: "sequential" | "parallel") => {
+    if (next === currentKind) return;
+    if (next === "parallel") {
+      onPatchAgent(node.agentPath, {
+        kind: "parallel",
+        branches: liveAgent.steps,
+        steps: undefined,
+        until: undefined,
+        maxIterations: undefined,
+      });
+    } else {
+      onPatchAgent(node.agentPath, {
+        kind: "sequential",
+        steps: liveAgent.branches,
+        branches: undefined,
+      });
+    }
+  };
 
   const applyLoop = (next: { until?: string; maxIterations?: number }) => {
     const nextUntil = next.until?.trim();
@@ -1495,7 +1592,7 @@ function SequentialStepEditor({
     <>
       <InsSection
         title={isRoot ? "Pipeline" : "Sub-pipeline"}
-        badge={isLoop ? "loop" : node.kind}
+        badge={isLoop ? "loop" : currentKind}
         defaultOpen
       >
         <EditableText
@@ -1506,58 +1603,112 @@ function SequentialStepEditor({
           multiline
           rows={2}
         />
-      </InsSection>
 
-      <InsSection
-        title="Loop"
-        badge={isLoop ? `until ${until}` : "off"}
-        defaultOpen={isLoop}
-      >
-        <Mono size={10.5} color={ag.muted}>
-          When set, the steps re-run until <code>until</code> is truthy (templated
-          against the latest state).
-        </Mono>
-        <EditableText
-          label="Until (state template)"
-          value={until}
-          onChange={(v) => applyLoop({ until: v || undefined, maxIterations })}
-          placeholder="{{step.done}}"
-          mono
-        />
-        <EditableNumber
-          label="Max iterations"
-          value={maxIterations}
-          onChange={(v) =>
-            applyLoop({
-              until: until || undefined,
-              maxIterations: v,
-            })
-          }
-          min={1}
-          step={1}
-          placeholder="—"
-          hint="blank = unbounded (use carefully)"
-        />
-        {isLoop && (
-          <button
-            type="button"
-            onClick={() => applyLoop({ until: undefined, maxIterations: undefined })}
+        <div>
+          <div
             style={{
-              border: `1px solid ${ag.line}`,
-              background: ag.surface2,
-              color: ag.danger,
-              cursor: "pointer",
-              borderRadius: 4,
-              padding: "4px 9px",
-              fontSize: 11.5,
-              fontFamily: "inherit",
-              alignSelf: "flex-start",
+              fontSize: 10.5,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              color: ag.muted,
+              fontWeight: 500,
+              marginBottom: 6,
             }}
           >
-            Turn off loop
-          </button>
-        )}
+            Kind
+          </div>
+          <div
+            style={{
+              display: "flex",
+              padding: 2,
+              background: ag.surface2,
+              border: `1px solid ${ag.line}`,
+              borderRadius: 4,
+              width: "fit-content",
+            }}
+          >
+            {(["sequential", "parallel"] as const).map((k) => {
+              const on = currentKind === k;
+              return (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => switchKind(k)}
+                  style={{
+                    padding: "4px 10px",
+                    borderRadius: 3,
+                    fontSize: 12,
+                    background: on ? ag.bg : "transparent",
+                    color: on ? ag.ink : ag.text2,
+                    border: "none",
+                    cursor: "pointer",
+                    fontWeight: 500,
+                    fontFamily: "var(--font-mono)",
+                  }}
+                >
+                  {k}
+                </button>
+              );
+            })}
+          </div>
+          <Mono size={10.5} color={ag.muted} style={{ marginTop: 6, display: "inline-block" }}>
+            Switching to parallel drops the loop config; switching back leaves it cleared.
+          </Mono>
+        </div>
       </InsSection>
+
+      {currentKind === "sequential" && (
+        <InsSection
+          title="Loop"
+          badge={isLoop ? `until ${until}` : "off"}
+          defaultOpen={isLoop}
+        >
+          <Mono size={10.5} color={ag.muted}>
+            When set, the steps re-run until <code>until</code> is truthy (templated
+            against the latest state).
+          </Mono>
+          <EditableText
+            label="Until (state template)"
+            value={until}
+            onChange={(v) => applyLoop({ until: v || undefined, maxIterations })}
+            placeholder="{{step.done}}"
+            mono
+          />
+          <EditableNumber
+            label="Max iterations"
+            value={maxIterations}
+            onChange={(v) =>
+              applyLoop({
+                until: until || undefined,
+                maxIterations: v,
+              })
+            }
+            min={1}
+            step={1}
+            placeholder="—"
+            hint="blank = unbounded (use carefully)"
+          />
+          {isLoop && (
+            <button
+              type="button"
+              onClick={() => applyLoop({ until: undefined, maxIterations: undefined })}
+              style={{
+                border: `1px solid ${ag.line}`,
+                background: ag.surface2,
+                color: ag.danger,
+                cursor: "pointer",
+                borderRadius: 4,
+                padding: "4px 9px",
+                fontSize: 11.5,
+                fontFamily: "inherit",
+                alignSelf: "flex-start",
+              }}
+            >
+              Turn off loop
+            </button>
+          )}
+        </InsSection>
+      )}
     </>
   );
 }
