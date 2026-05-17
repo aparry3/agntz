@@ -562,6 +562,8 @@ export interface MCPServerConfig {
 export interface AgentVersionSummary {
   createdAt: string;
   activatedAt: string | null;
+  /** Human-readable aliases pointing at this version (`stable`, `prod`, …). */
+  aliases: string[];
 }
 
 export interface AgentStore {
@@ -576,6 +578,19 @@ export interface AgentStore {
   getAgentVersion(agentId: string, createdAt: string): Promise<AgentDefinition | null>;
   /** Mark a specific version as the active one. */
   activateAgentVersion(agentId: string, createdAt: string): Promise<void>;
+  /**
+   * Resolve a version alias (`stable`, `prod`, …) to its createdAt timestamp.
+   * Returns `null` if no version carries that alias.
+   */
+  resolveAgentAlias(agentId: string, alias: string): Promise<string | null>;
+  /**
+   * Point an alias at a specific version. Reassigns the alias if it already
+   * exists on another version of the same agent (aliases are unique per agent).
+   * Throws if the version doesn't exist.
+   */
+  setAgentVersionAlias(agentId: string, createdAt: string, alias: string): Promise<void>;
+  /** Drop an alias from any version it currently points at. No-op if absent. */
+  removeAgentVersionAlias(agentId: string, alias: string): Promise<void>;
 }
 
 // ═══════════════════════════════════════════════════════════════════════

@@ -19,3 +19,20 @@ export async function activateVersion(
 ): Promise<void> {
   await store.activateAgentVersion(agentId, createdAt);
 }
+
+export async function setAlias(
+  store: UnifiedStore,
+  agentId: string,
+  createdAt: string,
+  alias: string,
+): Promise<void> {
+  await store.setAgentVersionAlias(agentId, createdAt, alias);
+}
+
+export async function removeAlias(
+  store: UnifiedStore,
+  agentId: string,
+  alias: string,
+): Promise<void> {
+  await store.removeAgentVersionAlias(agentId, alias);
+}

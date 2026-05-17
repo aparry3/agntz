@@ -8,6 +8,7 @@ import {
 } from "../utils/crypto.js";
 import type {
   AgentDefinition,
+  AgentVersionSummary,
   ProviderConfig,
   SecretDefinition,
   SecretMetadata,
@@ -70,6 +71,7 @@ interface SecretRow {
  */
 interface MemoryBackend {
   agentVersions: Map<string, Map<string, AgentVersion[]>>; // userId -> agentId -> versions
+  agentAliases: Map<string, Map<string, Map<string, string>>>; // userId -> agentId -> alias -> createdAt
   sessions: Map<string, SessionRow>;                        // sessionId -> row (row carries userId)
   contexts: Map<string, { userId: string; entries: ContextEntry[] }>;
   logs: Array<{ userId: string; log: InvocationLog }>;
@@ -88,6 +90,7 @@ interface MemoryBackend {
 function createBackend(): MemoryBackend {
   return {
     agentVersions: new Map(),
+    agentAliases: new Map(),
     sessions: new Map(),
     contexts: new Map(),
     logs: [],
@@ -195,10 +198,33 @@ export class MemoryStore implements UnifiedStore {
     this.agentMap().delete(id);
   }
 
-  async listAgentVersions(agentId: string): Promise<Array<{ createdAt: string; activatedAt: string | null }>> {
+  private aliasMap(): Map<string, Map<string, string>> {
+    const u = this.requireUser();
+    let m = this.backend.agentAliases.get(u);
+    if (!m) {
+      m = new Map();
+      this.backend.agentAliases.set(u, m);
+    }
+    return m;
+  }
+
+  async listAgentVersions(agentId: string): Promise<AgentVersionSummary[]> {
     const versions = this.agentMap().get(agentId) ?? [];
+    const aliasesByVersion = new Map<string, string[]>();
+    const aliases = this.aliasMap().get(agentId);
+    if (aliases) {
+      for (const [alias, createdAt] of aliases) {
+        const list = aliasesByVersion.get(createdAt) ?? [];
+        list.push(alias);
+        aliasesByVersion.set(createdAt, list);
+      }
+    }
     return versions
-      .map((v) => ({ createdAt: v.createdAt, activatedAt: v.activatedAt }))
+      .map((v) => ({
+        createdAt: v.createdAt,
+        activatedAt: v.activatedAt,
+        aliases: (aliasesByVersion.get(v.createdAt) ?? []).sort(),
+      }))
       .reverse();
   }
 
@@ -214,6 +240,28 @@ export class MemoryStore implements UnifiedStore {
     if (found) {
       found.activatedAt = this.nextTimestamp();
     }
+  }
+
+  async resolveAgentAlias(agentId: string, alias: string): Promise<string | null> {
+    return this.aliasMap().get(agentId)?.get(alias) ?? null;
+  }
+
+  async setAgentVersionAlias(agentId: string, createdAt: string, alias: string): Promise<void> {
+    const versions = this.agentMap().get(agentId) ?? [];
+    if (!versions.some((v) => v.createdAt === createdAt)) {
+      throw new Error(`Agent version not found: ${agentId}@${createdAt}`);
+    }
+    const aliases = this.aliasMap();
+    let perAgent = aliases.get(agentId);
+    if (!perAgent) {
+      perAgent = new Map();
+      aliases.set(agentId, perAgent);
+    }
+    perAgent.set(alias, createdAt);
+  }
+
+  async removeAgentVersionAlias(agentId: string, alias: string): Promise<void> {
+    this.aliasMap().get(agentId)?.delete(alias);
   }
 
   // ═══ SessionStore ═══

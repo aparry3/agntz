@@ -10,6 +10,7 @@ import {
 } from "@agntz/core";
 import type {
   AgentDefinition,
+  AgentVersionSummary,
   ContentBlock,
   ProviderConfig,
   UnifiedStore,
@@ -315,6 +316,24 @@ const MIGRATIONS = [
 
   UPDATE schema_version SET version = 8;
   `,
+  // v9: Per-version aliases (`stable`, `prod`, `pre-tools-overhaul`).
+  // Aliases are scoped to (user_id, agent_id) so two agents can share names
+  // like `stable`. Pointing an alias is "last write wins" — assigning it to
+  // a new version moves it.
+  `
+  CREATE TABLE IF NOT EXISTS agent_aliases (
+    user_id            TEXT NOT NULL,
+    agent_id           TEXT NOT NULL,
+    alias              TEXT NOT NULL,
+    version_created_at TEXT NOT NULL,
+    created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, agent_id, alias)
+  );
+  CREATE INDEX IF NOT EXISTS idx_agent_aliases_version
+    ON agent_aliases(user_id, agent_id, version_created_at);
+
+  UPDATE schema_version SET version = 9;
+  `,
 ];
 
 export interface SqliteStoreOptions {
@@ -449,16 +468,33 @@ export class SqliteStore implements UnifiedStore {
     this.db.prepare("DELETE FROM agents WHERE user_id = ? AND agent_id = ?").run(u, id);
   }
 
-  async listAgentVersions(agentId: string): Promise<Array<{ createdAt: string; activatedAt: string | null }>> {
+  async listAgentVersions(agentId: string): Promise<AgentVersionSummary[]> {
     const u = this.requireUser();
-    const rows = this.db
+    const versionRows = this.db
       .prepare(
         `SELECT created_at, activated_at FROM agents
          WHERE user_id = ? AND agent_id = ?
          ORDER BY created_at DESC`
       )
       .all(u, agentId) as Array<{ created_at: string; activated_at: string | null }>;
-    return rows.map((r) => ({ createdAt: r.created_at, activatedAt: r.activated_at }));
+    const aliasRows = this.db
+      .prepare(
+        `SELECT alias, version_created_at FROM agent_aliases
+         WHERE user_id = ? AND agent_id = ?
+         ORDER BY alias ASC`
+      )
+      .all(u, agentId) as Array<{ alias: string; version_created_at: string }>;
+    const aliasesByVersion = new Map<string, string[]>();
+    for (const r of aliasRows) {
+      const list = aliasesByVersion.get(r.version_created_at) ?? [];
+      list.push(r.alias);
+      aliasesByVersion.set(r.version_created_at, list);
+    }
+    return versionRows.map((r) => ({
+      createdAt: r.created_at,
+      activatedAt: r.activated_at,
+      aliases: aliasesByVersion.get(r.created_at) ?? [],
+    }));
   }
 
   async getAgentVersion(agentId: string, createdAt: string): Promise<AgentDefinition | null> {
@@ -482,6 +518,49 @@ export class SqliteStore implements UnifiedStore {
          WHERE user_id = ? AND agent_id = ? AND created_at = ?`
       )
       .run(now, u, agentId, createdAt);
+  }
+
+  async resolveAgentAlias(agentId: string, alias: string): Promise<string | null> {
+    const u = this.requireUser();
+    const row = this.db
+      .prepare(
+        `SELECT version_created_at FROM agent_aliases
+         WHERE user_id = ? AND agent_id = ? AND alias = ?`
+      )
+      .get(u, agentId, alias) as { version_created_at: string } | undefined;
+    return row?.version_created_at ?? null;
+  }
+
+  async setAgentVersionAlias(agentId: string, createdAt: string, alias: string): Promise<void> {
+    const u = this.requireUser();
+    const exists = this.db
+      .prepare(
+        `SELECT 1 FROM agents
+         WHERE user_id = ? AND agent_id = ? AND created_at = ?`
+      )
+      .get(u, agentId, createdAt);
+    if (!exists) {
+      throw new Error(`Agent version not found: ${agentId}@${createdAt}`);
+    }
+    const now = this.nextTimestamp();
+    this.db
+      .prepare(
+        `INSERT INTO agent_aliases (user_id, agent_id, alias, version_created_at, created_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, agent_id, alias)
+         DO UPDATE SET version_created_at = excluded.version_created_at, created_at = excluded.created_at`
+      )
+      .run(u, agentId, alias, createdAt, now);
+  }
+
+  async removeAgentVersionAlias(agentId: string, alias: string): Promise<void> {
+    const u = this.requireUser();
+    this.db
+      .prepare(
+        `DELETE FROM agent_aliases
+         WHERE user_id = ? AND agent_id = ? AND alias = ?`
+      )
+      .run(u, agentId, alias);
   }
 
   // ═══ SessionStore ═══

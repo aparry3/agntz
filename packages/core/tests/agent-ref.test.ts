@@ -3,6 +3,7 @@ import {
   parseAgentRef,
   formatAgentRef,
   isIsoTimestamp,
+  isAliasName,
 } from "../src/agent-ref.js";
 import { InvalidAgentRefError } from "../src/errors.js";
 
@@ -46,6 +47,27 @@ describe("parseAgentRef", () => {
     expect(parseAgentRef("foo.bar")).toEqual({ agentId: "foo.bar" });
   });
 
+  it("parses an alias", () => {
+    expect(parseAgentRef("reviewer@stable")).toEqual({
+      agentId: "reviewer",
+      version: "stable",
+    });
+  });
+
+  it("parses an alias with hyphens", () => {
+    expect(parseAgentRef("reviewer@pre-tools-overhaul")).toEqual({
+      agentId: "reviewer",
+      version: "pre-tools-overhaul",
+    });
+  });
+
+  it("parses an alias that looks like a version tag", () => {
+    expect(parseAgentRef("reviewer@v1-launch")).toEqual({
+      agentId: "reviewer",
+      version: "v1-launch",
+    });
+  });
+
   it.each([
     ["empty string", ""],
     ["only @", "@"],
@@ -57,9 +79,10 @@ describe("parseAgentRef", () => {
     ["trailing whitespace", "foo "],
     ["whitespace before @", "foo @latest"],
     ["whitespace after @", "foo@ latest"],
-    ["non-iso version", "foo@v2"],
-    ["partial date", "foo@2026-05-17"],
-    ["arbitrary keyword", "foo@now"],
+    ["alias starts with hyphen", "foo@-bad"],
+    ["alias starts with dot", "foo@.bad"],
+    ["alias with slash", "foo@bad/alias"],
+    ["alias with colon", "foo@bad:alias"],
     ["invalid month", "foo@2026-13-17T15:30:00.000Z"],
     ["invalid day", "foo@2026-05-99T15:30:00.000Z"],
     ["missing Z", "foo@2026-05-17T15:30:00.000"],
@@ -71,11 +94,11 @@ describe("parseAgentRef", () => {
 
   it("InvalidAgentRefError carries the input verbatim", () => {
     try {
-      parseAgentRef("foo@bogus");
+      parseAgentRef("foo@-bogus");
       expect.fail("should have thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(InvalidAgentRefError);
-      expect((err as InvalidAgentRefError).input).toBe("foo@bogus");
+      expect((err as InvalidAgentRefError).input).toBe("foo@-bogus");
       expect((err as InvalidAgentRefError).code).toBe("INVALID_AGENT_REF");
     }
   });
@@ -118,12 +141,42 @@ describe("formatAgentRef", () => {
       "reviewer",
       "reviewer@latest",
       "reviewer@2026-05-17T15:30:00.000Z",
+      "reviewer@stable",
+      "reviewer@pre-tools-overhaul",
       "my-agent_v2",
       "system:foo",
     ];
     for (const input of inputs) {
       expect(formatAgentRef(parseAgentRef(input))).toBe(input);
     }
+  });
+});
+
+describe("isAliasName", () => {
+  it.each([
+    ["stable"],
+    ["prod"],
+    ["pre-tools-overhaul"],
+    ["v1-launch"],
+    ["first.draft"],
+    ["A"],
+    ["v2"],
+    ["my_alias_2"],
+  ])("accepts %s", (input) => {
+    expect(isAliasName(input)).toBe(true);
+  });
+
+  it.each([
+    ["latest is reserved", "latest"],
+    ["ISO timestamp", "2026-05-17T15:30:00.000Z"],
+    ["empty", ""],
+    ["leading hyphen", "-foo"],
+    ["leading dot", ".foo"],
+    ["slash", "foo/bar"],
+    ["colon", "foo:bar"],
+    ["whitespace", "foo bar"],
+  ])("rejects %s", (_label, input) => {
+    expect(isAliasName(input)).toBe(false);
   });
 });
 

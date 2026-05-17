@@ -108,7 +108,8 @@ describe("Runner reference syntax", () => {
   it("throws InvalidAgentRefError for malformed @suffix", async () => {
     await putAndCapture(store, makeAgent("v1"));
 
-    await expect(runner.invoke("reviewer@v2", "hi")).rejects.toBeInstanceOf(
+    // `-bad` is rejected at parse time (aliases must start with alphanumeric).
+    await expect(runner.invoke("reviewer@-bad", "hi")).rejects.toBeInstanceOf(
       InvalidAgentRefError,
     );
   });

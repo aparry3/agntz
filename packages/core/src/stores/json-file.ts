@@ -133,7 +133,7 @@ export class JsonFileStore implements UnifiedStore {
     const files = await readdir(dir).catch(() => []);
     const versions: StoredAgentVersion[] = [];
     for (const file of files) {
-      if (!file.endsWith(".json")) continue;
+      if (!file.endsWith(".json") || file.startsWith("_")) continue;
       const v = await this.readJson<StoredAgentVersion>(join(dir, file));
       if (v) versions.push(v);
     }
@@ -188,11 +188,30 @@ export class JsonFileStore implements UnifiedStore {
     await rm(this.agentDir(id), { recursive: true, force: true });
   }
 
+  private aliasFilePath(agentId: string): string {
+    return join(this.agentDir(agentId), "_aliases.json");
+  }
+
+  private async readAliases(agentId: string): Promise<Record<string, string>> {
+    return (await this.readJson<Record<string, string>>(this.aliasFilePath(agentId))) ?? {};
+  }
+
   async listAgentVersions(agentId: string): Promise<AgentVersionSummary[]> {
     await this.ensureUserDirs();
     const versions = await this.readAllVersions(agentId);
+    const aliases = await this.readAliases(agentId);
+    const byVersion = new Map<string, string[]>();
+    for (const [alias, createdAt] of Object.entries(aliases)) {
+      const list = byVersion.get(createdAt) ?? [];
+      list.push(alias);
+      byVersion.set(createdAt, list);
+    }
     return versions
-      .map((v) => ({ createdAt: v.createdAt, activatedAt: v.activatedAt }))
+      .map((v) => ({
+        createdAt: v.createdAt,
+        activatedAt: v.activatedAt,
+        aliases: (byVersion.get(v.createdAt) ?? []).sort(),
+      }))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
@@ -210,6 +229,29 @@ export class JsonFileStore implements UnifiedStore {
     if (!v) return;
     v.activatedAt = this.nextTimestamp();
     await this.writeJson(path, v);
+  }
+
+  async resolveAgentAlias(agentId: string, alias: string): Promise<string | null> {
+    const aliases = await this.readAliases(agentId);
+    return aliases[alias] ?? null;
+  }
+
+  async setAgentVersionAlias(agentId: string, createdAt: string, alias: string): Promise<void> {
+    await this.ensureUserDirs();
+    const versionFile = join(this.agentDir(agentId), `${this.filenameSafeTimestamp(createdAt)}.json`);
+    const v = await this.readJson<StoredAgentVersion>(versionFile);
+    if (!v) throw new Error(`Agent version not found: ${agentId}@${createdAt}`);
+    const aliases = await this.readAliases(agentId);
+    aliases[alias] = createdAt;
+    await this.writeJson(this.aliasFilePath(agentId), aliases);
+  }
+
+  async removeAgentVersionAlias(agentId: string, alias: string): Promise<void> {
+    await this.ensureUserDirs();
+    const aliases = await this.readAliases(agentId);
+    if (!(alias in aliases)) return;
+    delete aliases[alias];
+    await this.writeJson(this.aliasFilePath(agentId), aliases);
   }
 
   // ═══ SessionStore ═══

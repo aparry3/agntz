@@ -118,8 +118,8 @@ export {
   SkillNotFoundError,
 } from "./errors.js";
 
-// Agent references — `<id>[@<version|latest>]`
-export { parseAgentRef, formatAgentRef, isIsoTimestamp } from "./agent-ref.js";
+// Agent references — `<id>[@<version|latest|alias>]`
+export { parseAgentRef, formatAgentRef, isIsoTimestamp, isAliasName } from "./agent-ref.js";
 export type { ParsedAgentRef } from "./agent-ref.js";
 
 // Multimodal — image content blocks + fetcher

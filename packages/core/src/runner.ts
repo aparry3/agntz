@@ -64,7 +64,7 @@ import {
   ToolExecutionError,
   ToolNotFoundError,
 } from "./errors.js";
-import { parseAgentRef, formatAgentRef } from "./agent-ref.js";
+import { parseAgentRef, formatAgentRef, isIsoTimestamp } from "./agent-ref.js";
 import type { ParsedAgentRef } from "./agent-ref.js";
 import { runEval } from "./eval.js";
 import type { EvalRunOptions } from "./eval.js";
@@ -87,7 +87,7 @@ export interface ResolvedAgent {
   requestedVersion: string | null;
   /** The ISO timestamp of the row that ran (null for in-memory registered agents). */
   resolvedVersion: string | null;
-  resolvedVia: "registered" | "activated" | "latest" | "exact";
+  resolvedVia: "registered" | "activated" | "latest" | "exact" | "alias";
 }
 
 /**
@@ -357,6 +357,31 @@ export class Runner {
         requestedVersion: "latest",
         resolvedVersion: newest,
         resolvedVia: "latest",
+      };
+    }
+
+    // Alias: resolve to a timestamp via the store, then fetch that version.
+    if (!isIsoTimestamp(ref.version)) {
+      const aliasTarget = await this.agentStore.resolveAgentAlias(
+        ref.agentId,
+        ref.version,
+      );
+      if (!aliasTarget) {
+        const exists = await this.agentStore.getAgent(ref.agentId);
+        if (!exists) throw new AgentNotFoundError(ref.agentId);
+        throw new AgentVersionNotFoundError(ref.agentId, ref.version);
+      }
+      const stored = await this.agentStore.getAgentVersion(ref.agentId, aliasTarget);
+      if (!stored) {
+        // Alias points to a version that no longer exists (e.g. raced with delete).
+        throw new AgentVersionNotFoundError(ref.agentId, aliasTarget);
+      }
+      return {
+        agent: stored,
+        agentId: ref.agentId,
+        requestedVersion: ref.version,
+        resolvedVersion: aliasTarget,
+        resolvedVia: "alias",
       };
     }
 

@@ -136,7 +136,7 @@ export class SpanEmitter {
     requestedVersion?: string | null;
     /** ISO timestamp of the row that ran (null/undefined for in-memory agents). */
     resolvedVersion?: string | null;
-    resolvedVia?: "registered" | "activated" | "latest" | "exact";
+    resolvedVia?: "registered" | "activated" | "latest" | "exact" | "alias";
   }): RunSpan {
     const attrs: Record<string, string | number | boolean> = {
       "agent.id": params.agentId,
@@ -166,7 +166,7 @@ export class SpanEmitter {
     sessionId?: string | null;
     requestedVersion?: string | null;
     resolvedVersion?: string | null;
-    resolvedVia?: "registered" | "activated" | "latest" | "exact";
+    resolvedVia?: "registered" | "activated" | "latest" | "exact" | "alias";
   }): ManifestSpan {
     const attrs: Record<string, string | number | boolean> = {
       "agent.id": params.agentId,
@@ -213,7 +213,7 @@ export class SpanEmitter {
     input?: string;
     requestedVersion?: string | null;
     resolvedVersion?: string | null;
-    resolvedVia?: "registered" | "activated" | "latest" | "exact";
+    resolvedVia?: "registered" | "activated" | "latest" | "exact" | "alias";
   }): InvokeSpan {
     const ownerId = params.ownerId ?? "unknown";
     const attrs: Record<string, string | number | boolean> = {

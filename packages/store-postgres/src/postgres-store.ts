@@ -9,6 +9,7 @@ import {
 } from "@agntz/core";
 import type {
   AgentDefinition,
+  AgentVersionSummary,
   ContentBlock,
   ProviderConfig,
   UnifiedStore,
@@ -361,6 +362,23 @@ const MIGRATIONS: string[] = [
 
   UPDATE ar_schema_version SET version = 9;
   `,
+  // v10: Per-version aliases (`stable`, `prod`, …).
+  // Scoped to (user_id, agent_id) so two agents can share alias names.
+  // Reassigning an existing alias is "last write wins" via ON CONFLICT.
+  `
+  CREATE TABLE IF NOT EXISTS ar_agent_aliases (
+    user_id            TEXT NOT NULL,
+    agent_id           TEXT NOT NULL,
+    alias              TEXT NOT NULL,
+    version_created_at TIMESTAMPTZ NOT NULL,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, agent_id, alias)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ar_agent_aliases_version
+    ON ar_agent_aliases(user_id, agent_id, version_created_at);
+
+  UPDATE ar_schema_version SET version = 10;
+  `,
 ];
 
 export interface PostgresStoreOptions {
@@ -560,21 +578,40 @@ export class PostgresStore implements UnifiedStore {
     );
   }
 
-  async listAgentVersions(agentId: string): Promise<Array<{ createdAt: string; activatedAt: string | null }>> {
+  async listAgentVersions(agentId: string): Promise<AgentVersionSummary[]> {
     await this.ensureMigrated();
     const u = this.requireUser();
-    const result = await this.pool.query(
+    const versions = await this.pool.query(
       `SELECT created_at, activated_at FROM ${this.t("agents")}
        WHERE user_id = $1 AND agent_id = $2
        ORDER BY created_at DESC`,
       [u, agentId]
     );
-    return result.rows.map((r: { created_at: Date | string; activated_at: Date | string | null }) => ({
-      createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
-      activatedAt: r.activated_at == null
-        ? null
-        : (r.activated_at instanceof Date ? r.activated_at.toISOString() : String(r.activated_at)),
-    }));
+    const aliases = await this.pool.query(
+      `SELECT alias, version_created_at FROM ${this.t("agent_aliases")}
+       WHERE user_id = $1 AND agent_id = $2
+       ORDER BY alias ASC`,
+      [u, agentId]
+    );
+    const aliasesByVersion = new Map<string, string[]>();
+    for (const row of aliases.rows as Array<{ alias: string; version_created_at: Date | string }>) {
+      const key = row.version_created_at instanceof Date
+        ? row.version_created_at.toISOString()
+        : String(row.version_created_at);
+      const list = aliasesByVersion.get(key) ?? [];
+      list.push(row.alias);
+      aliasesByVersion.set(key, list);
+    }
+    return versions.rows.map((r: { created_at: Date | string; activated_at: Date | string | null }) => {
+      const createdAt = r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at);
+      return {
+        createdAt,
+        activatedAt: r.activated_at == null
+          ? null
+          : (r.activated_at instanceof Date ? r.activated_at.toISOString() : String(r.activated_at)),
+        aliases: aliasesByVersion.get(createdAt) ?? [],
+      };
+    });
   }
 
   async getAgentVersion(agentId: string, createdAt: string): Promise<AgentDefinition | null> {
@@ -598,6 +635,49 @@ export class PostgresStore implements UnifiedStore {
       `UPDATE ${this.t("agents")} SET activated_at = $1
        WHERE user_id = $2 AND agent_id = $3 AND created_at = $4`,
       [now, u, agentId, createdAt]
+    );
+  }
+
+  async resolveAgentAlias(agentId: string, alias: string): Promise<string | null> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const result = await this.pool.query(
+      `SELECT version_created_at FROM ${this.t("agent_aliases")}
+       WHERE user_id = $1 AND agent_id = $2 AND alias = $3`,
+      [u, agentId, alias]
+    );
+    if (result.rows.length === 0) return null;
+    const ts = result.rows[0].version_created_at;
+    return ts instanceof Date ? ts.toISOString() : String(ts);
+  }
+
+  async setAgentVersionAlias(agentId: string, createdAt: string, alias: string): Promise<void> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    const exists = await this.pool.query(
+      `SELECT 1 FROM ${this.t("agents")}
+       WHERE user_id = $1 AND agent_id = $2 AND created_at = $3`,
+      [u, agentId, createdAt]
+    );
+    if (exists.rows.length === 0) {
+      throw new Error(`Agent version not found: ${agentId}@${createdAt}`);
+    }
+    await this.pool.query(
+      `INSERT INTO ${this.t("agent_aliases")} (user_id, agent_id, alias, version_created_at)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (user_id, agent_id, alias)
+       DO UPDATE SET version_created_at = EXCLUDED.version_created_at, created_at = NOW()`,
+      [u, agentId, alias, createdAt]
+    );
+  }
+
+  async removeAgentVersionAlias(agentId: string, alias: string): Promise<void> {
+    await this.ensureMigrated();
+    const u = this.requireUser();
+    await this.pool.query(
+      `DELETE FROM ${this.t("agent_aliases")}
+       WHERE user_id = $1 AND agent_id = $2 AND alias = $3`,
+      [u, agentId, alias]
     );
   }
 
