@@ -9,7 +9,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { I } from "@/components/v3/icons";
 import {
   Btn,
@@ -44,7 +44,7 @@ import { EditableNumber, EditableText } from "./editable-fields";
 import { ModelPicker } from "./model-picker";
 import { SchemaEditor } from "./schema-editor";
 import { ExamplesEditor, type Example } from "./examples-editor";
-import { ToolsEditor, type ToolEntry } from "./tools-editor";
+import { ParamsEditor, ToolsEditor, type ToolEntry } from "./tools-editor";
 import { getIn, isRecord } from "@/components/agent-builder/pipeline-types";
 import { Popover } from "./editable-fields";
 import { StepPicker, type StepRefPayload } from "./step-picker";
@@ -206,6 +206,7 @@ export function PipelineView({
             flatSteps={flatSteps}
             catalog={catalog}
             onAddStep={handleAddStep}
+            onSelectRoot={() => setSelectedId(root.id)}
           />
         )}
 
@@ -261,6 +262,7 @@ function PipelineGraph({
   flatSteps,
   catalog,
   onAddStep,
+  onSelectRoot,
 }: {
   root: PipelineNode;
   rootManifest: Record<string, unknown>;
@@ -269,6 +271,7 @@ function PipelineGraph({
   flatSteps: PipelineNode[];
   catalog?: Catalog;
   onAddStep: (step: StepRefPayload) => void;
+  onSelectRoot: () => void;
 }) {
   const children = root.steps ?? root.branches ?? [];
   const inputs = (root.inputSchema ?? []).map((f) => f.key);
@@ -277,33 +280,17 @@ function PipelineGraph({
   const addRef = useRef<HTMLButtonElement>(null);
   const [addOpen, setAddOpen] = useState(false);
 
-  const loopBadge = root.isLoop && root.loop?.until ? (
-    <div
-      style={{
-        padding: "3px 8px",
-        border: `1px solid ${ag.line}`,
-        borderRadius: 4,
-        background: ag.surface2,
-        fontSize: 11,
-        color: ag.text2,
-        fontFamily: "var(--font-mono)",
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 6,
-      }}
-    >
-      <I.Hist size={11} />
-      loop until {root.loop.until}
-      {root.loop.maxIterations ? ` · max ${root.loop.maxIterations}` : ""}
-    </div>
-  ) : null;
+  const containerKind: "sequential" | "parallel" | "loop" = root.isLoop
+    ? "loop"
+    : root.kind === "parallel"
+      ? "parallel"
+      : "sequential";
 
   const containerKey = containerKeyForKind(rootManifest.kind);
   const nextStepIndex = (rootManifest[containerKey] as unknown[] | undefined)?.length ?? 0;
 
   return (
     <GraphPanel
-      topLeftExtra={loopBadge}
       topRight={
         <Btn
           ref={addRef}
@@ -326,26 +313,30 @@ function PipelineGraph({
     >
       <NodeIO label="INPUT" sub={inputs.join(" · ") || "—"} />
       <Edge />
-      {children.length === 0 ? (
-        <PipelineStep
-          n={undefined}
-          id={root.id}
-          name={root.name}
-          kind="llm"
-          selected
-          summary={root.description}
-        />
-      ) : (
-        children.map((step, i) => (
-          <StepWithEdge
-            key={step.id}
-            step={step}
-            n={i + 1}
-            selected={step.id === selectedId}
-            onSelect={() => onSelect(step.id)}
-          />
-        ))
-      )}
+      <PipelineContainer
+        kind={containerKind}
+        rootId={root.id}
+        loopUntil={root.loop?.until}
+        loopMax={root.loop?.maxIterations}
+        selected={selectedId === root.id}
+        onSelect={onSelectRoot}
+      >
+        {children.length === 0 ? (
+          <EmptyContainerHint onAdd={() => setAddOpen(true)} />
+        ) : (
+          children.map((step, i) => (
+            <StepWithEdge
+              key={step.id}
+              step={step}
+              n={i + 1}
+              selected={step.id === selectedId}
+              onSelect={() => onSelect(step.id)}
+              isLast={i === children.length - 1}
+            />
+          ))
+        )}
+      </PipelineContainer>
+      <Edge />
       <NodeIO label="OUTPUT" sub={childIds.length ? `composed from ${childIds.join(" · ")}` : "—"} />
       <Popover open={addOpen} onClose={() => setAddOpen(false)} anchorRef={addRef} width={320}>
         <StepPicker
@@ -363,16 +354,155 @@ function PipelineGraph({
   );
 }
 
+/* ── PipelineContainer — labeled border that wraps the root step list ──── */
+
+function PipelineContainer({
+  kind,
+  rootId,
+  loopUntil,
+  loopMax,
+  selected,
+  onSelect,
+  children,
+}: {
+  kind: "sequential" | "parallel" | "loop";
+  rootId: string;
+  loopUntil?: string;
+  loopMax?: number;
+  selected: boolean;
+  onSelect: () => void;
+  children: ReactNode;
+}) {
+  const palette = (() => {
+    switch (kind) {
+      case "parallel":
+        return { fg: ag.purple, bg: ag.purpleBg, label: "parallel" };
+      case "loop":
+        return { fg: ag.warn, bg: ag.warnBg, label: "loop" };
+      default:
+        return { fg: ag.ok, bg: ag.okBg, label: "sequential" };
+    }
+  })();
+
+  return (
+    <div
+      style={{
+        width: 420,
+        border: `1.5px ${kind === "loop" ? "dashed" : "solid"} ${selected ? ag.ink : palette.fg}`,
+        borderRadius: 8,
+        background: ag.surface2,
+        padding: "10px 12px 12px",
+        position: "relative",
+        boxShadow: selected ? "0 0 0 3px rgba(26,25,22,0.06)" : "none",
+        cursor: "pointer",
+      }}
+      onClick={(e) => {
+        // Only register a click on the container itself, not on inner steps.
+        if (e.target === e.currentTarget) onSelect();
+      }}
+    >
+      <div
+        onClick={(e) => {
+          e.stopPropagation();
+          onSelect();
+        }}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          marginBottom: 10,
+          paddingBottom: 8,
+          borderBottom: `1px solid ${ag.line2}`,
+        }}
+      >
+        <span
+          style={{
+            background: palette.bg,
+            color: palette.fg,
+            padding: "2px 7px",
+            borderRadius: 3,
+            fontSize: 10.5,
+            fontFamily: "var(--font-mono)",
+            fontWeight: 500,
+            textTransform: "uppercase",
+            letterSpacing: "0.05em",
+          }}
+        >
+          {palette.label}
+        </span>
+        <Mono size={11} color={ag.muted}>
+          {rootId}
+        </Mono>
+        <div style={{ flex: 1 }} />
+        {kind === "loop" && loopUntil && (
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 5,
+              padding: "2px 6px",
+              border: `1px solid ${ag.line}`,
+              borderRadius: 3,
+              fontSize: 10.5,
+              color: ag.text2,
+              fontFamily: "var(--font-mono)",
+            }}
+            title="Loop runs until this condition is truthy"
+          >
+            <I.Hist size={10} />
+            until <span style={{ color: ag.warn }}>{loopUntil}</span>
+            {loopMax ? ` · max ${loopMax}` : ""}
+          </span>
+        )}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function EmptyContainerHint({ onAdd }: { onAdd: () => void }) {
+  return (
+    <div
+      style={{
+        padding: "24px 12px",
+        textAlign: "center",
+        color: ag.muted,
+        fontSize: 12,
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        alignItems: "center",
+      }}
+    >
+      <Mono size={11.5} color={ag.muted}>
+        No steps yet.
+      </Mono>
+      <Btn
+        variant="secondary"
+        size="sm"
+        icon={<I.Plus size={11} style={{ marginRight: 5 }} />}
+        onClick={onAdd}
+      >
+        Add first step
+      </Btn>
+    </div>
+  );
+}
+
 function StepWithEdge({
   step,
   n,
   selected,
   onSelect,
+  isLast,
 }: {
   step: PipelineNode;
   n: number;
   selected: boolean;
   onSelect: () => void;
+  isLast?: boolean;
 }) {
   const inputs: StepField[] = (step.inputSchema ?? []).map((f) => ({
     name: f.key,
@@ -395,9 +525,12 @@ function StepWithEdge({
         model={step.model ? `${step.model.provider} · ${step.model.name}` : undefined}
         inputs={inputs.length ? inputs : undefined}
         outputs={outputs.length ? outputs : undefined}
-        onClick={onSelect}
+        onClick={(e) => {
+          e?.stopPropagation();
+          onSelect();
+        }}
       />
-      <Edge />
+      {!isLast && <Edge />}
     </>
   );
 }
@@ -654,6 +787,13 @@ function PipelineInspector({
               agentPath={selected.agentPath}
               rootManifest={rootManifest}
               onPatchAgent={onPatchAgent}
+            />
+          ) : selected.kind === "sequential" && onPatchAgent ? (
+            <SequentialStepEditor
+              node={selected}
+              rootManifest={rootManifest}
+              onPatchAgent={onPatchAgent}
+              isRoot={selected.id === root.id}
             />
           ) : (
             <InsSection
@@ -1176,146 +1316,123 @@ function ToolStepEditor({
         />
       )}
 
-      <ToolParamsEditor
+      <ParamsEditor
+        label="Pinned params"
         value={toolParams}
         onChange={(next) => patchTool({ params: next })}
+        keyPlaceholder="placeholder"
+        valuePlaceholder="{{user_id}}"
+        hint="placeholder → state template"
       />
     </InsSection>
   );
 }
 
-function ToolParamsEditor({
-  value,
-  onChange,
+/* ── SequentialStepEditor — description + loop config for a kind=sequential
+ *    node. The loop part flips the agent between "plain sequential" and
+ *    "loop" by setting/clearing the `until` field on the same agent. */
+function SequentialStepEditor({
+  node,
+  rootManifest,
+  onPatchAgent,
+  isRoot,
 }: {
-  value: Record<string, string> | undefined;
-  onChange: (next: Record<string, string> | undefined) => void;
+  node: PipelineNode;
+  rootManifest: Record<string, unknown>;
+  onPatchAgent: (agentPath: PipelinePath, partial: Record<string, unknown>) => void;
+  isRoot: boolean;
 }) {
-  const entries = Object.entries(value ?? {});
-  const commit = (rows: Array<[string, string]>) => {
-    const obj: Record<string, string> = {};
-    let any = false;
-    for (const [k, v] of rows) {
-      const key = k.trim();
-      if (!key) continue;
-      obj[key] = v;
-      any = true;
+  const liveAgent = (() => {
+    const raw = getIn(rootManifest, node.agentPath);
+    return isRecord(raw) ? raw : {};
+  })();
+  const description = (liveAgent.description as string | undefined) ?? "";
+  const until = (liveAgent.until as string | undefined) ?? "";
+  const maxIterations =
+    typeof liveAgent.maxIterations === "number" ? (liveAgent.maxIterations as number) : undefined;
+  const isLoop = until.trim().length > 0;
+
+  const applyLoop = (next: { until?: string; maxIterations?: number }) => {
+    const nextUntil = next.until?.trim();
+    // Clearing the until also clears maxIterations — "max" without a condition
+    // isn't meaningful since a sequential runs its steps exactly once.
+    if (!nextUntil) {
+      onPatchAgent(node.agentPath, { until: undefined, maxIterations: undefined });
+      return;
     }
-    onChange(any ? obj : undefined);
-  };
-  const updateKey = (idx: number, key: string) =>
-    commit(entries.map(([k, v], i): [string, string] => (i === idx ? [key, v] : [k, v])));
-  const updateVal = (idx: number, val: string) =>
-    commit(entries.map(([k, v], i): [string, string] => (i === idx ? [k, val] : [k, v])));
-  const removeRow = (idx: number) => commit(entries.filter((_, i) => i !== idx));
-  const addRow = () => {
-    if (entries.some(([k]) => k === "")) return;
-    commit([...entries, ["", ""]]);
+    onPatchAgent(node.agentPath, {
+      until: nextUntil,
+      maxIterations: next.maxIterations,
+    });
   };
 
   return (
-    <div>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "baseline",
-          gap: 6,
-          marginBottom: 6,
-        }}
+    <>
+      <InsSection
+        title={isRoot ? "Pipeline" : "Sub-pipeline"}
+        badge={isLoop ? "loop" : node.kind}
+        defaultOpen
       >
-        <div
-          style={{
-            fontSize: 10.5,
-            letterSpacing: "0.08em",
-            textTransform: "uppercase",
-            color: ag.muted,
-            fontWeight: 500,
-          }}
-        >
-          Pinned params
-        </div>
-        <Mono size={10} color={ag.muted}>
-          · placeholder → state template
+        <EditableText
+          label="Description"
+          value={description}
+          onChange={(v) => onPatchAgent(node.agentPath, { description: v || undefined })}
+          placeholder={isRoot ? "What does this pipeline do?" : "What does this sub-pipeline do?"}
+          multiline
+          rows={2}
+        />
+      </InsSection>
+
+      <InsSection
+        title="Loop"
+        badge={isLoop ? `until ${until}` : "off"}
+        defaultOpen={isLoop}
+      >
+        <Mono size={10.5} color={ag.muted}>
+          When set, the steps re-run until <code>until</code> is truthy (templated
+          against the latest state).
         </Mono>
-      </div>
-      {entries.length > 0 && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 6 }}>
-          {entries.map(([k, v], i) => (
-            <div
-              key={i}
-              style={{
-                display: "grid",
-                gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.4fr) 22px",
-                gap: 4,
-                alignItems: "center",
-              }}
-            >
-              <input
-                value={k}
-                onChange={(e) => updateKey(i, e.target.value)}
-                placeholder="placeholder"
-                style={paramInputStyle}
-              />
-              <input
-                value={v}
-                onChange={(e) => updateVal(i, e.target.value)}
-                placeholder="{{user_id}}"
-                style={paramInputStyle}
-              />
-              <button
-                type="button"
-                onClick={() => removeRow(i)}
-                title="Remove"
-                style={{
-                  border: "1px solid transparent",
-                  background: "transparent",
-                  color: ag.muted,
-                  cursor: "pointer",
-                  borderRadius: 3,
-                  padding: 2,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontFamily: "inherit",
-                }}
-              >
-                <I.X size={10} />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-      <button
-        type="button"
-        onClick={addRow}
-        style={{
-          padding: "4px 8px",
-          border: `1px dashed ${ag.line}`,
-          borderRadius: 4,
-          background: "transparent",
-          color: ag.text2,
-          fontSize: 11,
-          fontFamily: "var(--font-mono)",
-          cursor: "pointer",
-          textAlign: "left",
-          width: "100%",
-        }}
-      >
-        + Pin param
-      </button>
-    </div>
+        <EditableText
+          label="Until (state template)"
+          value={until}
+          onChange={(v) => applyLoop({ until: v || undefined, maxIterations })}
+          placeholder="{{step.done}}"
+          mono
+        />
+        <EditableNumber
+          label="Max iterations"
+          value={maxIterations}
+          onChange={(v) =>
+            applyLoop({
+              until: until || undefined,
+              maxIterations: v,
+            })
+          }
+          min={1}
+          step={1}
+          placeholder="—"
+          hint="blank = unbounded (use carefully)"
+        />
+        {isLoop && (
+          <button
+            type="button"
+            onClick={() => applyLoop({ until: undefined, maxIterations: undefined })}
+            style={{
+              border: `1px solid ${ag.line}`,
+              background: ag.surface2,
+              color: ag.danger,
+              cursor: "pointer",
+              borderRadius: 4,
+              padding: "4px 9px",
+              fontSize: 11.5,
+              fontFamily: "inherit",
+              alignSelf: "flex-start",
+            }}
+          >
+            Turn off loop
+          </button>
+        )}
+      </InsSection>
+    </>
   );
 }
-
-const paramInputStyle: CSSProperties = {
-  width: "100%",
-  padding: "5px 8px",
-  border: `1px solid ${ag.line}`,
-  borderRadius: 4,
-  background: ag.surface2,
-  color: ag.ink,
-  fontFamily: "var(--font-mono)",
-  fontSize: 12,
-  outline: 0,
-  boxSizing: "border-box",
-};

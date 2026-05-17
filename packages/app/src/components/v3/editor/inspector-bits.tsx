@@ -443,7 +443,7 @@ export function ToolBlock({
   server,
   children,
 }: {
-  kind: "mcp" | "local" | "agent";
+  kind: "mcp" | "local" | "agent" | "http";
   label: string;
   server?: string;
   children: ReactNode;
@@ -452,6 +452,7 @@ export function ToolBlock({
     mcp: [ag.purple, ag.purpleBg] as const,
     local: [ag.blue, ag.blueBg] as const,
     agent: [ag.ok, ag.okBg] as const,
+    http: [ag.warn, ag.warnBg] as const,
   }[kind];
   return (
     <div style={{ border: `1px solid ${ag.line}`, borderRadius: 4, background: ag.surface2 }}>
