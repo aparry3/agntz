@@ -87,3 +87,7 @@ body {
   0%   { left: -30%; }
   100% { left: 100%; }
 }
+@keyframes agntz-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
+}
