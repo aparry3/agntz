@@ -35,10 +35,17 @@ import {
   appendStepAtRoot,
   containerKeyForKind,
   moveStepAt,
+  patchAgentAt,
   patchStepInputMap,
   removeStepAt,
   type RootManifest,
 } from "./pipeline-mutations";
+import { EditableNumber, EditableText } from "./editable-fields";
+import { ModelPicker } from "./model-picker";
+import { SchemaEditor } from "./schema-editor";
+import { ExamplesEditor, type Example } from "./examples-editor";
+import { ToolsEditor, type ToolEntry } from "./tools-editor";
+import { getIn, isRecord } from "@/components/agent-builder/pipeline-types";
 import { Popover } from "./editable-fields";
 import { StepPicker, type StepRefPayload } from "./step-picker";
 
@@ -102,6 +109,12 @@ export function PipelineView({
   const handleInputMap = (stepPath: PipelinePath, key: string, value: string | undefined) => {
     if (!onChange) return;
     const next = patchStepInputMap(rootManifest as RootManifest, stepPath, key, value);
+    onChange(next);
+  };
+
+  const handlePatchAgent = (agentPath: PipelinePath, partial: Record<string, unknown>) => {
+    if (!onChange) return;
+    const next = patchAgentAt(rootManifest as RootManifest, agentPath, partial);
     onChange(next);
   };
 
@@ -202,10 +215,13 @@ export function PipelineView({
           <PipelineInspector
             root={root}
             selected={selectedNode}
+            rootManifest={rootManifest}
+            catalog={catalog}
             availableState={availableState.keys}
             onRemoveSelected={onChange && selectedNode.stepPath ? handleRemoveSelected : undefined}
             onMoveSelected={onChange && selectedNode.stepPath ? handleMoveSelected : undefined}
             onPatchInputMap={onChange ? handleInputMap : undefined}
+            onPatchAgent={onChange ? handlePatchAgent : undefined}
             canMoveUp={canMove(rootManifest, selectedNode, -1)}
             canMoveDown={canMove(rootManifest, selectedNode, 1)}
           />
@@ -390,19 +406,25 @@ function StepWithEdge({
 function PipelineInspector({
   root,
   selected,
+  rootManifest,
+  catalog,
   availableState,
   onRemoveSelected,
   onMoveSelected,
   onPatchInputMap,
+  onPatchAgent,
   canMoveUp,
   canMoveDown,
 }: {
   root: PipelineNode;
   selected: PipelineNode;
+  rootManifest: Record<string, unknown>;
+  catalog?: Catalog;
   availableState: StateRef[];
   onRemoveSelected?: () => void;
   onMoveSelected?: (delta: -1 | 1) => void;
   onPatchInputMap?: (stepPath: PipelinePath, key: string, value: string | undefined) => void;
+  onPatchAgent?: (agentPath: PipelinePath, partial: Record<string, unknown>) => void;
   canMoveUp?: boolean;
   canMoveDown?: boolean;
 }) {
@@ -613,35 +635,49 @@ function PipelineInspector({
           </div>
         </div>
 
-        {/* Folded agent settings */}
+        {/* Agent settings — editable when the selected step is an LLM and we
+            have a patch callback. Falls back to a read-only summary for
+            non-LLM steps (tool / sub-pipeline) since those edits aren't wired
+            here yet. */}
         <div style={{ borderTop: `1px solid ${ag.line2}` }}>
-          <InsSection
-            title="Agent settings"
-            badge={selected.kind === "llm" ? "model · instruction" : selected.kind}
-            defaultOpen
-          >
-            {selected.description && (
-              <SubBlock label="Description" value={selected.description} multiline />
-            )}
-            {selected.model && (
-              <SubBlock
-                label="Model"
-                value={`${selected.model.provider} · ${selected.model.name}`}
-                mono
-                select
-              />
-            )}
-            {selected.instructionPreview && (
-              <SubBlock label="Instruction" value={selected.instructionPreview} mono multiline />
-            )}
-            {selected.outputSchemaKeys && selected.outputSchemaKeys.length > 0 && (
-              <SubBlock
-                label={`Output schema · ${selected.outputSchemaKeys.length} field${selected.outputSchemaKeys.length === 1 ? "" : "s"}`}
-                value={selected.outputSchemaKeys.map((k) => `${k.key}: ${k.type}`).join(", ")}
-                mono
-              />
-            )}
-          </InsSection>
+          {selected.kind === "llm" && onPatchAgent ? (
+            <LLMStepEditor
+              agentPath={selected.agentPath}
+              rootManifest={rootManifest}
+              catalog={catalog}
+              onPatchAgent={onPatchAgent}
+              currentAgentId={selected.id}
+              outputSchemaCount={selected.outputSchemaKeys?.length ?? 0}
+            />
+          ) : (
+            <InsSection
+              title="Agent settings"
+              badge={selected.kind === "llm" ? "model · instruction" : selected.kind}
+              defaultOpen
+            >
+              {selected.description && (
+                <SubBlock label="Description" value={selected.description} multiline />
+              )}
+              {selected.model && (
+                <SubBlock
+                  label="Model"
+                  value={`${selected.model.provider} · ${selected.model.name}`}
+                  mono
+                  select
+                />
+              )}
+              {selected.instructionPreview && (
+                <SubBlock label="Instruction" value={selected.instructionPreview} mono multiline />
+              )}
+              {selected.outputSchemaKeys && selected.outputSchemaKeys.length > 0 && (
+                <SubBlock
+                  label={`Output schema · ${selected.outputSchemaKeys.length} field${selected.outputSchemaKeys.length === 1 ? "" : "s"}`}
+                  value={selected.outputSchemaKeys.map((k) => `${k.key}: ${k.type}`).join(", ")}
+                  mono
+                />
+              )}
+            </InsSection>
+          )}
 
           {selected.stepPath && (
             <InsSection title="Step config" badge="state key · when">
@@ -883,6 +919,134 @@ function PipelineBindRow({
         </Popover>
       )}
     </div>
+  );
+}
+
+/* ── LLMStepEditor — editable Agent settings / Tools / Output / Examples
+ *    for a kind=llm step. Reads the live agent record from rootManifest at
+ *    `agentPath` and writes back via onPatchAgent. */
+function LLMStepEditor({
+  agentPath,
+  rootManifest,
+  catalog,
+  onPatchAgent,
+  currentAgentId,
+  outputSchemaCount,
+}: {
+  agentPath: PipelinePath;
+  rootManifest: Record<string, unknown>;
+  catalog?: Catalog;
+  onPatchAgent: (agentPath: PipelinePath, partial: Record<string, unknown>) => void;
+  currentAgentId: string;
+  outputSchemaCount: number;
+}) {
+  const liveAgent = (() => {
+    const raw = getIn(rootManifest, agentPath);
+    return isRecord(raw) ? raw : {};
+  })();
+
+  const description = (liveAgent.description as string | undefined) ?? "";
+  const model = (liveAgent.model as Record<string, unknown> | undefined) ?? {};
+  const instruction = (liveAgent.instruction as string | undefined) ?? "";
+  const tools = (liveAgent.tools as Array<Record<string, unknown>> | undefined) ?? [];
+  const outputSchema = liveAgent.outputSchema as Record<string, unknown> | undefined;
+  const examples = (liveAgent.examples as Example[] | undefined) ?? [];
+
+  const patch = (partial: Record<string, unknown>) => onPatchAgent(agentPath, partial);
+  const patchModel = (next: Partial<Record<string, unknown>>) => {
+    const merged: Record<string, unknown> = { ...model };
+    for (const [k, v] of Object.entries(next)) {
+      if (v === undefined) delete merged[k];
+      else merged[k] = v;
+    }
+    patch({ model: Object.keys(merged).length === 0 ? undefined : merged });
+  };
+
+  return (
+    <>
+      <InsSection title="Agent settings" badge="model · instruction" defaultOpen>
+        <EditableText
+          label="Description"
+          value={description}
+          onChange={(v) => patch({ description: v || undefined })}
+          placeholder="What does this step do?"
+          multiline
+          rows={2}
+        />
+        <ModelPicker
+          value={{
+            provider: (model.provider as string | undefined) ?? "",
+            name: (model.name as string | undefined) ?? "",
+          }}
+          providers={catalog?.providers ?? []}
+          loading={catalog?.loading}
+          onChange={(next) => patchModel({ provider: next.provider, name: next.name })}
+        />
+        <EditableText
+          label="Instruction"
+          value={instruction}
+          onChange={(v) => patch({ instruction: v || undefined })}
+          placeholder="Step's system prompt. Use {{var}} for inputs."
+          multiline
+          rows={6}
+          mono
+        />
+      </InsSection>
+
+      <InsSection title="Tools" badge={`${tools.length} attached`}>
+        <ToolsEditor
+          tools={tools as ToolEntry[]}
+          onChange={(next) => patch({ tools: next as Array<Record<string, unknown>> | undefined })}
+          mcpServers={catalog?.mcpServers ?? []}
+          localTools={catalog?.tools ?? []}
+          agents={catalog?.agents ?? []}
+          loadMcpTools={catalog?.loadMcpTools ?? (async () => [])}
+          mcpToolsByServer={catalog?.mcpToolsByServer ?? {}}
+          currentAgentId={currentAgentId}
+        />
+      </InsSection>
+
+      <InsSection
+        title="Output schema"
+        badge={`${outputSchemaCount} field${outputSchemaCount === 1 ? "" : "s"}`}
+      >
+        <SchemaEditor
+          kind="output"
+          schema={outputSchema}
+          onChange={(next) => patch({ outputSchema: next })}
+        />
+      </InsSection>
+
+      <InsSection title="Examples" badge={`${examples.length} pinned`}>
+        <ExamplesEditor
+          examples={examples}
+          onChange={(next) => patch({ examples: next?.length ? next : undefined })}
+        />
+      </InsSection>
+
+      <InsSection title="Advanced">
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <EditableNumber
+            label="Temperature"
+            value={typeof model.temperature === "number" ? model.temperature : undefined}
+            onChange={(v) => patchModel({ temperature: v })}
+            min={0}
+            max={2}
+            step={0.1}
+            placeholder="—"
+            hint="0–2, blank = provider default"
+          />
+          <EditableNumber
+            label="Max tokens"
+            value={typeof model.maxTokens === "number" ? model.maxTokens : undefined}
+            onChange={(v) => patchModel({ maxTokens: v })}
+            min={1}
+            step={1}
+            placeholder="—"
+          />
+        </div>
+      </InsSection>
+    </>
   );
 }
 

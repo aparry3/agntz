@@ -101,6 +101,32 @@ export function moveStepAt(
   return setIn(root, containerPath, next) as RootManifest;
 }
 
+/* ── Agent record edits at a specific JSON-pointer path ───────────────── */
+
+/**
+ * Shallow-merge `partial` into the agent record at `agentPath`. Keys whose
+ * value is `undefined` are deleted (matches the convention used by the
+ * single-agent editor's `patch({ field: undefined })`).
+ *
+ * Used by the pipeline inspector to mutate individual step agents
+ * (description, model, instruction, tools, etc.) without disturbing the
+ * surrounding pipeline structure.
+ */
+export function patchAgentAt(
+  root: RootManifest,
+  agentPath: PipelinePath,
+  partial: Record<string, unknown>,
+): RootManifest {
+  const existing = getIn(root, agentPath);
+  const base = isRecord(existing) ? existing : {};
+  const next: Record<string, unknown> = { ...base };
+  for (const [k, v] of Object.entries(partial)) {
+    if (v === undefined) delete next[k];
+    else next[k] = v;
+  }
+  return setIn(root, agentPath, next) as RootManifest;
+}
+
 /* ── Input-map edits on a specific step ────────────────────────────────── */
 
 export function patchStepInputMap(
