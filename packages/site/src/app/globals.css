@@ -2,20 +2,46 @@
 
 :root {
   color-scheme: light;
-  --font-display: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
-  --font-mono: "IBM Plex Mono", "SFMono-Regular", "SF Mono", Consolas, "Liberation Mono", monospace;
+  --sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: var(--font-geist-mono), ui-monospace, "SF Mono", Menlo, monospace;
 }
 
-html {
-  background: #08111b;
-}
-
+html,
 body {
-  background:
-    radial-gradient(circle at top left, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0) 28%),
-    linear-gradient(180deg, #0b1624 0%, #08111b 48%, #050b12 100%);
+  margin: 0;
+  background: #f4f1e9;
+  color: #1a1916;
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  color: inherit;
+}
+
+a:hover {
+  color: inherit;
 }
 
 ::selection {
-  background: rgba(244, 239, 230, 0.25);
+  background: rgba(26, 25, 22, 0.18);
+}
+
+.ag-card-hover {
+  transition:
+    transform 0.18s cubic-bezier(0.2, 0.7, 0.3, 1.2),
+    box-shadow 0.18s,
+    border-color 0.18s;
+}
+
+.ag-card-hover:hover {
+  transform: translateY(-2px);
+  border-color: rgba(26, 25, 22, 0.3) !important;
+  box-shadow: 0 8px 24px rgba(26, 25, 22, 0.08) !important;
 }
