@@ -4,6 +4,8 @@ export type {
   AgntzLocalOptions,
   LocalClient,
   LocalAgentsResource,
+  LocalRunsResource,
+  LocalTracesResource,
 } from "./client.js";
 
 // Loader (exposed for tests and advanced cases)
@@ -25,4 +27,15 @@ export type {
   Reply,
   ContentBlock,
   ImageMediaType,
+  Run,
+  RunListFilter,
+  RunListResult,
+  RunStatus,
+  Span,
+  SpanKind,
+  SpanStatus,
+  TraceDetail,
+  TraceFilter,
+  TraceSummary,
+  TracesListResult,
 } from "@agntz/sdk";
