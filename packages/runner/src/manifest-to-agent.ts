@@ -1,11 +1,18 @@
-import type { AgentManifest, LLMAgentManifest, ManifestToolEntry } from "@agntz/manifest";
-import type { AgentDefinition, ToolReference } from "@agntz/core";
+import type {
+  AgentManifest,
+  LLMAgentManifest,
+  ManifestToolEntry,
+  AgentRef as ManifestAgentRef,
+} from "@agntz/manifest";
+import type { AgentDefinition, AgentRef, ToolReference } from "@agntz/core";
 
 /**
  * Convert a parsed agent manifest into the `AgentDefinition` shape the core
- * runner consumes. Phase 2 supports LLM agents with local + HTTP tools; other
- * kinds and MCP tools throw a clear "not supported in embedded mode" error
- * so users hit the failure at registration rather than at first invoke.
+ * runner consumes. Supports LLM agents with all tool kinds the core engine
+ * handles: local (resolved via the `tools` map passed to `agntz()`), HTTP
+ * (state-templated headers/params with `{{env.X}}` / `{{secrets.X}}` refs),
+ * MCP (lazy URL connection, no connection store required), and agent
+ * (subagent invocation by id — target must also be loaded).
  *
  * `localToolNames` is the set of names supplied to the `tools` map at init
  * time. References to local tools not in this set raise an error here so
@@ -31,14 +38,9 @@ function llmManifestToAgentDefinition(
     ? convertTools(manifest, manifest.tools, localToolNames)
     : [];
 
-  if (manifest.spawnable && manifest.spawnable.length > 0) {
-    throw new Error(
-      `Agent '${manifest.id}' declares spawnable subagents — not yet supported in @agntz/runner.`,
-    );
-  }
   if (manifest.skills && manifest.skills.length > 0) {
     throw new Error(
-      `Agent '${manifest.id}' declares skills — not yet supported in @agntz/runner.`,
+      `Agent '${manifest.id}' declares skills — not yet supported in @agntz/runner (no SkillStore in embedded mode).`,
     );
   }
 
@@ -57,6 +59,9 @@ function llmManifestToAgentDefinition(
     },
     examples: manifest.examples,
     tools: tools.length > 0 ? tools : undefined,
+    spawnable: manifest.spawnable
+      ? convertSpawnable(manifest, manifest.spawnable, localToolNames)
+      : undefined,
     reply: manifest.reply,
   };
 }
@@ -83,14 +88,40 @@ function convertTools(
         out.push({ type: "http", entry });
         break;
       case "mcp":
-        throw new Error(
-          `Agent '${manifest.id}' uses MCP tools — not yet supported in @agntz/runner.`,
-        );
+        out.push({
+          type: "mcp",
+          server: entry.server,
+          tools: entry.tools
+            ? entry.tools.map((t) => (typeof t === "string" ? t : t.tool))
+            : undefined,
+          headers: entry.headers,
+        });
+        break;
       case "agent":
-        throw new Error(
-          `Agent '${manifest.id}' uses agent-as-tool references — not yet supported in @agntz/runner.`,
-        );
+        out.push({ type: "agent", agentId: entry.agent });
+        break;
     }
   }
   return out;
 }
+
+function convertSpawnable(
+  manifest: LLMAgentManifest,
+  refs: ManifestAgentRef[],
+  localToolNames: Set<string>,
+): AgentRef[] {
+  return refs.map((ref) => {
+    if (ref.kind === "ref") {
+      return ref.version
+        ? { kind: "ref", agentId: ref.agentId, version: ref.version }
+        : { kind: "ref", agentId: ref.agentId };
+    }
+    // Inline child — recursively convert as an LLM AgentDefinition. The
+    // child's instruction is used verbatim as its systemPrompt (the manifest
+    // validator already forbids template variables in inline-child
+    // instructions).
+    const childDef = llmManifestToAgentDefinition(ref.definition, localToolNames);
+    return { kind: "inline", definition: childDef };
+  });
+}
+

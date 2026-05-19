@@ -168,15 +168,34 @@ The `client.agents.run / .stream`, `client.runs.list / .get`, and `client.traces
 | LLM agents | ✓ | ✓ |
 | Local tools (in-process JS/TS) | ✓ | (use MCP/HTTP instead) |
 | HTTP tools | ✓ | ✓ |
-| MCP tools | (planned) | ✓ |
+| MCP tools (raw URL + headers) | ✓ | ✓ |
+| Agent-as-tool (subagent calls) | ✓ | ✓ |
+| Spawnable subagents | ✓ | ✓ |
 | Sequential / parallel / tool kinds | (planned) | ✓ |
-| Subagents (spawnable) | (planned) | ✓ |
 | Sessions | ✓ (memory or sqlite) | ✓ (managed) |
 | Runs / traces | ✓ (in-memory) | ✓ (persisted) |
 | `{{env.X}}` template refs | ✓ | (opt-in per server) |
 | `{{secrets.X}}` template refs | × | ✓ |
+| Skills | × | ✓ |
 | Evals | × | (planned) |
 | Multi-user isolation | × | ✓ |
+
+## MCP tools
+
+MCP servers work via raw URL + optional headers. No connection store
+required for embedded mode:
+
+```yaml
+tools:
+  - kind: mcp
+    server: "https://search.example.com/mcp"
+    tools: [search, fetch_url]
+    headers:
+      Authorization: "Bearer {{env.SEARCH_API_KEY}}"
+```
+
+The runner connects lazily on first tool call and reuses the connection
+for the lifetime of the process.
 
 ## License
 
