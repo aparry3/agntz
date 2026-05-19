@@ -1,0 +1,9 @@
+id: echo
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: |
+  You are an echo bot. Reply with exactly the user's message.
+
+  {{userQuery}}

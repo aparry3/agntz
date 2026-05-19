@@ -1,0 +1,12 @@
+id: calc-agent
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: |
+  You can call the `add` tool to add two numbers. Use it to answer the user's question.
+
+  {{userQuery}}
+tools:
+  - kind: local
+    tools: [add]
