@@ -1,6 +1,6 @@
 {
   "name": "@agntz/runner",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "description": "Embedded in-process runner for agntz agents. Reads YAML manifests from disk and executes them with a minimal SDK-shaped surface. The five-line-of-code path.",
   "type": "module",
   "main": "./dist/index.js",
@@ -42,6 +42,8 @@
     "url": "https://github.com/aparry3/agntz.git",
     "directory": "packages/runner"
   },
+  "homepage": "https://github.com/aparry3/agntz#readme",
+  "author": "Aaron Bidworthy",
   "publishConfig": {
     "access": "public"
   },
