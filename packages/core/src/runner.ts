@@ -312,6 +312,15 @@ export class Runner {
   }
 
   /**
+   * Remove an agent from the in-memory registry. Returns true if the id was
+   * present. Persisted agents in the AgentStore are untouched — use
+   * `runner.agents.deleteAgent` for those.
+   */
+  deregisterAgent(id: string): boolean {
+    return this.registeredAgents.delete(id);
+  }
+
+  /**
    * Register a tool in the registry.
    */
   registerTool(tool: ToolDefinition): void {

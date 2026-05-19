@@ -1,0 +1,35 @@
+id: pipeline
+kind: sequential
+inputSchema:
+  topic: string
+steps:
+  - agent:
+      id: extractor
+      kind: llm
+      model: { provider: openai, name: gpt-5.4 }
+      instruction: |
+        Summarize the topic in one short sentence.
+
+        Topic: {{topic}}
+      outputSchema:
+        summary: string
+      inputSchema:
+        topic: string
+    input:
+      topic: "{{topic}}"
+    stateKey: extractor
+  - agent:
+      id: writer
+      kind: llm
+      model: { provider: openai, name: gpt-5.4 }
+      instruction: |
+        Write a one-line tagline based on this summary:
+        {{summary}}
+      inputSchema:
+        summary: string
+    input:
+      summary: "{{extractor.summary}}"
+    stateKey: writer
+output:
+  summary: "{{extractor.summary}}"
+  tagline: "{{writer}}"

@@ -9,7 +9,7 @@ const fixturesDir = join(__dirname, "fixtures/agents");
 describe("loadManifestsFromDir", () => {
   it("loads YAML files keyed by agent id", async () => {
     const map = await loadManifestsFromDir(fixturesDir);
-    expect([...map.keys()].sort()).toEqual(["calc-agent", "echo"]);
+    expect([...map.keys()].sort()).toEqual(["calc-agent", "echo", "pipeline"]);
     expect(map.get("echo")?.kind).toBe("llm");
   });
 

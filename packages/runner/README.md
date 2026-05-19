@@ -166,14 +166,16 @@ The `client.agents.run / .stream`, `client.runs.list / .get`, and `client.traces
 | Feature | Embedded | Hosted SDK |
 |---|---|---|
 | LLM agents | ✓ | ✓ |
+| Sequential / parallel / tool agent kinds | ✓ | ✓ |
 | Local tools (in-process JS/TS) | ✓ | (use MCP/HTTP instead) |
 | HTTP tools | ✓ | ✓ |
 | MCP tools (raw URL + headers) | ✓ | ✓ |
 | Agent-as-tool (subagent calls) | ✓ | ✓ |
 | Spawnable subagents | ✓ | ✓ |
-| Sequential / parallel / tool kinds | (planned) | ✓ |
 | Sessions | ✓ (memory or sqlite) | ✓ (managed) |
 | Runs / traces | ✓ (in-memory) | ✓ (persisted) |
+| Streaming for LLM agents | ✓ (full event stream) | ✓ |
+| Streaming for pipelines | ✓ (single `complete` event) | ✓ |
 | `{{env.X}}` template refs | ✓ | (opt-in per server) |
 | `{{secrets.X}}` template refs | × | ✓ |
 | Skills | × | ✓ |
