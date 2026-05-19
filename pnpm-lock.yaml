@@ -183,6 +183,9 @@ importers:
         specifier: ^3.25.0
         version: 3.25.76
     devDependencies:
+      '@agntz/store-sqlite':
+        specifier: workspace:*
+        version: link:../store-sqlite
       '@biomejs/biome':
         specifier: ^1.9.0
         version: 1.9.4

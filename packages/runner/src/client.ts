@@ -4,6 +4,7 @@ import type {
   InvokeResult,
   ModelProvider,
   StreamEvent as CoreStreamEvent,
+  UnifiedStore,
 } from "@agntz/core";
 import type { AgentManifest } from "@agntz/manifest";
 import type {
@@ -69,6 +70,14 @@ export interface AgntzLocalOptions {
    * non-streaming path emits no intermediate events).
    */
   onEvent?: (event: CoreStreamEvent) => void;
+  /**
+   * Persistent backing store. By default the runner uses the core's
+   * in-memory store — sessions reset on process restart. Pass a
+   * `UnifiedStore` (e.g. `sqliteStore("./agntz.db")` from
+   * `@agntz/runner/sqlite`) to persist sessions/invocation logs across
+   * restarts.
+   */
+  store?: UnifiedStore;
 }
 
 /**
@@ -121,6 +130,7 @@ export async function agntz(opts: AgntzLocalOptions): Promise<LocalClient> {
     tools: toolDefs,
     envProvider,
     modelProvider: opts.modelProvider,
+    store: opts.store,
   });
 
   for (const manifest of manifests.values()) {

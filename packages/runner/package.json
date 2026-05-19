@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./sqlite": {
+      "types": "./dist/sqlite.d.ts",
+      "import": "./dist/sqlite.js"
     }
   },
   "files": [
@@ -48,7 +52,16 @@
     "@agntz/manifest": "workspace:*",
     "@agntz/sdk": "workspace:*"
   },
+  "peerDependencies": {
+    "@agntz/store-sqlite": "workspace:*"
+  },
+  "peerDependenciesMeta": {
+    "@agntz/store-sqlite": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@agntz/store-sqlite": "workspace:*",
     "@biomejs/biome": "^1.9.0",
     "@types/node": "^22.0.0",
     "tsup": "^8.5.0",
