@@ -18,6 +18,7 @@ import type {
 
 const HTTP_TOOL_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 const SECRET_REF_RE = /\{\{\s*secrets\.([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g;
+const ENV_REF_RE = /\{\{\s*env\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Types
@@ -56,6 +57,13 @@ export interface ValidationContext {
    * secret later before invoking.
    */
   resolveSecret?: (name: string) => Promise<boolean>;
+  /**
+   * Check whether an env var is available. Used by the HTTP tool validator
+   * to emit warnings for `{{env.<NAME>}}` references that aren't set in the
+   * resolution environment (typically `process.env` for embedded runs).
+   * Always a warning — env may be set later before invoking.
+   */
+  resolveEnv?: (name: string) => Promise<boolean>;
   /**
    * When true, MCP server connection failures are reported as errors
    * instead of warnings. Use for save-time validation where an unreachable
@@ -671,11 +679,29 @@ function collectHttpSecretRefs(entry: {
   params?: Record<string, string>;
   headers?: Record<string, string>;
 }): Set<string> {
+  return collectHttpTemplateRefs(entry, SECRET_REF_RE);
+}
+
+/**
+ * Collect `{{env.<NAME>}}` references from the params/headers of an HTTP
+ * tool entry. Used by the external validator to warn on missing env vars.
+ */
+function collectHttpEnvRefs(entry: {
+  params?: Record<string, string>;
+  headers?: Record<string, string>;
+}): Set<string> {
+  return collectHttpTemplateRefs(entry, ENV_REF_RE);
+}
+
+function collectHttpTemplateRefs(
+  entry: { params?: Record<string, string>; headers?: Record<string, string> },
+  re: RegExp,
+): Set<string> {
   const names = new Set<string>();
   const scan = (val: string) => {
-    SECRET_REF_RE.lastIndex = 0;
+    re.lastIndex = 0;
     let m: RegExpExecArray | null;
-    while ((m = SECRET_REF_RE.exec(val)) !== null) {
+    while ((m = re.exec(val)) !== null) {
       names.add(m[1]);
     }
   };
@@ -1178,6 +1204,20 @@ export async function validateToolEntriesExternal(
             warnings.push({
               path: epath,
               message: `Secret '${name}' referenced by '{{secrets.${name}}}' does not exist yet. Add it under Settings > Secrets before invoking this agent.`,
+            });
+          }
+        }
+      }
+
+      // Env-var references — warn (never error) on missing env.
+      if (ctx.resolveEnv) {
+        const refs = collectHttpEnvRefs(entry);
+        for (const name of refs) {
+          const exists = await ctx.resolveEnv(name);
+          if (!exists) {
+            warnings.push({
+              path: epath,
+              message: `Env var '${name}' referenced by '{{env.${name}}}' is not set in the resolution environment. Set it before invoking this agent.`,
             });
           }
         }
