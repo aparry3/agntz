@@ -238,6 +238,45 @@ describe("buildHttpToolDefinition — body and method", () => {
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
+  it("scrubs known tokens and secrets from response bodies", async () => {
+    const cache = new MapTokenCache();
+    cache.set("k", { token: "sekret-tok-1234567890", expiresAt: Date.now() + 60_000 });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({ message: "invalid: sekret-tok-1234567890 also static-secret-abc" }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const entry: HTTPToolEntry = {
+      kind: "http",
+      name: "x",
+      url: "https://api.example.com/x",
+      method: "GET",
+    };
+    const tool = buildHttpToolDefinition(
+      entry,
+      { secrets: { my_api_key: "static-secret-abc" } },
+      { tokenCache: cache },
+    );
+    const result = await tool.execute({}, noopCtx) as { message: string };
+    expect(result.message).toBe("invalid: ***REDACTED*** also ***REDACTED***");
+  });
+
+  it("scrubs sensitive values from 4xx error response bodies", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("error: leaked-secret-xyz-12345 is invalid", { status: 401 }),
+    );
+    const tool = buildHttpToolDefinition(
+      { kind: "http", name: "x", url: "https://api.example.com/x", method: "GET" },
+      { secrets: { tok: "leaked-secret-xyz-12345" } },
+      {},
+    );
+    const result = await tool.execute({}, noopCtx) as { error: string; body: string };
+    expect(result.body).toContain("***REDACTED***");
+    expect(result.body).not.toContain("leaked-secret-xyz-12345");
+  });
+
   it("returns an auth error when entry has auth but no resolver is wired", async () => {
     const tool = buildHttpToolDefinition(
       {

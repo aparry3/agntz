@@ -15,6 +15,7 @@
 // re-resolves; the HTTP tool retries exactly once.
 // ═══════════════════════════════════════════════════════════════════════
 import { interpolate, interpolateDeep } from "./template.js";
+import { collectSensitiveValues, scrubString } from "./redact.js";
 import {
   AuthError,
   type AppliedAuth,
@@ -248,8 +249,12 @@ async function fetchToken(
 
   const text = await response.text();
   if (response.status >= 400) {
+    const sensitive = collectSensitiveValues({
+      secrets: state.secrets as Record<string, string> | undefined,
+    });
+    const scrubbed = scrubString(truncate(text, 500), sensitive);
     throw new AuthError(
-      `Token request failed with HTTP ${response.status}: ${truncate(text, 500)}`,
+      `Token request failed with HTTP ${response.status}: ${scrubbed}`,
     );
   }
 

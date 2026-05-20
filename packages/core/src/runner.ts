@@ -2256,6 +2256,7 @@ export class Runner {
         const httpTool = buildHttpToolDefinition(ref.entry, state, {
           tokenResolver: this._tokenResolver,
           authCtx: { ownerId: opts.ownerId },
+          tokenCache: this._tokenCache,
         });
         opts.ephemeralTools.set(httpTool.name, httpTool);
         resolved.push({

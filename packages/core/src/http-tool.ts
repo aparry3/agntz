@@ -17,7 +17,8 @@
 import { z } from "zod";
 import type { ToolDefinition } from "./types.js";
 import { interpolate, interpolateDeep } from "./auth/template.js";
-import { AuthError, type AppliedAuth, type HTTPAuth, type ResolveAuthCtx, type TokenResolver } from "./auth/index.js";
+import { AuthError, type AppliedAuth, type HTTPAuth, type ResolveAuthCtx, type TokenCache, type TokenResolver } from "./auth/index.js";
+import { collectSensitiveValues, scrubString, scrubValue } from "./auth/redact.js";
 
 /**
  * Structural mirror of `HTTPToolEntry` from `@agntz/manifest`. Kept in
@@ -197,6 +198,12 @@ export interface HttpToolDeps {
    * (typically the request's userId / ownerId).
    */
   authCtx?: ResolveAuthCtx;
+  /**
+   * Token cache. Used purely for redaction — known tokens are scrubbed
+   * from response bodies and error messages before they leave the tool
+   * (preventing leakage into LLM context, traces, and logs).
+   */
+  tokenCache?: TokenCache;
 }
 
 export function buildHttpToolDefinition(
@@ -337,21 +344,26 @@ async function runRequest(args: RunRequestArgs): Promise<unknown> {
   const contentType = response.headers.get("content-type") ?? "";
   const text = await response.text();
 
+  const sensitive = collectSensitiveValues({
+    tokenCache: args.deps.tokenCache,
+    secrets: args.state.secrets as Record<string, string> | undefined,
+  });
+
   if (response.status >= 400) {
     return {
       error: `HTTP ${response.status}`,
-      body: truncate(text, MAX_CHARS),
+      body: scrubString(truncate(text, MAX_CHARS), sensitive),
     };
   }
   if (contentType.includes("application/json")) {
     try {
       const parsed = JSON.parse(text);
-      return truncateValue(parsed, MAX_CHARS);
+      return scrubValue(truncateValue(parsed, MAX_CHARS), sensitive);
     } catch {
       // Server lied about content-type — fall through to text.
     }
   }
-  return truncate(text, MAX_CHARS);
+  return scrubString(truncate(text, MAX_CHARS), sensitive);
 }
 
 // ─── Request body helpers ─────────────────────────────────────────────
