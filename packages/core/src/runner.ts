@@ -142,12 +142,32 @@ function resolveCallerTightensLimit(
 const SECRET_REF_RE = /\{\{\s*secrets\.([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g;
 
 /**
+ * Matches a `{{env.<NAME>}}` template reference. Parallel to SECRET_REF_RE
+ * but for env vars resolved via `RunnerConfig.envProvider` (typically
+ * `process.env` in embedded mode).
+ */
+const ENV_REF_RE = /\{\{\s*env\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
+
+/**
  * Walk an agent's tool references and collect the unique set of secret
  * names referenced via `{{secrets.<name>}}` in any HTTP tool's `params`
  * or `headers` template values. Returned as a Set so callers can iterate
  * once and fetch each secret exactly once per run.
  */
 function collectSecretReferences(agent: AgentDefinition): Set<string> {
+  return collectTemplateReferences(agent, SECRET_REF_RE);
+}
+
+/**
+ * Walk an agent's tool references and collect the unique set of env-var
+ * names referenced via `{{env.<NAME>}}` in any HTTP tool's `params` or
+ * `headers` template values.
+ */
+function collectEnvReferences(agent: AgentDefinition): Set<string> {
+  return collectTemplateReferences(agent, ENV_REF_RE);
+}
+
+function collectTemplateReferences(agent: AgentDefinition, re: RegExp): Set<string> {
   const names = new Set<string>();
   for (const ref of agent.tools ?? []) {
     if (ref.type !== "http") continue;
@@ -156,9 +176,9 @@ function collectSecretReferences(agent: AgentDefinition): Set<string> {
     if (entry.params) values.push(...Object.values(entry.params));
     if (entry.headers) values.push(...Object.values(entry.headers));
     for (const v of values) {
-      SECRET_REF_RE.lastIndex = 0;
+      re.lastIndex = 0;
       let m: RegExpExecArray | null;
-      while ((m = SECRET_REF_RE.exec(v)) !== null) {
+      while ((m = re.exec(v)) !== null) {
         names.add(m[1]);
       }
     }
@@ -179,6 +199,7 @@ export class Runner {
   private _connectionStore: ConnectionStore | undefined;
   private _skillStore: SkillStore | undefined;
   private _secretStore: SecretStore | undefined;
+  private _envProvider: ((name: string) => string | undefined) | undefined;
   private modelProvider: ModelProvider;
   private toolRegistry: ToolRegistry;
   private mcpManager: MCPClientManager | null = null;
@@ -220,6 +241,7 @@ export class Runner {
     this._secretStore = unifiedStore && "getSecretValue" in unifiedStore
       ? unifiedStore as SecretStore
       : undefined;
+    this._envProvider = config.envProvider;
     this.modelProvider = config.modelProvider ?? new AISDKModelProvider({
       providerStore: this._providerStore,
     });
@@ -287,6 +309,15 @@ export class Runner {
    */
   registerAgent(agent: AgentDefinition): void {
     this.registeredAgents.set(agent.id, agent);
+  }
+
+  /**
+   * Remove an agent from the in-memory registry. Returns true if the id was
+   * present. Persisted agents in the AgentStore are untouched — use
+   * `runner.agents.deleteAgent` for those.
+   */
+  deregisterAgent(id: string): boolean {
+    return this.registeredAgents.delete(id);
   }
 
   /**
@@ -608,6 +639,31 @@ export class Runner {
           resolved[name] = value;
         }
         state.secrets = resolved;
+      }
+
+      // ─── Env-var pre-fetch ────────────────────────────────────────────
+      // Parallel to the secrets path above. Resolves `{{env.<NAME>}}`
+      // references via the configured envProvider (typically `process.env`
+      // in embedded runs). Hosted servers leave envProvider unset so refs
+      // throw — prevents user manifests from reading server env.
+      const envNames = collectEnvReferences(agent);
+      if (envNames.size > 0) {
+        if (!self._envProvider) {
+          throw new Error(
+            `Agent '${agent.id}' references env vars but no envProvider is wired to the Runner.`,
+          );
+        }
+        const resolved: Record<string, string> = {};
+        for (const name of envNames) {
+          const value = self._envProvider(name);
+          if (value == null) {
+            throw new Error(
+              `Env var '${name}' referenced by agent '${agent.id}' is not set in the resolution environment.`,
+            );
+          }
+          resolved[name] = value;
+        }
+        state.env = resolved;
       }
 
       // ─── Cancel-and-replace concurrency + Run registration ────────────
@@ -1272,6 +1328,29 @@ export class Runner {
         resolved[name] = value;
       }
       state.secrets = resolved;
+    }
+
+    // ─── Env-var pre-fetch ────────────────────────────────────────────
+    // Parallel to secrets. Resolves `{{env.<NAME>}}` via the configured
+    // envProvider (typically `process.env` in embedded runs).
+    const envNames = collectEnvReferences(agent);
+    if (envNames.size > 0) {
+      if (!this._envProvider) {
+        throw new Error(
+          `Agent '${agent.id}' references env vars but no envProvider is wired to the Runner.`,
+        );
+      }
+      const resolved: Record<string, string> = {};
+      for (const name of envNames) {
+        const value = this._envProvider(name);
+        if (value == null) {
+          throw new Error(
+            `Env var '${name}' referenced by agent '${agent.id}' is not set in the resolution environment.`,
+          );
+        }
+        resolved[name] = value;
+      }
+      state.env = resolved;
     }
 
     // ─── Cancel-and-replace concurrency + Run registration ────────────

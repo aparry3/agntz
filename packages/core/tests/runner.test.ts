@@ -677,6 +677,118 @@ describe("Runner — HTTP tools", () => {
     );
   });
 
+  it("resolves {{env.NAME}} references via the configured envProvider", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const provider = new MockModelProvider([
+      {
+        text: "",
+        toolCalls: [{ id: "tc_1", name: "http__echo", args: { value: "hi" } }],
+        usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        finishReason: "tool-calls",
+      },
+      mockResponse("Done."),
+    ]);
+
+    const runner = createRunner({
+      modelProvider: provider,
+      envProvider: (name) => (name === "MY_API_TOKEN" ? "Bearer env-tok" : undefined),
+    });
+    runner.registerAgent(
+      defineAgent({
+        id: "env-agent",
+        name: "EnvHTTP",
+        systemPrompt: "Use the echo tool.",
+        model: { provider: "openai", name: "gpt-5.4" },
+        tools: [
+          {
+            type: "http",
+            entry: {
+              kind: "http",
+              name: "echo",
+              url: "https://api.example.com/echo?param={value}",
+              method: "GET",
+              description: "Echo.",
+              headers: { Authorization: "{{env.MY_API_TOKEN}}" },
+            },
+          },
+        ],
+      }),
+    );
+
+    const result = await runner.invoke("env-agent", "go");
+    expect(result.output).toBe("Done.");
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer env-tok");
+  });
+
+  it("throws when {{env.NAME}} is referenced but no envProvider is wired", async () => {
+    const provider = new MockModelProvider([mockResponse("never reached")]);
+    const runner = createRunner({ modelProvider: provider });
+    runner.registerAgent(
+      defineAgent({
+        id: "env-agent",
+        name: "EnvHTTP",
+        systemPrompt: "Use the echo tool.",
+        model: { provider: "openai", name: "gpt-5.4" },
+        tools: [
+          {
+            type: "http",
+            entry: {
+              kind: "http",
+              name: "echo",
+              url: "https://api.example.com/echo",
+              method: "GET",
+              description: "Echo.",
+              headers: { Authorization: "{{env.MY_API_TOKEN}}" },
+            },
+          },
+        ],
+      }),
+    );
+    await expect(runner.invoke("env-agent", "go")).rejects.toThrow(
+      /references env vars but no envProvider is wired/,
+    );
+  });
+
+  it("throws when {{env.NAME}} is referenced but the env var is not set", async () => {
+    const provider = new MockModelProvider([mockResponse("never reached")]);
+    const runner = createRunner({
+      modelProvider: provider,
+      envProvider: () => undefined,
+    });
+    runner.registerAgent(
+      defineAgent({
+        id: "env-agent",
+        name: "EnvHTTP",
+        systemPrompt: "Use the echo tool.",
+        model: { provider: "openai", name: "gpt-5.4" },
+        tools: [
+          {
+            type: "http",
+            entry: {
+              kind: "http",
+              name: "echo",
+              url: "https://api.example.com/echo",
+              method: "GET",
+              description: "Echo.",
+              headers: { Authorization: "{{env.MISSING_TOKEN}}" },
+            },
+          },
+        ],
+      }),
+    );
+    await expect(runner.invoke("env-agent", "go")).rejects.toThrow(
+      /Env var 'MISSING_TOKEN' referenced by agent 'env-agent' is not set/,
+    );
+  });
+
   it("uses the pinned param value from `params:` even if the LLM tries to supply one", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("{}", {

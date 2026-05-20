@@ -1,0 +1,76 @@
+{
+  "name": "@agntz/runner",
+  "version": "0.0.0",
+  "description": "Embedded in-process runner for agntz agents. Reads YAML manifests from disk and executes them with a minimal SDK-shaped surface. The five-line-of-code path.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./sqlite": {
+      "types": "./dist/sqlite.d.ts",
+      "import": "./dist/sqlite.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "biome check src/",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "tsup"
+  },
+  "keywords": [
+    "agntz",
+    "ai",
+    "agents",
+    "runner",
+    "embedded",
+    "local"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aparry3/agntz.git",
+    "directory": "packages/runner"
+  },
+  "homepage": "https://github.com/aparry3/agntz#readme",
+  "author": "Aaron Bidworthy",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "yaml": "^2.8.0",
+    "zod": "^3.25.0",
+    "@agntz/core": "workspace:*",
+    "@agntz/manifest": "workspace:*",
+    "@agntz/sdk": "workspace:*"
+  },
+  "peerDependencies": {
+    "@agntz/store-sqlite": "workspace:*"
+  },
+  "peerDependenciesMeta": {
+    "@agntz/store-sqlite": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@agntz/store-sqlite": "workspace:*",
+    "@biomejs/biome": "^1.9.0",
+    "@types/node": "^22.0.0",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

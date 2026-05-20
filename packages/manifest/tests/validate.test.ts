@@ -1063,4 +1063,46 @@ tools:
       setFetch(undefined);
     }
   });
+
+  const envYaml = `
+id: agent
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Use the tool."
+tools:
+  - kind: http
+    name: get_user
+    url: "https://api.example.com/users"
+    headers:
+      Authorization: "Bearer {{env.MY_API_TOKEN}}"
+`;
+
+  it("emits a warning (never an error) when a referenced env var is missing", async () => {
+    setFetch(vi.fn().mockResolvedValue(new Response(null, { status: 200 })));
+    try {
+      const result = await validateManifestFull(envYaml, ctx({
+        strict: true,
+        resolveEnv: vi.fn().mockResolvedValue(false),
+      }));
+      expect(result.errors.filter(e => e.message.includes("MY_API_TOKEN"))).toHaveLength(0);
+      expect(result.warnings.some(w => w.message.includes("MY_API_TOKEN"))).toBe(true);
+    } finally {
+      setFetch(undefined);
+    }
+  });
+
+  it("does not emit a warning when a referenced env var exists", async () => {
+    setFetch(vi.fn().mockResolvedValue(new Response(null, { status: 200 })));
+    try {
+      const result = await validateManifestFull(envYaml, ctx({
+        strict: true,
+        resolveEnv: vi.fn().mockResolvedValue(true),
+      }));
+      expect(result.warnings.filter(w => w.message.includes("MY_API_TOKEN"))).toHaveLength(0);
+    } finally {
+      setFetch(undefined);
+    }
+  });
 });
