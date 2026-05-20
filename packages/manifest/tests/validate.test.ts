@@ -857,7 +857,7 @@ tools:
     )).toBe(true);
   });
 
-  it("errors on non-GET method", () => {
+  it("accepts POST method with a body", () => {
     const result = validateManifest(`
 id: agent
 kind: llm
@@ -870,9 +870,184 @@ tools:
     name: post_user
     url: "https://api.example.com/users"
     method: POST
+    body_type: json
+    body:
+      name: "{{userName}}"
+`);
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("errors on unknown HTTP method", () => {
+    const result = validateManifest(`
+id: agent
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Use the tool."
+tools:
+  - kind: http
+    name: bogus
+    url: "https://api.example.com/users"
+    method: TEAPOT
 `);
     expect(result.errors.some(e =>
-      e.level === "structural" && e.message.includes("GET") && e.message.includes("only"),
+      e.level === "structural" && e.message.includes("HTTP tool method must be one of"),
+    )).toBe(true);
+  });
+
+  it("errors when body is set on a method that doesn't accept one", () => {
+    const result = validateManifest(`
+id: agent
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Use the tool."
+tools:
+  - kind: http
+    name: get_user
+    url: "https://api.example.com/users/{id}"
+    method: GET
+    body:
+      name: "x"
+`);
+    expect(result.errors.some(e =>
+      e.level === "structural" && e.message.includes("body is not allowed"),
+    )).toBe(true);
+  });
+
+  it("accepts oauth2_client_credentials auth", () => {
+    const result = validateManifest(`
+id: agent
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Use the tool."
+tools:
+  - kind: http
+    name: list_things
+    url: "https://api.example.com/things"
+    auth:
+      type: oauth2_client_credentials
+      token_url: "https://login.example.com/oauth/token"
+      client_id: "{{secrets.cid}}"
+      client_secret: "{{secrets.csec}}"
+      scope: "things:read"
+`);
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("errors on oauth2_client_credentials missing required fields", () => {
+    const result = validateManifest(`
+id: agent
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Use the tool."
+tools:
+  - kind: http
+    name: list_things
+    url: "https://api.example.com/things"
+    auth:
+      type: oauth2_client_credentials
+      token_url: "https://login.example.com/oauth/token"
+`);
+    expect(result.errors.some(e =>
+      e.level === "structural" && e.message.includes("client_id"),
+    )).toBe(true);
+    expect(result.errors.some(e =>
+      e.level === "structural" && e.message.includes("client_secret"),
+    )).toBe(true);
+  });
+
+  it("accepts a token_exchange auth block", () => {
+    const result = validateManifest(`
+id: agent
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Use the tool."
+tools:
+  - kind: http
+    name: list_things
+    url: "https://api.example.com/things"
+    auth:
+      type: token_exchange
+      request:
+        url: "https://api.example.com/auth/login"
+        method: POST
+        body_type: json
+        body:
+          username: "{{secrets.user}}"
+          password: "{{secrets.pass}}"
+      extract:
+        response_format: json
+        token_path: "$.token"
+      apply:
+        location: header
+        name: Authorization
+        format: "Bearer {token}"
+`);
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("errors on token_exchange with bad token_path (not JSONPath)", () => {
+    const result = validateManifest(`
+id: agent
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Use the tool."
+tools:
+  - kind: http
+    name: list_things
+    url: "https://api.example.com/things"
+    auth:
+      type: token_exchange
+      request:
+        url: "https://api.example.com/auth/login"
+        method: POST
+      extract:
+        token_path: "access_token"
+`);
+    expect(result.errors.some(e =>
+      e.level === "structural" && e.message.includes("token_path"),
+    )).toBe(true);
+  });
+
+  it("errors on apply.format missing {token} literal", () => {
+    const result = validateManifest(`
+id: agent
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Use the tool."
+tools:
+  - kind: http
+    name: list_things
+    url: "https://api.example.com/things"
+    auth:
+      type: token_exchange
+      request:
+        url: "https://api.example.com/auth/login"
+        method: POST
+      extract:
+        token_path: "$.access_token"
+      apply:
+        location: header
+        format: "Bearer xxx"
+`);
+    expect(result.errors.some(e =>
+      e.level === "structural" && e.message.includes("apply.format") && e.message.includes("{token}"),
     )).toBe(true);
   });
 

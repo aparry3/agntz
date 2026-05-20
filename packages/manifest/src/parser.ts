@@ -10,6 +10,7 @@ import type {
   StepRef,
   ManifestToolEntry,
   MCPToolRef,
+  HTTPToolEntry,
 } from "./types.js";
 
 /**
@@ -282,10 +283,13 @@ function normalizeTools(raw: unknown[]): ManifestToolEntry[] {
           kind: "http" as const,
           name: requireString(e, "name"),
           url: requireString(e, "url"),
-          method: e.method as "GET" | undefined,
+          method: e.method as HTTPToolEntry["method"],
           description: e.description as string | undefined,
           params: e.params as Record<string, string> | undefined,
           headers: e.headers as Record<string, string> | undefined,
+          body_type: e.body_type as HTTPToolEntry["body_type"],
+          body: e.body,
+          auth: e.auth as HTTPToolEntry["auth"],
         };
       default:
         throw new Error(`Unknown tool kind: ${kind}`);

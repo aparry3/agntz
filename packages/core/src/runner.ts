@@ -169,19 +169,35 @@ function collectEnvReferences(agent: AgentDefinition): Set<string> {
 
 function collectTemplateReferences(agent: AgentDefinition, re: RegExp): Set<string> {
   const names = new Set<string>();
-  for (const ref of agent.tools ?? []) {
-    if (ref.type !== "http") continue;
-    const entry = ref.entry;
-    const values: string[] = [];
-    if (entry.params) values.push(...Object.values(entry.params));
-    if (entry.headers) values.push(...Object.values(entry.headers));
-    for (const v of values) {
+  const scan = (val: unknown) => {
+    if (typeof val === "string") {
       re.lastIndex = 0;
       let m: RegExpExecArray | null;
-      while ((m = re.exec(v)) !== null) {
+      while ((m = re.exec(val)) !== null) {
         names.add(m[1]);
       }
+      return;
     }
+    if (Array.isArray(val)) {
+      for (const v of val) scan(v);
+      return;
+    }
+    if (val != null && typeof val === "object") {
+      for (const v of Object.values(val as Record<string, unknown>)) scan(v);
+    }
+  };
+  for (const ref of agent.tools ?? []) {
+    if (ref.type !== "http") continue;
+    const entry = ref.entry as {
+      params?: Record<string, string>;
+      headers?: Record<string, string>;
+      body?: unknown;
+      auth?: unknown;
+    };
+    if (entry.params) scan(entry.params);
+    if (entry.headers) scan(entry.headers);
+    if (entry.body !== undefined) scan(entry.body);
+    if (entry.auth !== undefined) scan(entry.auth);
   }
   return names;
 }
