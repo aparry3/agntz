@@ -25,10 +25,14 @@ export interface HTTPToolEntry {
   kind: "http";
   name: string;
   url: string;
-  method?: "GET";
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   description?: string;
   params?: Record<string, string>;
   headers?: Record<string, string>;
+  body_type?: "json" | "form" | "query";
+  body?: unknown;
+  /** Dynamic auth — opaque here; the runner resolves and applies it. */
+  auth?: unknown;
 }
 
 /** Structural mirror of `AgentState` from `@agntz/manifest`. */
@@ -221,6 +225,7 @@ export function buildHttpToolDefinition(
   const method = entry.method ?? "GET";
   const headerTemplates = entry.headers ?? {};
   const paramTemplates = entry.params ?? {};
+  const bodyType = entry.body_type ?? (entry.body !== undefined ? "json" : undefined);
 
   return {
     name: toolName,
@@ -237,17 +242,32 @@ export function buildHttpToolDefinition(
       }
 
       // 2. Build URL and headers from templates.
-      const url = buildHttpUrl(entry.url, values);
+      let url = buildHttpUrl(entry.url, values);
       const headers: Record<string, string> = {};
       for (const [k, v] of Object.entries(headerTemplates)) {
         headers[k] = interpolate(v, state);
       }
 
-      // 3. Issue the request with a 30s timeout.
+      // 3. Build request body (POST/PUT/PATCH only).
+      let body: string | undefined;
+      if (entry.body !== undefined && (method === "POST" || method === "PUT" || method === "PATCH")) {
+        const built = buildRequestBody(entry.body, bodyType, state);
+        if (built.kind === "body") {
+          body = built.value;
+          if (!hasHeader(headers, "content-type")) {
+            headers["Content-Type"] = built.contentType;
+          }
+        } else if (built.kind === "query") {
+          url = appendQuery(url, built.value);
+        }
+      }
+
+      // 4. Issue the request with a 30s timeout.
       try {
         const response = await fetch(url, {
           method,
           headers,
+          body,
           signal: AbortSignal.timeout(30_000),
         });
 
@@ -280,4 +300,75 @@ export function buildHttpToolDefinition(
       }
     },
   };
+}
+
+// ─── Request body helpers ─────────────────────────────────────────────
+
+type BuiltBody =
+  | { kind: "body"; value: string; contentType: string }
+  | { kind: "query"; value: Record<string, string> }
+  | { kind: "none" };
+
+function buildRequestBody(
+  body: unknown,
+  bodyType: "json" | "form" | "query" | undefined,
+  state: AgentState,
+): BuiltBody {
+  const type = bodyType ?? "json";
+  if (type === "json") {
+    const interpolated = interpolateDeep(body, state);
+    return {
+      kind: "body",
+      value: JSON.stringify(interpolated),
+      contentType: "application/json",
+    };
+  }
+  // form / query: flat string map only (validator guarantees this).
+  const flat: Record<string, string> = {};
+  if (body != null && typeof body === "object" && !Array.isArray(body)) {
+    for (const [k, v] of Object.entries(body as Record<string, unknown>)) {
+      if (typeof v === "string") flat[k] = interpolate(v, state);
+    }
+  }
+  if (type === "form") {
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(flat)) params.append(k, v);
+    return {
+      kind: "body",
+      value: params.toString(),
+      contentType: "application/x-www-form-urlencoded",
+    };
+  }
+  return { kind: "query", value: flat };
+}
+
+/**
+ * Recursively interpolate `{{...}}` template strings in any JSON-shaped value.
+ * Object keys are not templated — only string leaves and array elements.
+ */
+function interpolateDeep(node: unknown, state: AgentState): unknown {
+  if (typeof node === "string") return interpolate(node, state);
+  if (Array.isArray(node)) return node.map((n) => interpolateDeep(n, state));
+  if (node != null && typeof node === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+      out[k] = interpolateDeep(v, state);
+    }
+    return out;
+  }
+  return node;
+}
+
+function hasHeader(headers: Record<string, string>, name: string): boolean {
+  const lower = name.toLowerCase();
+  return Object.keys(headers).some((h) => h.toLowerCase() === lower);
+}
+
+function appendQuery(url: string, extra: Record<string, string>): string {
+  const entries = Object.entries(extra);
+  if (entries.length === 0) return url;
+  const sep = url.includes("?") ? "&" : "?";
+  const params = new URLSearchParams();
+  for (const [k, v] of entries) params.append(k, v);
+  return `${url}${sep}${params.toString()}`;
 }

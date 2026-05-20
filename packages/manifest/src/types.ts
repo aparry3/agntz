@@ -137,12 +137,18 @@ export interface ToolCallConfig {
   server?: string;
   /** http only — endpoint URL; may contain `{X}` / `{X?}` placeholders */
   url?: string;
-  /** http only — MVP supports GET; typed permissive for future verbs */
-  method?: "GET";
+  /** http only — GET/POST/PUT/PATCH/DELETE */
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   /** http only — optional description shown to operators */
   description?: string;
   /** http only — header values are state-templated; supports `{{secrets.X}}` */
   headers?: Record<string, string>;
+  /** http only — body encoding when `body` is set */
+  body_type?: "json" | "form" | "query";
+  /** http only — request body (state-templated) */
+  body?: unknown;
+  /** http only — dynamic auth (oauth2_client_credentials | token_exchange) */
+  auth?: HTTPAuth;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
