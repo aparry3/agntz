@@ -122,6 +122,7 @@ export function createExecutionContext(
               auth: config.auth,
             },
             state,
+            { tokenResolver: runner.tokenResolver },
           );
           return (tool.execute as (a: unknown, c: ToolContext) => Promise<unknown>)(
             {},

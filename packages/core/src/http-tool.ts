@@ -17,6 +17,7 @@
 import { z } from "zod";
 import type { ToolDefinition } from "./types.js";
 import { interpolate, interpolateDeep } from "./auth/template.js";
+import { AuthError, type AppliedAuth, type HTTPAuth, type ResolveAuthCtx, type TokenResolver } from "./auth/index.js";
 
 /**
  * Structural mirror of `HTTPToolEntry` from `@agntz/manifest`. Kept in
@@ -183,9 +184,25 @@ function truncateValue(val: unknown, maxChars: number): unknown {
  *  - Timeout (30s) → `{ error: "Request timeout after 30s" }`
  *  - Other network error → `{ error: "Network error: <message>" }`
  */
+export interface HttpToolDeps {
+  /**
+   * Resolves dynamic `auth:` (oauth2_client_credentials | token_exchange)
+   * to an AppliedAuth before each call. Required for entries that declare
+   * `auth`; ignored otherwise. When absent and an entry has `auth`, the
+   * tool returns a structured `AuthError`.
+   */
+  tokenResolver?: TokenResolver;
+  /**
+   * Tenant boundary for cache scoping. Threaded through from the runner
+   * (typically the request's userId / ownerId).
+   */
+  authCtx?: ResolveAuthCtx;
+}
+
 export function buildHttpToolDefinition(
   entry: HTTPToolEntry,
   state: AgentState,
+  deps: HttpToolDeps = {},
 ): ToolDefinition {
   const placeholders = parseUrlPlaceholders(entry.url);
   const pinned = new Set(Object.keys(entry.params ?? {}));
@@ -205,14 +222,15 @@ export function buildHttpToolDefinition(
   const headerTemplates = entry.headers ?? {};
   const paramTemplates = entry.params ?? {};
   const bodyType = entry.body_type ?? (entry.body !== undefined ? "json" : undefined);
+  const auth = entry.auth as HTTPAuth | undefined;
+  const refreshStatuses = new Set((auth?.refresh_on ?? [401]).map((n) => n));
 
   return {
     name: toolName,
     description,
     input,
     async execute(args: unknown): Promise<unknown> {
-      // 1. Merge LLM args with pinned params (pinned wins — same convention as
-      //    MCP `WrappedToolRef.params`).
+      // 1. Merge LLM args with pinned params.
       const values: Record<string, string | undefined> = {
         ...(args as Record<string, string | undefined>),
       };
@@ -220,56 +238,43 @@ export function buildHttpToolDefinition(
         values[key] = interpolate(template, state);
       }
 
-      // 2. Build URL and headers from templates.
-      let url = buildHttpUrl(entry.url, values);
-      const headers: Record<string, string> = {};
+      // 2. Build the base URL, headers, and body. Auth is merged in step 3.
+      const baseUrl = buildHttpUrl(entry.url, values);
+      const baseHeaders: Record<string, string> = {};
       for (const [k, v] of Object.entries(headerTemplates)) {
-        headers[k] = interpolate(v, state);
+        baseHeaders[k] = interpolate(v, state);
       }
-
-      // 3. Build request body (POST/PUT/PATCH only).
       let body: string | undefined;
+      let urlAfterBody = baseUrl;
       if (entry.body !== undefined && (method === "POST" || method === "PUT" || method === "PATCH")) {
         const built = buildRequestBody(entry.body, bodyType, state);
         if (built.kind === "body") {
           body = built.value;
-          if (!hasHeader(headers, "content-type")) {
-            headers["Content-Type"] = built.contentType;
+          if (!hasHeader(baseHeaders, "content-type")) {
+            baseHeaders["Content-Type"] = built.contentType;
           }
         } else if (built.kind === "query") {
-          url = appendQuery(url, built.value);
+          urlAfterBody = appendQuery(baseUrl, built.value);
         }
       }
 
-      // 4. Issue the request with a 30s timeout.
+      // 3. Run the request with optional auth + refresh-on-401 retry.
       try {
-        const response = await fetch(url, {
+        return await runRequest({
           method,
-          headers,
+          url: urlAfterBody,
+          headers: baseHeaders,
           body,
-          signal: AbortSignal.timeout(30_000),
+          auth,
+          refreshStatuses,
+          deps,
+          state,
+          allowRefresh: true,
         });
-
-        const contentType = response.headers.get("content-type") ?? "";
-        const text = await response.text();
-
-        if (response.status >= 400) {
-          return {
-            error: `HTTP ${response.status}`,
-            body: truncate(text, MAX_CHARS),
-          };
-        }
-
-        if (contentType.includes("application/json")) {
-          try {
-            const parsed = JSON.parse(text);
-            return truncateValue(parsed, MAX_CHARS);
-          } catch {
-            // Server lied about content-type — fall through to text.
-          }
-        }
-        return truncate(text, MAX_CHARS);
       } catch (err) {
+        if (err instanceof AuthError) {
+          return { error: `Auth error: ${err.message}` };
+        }
         if (err instanceof Error && err.name === "TimeoutError") {
           return { error: "Request timeout after 30s" };
         }
@@ -279,6 +284,74 @@ export function buildHttpToolDefinition(
       }
     },
   };
+}
+
+interface RunRequestArgs {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  body: string | undefined;
+  auth: HTTPAuth | undefined;
+  refreshStatuses: Set<number>;
+  deps: HttpToolDeps;
+  state: AgentState;
+  /** Whether a 401 (or refresh_on status) may trigger one token refresh + retry. */
+  allowRefresh: boolean;
+}
+
+async function runRequest(args: RunRequestArgs): Promise<unknown> {
+  let appliedHeaders: Record<string, string> = {};
+  let appliedQuery: Record<string, string> | undefined;
+
+  if (args.auth) {
+    if (!args.deps.tokenResolver) {
+      throw new AuthError(
+        `HTTP tool declares auth.type='${args.auth.type}' but no tokenResolver is wired into the runner.`,
+      );
+    }
+    const applied: AppliedAuth = await args.deps.tokenResolver.resolve(
+      args.auth,
+      args.state,
+      args.deps.authCtx ?? {},
+    );
+    appliedHeaders = applied.headers ?? {};
+    appliedQuery = applied.query;
+  }
+
+  const finalHeaders = { ...args.headers, ...appliedHeaders };
+  const finalUrl = appliedQuery ? appendQuery(args.url, appliedQuery) : args.url;
+
+  const response = await fetch(finalUrl, {
+    method: args.method,
+    headers: finalHeaders,
+    body: args.body,
+    signal: AbortSignal.timeout(30_000),
+  });
+
+  // Refresh path: invalidate token, retry exactly once.
+  if (args.auth && args.allowRefresh && args.refreshStatuses.has(response.status)) {
+    await args.deps.tokenResolver!.invalidate(args.auth, args.deps.authCtx ?? {});
+    return runRequest({ ...args, allowRefresh: false });
+  }
+
+  const contentType = response.headers.get("content-type") ?? "";
+  const text = await response.text();
+
+  if (response.status >= 400) {
+    return {
+      error: `HTTP ${response.status}`,
+      body: truncate(text, MAX_CHARS),
+    };
+  }
+  if (contentType.includes("application/json")) {
+    try {
+      const parsed = JSON.parse(text);
+      return truncateValue(parsed, MAX_CHARS);
+    } catch {
+      // Server lied about content-type — fall through to text.
+    }
+  }
+  return truncate(text, MAX_CHARS);
 }
 
 // ─── Request body helpers ─────────────────────────────────────────────

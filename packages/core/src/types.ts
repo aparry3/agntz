@@ -568,6 +568,14 @@ export interface RunnerConfig {
    * throw at invoke time (prevents user manifests from reading server env).
    */
   envProvider?: (name: string) => string | undefined;
+
+  /**
+   * Cache backend for HTTP tool auth tokens (oauth2_client_credentials /
+   * token_exchange). Defaults to in-memory; swap in a persistent backend
+   * for hosted/multi-process deployments to avoid token churn on cold
+   * starts.
+   */
+  tokenCache?: import("./auth/index.js").TokenCache;
 }
 
 export interface MCPServerConfig {

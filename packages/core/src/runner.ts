@@ -33,6 +33,8 @@ import { normalizeImageBlocks } from "./image-fetcher.js";
 import { flattenContentToText } from "./message-builder.js";
 import type { AiSdkMessage } from "./message-builder.js";
 import { buildHttpToolDefinition } from "./http-tool.js";
+import { MapTokenCache, createTokenResolver } from "./auth/index.js";
+import type { TokenCache, TokenResolver } from "./auth/index.js";
 import type { AgentState } from "./http-tool.js";
 import { ToolRegistry } from "./tool.js";
 import { zodToJsonSchema } from "./utils/schema.js";
@@ -216,6 +218,8 @@ export class Runner {
   private _skillStore: SkillStore | undefined;
   private _secretStore: SecretStore | undefined;
   private _envProvider: ((name: string) => string | undefined) | undefined;
+  private _tokenCache: TokenCache;
+  private _tokenResolver: TokenResolver;
   private modelProvider: ModelProvider;
   private toolRegistry: ToolRegistry;
   private mcpManager: MCPClientManager | null = null;
@@ -258,6 +262,8 @@ export class Runner {
       ? unifiedStore as SecretStore
       : undefined;
     this._envProvider = config.envProvider;
+    this._tokenCache = config.tokenCache ?? new MapTokenCache();
+    this._tokenResolver = createTokenResolver({ cache: this._tokenCache });
     this.modelProvider = config.modelProvider ?? new AISDKModelProvider({
       providerStore: this._providerStore,
     });
@@ -314,6 +320,10 @@ export class Runner {
   get model(): ModelProvider { return this.modelProvider; }
   /** Access the runner config */
   get runnerConfig(): RunnerConfig { return this.config; }
+  /** Access the HTTP tool auth token resolver. */
+  get tokenResolver(): TokenResolver { return this._tokenResolver; }
+  /** Access the HTTP tool auth token cache. */
+  get tokenCache(): TokenCache { return this._tokenCache; }
 
   // ═══════════════════════════════════════════════════════════════════
   // Agent Management
@@ -853,6 +863,7 @@ export class Runner {
           rootId: effectiveRootId,
           onReplyAccepted,
           state,
+          ownerId: options.ownerId ?? options.userId,
         });
 
         // See invoke() for the rationale. Persist the user turn up-front when
@@ -1135,6 +1146,7 @@ export class Runner {
               rootId: effectiveRootId,
               onReplyAccepted,
               state,
+              ownerId: options.ownerId ?? options.userId,
             });
             const seen = new Set(base.map((t) => t.name));
             availableTools = base.concat(
@@ -1567,6 +1579,7 @@ export class Runner {
         runId: effectiveRunId,
         rootId: effectiveRootId,
         state,
+        ownerId: options.ownerId ?? options.userId,
       });
 
       // When the agent can reply mid-run, persist the user input *before* the
@@ -1823,6 +1836,7 @@ export class Runner {
             runId: effectiveRunId,
             rootId: effectiveRootId,
             state,
+            ownerId: options.ownerId ?? options.userId,
           });
           const seen = new Set(base.map((t) => t.name));
           availableTools = base.concat(
@@ -2165,6 +2179,12 @@ export class Runner {
        * use HTTP tools keep working.
        */
       state?: AgentState;
+      /**
+       * Tenant / credential boundary for HTTP tool auth token caching.
+       * Tokens cached under one ownerId are not visible to another so
+       * two users sharing the same OAuth app don't share a token.
+       */
+      ownerId?: string;
     },
   ): Promise<Array<{
     name: string;
@@ -2233,7 +2253,10 @@ export class Runner {
           // than mutate the global registry.
           continue;
         }
-        const httpTool = buildHttpToolDefinition(ref.entry, state);
+        const httpTool = buildHttpToolDefinition(ref.entry, state, {
+          tokenResolver: this._tokenResolver,
+          authCtx: { ownerId: opts.ownerId },
+        });
         opts.ephemeralTools.set(httpTool.name, httpTool);
         resolved.push({
           name: httpTool.name,

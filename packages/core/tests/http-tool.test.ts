@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { buildHttpToolDefinition, type HTTPToolEntry } from "../src/http-tool.js";
+import { MapTokenCache, createTokenResolver } from "../src/auth/index.js";
+import type { HTTPAuth } from "../src/auth/index.js";
 import type { ToolContext } from "../src/types.js";
 
 const noopCtx: ToolContext = {
@@ -111,6 +113,151 @@ describe("buildHttpToolDefinition — body and method", () => {
     const init = fetchMock.mock.calls[0][1] as RequestInit;
     expect(init.body).toBeUndefined();
     expect(init.method).toBe("GET");
+  });
+
+  it("attaches auth headers from the token resolver before fetch", async () => {
+    const responses = [
+      // 1. token endpoint
+      new Response(JSON.stringify({ access_token: "tok-xyz", expires_in: 60 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+      // 2. actual API call
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    ];
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => responses.shift()!);
+
+    const cache = new MapTokenCache();
+    const tokenResolver = createTokenResolver({ cache });
+    const auth: HTTPAuth = {
+      type: "oauth2_client_credentials",
+      token_url: "https://login.example.com/oauth/token",
+      client_id: "{{secrets.cid}}",
+      client_secret: "{{secrets.csec}}",
+    };
+
+    const entry: HTTPToolEntry = {
+      kind: "http",
+      name: "list",
+      url: "https://api.example.com/list",
+      method: "GET",
+      auth,
+    };
+    const tool = buildHttpToolDefinition(
+      entry,
+      { secrets: { cid: "id", csec: "sec" } },
+      { tokenResolver },
+    );
+
+    const result = await tool.execute({}, noopCtx);
+    expect(result).toEqual({ ok: true });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers["Authorization"]).toBe("Bearer tok-xyz");
+  });
+
+  it("refreshes the token once on 401 and retries", async () => {
+    const responses = [
+      new Response(JSON.stringify({ access_token: "stale" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+      new Response("unauthorized", { status: 401 }),
+      new Response(JSON.stringify({ access_token: "fresh" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    ];
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => responses.shift()!);
+
+    const tokenResolver = createTokenResolver({ cache: new MapTokenCache() });
+    const auth: HTTPAuth = {
+      type: "oauth2_client_credentials",
+      token_url: "https://login.example.com/oauth/token",
+      client_id: "id",
+      client_secret: "sec",
+    };
+    const tool = buildHttpToolDefinition(
+      { kind: "http", name: "x", url: "https://api.example.com/x", method: "GET", auth },
+      {},
+      { tokenResolver },
+    );
+
+    const result = await tool.execute({}, noopCtx);
+    expect(result).toEqual({ ok: true });
+    // token + first call (401) + token refresh + retry
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    const retryHeaders = (fetchMock.mock.calls[3][1] as RequestInit).headers as Record<string, string>;
+    expect(retryHeaders["Authorization"]).toBe("Bearer fresh");
+  });
+
+  it("surfaces 401 after refresh retry also fails (no infinite loop)", async () => {
+    const responses = [
+      new Response(JSON.stringify({ access_token: "t1" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+      new Response("unauthorized", { status: 401 }),
+      new Response(JSON.stringify({ access_token: "t2" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+      new Response("still unauthorized", { status: 401 }),
+    ];
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => responses.shift()!);
+
+    const tokenResolver = createTokenResolver({ cache: new MapTokenCache() });
+    const tool = buildHttpToolDefinition(
+      {
+        kind: "http",
+        name: "x",
+        url: "https://api.example.com/x",
+        method: "GET",
+        auth: {
+          type: "oauth2_client_credentials",
+          token_url: "https://login.example.com/oauth/token",
+          client_id: "id",
+          client_secret: "sec",
+        },
+      },
+      {},
+      { tokenResolver },
+    );
+
+    const result = (await tool.execute({}, noopCtx)) as { error: string };
+    expect(result.error).toContain("HTTP 401");
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("returns an auth error when entry has auth but no resolver is wired", async () => {
+    const tool = buildHttpToolDefinition(
+      {
+        kind: "http",
+        name: "x",
+        url: "https://api.example.com/x",
+        method: "GET",
+        auth: {
+          type: "oauth2_client_credentials",
+          token_url: "https://login.example.com/oauth/token",
+          client_id: "id",
+          client_secret: "sec",
+        },
+      },
+      {},
+      {},
+    );
+
+    const result = (await tool.execute({}, noopCtx)) as { error: string };
+    expect(result.error).toContain("no tokenResolver");
   });
 
   it("preserves caller-supplied Content-Type header", async () => {
