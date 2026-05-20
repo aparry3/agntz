@@ -16,6 +16,7 @@
 // ═══════════════════════════════════════════════════════════════════════
 import { z } from "zod";
 import type { ToolDefinition } from "./types.js";
+import { interpolate, interpolateDeep } from "./auth/template.js";
 
 /**
  * Structural mirror of `HTTPToolEntry` from `@agntz/manifest`. Kept in
@@ -141,28 +142,6 @@ function buildHttpUrl(
 
   const queryStr = params.toString();
   return queryStr.length === 0 ? path : `${path}?${queryStr}`;
-}
-
-// ─── State template interpolation ─────────────────────────────────────
-// Same semantics as `interpolate` in `@agntz/manifest`. Inlined to avoid a
-// workspace circular dep. MUST stay sync.
-function resolvePath(state: AgentState, path: string): unknown {
-  const segments = path.split(".");
-  let current: unknown = state;
-  for (const seg of segments) {
-    if (current == null || typeof current !== "object") return undefined;
-    current = (current as Record<string, unknown>)[seg];
-  }
-  return current;
-}
-
-function interpolate(template: string, state: AgentState): string {
-  return template.replace(/\{\{([^#/}][^}]*?)\}\}/g, (_match, path: string) => {
-    const value = resolvePath(state, path.trim());
-    if (value == null) return "";
-    if (typeof value === "object") return JSON.stringify(value);
-    return String(value);
-  });
 }
 
 // ─── Truncation helpers ───────────────────────────────────────────────
@@ -340,23 +319,6 @@ function buildRequestBody(
     };
   }
   return { kind: "query", value: flat };
-}
-
-/**
- * Recursively interpolate `{{...}}` template strings in any JSON-shaped value.
- * Object keys are not templated — only string leaves and array elements.
- */
-function interpolateDeep(node: unknown, state: AgentState): unknown {
-  if (typeof node === "string") return interpolate(node, state);
-  if (Array.isArray(node)) return node.map((n) => interpolateDeep(n, state));
-  if (node != null && typeof node === "object") {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
-      out[k] = interpolateDeep(v, state);
-    }
-    return out;
-  }
-  return node;
 }
 
 function hasHeader(headers: Record<string, string>, name: string): boolean {
