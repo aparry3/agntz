@@ -117,8 +117,12 @@ export function createExecutionContext(
               description: config.description,
               params: config.params,
               headers: config.headers,
+              body_type: config.body_type,
+              body: config.body,
+              auth: config.auth,
             },
             state,
+            { tokenResolver: runner.tokenResolver, tokenCache: runner.tokenCache },
           );
           return (tool.execute as (a: unknown, c: ToolContext) => Promise<unknown>)(
             {},

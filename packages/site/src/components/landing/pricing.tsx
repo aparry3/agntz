@@ -15,37 +15,42 @@ type Tier = {
 
 const TIERS: Tier[] = [
   {
-    name: "OSS",
+    name: "OSS · available now",
     price: "Free",
     sub: "forever",
-    tagline: "Self-host the whole stack.",
+    tagline: "Embedded runner, MIT licensed.",
     bullets: [
       "Unlimited runs on your infra",
       "MIT license, no strings",
-      "Community support on Discord",
-      "Bring your own Postgres / SQLite",
+      "Bring your own model API keys",
+      "In-memory or SQLite persistence",
     ],
     cta: "Clone the repo",
     ghost: true,
   },
   {
-    name: "Hosted Starter",
-    price: "$49",
-    sub: "/mo",
+    name: "Hosted Starter · planned",
+    price: "TBD",
+    sub: "",
     tagline: "Skip the operations.",
-    bullets: ["100k runs / mo", "5 seats", "Email support", "Same OSS feature set"],
-    cta: "Start free",
+    bullets: [
+      "Managed runtime + Postgres",
+      "Multi-user isolation",
+      "Durable run history",
+      "Same SDK shape as embedded",
+    ],
+    cta: "Join the waitlist",
     featured: true,
   },
   {
-    name: "Team",
-    price: "Custom",
+    name: "Team · planned",
+    price: "TBD",
     sub: "",
     tagline: "Production scale + assurance.",
     bullets: [
       "Unlimited runs & seats",
       "SSO + RBAC + audit logs",
-      "99.9% SLA on paid tiers",
+      "SLA on paid tiers",
       "Dedicated support channel",
     ],
     cta: "Talk to us",
@@ -68,12 +73,13 @@ export function Pricing({ accent = "blue" }: { accent?: AccentName }) {
           Free forever, self-hosted.
           <br />
           <span style={{ color: TOKENS.muted }}>
-            Hosted plans for when you want less yak-shaving.
+            Hosted plans on the way.
           </span>
         </H1>
         <Lede>
-          Devs won&apos;t commit without seeing a number. Here are some numbers. The OSS edition is
-          the real product — the hosted edition is operational relief on top of the same code.
+          The OSS runner is the real product, shipping today. The hosted tiers below are planned
+          for an upcoming release — same code, same SDK shape, with the operational layer managed
+          for you.
         </Lede>
       </div>
 

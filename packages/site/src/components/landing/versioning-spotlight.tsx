@@ -13,7 +13,7 @@ export function VersioningSpotlight({ accent = "blue" }: { accent?: AccentName }
   return (
     <Section
       id="versioning"
-      kicker="Spotlight · 02 — Versioning"
+      kicker="Spotlight · 02 — Versioning · planned"
       style={{ background: TOKENS.surface }}
     >
       <div
@@ -46,9 +46,9 @@ export function VersioningSpotlight({ accent = "blue" }: { accent?: AccentName }
               maxWidth: 460,
             }}
           >
-            Every save is timestamped, immutable, and addressable. Production calls{" "}
-            <Code>support-agent</Code> and gets the pinned version — your in-flight edits never
-            reach users until you pin them.
+            On the roadmap for the hosted runtime: every save timestamped, immutable, and
+            addressable. Production calls <Code>support-agent</Code> and gets the pinned version —
+            in-flight edits never reach users until you pin them.
           </p>
           <Stack gap={6} style={{ marginTop: 4 }}>
             {ADDRESSES.map(([k, v]) => (

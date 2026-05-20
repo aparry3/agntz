@@ -3,14 +3,12 @@ import { Btn, Card, H1, Lede, Pill, Row, Section, Stack } from "./primitives";
 import { ArrowIcon, CheckIcon, ExternalIcon, GithubIcon } from "./icons";
 import { CodeBlock } from "./code-block";
 
-const HERO_CODE = `import { AgntzClient } from '@agntz/sdk';
+const HERO_CODE = `import { agntz } from '@agntz/runner';
 
-const agntz = new AgntzClient({
-  apiKey: process.env.AGNTZ_API_KEY!,
-});
+// Load YAML agents from disk, run in-process.
+const client = await agntz({ agents: './agents' });
 
-// Production always runs the pinned version
-const { output } = await agntz.agents.run({
+const { output } = await client.agents.run({
   agentId: 'support-agent',
   input: {
     message: email.body,
@@ -53,7 +51,7 @@ export function Hero({ h1, accent = "blue" }: { h1: string; accent?: AccentName 
         <Stack gap={28}>
           <Row gap={8} style={{ alignItems: "center", flexWrap: "wrap" }}>
             <Pill accent="green" dot>
-              v1.0.0 — released
+              @agntz/runner · v1.0.0
             </Pill>
             <Pill mono>MIT licensed</Pill>
             <Pill mono>Open source</Pill>
@@ -69,8 +67,8 @@ export function Hero({ h1, accent = "blue" }: { h1: string; accent?: AccentName 
           </Lede>
 
           <Row gap={10} style={{ marginTop: 4, flexWrap: "wrap" }}>
-            <Btn primary size="lg">
-              Get started <ArrowIcon />
+            <Btn primary size="lg" href="/docs">
+              Read the quickstart <ArrowIcon />
             </Btn>
             <Btn size="lg" icon={<GithubIcon />} href="https://github.com/aparry3/agntz">
               View on GitHub <ExternalIcon />
@@ -93,7 +91,7 @@ export function Hero({ h1, accent = "blue" }: { h1: string; accent?: AccentName 
           >
             <span style={{ color: TOKENS.muted }}>$</span>
             <span>
-              <span style={{ color: TOKENS.text2 }}>npm install</span> @agntz/sdk
+              <span style={{ color: TOKENS.text2 }}>npm install</span> @agntz/runner
             </span>
             <span style={{ width: 1, height: 14, background: TOKENS.line, margin: "0 2px" }} />
             <span
@@ -237,48 +235,6 @@ export function Hero({ h1, accent = "blue" }: { h1: string; accent?: AccentName 
         </Stack>
       </div>
 
-      <div style={{ marginTop: 96, paddingTop: 28, borderTop: `1px solid ${TOKENS.line}` }}>
-        <Row
-          style={{
-            alignItems: "center",
-            justifyContent: "space-between",
-            flexWrap: "wrap",
-            gap: 24,
-          }}
-        >
-          <span
-            style={{
-              fontFamily: "var(--mono)",
-              fontSize: 11,
-              color: TOKENS.muted,
-              letterSpacing: "0.18em",
-              textTransform: "uppercase",
-            }}
-          >
-            Trusted by teams shipping production agents
-          </span>
-          <Row
-            gap={36}
-            style={{
-              alignItems: "center",
-              opacity: 0.55,
-              fontFamily: "var(--sans)",
-              fontSize: 16,
-              fontWeight: 500,
-              letterSpacing: "-0.02em",
-              color: TOKENS.ink,
-              flexWrap: "wrap",
-            }}
-          >
-            <span>retool</span>
-            <span style={{ fontFamily: "Georgia, serif", fontStyle: "italic" }}>linearise</span>
-            <span style={{ fontFamily: "var(--mono)", fontWeight: 600 }}>vercel/co</span>
-            <span style={{ fontWeight: 700, letterSpacing: "0.04em" }}>POSTHOG</span>
-            <span style={{ fontFamily: "Georgia, serif" }}>Replicate</span>
-            <span>cohere</span>
-          </Row>
-        </Row>
-      </div>
     </Section>
   );
 }

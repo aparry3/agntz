@@ -16,6 +16,9 @@
 // ═══════════════════════════════════════════════════════════════════════
 import { z } from "zod";
 import type { ToolDefinition } from "./types.js";
+import { interpolate, interpolateDeep } from "./auth/template.js";
+import { AuthError, type AppliedAuth, type HTTPAuth, type ResolveAuthCtx, type TokenCache, type TokenResolver } from "./auth/index.js";
+import { collectSensitiveValues, scrubString, scrubValue } from "./auth/redact.js";
 
 /**
  * Structural mirror of `HTTPToolEntry` from `@agntz/manifest`. Kept in
@@ -25,10 +28,14 @@ export interface HTTPToolEntry {
   kind: "http";
   name: string;
   url: string;
-  method?: "GET";
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   description?: string;
   params?: Record<string, string>;
   headers?: Record<string, string>;
+  body_type?: "json" | "form" | "query";
+  body?: unknown;
+  /** Dynamic auth — opaque here; the runner resolves and applies it. */
+  auth?: unknown;
 }
 
 /** Structural mirror of `AgentState` from `@agntz/manifest`. */
@@ -139,28 +146,6 @@ function buildHttpUrl(
   return queryStr.length === 0 ? path : `${path}?${queryStr}`;
 }
 
-// ─── State template interpolation ─────────────────────────────────────
-// Same semantics as `interpolate` in `@agntz/manifest`. Inlined to avoid a
-// workspace circular dep. MUST stay sync.
-function resolvePath(state: AgentState, path: string): unknown {
-  const segments = path.split(".");
-  let current: unknown = state;
-  for (const seg of segments) {
-    if (current == null || typeof current !== "object") return undefined;
-    current = (current as Record<string, unknown>)[seg];
-  }
-  return current;
-}
-
-function interpolate(template: string, state: AgentState): string {
-  return template.replace(/\{\{([^#/}][^}]*?)\}\}/g, (_match, path: string) => {
-    const value = resolvePath(state, path.trim());
-    if (value == null) return "";
-    if (typeof value === "object") return JSON.stringify(value);
-    return String(value);
-  });
-}
-
 // ─── Truncation helpers ───────────────────────────────────────────────
 function truncate(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text;
@@ -200,9 +185,31 @@ function truncateValue(val: unknown, maxChars: number): unknown {
  *  - Timeout (30s) → `{ error: "Request timeout after 30s" }`
  *  - Other network error → `{ error: "Network error: <message>" }`
  */
+export interface HttpToolDeps {
+  /**
+   * Resolves dynamic `auth:` (oauth2_client_credentials | token_exchange)
+   * to an AppliedAuth before each call. Required for entries that declare
+   * `auth`; ignored otherwise. When absent and an entry has `auth`, the
+   * tool returns a structured `AuthError`.
+   */
+  tokenResolver?: TokenResolver;
+  /**
+   * Tenant boundary for cache scoping. Threaded through from the runner
+   * (typically the request's userId / ownerId).
+   */
+  authCtx?: ResolveAuthCtx;
+  /**
+   * Token cache. Used purely for redaction — known tokens are scrubbed
+   * from response bodies and error messages before they leave the tool
+   * (preventing leakage into LLM context, traces, and logs).
+   */
+  tokenCache?: TokenCache;
+}
+
 export function buildHttpToolDefinition(
   entry: HTTPToolEntry,
   state: AgentState,
+  deps: HttpToolDeps = {},
 ): ToolDefinition {
   const placeholders = parseUrlPlaceholders(entry.url);
   const pinned = new Set(Object.keys(entry.params ?? {}));
@@ -221,14 +228,16 @@ export function buildHttpToolDefinition(
   const method = entry.method ?? "GET";
   const headerTemplates = entry.headers ?? {};
   const paramTemplates = entry.params ?? {};
+  const bodyType = entry.body_type ?? (entry.body !== undefined ? "json" : undefined);
+  const auth = entry.auth as HTTPAuth | undefined;
+  const refreshStatuses = new Set((auth?.refresh_on ?? [401]).map((n) => n));
 
   return {
     name: toolName,
     description,
     input,
     async execute(args: unknown): Promise<unknown> {
-      // 1. Merge LLM args with pinned params (pinned wins — same convention as
-      //    MCP `WrappedToolRef.params`).
+      // 1. Merge LLM args with pinned params.
       const values: Record<string, string | undefined> = {
         ...(args as Record<string, string | undefined>),
       };
@@ -236,41 +245,43 @@ export function buildHttpToolDefinition(
         values[key] = interpolate(template, state);
       }
 
-      // 2. Build URL and headers from templates.
-      const url = buildHttpUrl(entry.url, values);
-      const headers: Record<string, string> = {};
+      // 2. Build the base URL, headers, and body. Auth is merged in step 3.
+      const baseUrl = buildHttpUrl(entry.url, values);
+      const baseHeaders: Record<string, string> = {};
       for (const [k, v] of Object.entries(headerTemplates)) {
-        headers[k] = interpolate(v, state);
+        baseHeaders[k] = interpolate(v, state);
+      }
+      let body: string | undefined;
+      let urlAfterBody = baseUrl;
+      if (entry.body !== undefined && (method === "POST" || method === "PUT" || method === "PATCH")) {
+        const built = buildRequestBody(entry.body, bodyType, state);
+        if (built.kind === "body") {
+          body = built.value;
+          if (!hasHeader(baseHeaders, "content-type")) {
+            baseHeaders["Content-Type"] = built.contentType;
+          }
+        } else if (built.kind === "query") {
+          urlAfterBody = appendQuery(baseUrl, built.value);
+        }
       }
 
-      // 3. Issue the request with a 30s timeout.
+      // 3. Run the request with optional auth + refresh-on-401 retry.
       try {
-        const response = await fetch(url, {
+        return await runRequest({
           method,
-          headers,
-          signal: AbortSignal.timeout(30_000),
+          url: urlAfterBody,
+          headers: baseHeaders,
+          body,
+          auth,
+          refreshStatuses,
+          deps,
+          state,
+          allowRefresh: true,
         });
-
-        const contentType = response.headers.get("content-type") ?? "";
-        const text = await response.text();
-
-        if (response.status >= 400) {
-          return {
-            error: `HTTP ${response.status}`,
-            body: truncate(text, MAX_CHARS),
-          };
-        }
-
-        if (contentType.includes("application/json")) {
-          try {
-            const parsed = JSON.parse(text);
-            return truncateValue(parsed, MAX_CHARS);
-          } catch {
-            // Server lied about content-type — fall through to text.
-          }
-        }
-        return truncate(text, MAX_CHARS);
       } catch (err) {
+        if (err instanceof AuthError) {
+          return { error: `Auth error: ${err.message}` };
+        }
         if (err instanceof Error && err.name === "TimeoutError") {
           return { error: "Request timeout after 30s" };
         }
@@ -280,4 +291,131 @@ export function buildHttpToolDefinition(
       }
     },
   };
+}
+
+interface RunRequestArgs {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  body: string | undefined;
+  auth: HTTPAuth | undefined;
+  refreshStatuses: Set<number>;
+  deps: HttpToolDeps;
+  state: AgentState;
+  /** Whether a 401 (or refresh_on status) may trigger one token refresh + retry. */
+  allowRefresh: boolean;
+}
+
+async function runRequest(args: RunRequestArgs): Promise<unknown> {
+  let appliedHeaders: Record<string, string> = {};
+  let appliedQuery: Record<string, string> | undefined;
+
+  if (args.auth) {
+    if (!args.deps.tokenResolver) {
+      throw new AuthError(
+        `HTTP tool declares auth.type='${args.auth.type}' but no tokenResolver is wired into the runner.`,
+      );
+    }
+    const applied: AppliedAuth = await args.deps.tokenResolver.resolve(
+      args.auth,
+      args.state,
+      args.deps.authCtx ?? {},
+    );
+    appliedHeaders = applied.headers ?? {};
+    appliedQuery = applied.query;
+  }
+
+  const finalHeaders = { ...args.headers, ...appliedHeaders };
+  const finalUrl = appliedQuery ? appendQuery(args.url, appliedQuery) : args.url;
+
+  const response = await fetch(finalUrl, {
+    method: args.method,
+    headers: finalHeaders,
+    body: args.body,
+    signal: AbortSignal.timeout(30_000),
+  });
+
+  // Refresh path: invalidate token, retry exactly once.
+  if (args.auth && args.allowRefresh && args.refreshStatuses.has(response.status)) {
+    await args.deps.tokenResolver!.invalidate(args.auth, args.deps.authCtx ?? {});
+    return runRequest({ ...args, allowRefresh: false });
+  }
+
+  const contentType = response.headers.get("content-type") ?? "";
+  const text = await response.text();
+
+  const sensitive = collectSensitiveValues({
+    tokenCache: args.deps.tokenCache,
+    secrets: args.state.secrets as Record<string, string> | undefined,
+  });
+
+  if (response.status >= 400) {
+    return {
+      error: `HTTP ${response.status}`,
+      body: scrubString(truncate(text, MAX_CHARS), sensitive),
+    };
+  }
+  if (contentType.includes("application/json")) {
+    try {
+      const parsed = JSON.parse(text);
+      return scrubValue(truncateValue(parsed, MAX_CHARS), sensitive);
+    } catch {
+      // Server lied about content-type — fall through to text.
+    }
+  }
+  return scrubString(truncate(text, MAX_CHARS), sensitive);
+}
+
+// ─── Request body helpers ─────────────────────────────────────────────
+
+type BuiltBody =
+  | { kind: "body"; value: string; contentType: string }
+  | { kind: "query"; value: Record<string, string> }
+  | { kind: "none" };
+
+function buildRequestBody(
+  body: unknown,
+  bodyType: "json" | "form" | "query" | undefined,
+  state: AgentState,
+): BuiltBody {
+  const type = bodyType ?? "json";
+  if (type === "json") {
+    const interpolated = interpolateDeep(body, state);
+    return {
+      kind: "body",
+      value: JSON.stringify(interpolated),
+      contentType: "application/json",
+    };
+  }
+  // form / query: flat string map only (validator guarantees this).
+  const flat: Record<string, string> = {};
+  if (body != null && typeof body === "object" && !Array.isArray(body)) {
+    for (const [k, v] of Object.entries(body as Record<string, unknown>)) {
+      if (typeof v === "string") flat[k] = interpolate(v, state);
+    }
+  }
+  if (type === "form") {
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(flat)) params.append(k, v);
+    return {
+      kind: "body",
+      value: params.toString(),
+      contentType: "application/x-www-form-urlencoded",
+    };
+  }
+  return { kind: "query", value: flat };
+}
+
+function hasHeader(headers: Record<string, string>, name: string): boolean {
+  const lower = name.toLowerCase();
+  return Object.keys(headers).some((h) => h.toLowerCase() === lower);
+}
+
+function appendQuery(url: string, extra: Record<string, string>): string {
+  const entries = Object.entries(extra);
+  if (entries.length === 0) return url;
+  const sep = url.includes("?") ? "&" : "?";
+  const params = new URLSearchParams();
+  for (const [k, v] of entries) params.append(k, v);
+  return `${url}${sep}${params.toString()}`;
 }

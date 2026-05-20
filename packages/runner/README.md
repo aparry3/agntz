@@ -74,6 +74,8 @@ Names referenced in YAML but missing from the `tools` map fail at load time, not
 
 ## HTTP tools with credentials
 
+### Static credentials — templated headers
+
 Reference env vars with `{{env.NAME}}` — resolved from `process.env` automatically:
 
 ```yaml
@@ -86,6 +88,102 @@ tools:
 ```
 
 Missing env vars throw at invoke time with a clear error so misconfigurations surface fast.
+
+`{{secrets.NAME}}` works the same way when a `SecretStore` is wired (typically through `@agntz/store-sqlite`).
+
+### POST / PUT / PATCH with a request body
+
+HTTP tools support `GET`, `POST`, `PUT`, `PATCH`, and `DELETE`. For methods that accept a body, set `body_type` (`json` is the default when `body` is present) and provide a templated `body`:
+
+```yaml
+tools:
+  - kind: http
+    name: create_user
+    url: "https://api.example.com/users"
+    method: POST
+    body_type: json
+    body:
+      name: "{{userName}}"
+      email: "{{userEmail}}"
+```
+
+`body_type: form` serializes the body as `application/x-www-form-urlencoded`; `body_type: query` appends the fields to the URL.
+
+### Dynamic auth — OAuth2 client credentials
+
+When an API requires fetching a short-lived access token before each request, declare an `auth:` block. The runner fetches the token, caches it (in-memory by default; refreshes on `401`), and applies it to every request — you don't need to write any code.
+
+The `oauth2_client_credentials` preset covers the standard RFC 6749 §4.4 flow:
+
+```yaml
+tools:
+  - kind: http
+    name: send_message
+    url: "https://api.salesforce.com/services/data/v60.0/sobjects/Message"
+    method: POST
+    body_type: json
+    body:
+      content: "{{message}}"
+    auth:
+      type: oauth2_client_credentials
+      token_url: "https://login.salesforce.com/services/oauth2/token"
+      client_id: "{{secrets.sf_client_id}}"
+      client_secret: "{{secrets.sf_client_secret}}"
+      scope: "messages:write"             # optional
+      creds_location: basic_header        # default; or "body"
+```
+
+### Dynamic auth — generic token exchange
+
+For login endpoints that don't match RFC 6749 (custom shapes, different field names, plain-text token bodies, etc.) use the parametric `token_exchange` form:
+
+```yaml
+tools:
+  - kind: http
+    name: list_things
+    url: "https://api.example.com/things"
+    auth:
+      type: token_exchange
+      request:
+        url: "https://api.example.com/auth/login"
+        method: POST
+        body_type: json
+        body:
+          username: "{{secrets.api_user}}"
+          password: "{{secrets.api_pass}}"
+      extract:
+        response_format: json             # default; or "text" for raw-body tokens
+        token_path: "$.access_token"      # JSONPath; e.g. "$.token", "$.data.accessToken"
+        expires_path: "$.expires_in"      # optional, seconds
+      apply:
+        location: header                  # default; or "query"
+        name: Authorization               # header or query parameter name
+        format: "Bearer {token}"          # default for header; "{token}" for query
+      cache_ttl: 3000                     # optional, seconds (overrides expires_path)
+      refresh_on: [401]                   # default; statuses that trigger refresh + retry
+```
+
+Every shape is configurable: `{access_token}`, `{token}`, `{data: {accessToken}}`, raw text bodies, headers vs query, "Bearer" prefix vs raw token. See the test fixtures in `packages/core/tests/auth/` for more examples.
+
+### What you get for free
+
+- **Token caching** per `(auth shape, ownerId)` so two tenants sharing the same OAuth app don't share a token.
+- **Single-flight** dedup: a burst of N tool calls fires one token request, not N.
+- **Refresh-on-401**: on `401` (configurable via `refresh_on`), the runner invalidates the cache and retries exactly once. A second `401` surfaces normally — no infinite loops.
+- **Credential redaction**: known tokens and `state.secrets` values are scrubbed from response bodies and auth-error messages before they reach the LLM, traces, or logs.
+
+### Persistent token cache (advanced)
+
+The default in-memory cache is lost on process restart. To plug in a persistent backend (Redis, SQL, etc.), pass `tokenCache` when constructing the runner:
+
+```ts
+import { agntz } from "@agntz/runner";
+
+const client = await agntz({
+  agents: "./agents",
+  tokenCache: myPersistentCache,  // any object implementing TokenCache
+});
+```
 
 ## Sessions
 

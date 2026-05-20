@@ -1,4 +1,4 @@
-import { ACCENTS, TOKENS } from "./tokens";
+import { TOKENS } from "./tokens";
 import { Row, Stack, Wordmark } from "./primitives";
 import { GithubIcon } from "./icons";
 
@@ -55,38 +55,6 @@ export function FooterX() {
               >
                 <GithubIcon />
               </a>
-              <a
-                href="#"
-                style={{
-                  display: "inline-flex",
-                  padding: 8,
-                  border: "1px solid rgba(244,241,233,0.2)",
-                  borderRadius: 6,
-                  color: TOKENS.bg,
-                  fontFamily: "var(--mono)",
-                  fontSize: 12,
-                }}
-              >
-                X
-              </a>
-              <a
-                href="#"
-                style={{
-                  display: "inline-flex",
-                  padding: "8px 12px",
-                  border: "1px solid rgba(244,241,233,0.2)",
-                  borderRadius: 6,
-                  color: TOKENS.bg,
-                  fontSize: 12,
-                  alignItems: "center",
-                  gap: 6,
-                }}
-              >
-                <span
-                  style={{ width: 6, height: 6, borderRadius: 99, background: ACCENTS.green.fg }}
-                />
-                Discord · 1.2k
-              </a>
             </Row>
           </Stack>
 
@@ -142,13 +110,9 @@ export function FooterX() {
               letterSpacing: "0.04em",
             }}
           >
-            <span>© 2026 agntz, inc.</span>
+            <span>© 2026 agntz</span>
             <span>MIT</span>
-            <span>v1.0.0</span>
-            <Row gap={6} style={{ alignItems: "center" }}>
-              <span style={{ width: 6, height: 6, borderRadius: 99, background: ACCENTS.green.fg }} />
-              all systems normal
-            </Row>
+            <span>@agntz/runner v1.0.0</span>
           </Row>
           <span
             style={{
@@ -157,7 +121,7 @@ export function FooterX() {
               color: "rgba(244,241,233,0.45)",
             }}
           >
-            built with agntz · traced by agntz · pinned by agntz
+            built with agntz · traced by agntz
           </span>
         </Row>
       </div>

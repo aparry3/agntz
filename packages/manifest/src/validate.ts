@@ -603,16 +603,17 @@ export function validateToolEntries(
         }
       }
 
-      // Method — only GET is supported in MVP. Type kept permissive for future
-      // verbs but validation hard-rejects anything else.
+      // Method — GET/POST/PUT/PATCH/DELETE.
       const method = entry.method ?? "GET";
-      if (method !== "GET") {
+      const allowedMethods = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+      if (!allowedMethods.includes(method)) {
         errors.push({
           level: "structural",
           path: p(epath, "method"),
-          message: `HTTP tool method must be 'GET' — only GET is supported in this release.`,
+          message: `HTTP tool method must be one of ${allowedMethods.join(", ")}; got '${method}'.`,
         });
       }
+      const methodHasBody = method === "POST" || method === "PUT" || method === "PATCH";
 
       // Placeholders — `{X?}` only legal in query string.
       let placeholderNames: Set<string> = new Set();
@@ -667,7 +668,309 @@ export function validateToolEntries(
           }
         }
       }
+
+      // body / body_type — only meaningful for methods that accept a body.
+      if (entry.body !== undefined) {
+        if (!methodHasBody) {
+          errors.push({
+            level: "structural",
+            path: p(epath, "body"),
+            message: `HTTP tool body is not allowed for method '${method}'.`,
+          });
+        }
+        validateBodyTemplates(entry.body, entry.body_type, p(epath, "body"), errors);
+      }
+      if (entry.body_type !== undefined) {
+        const allowed = ["json", "form", "query"];
+        if (!allowed.includes(entry.body_type as string)) {
+          errors.push({
+            level: "structural",
+            path: p(epath, "body_type"),
+            message: `body_type must be one of ${allowed.join(", ")}`,
+          });
+        }
+      }
+
+      // auth — discriminated union, optional.
+      if (entry.auth !== undefined) {
+        validateHttpAuth(entry.auth, p(epath, "auth"), errors);
+      }
     }
+  }
+}
+
+// ─── HTTP body / auth helpers ────────────────────────────────────────
+
+function validateBodyTemplates(
+  body: unknown,
+  bodyType: string | undefined,
+  path: string,
+  errors: ValidationError[],
+): void {
+  if (bodyType === "form" || bodyType === "query") {
+    if (body == null || typeof body !== "object" || Array.isArray(body)) {
+      errors.push({
+        level: "structural",
+        path,
+        message: `body must be a flat object of string values when body_type is '${bodyType}'.`,
+      });
+      return;
+    }
+    for (const [key, val] of Object.entries(body as Record<string, unknown>)) {
+      if (typeof val !== "string") {
+        errors.push({
+          level: "structural",
+          path: p(path, key),
+          message: `body.${key} must be a string when body_type is '${bodyType}'.`,
+        });
+      } else {
+        validateTemplatesSyntax(val, p(path, key), errors);
+      }
+    }
+    return;
+  }
+  // JSON (default): walk recursively, validating every string leaf.
+  walkBodyJSON(body, path, errors);
+}
+
+function walkBodyJSON(node: unknown, path: string, errors: ValidationError[]): void {
+  if (typeof node === "string") {
+    validateTemplatesSyntax(node, path, errors);
+    return;
+  }
+  if (Array.isArray(node)) {
+    node.forEach((v, i) => walkBodyJSON(v, p(path, String(i)), errors));
+    return;
+  }
+  if (node != null && typeof node === "object") {
+    for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+      walkBodyJSON(v, p(path, k), errors);
+    }
+  }
+}
+
+function validateHttpAuth(auth: unknown, path: string, errors: ValidationError[]): void {
+  if (auth == null || typeof auth !== "object") {
+    errors.push({ level: "structural", path, message: "auth must be an object" });
+    return;
+  }
+  const a = auth as Record<string, unknown>;
+  if (typeof a.type !== "string") {
+    errors.push({ level: "structural", path: p(path, "type"), message: "auth.type is required" });
+    return;
+  }
+  if (a.type === "oauth2_client_credentials") {
+    validateOAuth2ClientCredentials(a, path, errors);
+    return;
+  }
+  if (a.type === "token_exchange") {
+    validateTokenExchange(a, path, errors);
+    return;
+  }
+  errors.push({
+    level: "structural",
+    path: p(path, "type"),
+    message: `auth.type must be 'oauth2_client_credentials' or 'token_exchange'; got '${a.type}'.`,
+  });
+}
+
+function validateOAuth2ClientCredentials(
+  a: Record<string, unknown>,
+  path: string,
+  errors: ValidationError[],
+): void {
+  for (const field of ["token_url", "client_id", "client_secret"] as const) {
+    const val = a[field];
+    if (typeof val !== "string" || val.length === 0) {
+      errors.push({
+        level: "structural",
+        path: p(path, field),
+        message: `auth.${field} is required for oauth2_client_credentials`,
+      });
+    }
+  }
+  if (typeof a.token_url === "string") {
+    try {
+      new URL(a.token_url);
+    } catch {
+      errors.push({
+        level: "structural",
+        path: p(path, "token_url"),
+        message: `auth.token_url is not a valid URL: '${a.token_url}'`,
+      });
+    }
+  }
+  for (const field of ["client_id", "client_secret", "scope"] as const) {
+    if (typeof a[field] === "string") {
+      validateTemplatesSyntax(a[field] as string, p(path, field), errors);
+    }
+  }
+  if (a.creds_location !== undefined && a.creds_location !== "basic_header" && a.creds_location !== "body") {
+    errors.push({
+      level: "structural",
+      path: p(path, "creds_location"),
+      message: `auth.creds_location must be 'basic_header' or 'body'.`,
+    });
+  }
+  validateRefreshOn(a.refresh_on, path, errors);
+  validateCacheTtl(a.cache_ttl, path, errors);
+}
+
+function validateTokenExchange(
+  a: Record<string, unknown>,
+  path: string,
+  errors: ValidationError[],
+): void {
+  // request
+  const req = a.request as Record<string, unknown> | undefined;
+  if (!req || typeof req !== "object") {
+    errors.push({ level: "structural", path: p(path, "request"), message: "auth.request is required" });
+  } else {
+    if (typeof req.url !== "string" || req.url.length === 0) {
+      errors.push({
+        level: "structural",
+        path: p(path, "request.url"),
+        message: "auth.request.url is required",
+      });
+    } else {
+      try {
+        new URL(req.url);
+      } catch {
+        errors.push({
+          level: "structural",
+          path: p(path, "request.url"),
+          message: `auth.request.url is not a valid URL: '${req.url}'`,
+        });
+      }
+    }
+    const reqMethod = (req.method ?? "POST") as string;
+    if (!["GET", "POST", "PUT", "PATCH"].includes(reqMethod)) {
+      errors.push({
+        level: "structural",
+        path: p(path, "request.method"),
+        message: `auth.request.method must be one of GET, POST, PUT, PATCH`,
+      });
+    }
+    if (req.headers !== undefined) {
+      if (typeof req.headers !== "object" || req.headers === null) {
+        errors.push({
+          level: "structural",
+          path: p(path, "request.headers"),
+          message: "auth.request.headers must be an object",
+        });
+      } else {
+        for (const [k, v] of Object.entries(req.headers as Record<string, unknown>)) {
+          if (typeof v !== "string") {
+            errors.push({
+              level: "structural",
+              path: p(path, `request.headers.${k}`),
+              message: "auth.request.headers values must be strings",
+            });
+          } else {
+            validateTemplatesSyntax(v, p(path, `request.headers.${k}`), errors);
+          }
+        }
+      }
+    }
+    if (req.body_type !== undefined && !["json", "form", "query"].includes(req.body_type as string)) {
+      errors.push({
+        level: "structural",
+        path: p(path, "request.body_type"),
+        message: "auth.request.body_type must be one of json, form, query",
+      });
+    }
+    if (req.body !== undefined) {
+      validateBodyTemplates(req.body, req.body_type as string | undefined, p(path, "request.body"), errors);
+    }
+  }
+  // extract
+  const ext = a.extract as Record<string, unknown> | undefined;
+  if (!ext || typeof ext !== "object") {
+    errors.push({ level: "structural", path: p(path, "extract"), message: "auth.extract is required" });
+  } else {
+    if (ext.response_format !== undefined && ext.response_format !== "json" && ext.response_format !== "text") {
+      errors.push({
+        level: "structural",
+        path: p(path, "extract.response_format"),
+        message: "auth.extract.response_format must be 'json' or 'text'.",
+      });
+    }
+    const isText = ext.response_format === "text";
+    if (!isText) {
+      if (typeof ext.token_path !== "string" || ext.token_path.length === 0) {
+        errors.push({
+          level: "structural",
+          path: p(path, "extract.token_path"),
+          message: "auth.extract.token_path is required for JSON responses",
+        });
+      } else if (!ext.token_path.startsWith("$")) {
+        errors.push({
+          level: "structural",
+          path: p(path, "extract.token_path"),
+          message: "auth.extract.token_path must be a JSONPath starting with '$'.",
+        });
+      }
+    }
+    if (ext.expires_path !== undefined) {
+      if (typeof ext.expires_path !== "string" || !ext.expires_path.startsWith("$")) {
+        errors.push({
+          level: "structural",
+          path: p(path, "extract.expires_path"),
+          message: "auth.extract.expires_path must be a JSONPath starting with '$'.",
+        });
+      }
+    }
+  }
+  // apply
+  const app = a.apply as Record<string, unknown> | undefined;
+  if (app && typeof app === "object") {
+    if (app.location !== undefined && app.location !== "header" && app.location !== "query") {
+      errors.push({
+        level: "structural",
+        path: p(path, "apply.location"),
+        message: "auth.apply.location must be 'header' or 'query'.",
+      });
+    }
+    if (app.location === "query" && (typeof app.name !== "string" || app.name.length === 0)) {
+      errors.push({
+        level: "structural",
+        path: p(path, "apply.name"),
+        message: "auth.apply.name is required when apply.location is 'query'.",
+      });
+    }
+    if (app.format !== undefined) {
+      if (typeof app.format !== "string" || !app.format.includes("{token}")) {
+        errors.push({
+          level: "structural",
+          path: p(path, "apply.format"),
+          message: "auth.apply.format must be a string containing the literal '{token}'.",
+        });
+      }
+    }
+  }
+  validateRefreshOn(a.refresh_on, path, errors);
+  validateCacheTtl(a.cache_ttl, path, errors);
+}
+
+function validateRefreshOn(val: unknown, path: string, errors: ValidationError[]): void {
+  if (val === undefined) return;
+  if (!Array.isArray(val) || val.some((n) => typeof n !== "number" || !Number.isInteger(n) || n < 100 || n > 599)) {
+    errors.push({
+      level: "structural",
+      path: p(path, "refresh_on"),
+      message: "auth.refresh_on must be an array of HTTP status code integers (100-599).",
+    });
+  }
+}
+
+function validateCacheTtl(val: unknown, path: string, errors: ValidationError[]): void {
+  if (val === undefined) return;
+  if (typeof val !== "number" || !Number.isFinite(val) || val <= 0) {
+    errors.push({
+      level: "structural",
+      path: p(path, "cache_ttl"),
+      message: "auth.cache_ttl must be a positive number (seconds).",
+    });
   }
 }
 
@@ -694,27 +997,36 @@ function collectHttpEnvRefs(entry: {
 }
 
 function collectHttpTemplateRefs(
-  entry: { params?: Record<string, string>; headers?: Record<string, string> },
+  entry: {
+    params?: Record<string, string>;
+    headers?: Record<string, string>;
+    body?: unknown;
+    auth?: unknown;
+  },
   re: RegExp,
 ): Set<string> {
   const names = new Set<string>();
-  const scan = (val: string) => {
-    re.lastIndex = 0;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(val)) !== null) {
-      names.add(m[1]);
+  const scan = (val: unknown) => {
+    if (typeof val === "string") {
+      re.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(val)) !== null) {
+        names.add(m[1]);
+      }
+      return;
+    }
+    if (Array.isArray(val)) {
+      for (const v of val) scan(v);
+      return;
+    }
+    if (val != null && typeof val === "object") {
+      for (const v of Object.values(val as Record<string, unknown>)) scan(v);
     }
   };
-  if (entry.params) {
-    for (const val of Object.values(entry.params)) {
-      if (typeof val === "string") scan(val);
-    }
-  }
-  if (entry.headers) {
-    for (const val of Object.values(entry.headers)) {
-      if (typeof val === "string") scan(val);
-    }
-  }
+  if (entry.params) scan(entry.params);
+  if (entry.headers) scan(entry.headers);
+  if (entry.body !== undefined) scan(entry.body);
+  if (entry.auth !== undefined) scan(entry.auth);
   return names;
 }
 

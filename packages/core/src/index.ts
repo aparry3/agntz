@@ -22,6 +22,25 @@ export type { ReplyToolDeps } from "./tools/reply.js";
 export { DEFAULT_REPLY_MAX_PER_RUN } from "./types.js";
 export { buildHttpToolDefinition } from "./http-tool.js";
 export type { HTTPToolEntry as HTTPToolEntryRuntime, AgentState as RuntimeState } from "./http-tool.js";
+export {
+  AuthError,
+  MapTokenCache,
+  createTokenResolver,
+} from "./auth/index.js";
+export type {
+  AppliedAuth,
+  HTTPAuth,
+  OAuth2ClientCredentialsAuth,
+  ResolveAuthCtx,
+  TokenCache,
+  TokenCacheEntry,
+  TokenExchangeApply,
+  TokenExchangeAuth,
+  TokenExchangeExtract,
+  TokenExchangeRequest,
+  TokenResolver,
+  TokenResolverDeps,
+} from "./auth/index.js";
 
 // Stores
 export { MemoryStore } from "./stores/memory.js";

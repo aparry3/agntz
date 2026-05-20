@@ -33,6 +33,8 @@ import { normalizeImageBlocks } from "./image-fetcher.js";
 import { flattenContentToText } from "./message-builder.js";
 import type { AiSdkMessage } from "./message-builder.js";
 import { buildHttpToolDefinition } from "./http-tool.js";
+import { MapTokenCache, createTokenResolver } from "./auth/index.js";
+import type { TokenCache, TokenResolver } from "./auth/index.js";
 import type { AgentState } from "./http-tool.js";
 import { ToolRegistry } from "./tool.js";
 import { zodToJsonSchema } from "./utils/schema.js";
@@ -169,19 +171,35 @@ function collectEnvReferences(agent: AgentDefinition): Set<string> {
 
 function collectTemplateReferences(agent: AgentDefinition, re: RegExp): Set<string> {
   const names = new Set<string>();
-  for (const ref of agent.tools ?? []) {
-    if (ref.type !== "http") continue;
-    const entry = ref.entry;
-    const values: string[] = [];
-    if (entry.params) values.push(...Object.values(entry.params));
-    if (entry.headers) values.push(...Object.values(entry.headers));
-    for (const v of values) {
+  const scan = (val: unknown) => {
+    if (typeof val === "string") {
       re.lastIndex = 0;
       let m: RegExpExecArray | null;
-      while ((m = re.exec(v)) !== null) {
+      while ((m = re.exec(val)) !== null) {
         names.add(m[1]);
       }
+      return;
     }
+    if (Array.isArray(val)) {
+      for (const v of val) scan(v);
+      return;
+    }
+    if (val != null && typeof val === "object") {
+      for (const v of Object.values(val as Record<string, unknown>)) scan(v);
+    }
+  };
+  for (const ref of agent.tools ?? []) {
+    if (ref.type !== "http") continue;
+    const entry = ref.entry as {
+      params?: Record<string, string>;
+      headers?: Record<string, string>;
+      body?: unknown;
+      auth?: unknown;
+    };
+    if (entry.params) scan(entry.params);
+    if (entry.headers) scan(entry.headers);
+    if (entry.body !== undefined) scan(entry.body);
+    if (entry.auth !== undefined) scan(entry.auth);
   }
   return names;
 }
@@ -200,6 +218,8 @@ export class Runner {
   private _skillStore: SkillStore | undefined;
   private _secretStore: SecretStore | undefined;
   private _envProvider: ((name: string) => string | undefined) | undefined;
+  private _tokenCache: TokenCache;
+  private _tokenResolver: TokenResolver;
   private modelProvider: ModelProvider;
   private toolRegistry: ToolRegistry;
   private mcpManager: MCPClientManager | null = null;
@@ -242,6 +262,8 @@ export class Runner {
       ? unifiedStore as SecretStore
       : undefined;
     this._envProvider = config.envProvider;
+    this._tokenCache = config.tokenCache ?? new MapTokenCache();
+    this._tokenResolver = createTokenResolver({ cache: this._tokenCache });
     this.modelProvider = config.modelProvider ?? new AISDKModelProvider({
       providerStore: this._providerStore,
     });
@@ -298,6 +320,10 @@ export class Runner {
   get model(): ModelProvider { return this.modelProvider; }
   /** Access the runner config */
   get runnerConfig(): RunnerConfig { return this.config; }
+  /** Access the HTTP tool auth token resolver. */
+  get tokenResolver(): TokenResolver { return this._tokenResolver; }
+  /** Access the HTTP tool auth token cache. */
+  get tokenCache(): TokenCache { return this._tokenCache; }
 
   // ═══════════════════════════════════════════════════════════════════
   // Agent Management
@@ -837,6 +863,7 @@ export class Runner {
           rootId: effectiveRootId,
           onReplyAccepted,
           state,
+          ownerId: options.ownerId ?? options.userId,
         });
 
         // See invoke() for the rationale. Persist the user turn up-front when
@@ -1119,6 +1146,7 @@ export class Runner {
               rootId: effectiveRootId,
               onReplyAccepted,
               state,
+              ownerId: options.ownerId ?? options.userId,
             });
             const seen = new Set(base.map((t) => t.name));
             availableTools = base.concat(
@@ -1551,6 +1579,7 @@ export class Runner {
         runId: effectiveRunId,
         rootId: effectiveRootId,
         state,
+        ownerId: options.ownerId ?? options.userId,
       });
 
       // When the agent can reply mid-run, persist the user input *before* the
@@ -1807,6 +1836,7 @@ export class Runner {
             runId: effectiveRunId,
             rootId: effectiveRootId,
             state,
+            ownerId: options.ownerId ?? options.userId,
           });
           const seen = new Set(base.map((t) => t.name));
           availableTools = base.concat(
@@ -2149,6 +2179,12 @@ export class Runner {
        * use HTTP tools keep working.
        */
       state?: AgentState;
+      /**
+       * Tenant / credential boundary for HTTP tool auth token caching.
+       * Tokens cached under one ownerId are not visible to another so
+       * two users sharing the same OAuth app don't share a token.
+       */
+      ownerId?: string;
     },
   ): Promise<Array<{
     name: string;
@@ -2217,7 +2253,11 @@ export class Runner {
           // than mutate the global registry.
           continue;
         }
-        const httpTool = buildHttpToolDefinition(ref.entry, state);
+        const httpTool = buildHttpToolDefinition(ref.entry, state, {
+          tokenResolver: this._tokenResolver,
+          authCtx: { ownerId: opts.ownerId },
+          tokenCache: this._tokenCache,
+        });
         opts.ephemeralTools.set(httpTool.name, httpTool);
         resolved.push({
           name: httpTool.name,

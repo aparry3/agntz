@@ -381,7 +381,7 @@ Names referenced in YAML but missing from the \`tools\` map fail at **load time*
 
 ### HTTP tools
 
-A single GET endpoint exposed to the model as a tool. URL placeholders define the LLM-facing parameter schema.
+A single HTTP endpoint exposed to the model as a tool. URL placeholders define the LLM-facing parameter schema. \`GET\`, \`POST\`, \`PUT\`, \`PATCH\`, and \`DELETE\` are all supported.
 
 \`\`\`yaml
 tools:
@@ -400,6 +400,73 @@ URL placeholder syntax:
 - \`{X?}\` — optional (query only)
 
 Headers are templated and can reference env vars (\`{{env.NAME}}\` in embedded mode) or secrets (\`{{secrets.NAME}}\` in hosted mode).
+
+#### POST / PUT / PATCH with a request body
+
+\`\`\`yaml
+tools:
+  - kind: http
+    name: create_user
+    url: "https://api.example.com/users"
+    method: POST
+    body_type: json            # json (default), form, or query
+    body:
+      name: "{{userName}}"
+      email: "{{userEmail}}"
+\`\`\`
+
+#### Dynamic auth — OAuth2 client credentials
+
+For APIs that require fetching a short-lived access token before each call, declare an \`auth:\` block. The runner fetches the token, caches it (refreshes on 401), and applies it — no code required.
+
+\`\`\`yaml
+tools:
+  - kind: http
+    name: send_message
+    url: "https://api.salesforce.com/services/data/v60.0/sobjects/Message"
+    method: POST
+    body_type: json
+    body: { content: "{{message}}" }
+    auth:
+      type: oauth2_client_credentials
+      token_url: "https://login.salesforce.com/services/oauth2/token"
+      client_id: "{{secrets.SF_CLIENT_ID}}"
+      client_secret: "{{secrets.SF_CLIENT_SECRET}}"
+      scope: "messages:write"          # optional
+      creds_location: basic_header     # default (RFC 6749); or "body"
+\`\`\`
+
+#### Dynamic auth — generic token exchange
+
+For login endpoints that don't match the OAuth2 spec — different field names, plain-text token responses, custom header names — use the parametric \`token_exchange\` form:
+
+\`\`\`yaml
+tools:
+  - kind: http
+    name: list_things
+    url: "https://api.example.com/things"
+    auth:
+      type: token_exchange
+      request:
+        url: "https://api.example.com/auth/login"
+        method: POST
+        body_type: json
+        body:
+          username: "{{secrets.API_USER}}"
+          password: "{{secrets.API_PASS}}"
+      extract:
+        response_format: json          # default; "text" for raw-body tokens
+        token_path: "$.access_token"   # JSONPath; e.g. "$.token", "$.data.accessToken"
+        expires_path: "$.expires_in"   # optional, seconds
+      apply:
+        location: header               # default; or "query"
+        name: Authorization
+        format: "Bearer {token}"       # default for header; "{token}" for query
+      cache_ttl: 3000                  # optional, seconds
+      refresh_on: [401]                # default
+\`\`\`
+
+What you get for free: per-tenant token caching, single-flight dedup of concurrent requests, automatic refresh-on-401 (one retry, no infinite loops), and redaction of known token / secret substrings from response bodies and error messages.
 
 ### MCP tools
 

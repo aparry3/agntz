@@ -123,7 +123,7 @@ export function WhoItsFor({ accent = "blue" }: { accent?: AccentName }) {
             </p>
 
             <a
-              href="#"
+              href="/docs"
               style={{
                 display: "inline-flex",
                 alignItems: "center",
