@@ -3,9 +3,9 @@ import { ArrowIcon, GithubIcon } from "./icons";
 import { TOKENS } from "./tokens";
 
 const NAV_LINKS: [string, string][] = [
-  ["Product", "#how"],
-  ["Docs", "#"],
-  ["Pricing", "#pricing"],
+  ["Product", "/#how"],
+  ["Docs", "/docs"],
+  ["Pricing", "/#pricing"],
   ["Changelog", "#"],
   ["Blog", "#"],
 ];
