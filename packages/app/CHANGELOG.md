@@ -1,5 +1,14 @@
 # @agntz/app
 
+## 0.1.2
+
+### Patch Changes
+
+- Updated dependencies [[`44a8bd0`](https://github.com/aparry3/agntz/commit/44a8bd0feebfffb6cdf4e22a6aa4b326244bf166)]:
+  - @agntz/core@1.1.0
+  - @agntz/manifest@2.0.0
+  - @agntz/store-postgres@2.0.0
+
 ## 0.1.1
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 {
   "name": "@agntz/runner",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "Embedded in-process runner for agntz agents. Reads YAML manifests from disk and executes them with a minimal SDK-shaped surface. The five-line-of-code path.",
   "type": "module",
   "main": "./dist/index.js",
