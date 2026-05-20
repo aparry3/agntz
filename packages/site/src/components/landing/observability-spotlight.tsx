@@ -6,14 +6,14 @@ import { Btn, Card, Code, H2, Lede, Pill, Row, Section, Stack } from "./primitiv
 import { ArrowIcon, CheckIcon } from "./icons";
 
 const BULLETS: [string, string][] = [
-  ["Full execution graph", "Spans for every model call, tool call, and child agent."],
+  ["Full execution graph", "Spans for every model call, tool call, and child agent — recorded automatically."],
   [
-    "Trace → version pin",
-    "Jump from any trace straight to the agent version that produced it.",
+    "Stream live events",
+    "Subscribe to text deltas, tool starts, and completion events as they happen via onEvent.",
   ],
   [
-    "Replay & compare",
-    "Re-run any historic invocation against a new version side-by-side.",
+    "List, replay, debug",
+    "client.runs.list() and client.traces.get() expose every recorded invocation in-process.",
   ],
 ];
 
@@ -37,8 +37,9 @@ export function ObservabilitySpotlight({ accent = "blue" }: { accent?: AccentNam
             Every version — <span style={{ color: TOKENS.muted }}>traced.</span>
           </H2>
           <Lede>
-            See the prompt. See the response. See every tool call. See the version that ran it.
-            Replay any run. Compare runs. Score outputs against evals.
+            See the prompt. See the response. See every tool call. Spans for each model call and
+            tool execution, recorded to an in-memory ring buffer — list, replay, and stream them
+            live without standing up a separate observability vendor.
           </Lede>
           <p
             style={{
@@ -78,8 +79,8 @@ export function ObservabilitySpotlight({ accent = "blue" }: { accent?: AccentNam
               </Row>
             ))}
           </Stack>
-          <Btn size="md" style={{ marginTop: 8, alignSelf: "flex-start" }}>
-            View a live trace <ArrowIcon />
+          <Btn size="md" href="/docs" style={{ marginTop: 8, alignSelf: "flex-start" }}>
+            See the trace API <ArrowIcon />
           </Btn>
         </Stack>
 

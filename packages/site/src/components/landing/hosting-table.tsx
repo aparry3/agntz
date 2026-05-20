@@ -18,7 +18,7 @@ const ROWS: [string, Cell, Cell][] = [
 
 export function HostingTable({ accent = "blue" }: { accent?: AccentName }) {
   return (
-    <Section id="hosting" kicker="Self-host vs hosted" style={{ background: TOKENS.surface }}>
+    <Section id="hosting" kicker="Self-host vs hosted · hosted planned" style={{ background: TOKENS.surface }}>
       <div
         style={{
           marginBottom: 48,
@@ -30,8 +30,9 @@ export function HostingTable({ accent = "blue" }: { accent?: AccentName }) {
       >
         <H2 size={48}>Run it your way.</H2>
         <Lede>
-          Same features in both editions. The difference is operational burden — not feature
-          unlock. Self-host the whole stack, or let us run it when you&apos;re ready to stop.
+          The OSS runner ships today. The hosted runtime is on the roadmap — same agents, same
+          YAML, swap one import line. Self-host the whole stack, or graduate to the managed runtime
+          when it lands.
         </Lede>
       </div>
 
@@ -124,11 +125,11 @@ export function HostingTable({ accent = "blue" }: { accent?: AccentName }) {
         <Btn icon={<GithubIcon />} href="https://github.com/aparry3/agntz">
           Clone the repo
         </Btn>
-        <Btn primary>
-          Open hosted app <ArrowIcon />
+        <Btn primary href="/docs">
+          Read the quickstart <ArrowIcon />
         </Btn>
         <span style={{ fontSize: 13, color: TOKENS.muted, marginLeft: 8 }}>
-          Start hosted, move later. Or start self-hosted, never move.
+          Hosted runtime coming soon. Self-hosted is shipping today.
         </span>
       </Row>
     </Section>

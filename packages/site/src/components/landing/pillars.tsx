@@ -15,26 +15,26 @@ const ITEMS: PillarItem[] = [
   {
     title: "Agents as config, not code.",
     kicker: "Principle",
-    body: "Define behavior as YAML or JSON. Call it from any service with one line. No framework to learn. No glue code.",
+    body: "Define behavior as YAML. Call it from any service with one line. No framework to learn. No glue code.",
     ic: <CubeIcon />,
   },
   {
     title: "Iterate live. Pin what ships.",
-    kicker: "Safety",
-    body: "Every save is a new version, stamped with the moment. Production runs the pinned one. Roll back in one click.",
+    kicker: "Safety · planned",
+    body: "Every save will become a new version, stamped with the moment. Production runs the pinned one. Roll back in one click. Shipping in a future release.",
     ic: <PinIcon />,
     accent: true,
   },
   {
-    title: "Eval & debug in one place.",
+    title: "Debug in one place.",
     kicker: "Visibility",
-    body: "Every run, every span, every token — traced, replayable, scorable. Built in, not a separate $400/mo tool.",
+    body: "Every run, every span, every token — traced and replayable in-process. Built in, not a separate $400/mo tool.",
     ic: <EyeIcon />,
   },
   {
     title: "Run it anywhere.",
     kicker: "Trust",
-    body: "Docker, Kubernetes, your cloud, our cloud, your laptop. Bring your own Postgres or SQLite — same framework everywhere.",
+    body: "Node 20+, Docker, your laptop. In-memory by default, swap in SQLite or Postgres when you need persistence — same code, same YAML.",
     ic: <ServerIcon />,
   },
 ];

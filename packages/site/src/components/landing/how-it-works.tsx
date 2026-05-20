@@ -16,9 +16,9 @@ const STEPS: Step[] = [
   {
     n: 1,
     t: "Define your agent",
-    d: "Author in YAML, the UI, or via SDK. Every save creates a new version in your store.",
+    d: "Drop a YAML file in ./agents. The runner loads everything in that directory at startup.",
     lang: "yaml",
-    filename: "support-agent.yaml",
+    filename: "agents/support-agent.yaml",
     code: `id: support-agent
 name: Support Triager
 kind: llm
@@ -32,47 +32,44 @@ instruction: |
   Triage support emails and draft
   a friendly, accurate reply.
 
+  {{userQuery}}
+
 tools:
   - kind: local
     tools: [lookup_customer, search_kb]`,
   },
   {
     n: 2,
-    t: "Call it from your code",
-    d: "One call from any service, edge function, or worker. The runtime resolves the active version.",
+    t: "Run it from your code",
+    d: "Five lines, no server. Pass local tool handlers in the same factory call.",
     lang: "ts",
     filename: "app.ts",
-    code: `import { AgntzClient } from '@agntz/sdk';
+    code: `import { agntz } from '@agntz/runner';
 
-const agntz = new AgntzClient({
-  apiKey: process.env.AGNTZ_API_KEY!,
+const client = await agntz({
+  agents: './agents',
+  tools: { lookup_customer, search_kb },
 });
 
-const { output } = await agntz.agents.run({
+const { output } = await client.agents.run({
   agentId: 'support-agent',
-  input: {
-    message: email.body,
-    customerId: email.from,
-  },
+  input: email.body,
 });`,
   },
   {
     n: 3,
-    t: "Observe, iterate, pin",
-    d: "Every run is traced. Test against @latest. Pin the version that's ready. Roll back in a click.",
+    t: "Observe and iterate",
+    d: "Every run records a trace in-process. List runs, replay any one, stream events live as they happen.",
     lang: "ts",
-    filename: "test.ts",
-    code: `// Test the newest save before promoting
-await agntz.agents.run({
-  agentId: 'support-agent@latest',
-  input: { message },
-});
+    filename: "trace.ts",
+    code: `// List recent runs from the in-memory buffer
+const { rows } = await client.runs.list({ limit: 10 });
 
-// Or any version, by timestamp or alias
-await agntz.agents.run({
-  agentId: 'support-agent@known-good',
-  input: { message },
-});`,
+// Pull the full trace for any run
+const trace = await client.traces.get(rows[0].id);
+for (const span of trace?.spans ?? []) {
+  console.log(span.kind, span.name, span.durationMs);
+}`,
   },
 ];
 
@@ -178,7 +175,7 @@ export function HowItWorks({ accent = "blue" }: { accent?: AccentName }) {
 
       <Row gap={12} style={{ marginTop: 48, alignItems: "center" }}>
         <a
-          href="#"
+          href="/docs"
           style={{
             display: "inline-flex",
             alignItems: "center",
@@ -191,7 +188,7 @@ export function HowItWorks({ accent = "blue" }: { accent?: AccentName }) {
             paddingBottom: 2,
           }}
         >
-          View a live trace from this exact pipeline <ArrowIcon />
+          Read the full quickstart <ArrowIcon />
         </a>
       </Row>
     </Section>

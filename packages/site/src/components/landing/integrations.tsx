@@ -15,7 +15,7 @@ export function Integrations({ accent = "blue" }: { accent?: AccentName }) {
         Fits the stack you already have.
       </H2>
       <Lede style={{ marginBottom: 36 }}>
-        Confirmed integrations as of <Code>@agntz/sdk@1.0.0</Code>. Custom adapters via a thin
+        Confirmed integrations as of <Code>@agntz/runner@1.0.0</Code>. Custom adapters via a thin
         interface — three methods per store, one per model provider.
       </Lede>
       <div

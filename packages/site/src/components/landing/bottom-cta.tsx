@@ -3,9 +3,9 @@ import { Btn, Card, H1, Lede, Row, Section, Stack } from "./primitives";
 import { ArrowIcon, ExternalIcon, GithubIcon } from "./icons";
 
 const STEPS: [string, string][] = [
-  ["1.", "npm i @agntz/sdk"],
-  ["2.", "agntz init support-agent"],
-  ["3.", "agntz invoke support-agent 'hello'"],
+  ["1.", "npm i @agntz/runner"],
+  ["2.", "echo '...' > agents/support.yaml"],
+  ["3.", "agntz({ agents: './agents' })"],
 ];
 
 export function BottomCTA({ accent = "blue" }: { accent?: AccentName }) {
@@ -51,16 +51,17 @@ export function BottomCTA({ accent = "blue" }: { accent?: AccentName }) {
               <span style={{ color: ACCENTS[accent].bg }}>in five minutes.</span>
             </H1>
             <Lede style={{ color: "rgba(244,241,233,0.7)", maxWidth: 540, fontSize: 18 }}>
-              Open source. MIT licensed. Self-host the whole stack, or use the hosted version.
-              Every save versioned. Every run traced. From day one.
+              Open source. MIT licensed. One YAML file, one factory call, zero infrastructure.
+              Every run traced in-process. Graduate to the hosted runtime when you outgrow embedded mode.
             </Lede>
             <Row gap={10} style={{ marginTop: 4, flexWrap: "wrap" }}>
               <Btn
                 primary
                 size="lg"
+                href="/docs"
                 style={{ background: TOKENS.bg, color: TOKENS.ink, borderColor: TOKENS.bg }}
               >
-                Get started <ArrowIcon />
+                Read the quickstart <ArrowIcon />
               </Btn>
               <Btn
                 size="lg"
@@ -72,13 +73,7 @@ export function BottomCTA({ accent = "blue" }: { accent?: AccentName }) {
                   borderColor: "rgba(244,241,233,0.3)",
                 }}
               >
-                View on GitHub
-              </Btn>
-              <Btn
-                size="lg"
-                style={{ background: "transparent", color: TOKENS.bg, borderColor: "transparent" }}
-              >
-                Read the docs <ExternalIcon />
+                View on GitHub <ExternalIcon />
               </Btn>
             </Row>
           </Stack>
@@ -131,7 +126,7 @@ export function BottomCTA({ accent = "blue" }: { accent?: AccentName }) {
                 lineHeight: 1.5,
               }}
             >
-              First traced run takes ~5s. Versioned automatically. Pin it when you&apos;re ready.
+              First traced run in under a minute. No server, no signup, no API key — bring your own model.
             </p>
           </Card>
         </div>

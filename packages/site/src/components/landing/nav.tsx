@@ -10,6 +10,8 @@ const NAV_LINKS: [string, string][] = [
   ["Blog", "#"],
 ];
 
+const GITHUB_STARS = 0;
+
 export function Nav() {
   return (
     <div
@@ -67,13 +69,14 @@ export function Nav() {
             }}
           >
             <GithubIcon />
-            <span style={{ fontFamily: "var(--mono)", fontSize: 12 }}>2,847</span>
+            {GITHUB_STARS > 0 && (
+              <span style={{ fontFamily: "var(--mono)", fontSize: 12 }}>
+                {GITHUB_STARS.toLocaleString()}
+              </span>
+            )}
           </a>
-          <a href="#" style={{ color: TOKENS.text2, fontSize: 13.5, textDecoration: "none" }}>
-            Sign in
-          </a>
-          <Btn primary size="sm">
-            Get started <ArrowIcon />
+          <Btn primary size="sm" href="/docs">
+            Read the docs <ArrowIcon />
           </Btn>
         </Row>
       </div>
