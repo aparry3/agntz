@@ -1,4 +1,5 @@
 import { createRunner, SpanEmitter } from "@agntz/core";
+import type { TokenCache } from "@agntz/core";
 import type {
   Runner,
   InvokeResult,
@@ -41,6 +42,13 @@ export interface AgntzLocalOptions {
   tracesCapacity?: number;
   onEvent?: (event: CoreStreamEvent) => void;
   store?: UnifiedStore;
+  /**
+   * Cache backend for HTTP tool auth tokens (oauth2_client_credentials /
+   * token_exchange). Defaults to an in-memory MapTokenCache. Swap in a
+   * persistent backend for hosted deployments to avoid token churn on
+   * cold starts.
+   */
+  tokenCache?: TokenCache;
 }
 
 export interface LocalClient {
@@ -78,6 +86,7 @@ export async function agntz(opts: AgntzLocalOptions): Promise<LocalClient> {
     envProvider,
     modelProvider: opts.modelProvider,
     store: opts.store,
+    tokenCache: opts.tokenCache,
   });
 
   // Register LLM agents up-front so spawn / agent-as-tool refs resolve. Non-
