@@ -8,7 +8,7 @@ import type {
   TraceFilter,
   TraceSummary,
   TracesListResult,
-} from "@agntz/sdk";
+} from "@agntz/client";
 import type { InvokeResult } from "@agntz/core";
 
 /**

@@ -1,353 +1,438 @@
-import { StreamError } from "./errors.js";
-import { normalizeEvent, normalizeRunEvent, normalizeTraceLiveEvent } from "./events.js";
-import { composeSignal, sendRequest } from "./fetch.js";
-import { parseSSE } from "./sse.js";
+import { createRunner, SpanEmitter } from "@agntz/core";
+import type { TokenCache } from "@agntz/core";
 import type {
-  AgntzClientOptions,
-  HealthResult,
-  MultiplexedRunEvent,
+  Runner,
+  InvokeResult,
+  ModelProvider,
+  StreamEvent as CoreStreamEvent,
+  ToolDefinition,
+  UnifiedStore,
+  Reply,
+} from "@agntz/core";
+import { execute, type AgentManifest } from "@agntz/manifest";
+import { renderTemplate, createInitialState } from "@agntz/manifest";
+import type {
   Run,
   RunInput,
   RunListFilter,
   RunListResult,
   RunResult,
-  RunsStartInput,
-  RunsStreamInput,
   StreamEvent,
   TraceDetail,
   TraceFilter,
-  TraceLiveEvent,
   TracesListResult,
-} from "./types.js";
+} from "@agntz/client";
+import { loadManifestsFromDir } from "./loader.js";
+import { manifestToAgentDefinition } from "./manifest-to-agent.js";
+import { toolMapToDefinitions, type LocalToolMap } from "./tools.js";
+import {
+  buildRunRecord,
+  RunsBuffer,
+  TracesBuffer,
+} from "./buffers.js";
+import { createExecutionContext } from "./bridge.js";
+import { createTraceAggregator } from "./trace-aggregator.js";
 
-export class AgntzClient {
-  readonly agents: AgentsResource;
-  readonly runs: RunsResource;
-  readonly traces: TracesResource;
-  private readonly apiKey: string;
-  private readonly baseUrl: string;
-  private readonly fetchImpl: typeof fetch;
-  private readonly defaultSignal?: AbortSignal;
+export interface AgntzLocalOptions {
+  agents: string;
+  tools?: LocalToolMap;
+  envProvider?: (name: string) => string | undefined;
+  modelProvider?: ModelProvider;
+  runsCapacity?: number;
+  tracesCapacity?: number;
+  onEvent?: (event: CoreStreamEvent) => void;
+  store?: UnifiedStore;
+  /**
+   * Cache backend for HTTP tool auth tokens (oauth2_client_credentials /
+   * token_exchange). Defaults to an in-memory MapTokenCache. Swap in a
+   * persistent backend for hosted deployments to avoid token churn on
+   * cold starts.
+   */
+  tokenCache?: TokenCache;
+}
 
-  constructor(opts: AgntzClientOptions) {
-    if (!opts.apiKey) throw new Error("AgntzClient: apiKey is required");
-    if (!opts.baseUrl) throw new Error("AgntzClient: baseUrl is required");
-    this.apiKey = opts.apiKey;
-    this.baseUrl = opts.baseUrl;
-    this.fetchImpl = opts.fetch ?? fetch;
-    this.defaultSignal = opts.defaultSignal;
-    this.agents = new AgentsResource(this);
-    this.runs = new RunsResource(this);
-    this.traces = new TracesResource(this);
+export interface LocalClient {
+  readonly agents: LocalAgentsResource;
+  readonly runs: LocalRunsResource;
+  readonly traces: LocalTracesResource;
+  readonly manifests: ReadonlyMap<string, AgentManifest>;
+  readonly _runner: Runner;
+}
+
+export interface LocalAgentsResource {
+  run(input: RunInput): Promise<RunResult>;
+  stream(input: RunInput): AsyncGenerator<StreamEvent, void, void>;
+}
+
+export interface LocalRunsResource {
+  list(filter?: RunListFilter): Promise<RunListResult>;
+  get(id: string): Promise<Run | null>;
+}
+
+export interface LocalTracesResource {
+  list(filter?: TraceFilter): Promise<TracesListResult>;
+  get(traceId: string): Promise<TraceDetail | null>;
+}
+
+export async function agntz(opts: AgntzLocalOptions): Promise<LocalClient> {
+  const manifests = await loadManifestsFromDir(opts.agents);
+  const localToolNames = new Set(Object.keys(opts.tools ?? {}));
+  const toolDefs = opts.tools ? toolMapToDefinitions(opts.tools) : [];
+
+  const envProvider = opts.envProvider ?? ((name: string) => process.env[name]);
+
+  const runner = createRunner({
+    tools: toolDefs,
+    envProvider,
+    modelProvider: opts.modelProvider,
+    store: opts.store,
+    tokenCache: opts.tokenCache,
+  });
+
+  // Register LLM agents up-front so spawn / agent-as-tool refs resolve. Non-
+  // LLM kinds are dispatched through the manifest executor at run time and
+  // don't need a pre-registration step.
+  for (const manifest of manifests.values()) {
+    if (manifest.kind === "llm") {
+      const def = manifestToAgentDefinition(manifest, localToolNames);
+      runner.registerAgent(def);
+    }
   }
 
-  /** @internal */
-  get _apiKey(): string { return this.apiKey; }
-  /** @internal */
-  get _baseUrl(): string { return this.baseUrl; }
-  /** @internal */
-  get _fetchImpl(): typeof fetch { return this.fetchImpl; }
-  /** @internal */
-  _composeSignal(signal?: AbortSignal): AbortSignal | undefined {
-    return composeSignal(this.defaultSignal, signal);
-  }
+  // Build local tool name → ToolDefinition map for pipeline tool steps.
+  const localToolsMap = new Map<string, ToolDefinition>(
+    toolDefs.map((t) => [t.name, t]),
+  );
 
-  async health(): Promise<HealthResult> {
-    const res = await sendRequest({
-      baseUrl: this.baseUrl,
-      path: "/health",
-      method: "GET",
-      fetchImpl: this.fetchImpl,
-      signal: this.defaultSignal,
-    });
-    return (await res.json()) as HealthResult;
-  }
+  return new LocalClientImpl(runner, manifests, localToolsMap, localToolNames, opts);
+}
 
-  /** @internal */
-  _runRequest(input: RunInput, stream: boolean): Promise<Response> {
-    const signal = composeSignal(this.defaultSignal, input.signal);
-    const body: Record<string, unknown> = { agentId: input.agentId };
-    if (input.input !== undefined) body.input = input.input;
-    if (input.sessionId !== undefined) body.sessionId = input.sessionId;
-    return sendRequest({
-      baseUrl: this.baseUrl,
-      path: stream ? "/run/stream" : "/run",
-      method: "POST",
-      apiKey: this.apiKey,
-      body,
-      signal,
-      accept: stream ? "text/event-stream" : undefined,
-      fetchImpl: this.fetchImpl,
-    });
-  }
+class LocalClientImpl implements LocalClient {
+  readonly agents: LocalAgentsResource;
+  readonly runs: LocalRunsResource;
+  readonly traces: LocalTracesResource;
+  constructor(
+    readonly _runner: Runner,
+    readonly manifests: ReadonlyMap<string, AgentManifest>,
+    localToolsMap: Map<string, ToolDefinition>,
+    localToolNames: Set<string>,
+    opts: AgntzLocalOptions,
+  ) {
+    const runsBuffer = new RunsBuffer({ capacity: opts.runsCapacity });
+    const tracesBuffer = new TracesBuffer({ capacity: opts.tracesCapacity });
+    const traceSink = createTraceAggregator(tracesBuffer);
 
-  /** @internal */
-  _resolveStreamSignal(input: RunInput): AbortSignal | undefined {
-    return composeSignal(this.defaultSignal, input.signal);
+    this.agents = new AgentsResourceImpl(
+      _runner,
+      manifests,
+      localToolsMap,
+      localToolNames,
+      runsBuffer,
+      traceSink,
+      opts.onEvent,
+    );
+    this.runs = new RunsResourceImpl(runsBuffer);
+    this.traces = new TracesResourceImpl(tracesBuffer);
   }
 }
 
-export class AgentsResource {
-  constructor(private readonly client: AgntzClient) {}
+class AgentsResourceImpl implements LocalAgentsResource {
+  constructor(
+    private readonly runner: Runner,
+    private readonly manifests: ReadonlyMap<string, AgentManifest>,
+    private readonly localTools: Map<string, ToolDefinition>,
+    private readonly localToolNames: Set<string>,
+    private readonly runsBuffer: RunsBuffer,
+    private readonly traceSink: (event: import("@agntz/client").TraceLiveEvent) => void,
+    private readonly onEvent: ((event: CoreStreamEvent) => void) | undefined,
+  ) {}
 
   async run(input: RunInput): Promise<RunResult> {
-    const res = await this.client._runRequest(input, false);
-    return (await res.json()) as RunResult;
-  }
+    const runId = generateRunId();
+    const startedAt = Date.now();
+    const inputAsString = inputToString(input.input);
+    const replies: Reply[] = [];
 
-  stream(input: RunInput): AsyncGenerator<StreamEvent, void, void> {
-    return streamAgentEvents(this.client, input);
-  }
-}
-
-export class RunsResource {
-  constructor(private readonly client: AgntzClient) {}
-
-  /** Start a run and return its handle immediately (status: "running"). */
-  async start(input: RunsStartInput): Promise<Run> {
-    const signal = this.client._composeSignal(input.signal);
-    const body: Record<string, unknown> = { agentId: input.agentId };
-    if (input.input !== undefined) body.input = input.input;
-    if (input.sessionId !== undefined) body.sessionId = input.sessionId;
-    if (input.callbackUrl !== undefined) body.callbackUrl = input.callbackUrl;
-    if (input.webhookSecretName !== undefined) body.webhookSecretName = input.webhookSecretName;
-    const res = await sendRequest({
-      baseUrl: this.client._baseUrl,
-      path: "/runs",
-      method: "POST",
-      apiKey: this.client._apiKey,
-      body,
-      signal,
-      fetchImpl: this.client._fetchImpl,
-    });
-    return (await res.json()) as Run;
-  }
-
-  /** Fetch the current state of a Run (live registry or durable store). */
-  async get(runId: string, opts: { signal?: AbortSignal } = {}): Promise<Run> {
-    const signal = this.client._composeSignal(opts.signal);
-    const res = await sendRequest({
-      baseUrl: this.client._baseUrl,
-      path: `/runs/${encodeURIComponent(runId)}`,
-      method: "GET",
-      apiKey: this.client._apiKey,
-      signal,
-      fetchImpl: this.client._fetchImpl,
-    });
-    return (await res.json()) as Run;
-  }
-
-  /**
-   * Stream multiplexed events for a Run's subtree. Pass `since` to resume
-   * from a specific seq after a reconnect. If the Run has been evicted, the
-   * stream emits a single `snapshot` event and closes.
-   */
-  stream(input: RunsStreamInput): AsyncGenerator<MultiplexedRunEvent, void, void> {
-    return streamRunEvents(this.client, input);
-  }
-
-  /** Cancel a Run and cascade to all descendants. */
-  async cancel(runId: string, opts: { signal?: AbortSignal } = {}): Promise<Run> {
-    const signal = this.client._composeSignal(opts.signal);
-    const res = await sendRequest({
-      baseUrl: this.client._baseUrl,
-      path: `/runs/${encodeURIComponent(runId)}/cancel`,
-      method: "POST",
-      apiKey: this.client._apiKey,
-      signal,
-      fetchImpl: this.client._fetchImpl,
-    });
-    return (await res.json()) as Run;
-  }
-
-  /** List runs for the authenticated user, with optional filters and cursor-based pagination. */
-  async list(
-    filter: RunListFilter = {},
-    opts: { signal?: AbortSignal } = {},
-  ): Promise<RunListResult> {
-    const signal = this.client._composeSignal(opts.signal);
-    const qs = new URLSearchParams();
-    if (filter.rootsOnly !== undefined) qs.set("rootsOnly", String(filter.rootsOnly));
-    if (filter.agentId) qs.set("agentId", filter.agentId);
-    if (filter.status) qs.set("status", filter.status);
-    if (filter.startedAfter) qs.set("startedAfter", filter.startedAfter);
-    if (filter.startedBefore) qs.set("startedBefore", filter.startedBefore);
-    if (filter.limit !== undefined) qs.set("limit", String(filter.limit));
-    if (filter.cursor) qs.set("cursor", filter.cursor);
-
-    const path = qs.toString() ? `/runs?${qs.toString()}` : "/runs";
-    const res = await sendRequest({
-      baseUrl: this.client._baseUrl,
-      path,
-      method: "GET",
-      apiKey: this.client._apiKey,
-      signal,
-      fetchImpl: this.client._fetchImpl,
-    });
-    return (await res.json()) as RunListResult;
-  }
-}
-
-export class TracesResource {
-  constructor(private readonly client: AgntzClient) {}
-
-  async list(
-    filter: TraceFilter = {},
-    opts: { signal?: AbortSignal } = {},
-  ): Promise<TracesListResult> {
-    const signal = this.client._composeSignal(opts.signal);
-    const qs = encodeTraceFilter(filter);
-    const res = await sendRequest({
-      baseUrl: this.client._baseUrl,
-      path: qs ? `/traces?${qs}` : "/traces",
-      method: "GET",
-      apiKey: this.client._apiKey,
-      signal,
-      fetchImpl: this.client._fetchImpl,
-    });
-    return (await res.json()) as TracesListResult;
-  }
-
-  async get(traceId: string, opts: { signal?: AbortSignal } = {}): Promise<TraceDetail> {
-    const signal = this.client._composeSignal(opts.signal);
-    const res = await sendRequest({
-      baseUrl: this.client._baseUrl,
-      path: `/traces/${encodeURIComponent(traceId)}`,
-      method: "GET",
-      apiKey: this.client._apiKey,
-      signal,
-      fetchImpl: this.client._fetchImpl,
-    });
-    return (await res.json()) as TraceDetail;
-  }
-
-  stream(
-    traceId: string,
-    opts: { signal?: AbortSignal } = {},
-  ): AsyncGenerator<TraceLiveEvent, void, void> {
-    return streamTraceEvents(this.client, traceId, opts.signal);
-  }
-
-  async delete(traceId: string, opts: { signal?: AbortSignal } = {}): Promise<void> {
-    const signal = this.client._composeSignal(opts.signal);
-    await sendRequest({
-      baseUrl: this.client._baseUrl,
-      path: `/traces/${encodeURIComponent(traceId)}`,
-      method: "DELETE",
-      apiKey: this.client._apiKey,
-      signal,
-      fetchImpl: this.client._fetchImpl,
-    });
-  }
-}
-
-function encodeTraceFilter(filter: TraceFilter): string {
-  const params = new URLSearchParams();
-  if (filter.agentId !== undefined) params.set("agentId", filter.agentId);
-  if (filter.status !== undefined) params.set("status", filter.status);
-  if (filter.startedAfter !== undefined) params.set("startedAfter", filter.startedAfter);
-  if (filter.startedBefore !== undefined) params.set("startedBefore", filter.startedBefore);
-  if (filter.limit !== undefined) params.set("limit", String(filter.limit));
-  if (filter.cursor !== undefined) params.set("cursor", filter.cursor);
-  return params.toString();
-}
-
-async function* streamTraceEvents(
-  client: AgntzClient,
-  traceId: string,
-  signalIn?: AbortSignal,
-): AsyncGenerator<TraceLiveEvent, void, void> {
-  const signal = client._composeSignal(signalIn);
-  const res = await sendRequest({
-    baseUrl: client._baseUrl,
-    path: `/traces/${encodeURIComponent(traceId)}/stream`,
-    method: "GET",
-    apiKey: client._apiKey,
-    signal,
-    accept: "text/event-stream",
-    fetchImpl: client._fetchImpl,
-  });
-  if (!res.body) {
-    throw new StreamError("Worker returned no stream body", { status: res.status });
-  }
-
-  for await (const frame of parseSSE(res.body, signal)) {
-    const ev = normalizeTraceLiveEvent(frame);
-    if (!ev) continue;
-    yield ev;
-    // snapshot and trace-done both terminate the stream.
-    if (ev.type === "snapshot" || ev.type === "trace-done") return;
-  }
-}
-
-async function* streamRunEvents(
-  client: AgntzClient,
-  input: RunsStreamInput,
-): AsyncGenerator<MultiplexedRunEvent, void, void> {
-  const signal = client._composeSignal(input.signal);
-  const path =
-    `/runs/${encodeURIComponent(input.runId)}/stream` +
-    (typeof input.since === "number" ? `?since=${input.since}` : "");
-  const res = await sendRequest({
-    baseUrl: client._baseUrl,
-    path,
-    method: "GET",
-    apiKey: client._apiKey,
-    signal,
-    accept: "text/event-stream",
-    fetchImpl: client._fetchImpl,
-  });
-  if (!res.body) {
-    throw new StreamError("Worker returned no stream body", { status: res.status });
-  }
-
-  for await (const frame of parseSSE(res.body, signal)) {
-    const ev = normalizeRunEvent(frame);
-    if (!ev) continue;
-    yield ev;
-    if (ev.type === "snapshot" || ev.type === "run-complete" || ev.type === "run-error" || ev.type === "run-cancelled") {
-      // For root terminal or snapshot, close the iterator cleanly.
-      if (ev.type === "snapshot" || ev.runId === input.runId) {
-        return;
-      }
+    let manifest: AgentManifest;
+    try {
+      manifest = this.requireManifest(input.agentId);
+    } catch (e) {
+      const endedAt = Date.now();
+      this.runsBuffer.record(
+        buildRunRecord({
+          runId,
+          agentId: input.agentId,
+          inputAsString,
+          status: "failed",
+          error: e instanceof Error ? e.message : String(e),
+          startedAt,
+          endedAt,
+        }),
+      );
+      throw e;
     }
-  }
-}
 
-async function* streamAgentEvents(
-  client: AgntzClient,
-  input: RunInput,
-): AsyncGenerator<StreamEvent, void, void> {
-  const res = await client._runRequest(input, true);
-  if (!res.body) {
-    throw new StreamError("Worker returned no stream body", { status: res.status });
-  }
-  const signal = client._resolveStreamSignal(input);
-  let sawTerminal = false;
-  let aborted = false;
-  const onAbort = () => {
-    aborted = true;
-  };
-  if (signal) {
-    if (signal.aborted) aborted = true;
-    else signal.addEventListener("abort", onAbort, { once: true });
-  }
-  try {
-    for await (const frame of parseSSE(res.body, signal)) {
-      const event = normalizeEvent(frame);
-      if (!event) continue;
-      if (event.type === "complete" || event.type === "error") {
-        sawTerminal = true;
-      }
-      yield event;
-      if (sawTerminal) return;
-    }
-    if (!sawTerminal && !aborted) {
-      throw new StreamError("Stream closed before completion", {
-        code: "STREAM_TRUNCATED",
+    const spanEmitter = new SpanEmitter({ traceSink: this.traceSink });
+    const sessionId = input.sessionId ?? generateSessionId();
+
+    try {
+      const ctx = createExecutionContext(this.runner, this.manifests, this.localToolNames, {
+        spanEmitter,
+        sessionId,
+        signal: input.signal,
+        localTools: this.localTools,
+        replyCollector: replies,
       });
+      const result = await execute(manifest, input.input ?? "", ctx);
+      const endedAt = Date.now();
+      const synthetic: InvokeResult = synthesizeInvokeResult({
+        output: result.output,
+        sessionId,
+        startedAt,
+        endedAt,
+        model: manifest.kind === "llm" ? `${manifest.model.provider}/${manifest.model.name}` : "(pipeline)",
+        replies: replies.length > 0 ? replies : undefined,
+      });
+      this.runsBuffer.record(
+        buildRunRecord({
+          runId,
+          agentId: input.agentId,
+          inputAsString,
+          status: "completed",
+          result: synthetic,
+          startedAt,
+          endedAt,
+        }),
+      );
+      return invokeResultToRunResult(synthetic, result.output);
+    } catch (e) {
+      const endedAt = Date.now();
+      const message = e instanceof Error ? e.message : String(e);
+      this.runsBuffer.record(
+        buildRunRecord({
+          runId,
+          agentId: input.agentId,
+          inputAsString,
+          status: "failed",
+          error: message,
+          startedAt,
+          endedAt,
+        }),
+      );
+      throw e;
     }
-  } finally {
-    if (signal) signal.removeEventListener("abort", onAbort);
+  }
+
+  async *stream(input: RunInput): AsyncGenerator<StreamEvent, void, void> {
+    const manifest = this.requireManifest(input.agentId);
+    const runId = generateRunId();
+    const startedAt = Date.now();
+    const inputAsString = inputToString(input.input);
+    const spanEmitter = new SpanEmitter({ traceSink: this.traceSink });
+
+    // Non-LLM kinds collapse to one `complete` event — the manifest
+    // executor's pipelines don't natively stream events. LLM agents go
+    // through runner.stream for native delta/reply emission.
+    if (manifest.kind !== "llm") {
+      if (input.sessionId) {
+        yield { type: "start", agentId: input.agentId, kind: manifest.kind, sessionId: input.sessionId };
+      }
+      try {
+        const result = await this.run(input);
+        yield {
+          type: "complete",
+          output: result.output,
+          state: result.state,
+          sessionId: result.sessionId,
+        };
+      } catch (e) {
+        const endedAt = Date.now();
+        const message = e instanceof Error ? e.message : String(e);
+        this.runsBuffer.record(
+          buildRunRecord({
+            runId,
+            agentId: input.agentId,
+            inputAsString,
+            status: "failed",
+            error: message,
+            startedAt,
+            endedAt,
+          }),
+        );
+        yield { type: "error", error: message };
+        throw e;
+      }
+      return;
+    }
+
+    // LLM streaming path — render template, register temp agent, stream.
+    const state = createInitialState(input.input ?? "", manifest.inputSchema);
+    const renderedInstruction = renderTemplate(manifest.instruction, state);
+    const tempId = `__stream_${manifest.id}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const def = manifestToAgentDefinition({ ...manifest, instruction: renderedInstruction }, this.localToolNames);
+    def.id = tempId;
+    def.userPromptTemplate = undefined;
+    this.runner.registerAgent(def);
+
+    if (input.sessionId) {
+      yield { type: "start", agentId: input.agentId, kind: "llm", sessionId: input.sessionId };
+    }
+    let finalResult: InvokeResult | undefined;
+    try {
+      const userInput =
+        manifest.prompt != null
+          ? renderTemplate(manifest.prompt, state)
+          : state.userQuery != null
+            ? String(state.userQuery)
+            : "";
+      const iter = this.runner.stream(tempId, userInput, {
+        sessionId: input.sessionId,
+        signal: input.signal,
+        spanEmitter,
+      });
+      for await (const event of iter) {
+        this.onEvent?.(event);
+        if (event.type === "done") finalResult = event.result;
+        const mapped = mapCoreStreamEvent(event);
+        if (mapped) yield mapped;
+      }
+      const endedAt = Date.now();
+      if (finalResult) {
+        this.runsBuffer.record(
+          buildRunRecord({
+            runId,
+            agentId: input.agentId,
+            inputAsString,
+            status: "completed",
+            result: finalResult,
+            startedAt,
+            endedAt,
+          }),
+        );
+      }
+    } catch (e) {
+      const endedAt = Date.now();
+      const message = e instanceof Error ? e.message : String(e);
+      this.runsBuffer.record(
+        buildRunRecord({
+          runId,
+          agentId: input.agentId,
+          inputAsString,
+          status: "failed",
+          error: message,
+          startedAt,
+          endedAt,
+        }),
+      );
+      yield { type: "error", error: message };
+      throw e;
+    } finally {
+      this.runner.deregisterAgent(tempId);
+    }
+  }
+
+  private requireManifest(agentId: string): AgentManifest {
+    const manifest = this.manifests.get(agentId);
+    if (!manifest) {
+      throw new Error(`Agent "${agentId}" not loaded from agents directory`);
+    }
+    return manifest;
+  }
+}
+
+class RunsResourceImpl implements LocalRunsResource {
+  constructor(private readonly buffer: RunsBuffer) {}
+  async list(filter: RunListFilter = {}): Promise<RunListResult> {
+    return this.buffer.list(filter);
+  }
+  async get(id: string): Promise<Run | null> {
+    return this.buffer.get(id);
+  }
+}
+
+class TracesResourceImpl implements LocalTracesResource {
+  constructor(private readonly buffer: TracesBuffer) {}
+  async list(filter: TraceFilter = {}): Promise<TracesListResult> {
+    return this.buffer.list(filter);
+  }
+  async get(traceId: string): Promise<TraceDetail | null> {
+    return this.buffer.get(traceId);
+  }
+}
+
+function generateRunId(): string {
+  return `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function generateSessionId(): string {
+  return `ses_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function inputToString(input: RunInput["input"]): string {
+  if (input == null) return "";
+  if (typeof input === "string") return input;
+  return JSON.stringify(input);
+}
+
+function invokeResultToRunResult(result: InvokeResult, output: unknown): RunResult {
+  return {
+    output,
+    state: {
+      invocationId: result.invocationId,
+      usage: result.usage,
+      duration: result.duration,
+      model: result.model,
+      toolCalls: result.toolCalls,
+    },
+    sessionId: result.sessionId,
+    replies: result.replies,
+  };
+}
+
+function synthesizeInvokeResult(args: {
+  output: unknown;
+  sessionId: string;
+  startedAt: number;
+  endedAt: number;
+  model: string;
+  replies?: Reply[];
+}): InvokeResult {
+  return {
+    output: typeof args.output === "string" ? args.output : JSON.stringify(args.output),
+    invocationId: `inv_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    sessionId: args.sessionId,
+    toolCalls: [],
+    usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    duration: args.endedAt - args.startedAt,
+    model: args.model,
+    replies: args.replies,
+  };
+}
+
+function mapCoreStreamEvent(event: CoreStreamEvent): StreamEvent | null {
+  switch (event.type) {
+    case "done":
+      return {
+        type: "complete",
+        output: event.result.output,
+        state: {
+          invocationId: event.result.invocationId,
+          usage: event.result.usage,
+          duration: event.result.duration,
+          model: event.result.model,
+          toolCalls: event.result.toolCalls,
+        },
+        sessionId: event.result.sessionId,
+      };
+    case "reply":
+      return {
+        type: "reply",
+        text: event.text,
+        ts: event.ts,
+        sessionId: event.sessionId,
+        runId: event.runId,
+      };
+    default:
+      return null;
   }
 }

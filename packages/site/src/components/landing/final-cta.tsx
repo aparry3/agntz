@@ -3,7 +3,7 @@ import { Btn, Card, H1, Lede, Row, Section, Stack } from "./primitives";
 import { ArrowIcon, ExternalIcon, GithubIcon } from "./icons";
 
 const STEPS: [string, string, string][] = [
-  ["1.", "npm i @agntz/runner", "install"],
+  ["1.", "npm i @agntz/sdk", "install"],
   ["2.", "echo 'id: hello' > agents/hello.yaml", "define"],
   ["3.", "runner.run(await runner.start('hello'))", "run"],
 ];
@@ -87,7 +87,7 @@ export function FinalCTA({ accent = "blue" }: { accent?: AccentName }) {
             >
               <span style={{ color: "rgba(244,241,233,0.45)" }}>$</span>
               <span style={{ color: "rgba(244,241,233,0.75)" }}>npm install</span>
-              <span style={{ color: TOKENS.bg }}>@agntz/runner</span>
+              <span style={{ color: TOKENS.bg }}>@agntz/sdk</span>
               <span
                 style={{
                   width: 1,

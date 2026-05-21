@@ -1,27 +1,27 @@
 # The HTTP SDK Client
 
-`@agntz/sdk` is the TypeScript HTTP client for the agntz Worker API. It is **separate** from `agntz` (the core SDK that runs the agent loop in-process) — use `@agntz/sdk` when you want to call a hosted worker from your application, in either Node or the browser.
+`@agntz/client` is the TypeScript HTTP client for the agntz Worker API. It is **separate** from `agntz` (the core SDK that runs the agent loop in-process) — use `@agntz/client` when you want to call a hosted worker from your application, in either Node or the browser.
 
 ```
-agntz                    @agntz/sdk
+agntz                    @agntz/client
 ─────                    ──────────
 in-process runner        HTTP client
 your app embeds          your app calls a remote worker
 ai-sdk → model           fetch → POST /runs → worker runs loop → SSE
 ```
 
-If you're hosting your own agents, you generally pick one. If you're using the agntz hosted product, you only ever use `@agntz/sdk`.
+If you're hosting your own agents, you generally pick one. If you're using the agntz hosted product, you only ever use `@agntz/client`.
 
 ## Install
 
 ```bash
-npm install @agntz/sdk
+npm install @agntz/client
 ```
 
 ## Create a client
 
 ```typescript
-import { AgntzClient } from "@agntz/sdk";
+import { AgntzClient } from "@agntz/client";
 
 const client = new AgntzClient({
   apiKey: process.env.AGNTZ_API_KEY!,        // ar_live_…
@@ -148,7 +148,7 @@ import {
   AuthenticationError,
   NotFoundError,
   StreamError,
-} from "@agntz/sdk";
+} from "@agntz/client";
 
 try {
   await client.runs.get("nonexistent");
@@ -180,19 +180,19 @@ import type {
   TraceLiveEvent,
   TraceSummary,
   MultiplexedRunEvent,
-} from "@agntz/sdk";
+} from "@agntz/client";
 ```
 
 These mirror the core types but are hand-maintained inside the SDK so the package has zero runtime dependency on `@agntz/core` — it's pure HTTP and SSE.
 
-## When to use `@agntz/sdk` vs `agntz`
+## When to use `@agntz/client` vs `agntz`
 
 | You want… | Use |
 |---|---|
 | To embed agents in your own Node service, manage your own DB | `agntz` |
-| To call agents hosted by the agntz worker from your app | `@agntz/sdk` |
-| To run agents in the browser | `@agntz/sdk` (the core SDK is Node-only) |
-| To build admin tooling that talks to the worker | `@agntz/sdk` |
+| To call agents hosted by the agntz worker from your app | `@agntz/client` |
+| To run agents in the browser | `@agntz/client` (the core SDK is Node-only) |
+| To build admin tooling that talks to the worker | `@agntz/client` |
 
 Both packages emit the same conceptual events — `text-delta`, `tool-call-start`, etc. — so logic that consumes them is portable between the two surfaces.
 

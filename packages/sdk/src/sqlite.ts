@@ -21,12 +21,12 @@ export interface SqliteStoreOptions {
  * sessions and invocation logs across process restarts.
  *
  * Requires `@agntz/store-sqlite` (and its `better-sqlite3` peer dep) to be
- * installed alongside `@agntz/runner`. Kept as a separate subpath export
+ * installed alongside `@agntz/sdk`. Kept as a separate subpath export
  * so users who don't need persistence don't pull in native bindings.
  *
  * ```ts
- * import { agntz } from "@agntz/runner";
- * import { sqliteStore } from "@agntz/runner/sqlite";
+ * import { agntz } from "@agntz/sdk";
+ * import { sqliteStore } from "@agntz/sdk/sqlite";
  *
  * const client = await agntz({
  *   agents: "./agents",

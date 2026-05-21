@@ -43,7 +43,7 @@ The app and the worker share the same Postgres. The app uses it directly for CRU
 
 | Artifact | Where it goes |
 |---|---|
-| `@agntz/core`, `@agntz/manifest`, `@agntz/sdk`, `@agntz/store-postgres`, `@agntz/store-sqlite` | **npm** — published via changesets + GitHub Actions |
+| `@agntz/core`, `@agntz/manifest`, `@agntz/client`, `@agntz/store-postgres`, `@agntz/store-sqlite` | **npm** — published via changesets + GitHub Actions |
 | `@agntz/worker` | Built and deployed as a service. Currently not published to npm (deployment-only) |
 | `@agntz/app` | Same — deployed as a service |
 | `@agntz/site` | Same |

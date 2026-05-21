@@ -1,4 +1,4 @@
-# Embedded Runner (`@agntz/runner`)
+# Embedded Runner (`@agntz/sdk`)
 
 **Status:** Proposed
 **Author:** Aaron + Claude
@@ -6,7 +6,7 @@
 
 ## Problem
 
-Today, the only way to run an agntz agent from your own code is via `@agntz/sdk`, which is a thin HTTP/SSE client to a hosted (or self-hosted) agntz server. That's right for production but heavy for "I want to try this in 5 lines of code." We want an embedded, in-process path:
+Today, the only way to run an agntz agent from your own code is via `@agntz/client`, which is a thin HTTP/SSE client to a hosted (or self-hosted) agntz server. That's right for production but heavy for "I want to try this in 5 lines of code." We want an embedded, in-process path:
 
 1. Install one package.
 2. Drop a YAML file in a directory.
@@ -18,12 +18,12 @@ When the developer eventually wants persistence, observability beyond a local bu
 
 | Choice | Decision |
 |---|---|
-| Package shape | Separate `@agntz/runner` package, not a mode of `@agntz/sdk` |
+| Package shape | Separate `@agntz/sdk` package, not a mode of `@agntz/client` |
 | Why separate | SDK is 76 KB / 0 runtime deps / universal; runner pulls ~60 MB of AI SDK providers (Node-only). Folding would destroy SDK's lightness and break its browser story. |
 | API surface | Parity with SDK on `.agents.run/stream`, `.runs.list/get`, `.traces.list/get`. No evals, no agent CRUD, no secrets vault. |
-| Type parity | Re-export `RunInput` / `RunResult` / `StreamEvent` / `TraceDetail` from `@agntz/sdk`. Graduation = one import line. |
+| Type parity | Re-export `RunInput` / `RunResult` / `StreamEvent` / `TraceDetail` from `@agntz/client`. Graduation = one import line. |
 | Tool wiring | YAML lists tool names (`kind: local`); init passes `{ name: handler }` map. Fail-fast at load time on missing names. |
-| Sessions | In-memory by default. Optional sqlite via `@agntz/runner/sqlite` subpath. |
+| Sessions | In-memory by default. Optional sqlite via `@agntz/sdk/sqlite` subpath. |
 | Traces | In-memory ring buffer + optional `onEvent` callback at init. |
 | YAML reload | Load-once at init. Dev restart picks up changes. |
 | Model auth | Env vars (AI SDK default: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc.). |
@@ -38,7 +38,7 @@ When the developer eventually wants persistence, observability beyond a local bu
        │
        │  agntz({ agents: "./agents", tools: {...} })
        ▼
-   @agntz/runner ── LocalClient ────────────────┐
+   @agntz/sdk ── LocalClient ────────────────┐
        │                                         │
        │  loads YAML files                       │  re-exports types
        ▼                                         │
@@ -56,7 +56,7 @@ When the developer eventually wants persistence, observability beyond a local bu
 ## Public API
 
 ```ts
-import { agntz } from "@agntz/runner";
+import { agntz } from "@agntz/sdk";
 
 const client = agntz({
   agents: "./agents",                            // dir of .yaml files (or array)
@@ -91,7 +91,7 @@ instruction: |
 TypeScript:
 
 ```ts
-import { agntz } from "@agntz/runner";
+import { agntz } from "@agntz/sdk";
 
 const client = agntz({ agents: "./agents" });
 const out = await client.agents.run({ agentId: "support", input: "How do I reset my password?" });
@@ -116,7 +116,7 @@ Add a parallel path for env vars:
 | Validator warning on missing env at parse time | Existing missing-secret warning |
 
 Defaults:
-- `@agntz/runner` factory wires `envProvider = (n) => process.env[n]`.
+- `@agntz/sdk` factory wires `envProvider = (n) => process.env[n]`.
 - Hosted server passes nothing — `{{env.X}}` references throw at runtime.
 - Self-host opt-in via server config.
 
@@ -126,7 +126,7 @@ Template engine itself requires no changes.
 
 ## What's reused vs. new
 
-| Reused | New in `@agntz/runner` |
+| Reused | New in `@agntz/sdk` |
 |---|---|
 | `@agntz/core` engine (run/invoke/stream, version refs, timeouts) | `agntz()` factory + `LocalClient` |
 | `@agntz/manifest` parser + `kind: local` schema | Disk loader (scan dir, parse, build registry) |
@@ -153,7 +153,7 @@ Lives in `@agntz/core` + `@agntz/manifest`. Useful independently for self-host.
 - Add `envProvider` to `RunnerOptions`; pre-fetch step parallel to secrets
 - Tests: HTTP headers, MCP headers, missing env throws, validator warning fires
 
-**Phase 2 — `@agntz/runner` package skeleton**
+**Phase 2 — `@agntz/sdk` package skeleton**
 - Package boilerplate (`package.json`, `tsup.config.ts`, exports)
 - `agntz()` factory + `LocalClient` class wrapping `@agntz/core` runner
 - Disk loader: scan dir, parse YAML, register agents by id
@@ -168,7 +168,7 @@ Lives in `@agntz/core` + `@agntz/manifest`. Useful independently for self-host.
 - Tests: multi-turn session, trace retrieval, ring-buffer eviction
 
 **Phase 4 — Optional sqlite subpath**
-- `@agntz/runner/sqlite` exports `sqliteStore(path)`
+- `@agntz/sdk/sqlite` exports `sqliteStore(path)`
 - Tests: persistence across process restarts
 
 **Phase 5 — Get-started docs**
@@ -179,7 +179,7 @@ Lives in `@agntz/core` + `@agntz/manifest`. Useful independently for self-host.
 ## Open questions
 
 1. **Versioning**: in embedded mode, what does `support@latest` resolve to? Lean: `@latest` = the YAML file as-is. `@<timestamp>` and aliases throw with `"version refs not supported in embedded mode"`. Worth confirming during Phase 2.
-2. **Package name**: `@agntz/runner` vs `@agntz/local` vs other. `runner` for now.
+2. **Package name**: `@agntz/sdk` vs `@agntz/local` vs other. `runner` for now.
 3. **Tool input validation**: do local tool handlers get zod-typed inputs from YAML `inputSchema`? Probably yes for parity with HTTP tool validation — but punt to a follow-up if it slows Phase 2.
 
 ## Out of scope
@@ -189,4 +189,4 @@ Lives in `@agntz/core` + `@agntz/manifest`. Useful independently for self-host.
 - Secrets vault (env vars *are* the vault in embedded mode)
 - Telemetry push to a hosted backend (`onEvent` is the hook for anyone who wants it)
 - Hot-reload of YAML during dev (decided: load once, dev restart on edits)
-- Browser support (Node-only; that's `@agntz/sdk`'s job)
+- Browser support (Node-only; that's `@agntz/client`'s job)

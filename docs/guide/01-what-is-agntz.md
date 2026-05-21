@@ -118,6 +118,6 @@ agntz isn't only an SDK. The hosted product is built from several packages that 
 | `@agntz/store-sqlite`, `@agntz/store-postgres` | Production store adapters. See [chapter 10](/guide/10-stores) |
 | `@agntz/worker` | HTTP service that owns all execution in the hosted stack. See [chapter 16](/guide/16-worker) |
 | `@agntz/app` | Next.js UI with Clerk auth and multi-tenant scoping. See [chapter 17](/guide/17-app) |
-| `@agntz/sdk` | HTTP client for calling the worker from your own apps. See [chapter 18](/guide/18-sdk-client) |
+| `@agntz/client` | HTTP client for calling the worker from your own apps. See [chapter 18](/guide/18-sdk-client) |
 
-If you're embedding agents in your own backend, you only need `agntz` (plus a store). If you're building on top of the hosted product, you only need `@agntz/sdk`. The chapters that follow cover both paths.
+If you're embedding agents in your own backend, you only need `agntz` (plus a store). If you're building on top of the hosted product, you only need `@agntz/client`. The chapters that follow cover both paths.

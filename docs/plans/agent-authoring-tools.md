@@ -27,7 +27,7 @@ Both wrap a new authoring SDK and route through a server-side **agent-builder ag
 | API surface | Builder path + raw CRUD both exposed |
 | Hosted MCP location | `<host>/mcp` route group in `packages/app` |
 | CLI binary | Extend existing `agntz`, lazy-load SDKs |
-| SDK split | `@agntz/sdk` stays runtime; new `@agntz/management` for authoring |
+| SDK split | `@agntz/client` stays runtime; new `@agntz/management` for authoring |
 | Self-hosting | Host configurable everywhere; auth-provider-agnostic |
 | Skill | Heavy guidance, focused on describing agents well |
 | Agent-builder | A first-class agntz agent, model-portable |
@@ -82,7 +82,7 @@ packages/
 │        └─ route.ts                       ← Streamable HTTP transport
 ├─ core/
 │  └─ src/cli.ts                           ← (EXTEND) add `auth`, `agents`, `traces`
-├─ sdk/                                    ← (UNCHANGED in shape) @agntz/sdk
+├─ sdk/                                    ← (UNCHANGED in shape) @agntz/client
 │  └─ AgntzClient — runtime: agents.run/.stream, runs.*, traces (read)
 ├─ management/                             ← (NEW) @agntz/management
 │  └─ AgntzManagementClient
@@ -202,7 +202,7 @@ New package. HTTP client over the agntz REST API, bearer-token auth.
 **Traces:**
 - `TracesResource.list(filter)`, `.get(id)` — for debugging runs
 
-Shared internals (HTTP, retry, auth, errors) factored into a private module. If duplication with `@agntz/sdk` becomes painful, extract `@agntz/sdk-core` later.
+Shared internals (HTTP, retry, auth, errors) factored into a private module. If duplication with `@agntz/client` becomes painful, extract `@agntz/client-core` later.
 
 **Acceptance:** end-to-end `curl`-equivalent tests passing against a local agntz instance.
 

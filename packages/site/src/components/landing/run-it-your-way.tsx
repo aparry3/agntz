@@ -17,7 +17,7 @@ type Option = {
 const OPTIONS: Option[] = [
   {
     tag: "local",
-    name: "@agntz/runner",
+    name: "@agntz/sdk",
     tagline: "Embed it in your Node app.",
     bullets: [
       "Embed in any service or worker",
@@ -26,7 +26,7 @@ const OPTIONS: Option[] = [
       "Trace JSON locally, no UI required",
     ],
     best: "Solo devs, internal tools, existing services.",
-    cmd: "npm i @agntz/runner",
+    cmd: "npm i @agntz/sdk",
     cta: "Read the runner docs",
     icon: <CodeIcon />,
   },

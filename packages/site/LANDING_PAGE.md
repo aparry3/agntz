@@ -1,6 +1,6 @@
 # agntz Landing Page — Design + Copy Spec
 
-Working document for the marketing landing page. Every code snippet matches the real `@agntz/sdk` and `@agntz/manifest` schemas as of 2026-05-17. Sections marked **Requires Path A** depend on product work outlined at the bottom — flag these to engineering before the page goes live.
+Working document for the marketing landing page. Every code snippet matches the real `@agntz/client` and `@agntz/manifest` schemas as of 2026-05-17. Sections marked **Requires Path A** depend on product work outlined at the bottom — flag these to engineering before the page goes live.
 
 ---
 
@@ -70,7 +70,7 @@ Each section advances a single thesis: **config + versioning + observability + p
 ### Hero code snippet
 
 ```ts
-import { AgntzClient } from '@agntz/sdk';
+import { AgntzClient } from '@agntz/client';
 
 const agntz = new AgntzClient({
   apiKey: process.env.AGNTZ_API_KEY!,
@@ -86,7 +86,7 @@ const { output } = await agntz.agents.run({
 
 ### Notes
 
-- Real package name: `@agntz/sdk`. Real class: `AgntzClient`. Real method: `client.agents.run({ agentId, input })`. Don't simplify away from these.
+- Real package name: `@agntz/client`. Real class: `AgntzClient`. Real method: `client.agents.run({ agentId, input })`. Don't simplify away from these.
 - Comment in the snippet ("Production always runs the pinned version") seeds the versioning story we expand on later.
 
 ---
@@ -160,7 +160,7 @@ tools:
 One call from any service, edge function, or worker. The runtime resolves the active version from your store.
 
 ```ts
-import { AgntzClient } from '@agntz/sdk';
+import { AgntzClient } from '@agntz/client';
 
 const agntz = new AgntzClient({
   apiKey: process.env.AGNTZ_API_KEY!,
@@ -496,4 +496,4 @@ Things still to nail down before publishing:
 
 ---
 
-*Last updated: 2026-05-17. Reflects `@agntz/sdk@1.0.0` and `@agntz/manifest@1.0.0` schemas.*
+*Last updated: 2026-05-17. Reflects `@agntz/client@1.0.0` and `@agntz/manifest@1.0.0` schemas.*

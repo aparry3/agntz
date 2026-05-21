@@ -27,7 +27,7 @@ tools:
     method: GET`;
 
 const HERO_RUNNER = `// runner.ts — call your existing APIs, run anywhere.
-import { Runner } from '@agntz/runner';
+import { Runner } from '@agntz/sdk';
 
 const runner = new Runner({
   agentsDir: './agents',
@@ -98,7 +98,7 @@ export function Hero({ accent = "blue" }: { accent?: AccentName }) {
           >
             <span style={{ color: TOKENS.muted }}>$</span>
             <span>
-              <span style={{ color: TOKENS.text2 }}>npm install</span> @agntz/runner
+              <span style={{ color: TOKENS.text2 }}>npm install</span> @agntz/sdk
             </span>
             <span style={{ width: 1, height: 16, background: TOKENS.line, margin: "0 4px" }} />
             <span
@@ -246,7 +246,7 @@ export function Hero({ accent = "blue" }: { accent?: AccentName }) {
                 </span>
               </Row>
               <span style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: TOKENS.muted }}>
-                {tab === "yaml" ? "weather-bot.yaml" : "@agntz/runner"}
+                {tab === "yaml" ? "weather-bot.yaml" : "@agntz/sdk"}
               </span>
             </Row>
           </div>

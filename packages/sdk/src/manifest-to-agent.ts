@@ -24,7 +24,7 @@ export function manifestToAgentDefinition(
 ): AgentDefinition {
   if (manifest.kind !== "llm") {
     throw new Error(
-      `Agent '${manifest.id}' has kind '${manifest.kind}' — only 'llm' agents are supported in @agntz/runner today.`,
+      `Agent '${manifest.id}' has kind '${manifest.kind}' — only 'llm' agents are supported in @agntz/sdk today.`,
     );
   }
   return llmManifestToAgentDefinition(manifest, localToolNames);
@@ -40,7 +40,7 @@ function llmManifestToAgentDefinition(
 
   if (manifest.skills && manifest.skills.length > 0) {
     throw new Error(
-      `Agent '${manifest.id}' declares skills — not yet supported in @agntz/runner (no SkillStore in embedded mode).`,
+      `Agent '${manifest.id}' declares skills — not yet supported in @agntz/sdk (no SkillStore in embedded mode).`,
     );
   }
 

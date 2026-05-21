@@ -109,10 +109,10 @@ The Worker exposes streaming on two endpoints:
 - `POST /run/stream` — one-shot synchronous run with SSE (events: `run-start`, `run-complete`/`run-error`)
 - `GET /runs/:id/stream` — multiplexed events for a tracked Run, with `?since=N` for resume
 
-`@agntz/sdk` wraps both with async-generator APIs (see [the SDK client chapter](/guide/18-sdk-client)):
+`@agntz/client` wraps both with async-generator APIs (see [the SDK client chapter](/guide/18-sdk-client)):
 
 ```typescript
-import { AgntzClient } from "@agntz/sdk";
+import { AgntzClient } from "@agntz/client";
 
 const client = new AgntzClient({ apiKey, baseUrl });
 

@@ -1,7 +1,7 @@
 {
   "name": "@agntz/sdk",
-  "version": "1.0.0",
-  "description": "Official TypeScript client for the agntz HTTP API. Universal (Node + browser), SSE streaming, AbortSignal-native.",
+  "version": "2.0.0",
+  "description": "Official agntz SDK. Run YAML agent manifests in-process with a five-line code path, or call the hosted agntz API. The library you build agntz apps with.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./sqlite": {
+      "types": "./dist/sqlite.d.ts",
+      "import": "./dist/sqlite.js"
     }
   },
   "files": [
@@ -29,8 +33,8 @@
     "ai",
     "agents",
     "sdk",
-    "sse",
-    "client"
+    "yaml",
+    "manifest"
   ],
   "license": "MIT",
   "repository": {
@@ -38,10 +42,28 @@
     "url": "https://github.com/aparry3/agntz.git",
     "directory": "packages/sdk"
   },
+  "homepage": "https://github.com/aparry3/agntz#readme",
+  "author": "Aaron Bidworthy",
   "publishConfig": {
     "access": "public"
   },
+  "dependencies": {
+    "yaml": "^2.8.0",
+    "zod": "^3.25.0",
+    "@agntz/core": "workspace:*",
+    "@agntz/manifest": "workspace:*",
+    "@agntz/client": "workspace:*"
+  },
+  "peerDependencies": {
+    "@agntz/store-sqlite": "workspace:*"
+  },
+  "peerDependenciesMeta": {
+    "@agntz/store-sqlite": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@agntz/store-sqlite": "workspace:*",
     "@biomejs/biome": "^1.9.0",
     "@types/node": "^22.0.0",
     "tsup": "^8.5.0",

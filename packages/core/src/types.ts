@@ -563,7 +563,7 @@ export interface RunnerConfig {
 
   /**
    * Resolves `{{env.<NAME>}}` template references in HTTP tool params/headers
-   * to their values. Embedded use cases (`@agntz/runner`) typically wire this
+   * to their values. Embedded use cases (`@agntz/sdk`) typically wire this
    * to `process.env`; hosted/multi-tenant servers leave it unset so env refs
    * throw at invoke time (prevents user manifests from reading server env).
    */

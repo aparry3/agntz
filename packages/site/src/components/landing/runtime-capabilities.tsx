@@ -179,7 +179,7 @@ export function RuntimeCapabilities({ accent = "blue" }: { accent?: AccentName }
         <Pill accent="green" dot mono>
           shipped
         </Pill>
-        <span>= in @agntz/runner@1.0.0.</span>
+        <span>= in @agntz/sdk@2.0.0.</span>
         <Pill accent="amber" dot mono>
           planned
         </Pill>

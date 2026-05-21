@@ -33,7 +33,7 @@ function plainResponse(text: string): GenerateTextResult {
 
 const noopTools = { add: async () => 0 };
 
-describe("@agntz/runner/sqlite — sqliteStore()", () => {
+describe("@agntz/sdk/sqlite — sqliteStore()", () => {
   it("runs an agent against a sqlite-backed store", async () => {
     const dir = mkdtempSync(join(tmpdir(), "runner-sqlite-"));
     const dbPath = join(dir, "agntz.db");

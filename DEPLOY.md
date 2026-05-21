@@ -35,6 +35,8 @@ Leftovers from the rename. Bundle these in a single PR.
 
 ## Phase 1 — Publish `@agntz/*` packages to npm
 
+> **Rename note (2026-05-21):** `@agntz/runner` → `@agntz/sdk` (now v2.x), and the old `@agntz/sdk` (HTTP client) → `@agntz/client` (v1.x). Both legacy npm names (`@agntz/runner`, the old `@agntz/sdk` v1.x) are deprecated. Publish the new packages and `npm deprecate` the old names with a pointer to their replacements.
+
 ### 1.1 npm account + org setup (one-time)
 
 - [ ] 🧑 Confirm you have an npm account with **2FA enabled** (required for publishing).
@@ -52,7 +54,7 @@ Leftovers from the rename. Bundle these in a single PR.
   ```sh
   pnpm changeset
   ```
-  Select all 5 publishable packages (`@agntz/core`, `@agntz/manifest`, `@agntz/sdk`, `@agntz/store-postgres`, `@agntz/store-sqlite`). Bump **minor** for each (first real release). Write a short note ("First public release after rename from agent-runner").
+  Select all 6 publishable packages (`@agntz/core`, `@agntz/manifest`, `@agntz/sdk`, `@agntz/client`, `@agntz/store-postgres`, `@agntz/store-sqlite`). Bump as appropriate for each. Note: `@agntz/sdk` is the embedded YAML runner (formerly `@agntz/runner`); `@agntz/client` is the HTTP client (formerly the old `@agntz/sdk`).
 - [ ] 🤖 Commit the generated `.changeset/<slug>.md`, open PR.
 
 ### 1.3 Release via CI
@@ -65,6 +67,7 @@ Leftovers from the rename. Bundle these in a single PR.
   npm view @agntz/core version
   npm view @agntz/manifest version
   npm view @agntz/sdk version
+  npm view @agntz/client version
   npm view @agntz/store-postgres version
   npm view @agntz/store-sqlite version
   ```

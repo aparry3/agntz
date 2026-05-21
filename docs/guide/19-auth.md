@@ -31,7 +31,7 @@ Used by:
 
 ### Mode 2 — External (third-party API caller)
 
-External clients (including `@agntz/sdk`) authenticate with a per-user API key:
+External clients (including `@agntz/client`) authenticate with a per-user API key:
 
 ```http
 POST /runs HTTP/1.1

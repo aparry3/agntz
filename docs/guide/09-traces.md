@@ -152,10 +152,10 @@ Cursor pagination uses base64url JSON `{ startedAt, traceId }` for stable orderi
 
 ## The SDK surface
 
-`@agntz/sdk`'s `TracesResource` (`packages/sdk/src/client.ts:189-240`):
+`@agntz/client`'s `TracesResource` (`packages/sdk/src/client.ts:189-240`):
 
 ```typescript
-import { AgntzClient } from "@agntz/sdk";
+import { AgntzClient } from "@agntz/client";
 
 const client = new AgntzClient({ apiKey, baseUrl });
 
@@ -205,7 +205,7 @@ The OTel integration ([chapter 21](/guide/21-telemetry)) and the in-app trace st
 | | In-app traces | OpenTelemetry |
 |---|---|---|
 | Storage | `TraceStore` (Postgres/memory) | Whatever OTel collector you ship to |
-| Access | App `/traces` UI, `@agntz/sdk` | Jaeger, Honeycomb, Datadog, etc. |
+| Access | App `/traces` UI, `@agntz/client` | Jaeger, Honeycomb, Datadog, etc. |
 | Schema | `Span` (this chapter) | OTel `Span` |
 | Off by default? | No — always on if a `TraceStore` is configured | Yes — opt-in via `RunnerConfig.telemetry` |
 | Privacy default | `recordIO: false` | `recordIO: false` |

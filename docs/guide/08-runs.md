@@ -2,7 +2,7 @@
 
 A **Run** is a tracked agent invocation. It has an id, a place in a tree (root or child), a lifecycle (`pending → running → draining → completed/failed/cancelled`), and a replay buffer of every event it emitted. Runs are independent of HTTP request lifetime — a client can disconnect, reconnect, and resume streaming from where it left off.
 
-If you've only used `runner.invoke()` from the SDK, you've been making "one-shot" calls that complete before the HTTP response closes. Runs are the durable, observable counterpart — and they're what the App's `/runs` UI, the `@agntz/sdk` `RunsResource`, and concurrent sub-agent spawning are all built on.
+If you've only used `runner.invoke()` from the SDK, you've been making "one-shot" calls that complete before the HTTP response closes. Runs are the durable, observable counterpart — and they're what the App's `/runs` UI, the `@agntz/client` `RunsResource`, and concurrent sub-agent spawning are all built on.
 
 ## Run vs Session vs Context
 
@@ -139,10 +139,10 @@ Note `POST /run` (no `s`) is the one-shot, synchronous endpoint that pre-dates R
 
 ## The SDK surface
 
-`@agntz/sdk`'s `RunsResource` mirrors the HTTP surface (`packages/sdk/src/client.ts:103-187`):
+`@agntz/client`'s `RunsResource` mirrors the HTTP surface (`packages/sdk/src/client.ts:103-187`):
 
 ```typescript
-import { AgntzClient } from "@agntz/sdk";
+import { AgntzClient } from "@agntz/client";
 
 const client = new AgntzClient({
   apiKey: "ar_live_…",

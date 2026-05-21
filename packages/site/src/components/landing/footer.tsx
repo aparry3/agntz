@@ -3,7 +3,7 @@ import { Row, Stack, Wordmark } from "./primitives";
 import { GithubIcon } from "./icons";
 
 const COLS = [
-  { h: "Runtime", items: ["@agntz/runner", "Manifest spec", "Tool kinds", "Sessions", "Tracing"] },
+  { h: "Runtime", items: ["@agntz/sdk", "Manifest spec", "Tool kinds", "Sessions", "Tracing"] },
   { h: "Hosted", items: ["Visual builder", "Versions", "Evals", "Team plans", "SLA"] },
   { h: "Self-host", items: ["Guide", "Docker", "Helm chart", "Architecture", "Upgrades"] },
   { h: "Resources", items: ["Docs", "Quickstart", "Examples", "Discord", "Blog"] },

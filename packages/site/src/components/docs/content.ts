@@ -8,7 +8,7 @@ export const DOCS_MARKDOWN = `# agntz documentation
 
 A complete guide to defining, running, and shipping AI agents with **agntz**.
 
-agntz is an open-source agent framework where agents are declared as YAML — not code — and run unchanged in three places: embedded in your app (\`@agntz/runner\`), on the hosted cloud (\`agntz.co\`), or on infrastructure you control (self-host). Every run is traced. Every save is a version. Bring your own model keys.
+agntz is an open-source agent framework where agents are declared as YAML — not code — and run unchanged in three places: embedded in your app (\`@agntz/sdk\`), on the hosted cloud (\`agntz.co\`), or on infrastructure you control (self-host). Every run is traced. Every save is a version. Bring your own model keys.
 
 These docs are optimized for both humans and LLMs. The same markdown is served verbatim at [/llms.txt](/llms.txt) for AI tools and agents.
 
@@ -24,26 +24,26 @@ These docs are optimized for both humans and LLMs. The same markdown is served v
 Three things stay the same as you scale from your laptop to production:
 
 1. **The YAML schema.** One \`manifest.yaml\` runs in embedded mode, hosted mode, and self-hosted mode.
-2. **The client API.** \`client.agents.run({ agentId, input })\` — same call against \`@agntz/runner\` and \`@agntz/sdk\`.
+2. **The client API.** \`client.agents.run({ agentId, input })\` — same call against \`@agntz/sdk\` and \`@agntz/client\`.
 3. **The observability model.** Runs, spans, and traces work identically in every edition.
 
 ## Choose your starting point
 
 | If you want to… | Use | Read |
 |---|---|---|
-| Run an agent on your laptop in 60 seconds | \`@agntz/runner\` | [Quickstart — local](#quickstart-local-runner) |
+| Run an agent on your laptop in 60 seconds | \`@agntz/sdk\` | [Quickstart — local](#quickstart-local-runner) |
 | Author and run agents in a hosted UI | agntz.co | [Hosted cloud](#hosted-cloud) |
-| Call hosted agents from your backend | \`@agntz/sdk\` | [Calling agents from code](#calling-agents-from-code) |
+| Call hosted agents from your backend | \`@agntz/client\` | [Calling agents from code](#calling-agents-from-code) |
 | Deploy your own hosted stack | Docker / Vercel + Railway | [Self-host](#self-host) |
 
 ## Install
 
 \`\`\`bash
 # Embedded: run agents in-process from YAML files
-pnpm add @agntz/runner
+pnpm add @agntz/sdk
 
 # Hosted client: call agents on agntz.co or your own worker
-pnpm add @agntz/sdk
+pnpm add @agntz/client
 
 # Optional persistence for embedded mode
 pnpm add @agntz/store-sqlite
@@ -63,7 +63,7 @@ agntz calls providers directly with your key — no proxy, no data routing.
 
 ## Quickstart — local runner
 
-The fastest path: write a YAML file, point \`@agntz/runner\` at the directory, call it. No server, no signup, no infrastructure.
+The fastest path: write a YAML file, point \`@agntz/sdk\` at the directory, call it. No server, no signup, no infrastructure.
 
 ### 1. Create an agent
 
@@ -82,7 +82,7 @@ instruction: |
 ### 2. Run it
 
 \`\`\`ts [index.ts]
-import { agntz } from "@agntz/runner";
+import { agntz } from "@agntz/sdk";
 
 const client = await agntz({ agents: "./agents" });
 
@@ -106,8 +106,8 @@ That's it. The runner parses every \`.yaml\` file under \`./agents\`, validates 
 When you outgrow embedded mode — durable run history, multi-user isolation, agent management UI — change one line:
 
 \`\`\`diff
-- import { agntz } from "@agntz/runner";
-+ import { agntz } from "@agntz/sdk";
+- import { agntz } from "@agntz/sdk";
++ import { agntz } from "@agntz/client";
 
 - const client = await agntz({ agents: "./agents" });
 + const client = agntz({ apiKey: process.env.AGNTZ_API_KEY });
@@ -709,12 +709,12 @@ Pipelines **fail fast**. If any step fails, the entire pipeline fails immediatel
 
 ## Calling agents from code
 
-The \`@agntz/runner\` and \`@agntz/sdk\` clients expose the same shape: \`client.agents\`, \`client.runs\`, \`client.traces\`. Code that's written against one runs against the other.
+The \`@agntz/sdk\` and \`@agntz/client\` clients expose the same shape: \`client.agents\`, \`client.runs\`, \`client.traces\`. Code that's written against one runs against the other.
 
-### Embedded — \`@agntz/runner\`
+### Embedded — \`@agntz/sdk\`
 
 \`\`\`ts
-import { agntz } from "@agntz/runner";
+import { agntz } from "@agntz/sdk";
 
 const client = await agntz({
   agents: "./agents",
@@ -744,10 +744,10 @@ const { rows } = await client.runs.list({ limit: 10 });
 const trace = await client.traces.get(rows[0].id);
 \`\`\`
 
-### Hosted — \`@agntz/sdk\`
+### Hosted — \`@agntz/client\`
 
 \`\`\`ts
-import { AgntzClient } from "@agntz/sdk";
+import { AgntzClient } from "@agntz/client";
 
 const client = new AgntzClient({
   apiKey: process.env.AGNTZ_API_KEY!,    // ar_live_...
@@ -793,8 +793,8 @@ await client.agents.run({ agentId: "support", input: "follow-up", sessionId: "us
 In embedded mode, sessions live in memory by default. For persistence, install \`@agntz/store-sqlite\` and use the \`sqlite\` subpath:
 
 \`\`\`ts
-import { agntz } from "@agntz/runner";
-import { sqliteStore } from "@agntz/runner/sqlite";
+import { agntz } from "@agntz/sdk";
+import { sqliteStore } from "@agntz/sdk/sqlite";
 
 const client = await agntz({
   agents: "./agents",
@@ -824,7 +824,7 @@ Always handle \`complete\` and \`error\` as terminal. \`break\` from a \`for awa
 ### Errors
 
 \`\`\`ts
-import { AgntzError, AuthenticationError, NotFoundError, StreamError } from "@agntz/sdk";
+import { AgntzError, AuthenticationError, NotFoundError, StreamError } from "@agntz/client";
 
 try {
   await client.agents.run({ agentId: "unknown", input: {} });
@@ -930,7 +930,7 @@ The hosted edition at **agntz.co** gives you the same runtime plus a managed mul
 Create an agent in the UI, then call it with the same SDK code you'd use locally — just point the SDK at the hosted worker:
 
 \`\`\`ts
-import { AgntzClient } from "@agntz/sdk";
+import { AgntzClient } from "@agntz/client";
 
 const client = new AgntzClient({
   apiKey: process.env.AGNTZ_API_KEY!,
@@ -1158,7 +1158,7 @@ Commands: \`.new\` (new session), \`.session\` (show id), \`.exit\` (quit).
 
 What runs where, today.
 
-| Feature | Embedded (\`@agntz/runner\`) | Hosted (\`agntz.co\` / self-host) |
+| Feature | Embedded (\`@agntz/sdk\`) | Hosted (\`agntz.co\` / self-host) |
 |---|:---:|:---:|
 | LLM agents | ✓ | ✓ |
 | Sequential / parallel / tool kinds | ✓ | ✓ |
@@ -1181,7 +1181,7 @@ What runs where, today.
 ## Resources
 
 - **GitHub:** [github.com/aparry3/agntz](https://github.com/aparry3/agntz) — source, issues, discussions.
-- **npm:** \`@agntz/runner\`, \`@agntz/sdk\`, \`@agntz/store-sqlite\`, \`@agntz/store-postgres\`, \`@agntz/manifest\`.
+- **npm:** \`@agntz/sdk\`, \`@agntz/client\`, \`@agntz/store-sqlite\`, \`@agntz/store-postgres\`, \`@agntz/manifest\`.
 - **Examples:** \`examples/agents/*.yaml\` in the repo — every agent kind demonstrated.
 - **License:** MIT.
 - **AI-friendly:** This page is also available as raw markdown at [/llms.txt](/llms.txt).

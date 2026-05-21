@@ -1,4 +1,4 @@
-import type { Span, TraceDetail, TraceLiveEvent, TraceSummary } from "@agntz/sdk";
+import type { Span, TraceDetail, TraceLiveEvent, TraceSummary } from "@agntz/client";
 import type { TracesBuffer } from "./buffers.js";
 
 interface PendingTrace {

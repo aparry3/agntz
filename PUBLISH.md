@@ -6,11 +6,12 @@ This is a focused reference for publishing the npm packages. For the full deploy
 
 | Directory | Package name | Version | Publish status |
 |---|---|---|---|
-| `packages/core` | `@agntz/core` | 0.1.2 | publishable |
-| `packages/manifest` | `@agntz/manifest` | 0.1.0 | publishable |
-| `packages/sdk` | `@agntz/sdk` | 0.1.0 | publishable |
-| `packages/store-postgres` | `@agntz/store-postgres` | 0.1.1 | publishable |
-| `packages/store-sqlite` | `@agntz/store-sqlite` | 0.1.1 | publishable |
+| `packages/core` | `@agntz/core` | 1.1.0 | publishable |
+| `packages/manifest` | `@agntz/manifest` | 2.0.0 | publishable |
+| `packages/sdk` | `@agntz/sdk` | 2.0.0 | publishable (was `@agntz/runner` v1.0.0; old `@agntz/runner` now deprecated on npm) |
+| `packages/client` | `@agntz/client` | 1.0.0 | publishable (was `@agntz/sdk` v1.0.0; old `@agntz/sdk` now deprecated on npm) |
+| `packages/store-postgres` | `@agntz/store-postgres` | 2.0.0 | publishable |
+| `packages/store-sqlite` | `@agntz/store-sqlite` | 2.0.0 | publishable |
 | `packages/worker` | `@agntz/worker` | 0.1.0 | private (deployed service) |
 | `packages/app` | `@agntz/app` | 0.1.0 | private (deployed service) |
 | `packages/site` | `@agntz/site` | 0.1.0 | private (deployed service) |
@@ -52,6 +53,7 @@ cd packages/core && npm publish
 cd ../store-postgres && npm publish
 cd ../store-sqlite && npm publish
 cd ../manifest && npm publish
+cd ../client && npm publish
 cd ../sdk && npm publish
 ```
 
@@ -63,6 +65,7 @@ Publish order matters for packages with `peerDependencies` on `@agntz/core`: pub
 npm view @agntz/core version
 npm view @agntz/manifest version
 npm view @agntz/sdk version
+npm view @agntz/client version
 npm view @agntz/store-postgres version
 npm view @agntz/store-sqlite version
 
