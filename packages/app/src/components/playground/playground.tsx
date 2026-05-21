@@ -80,8 +80,15 @@ export function Playground({
     return base;
   }, [sessions]);
 
+  // Set false on (re)mount, true on unmount. Reset on mount matters because
+  // React StrictMode in `next dev` does mount → cleanup → mount on initial
+  // render — without the reset, cancelledRef would be stuck at true and
+  // handleRun would break out of the SSE loop on the first event.
   const cancelledRef = useRef(false);
-  useEffect(() => () => { cancelledRef.current = true; }, []);
+  useEffect(() => {
+    cancelledRef.current = false;
+    return () => { cancelledRef.current = true; };
+  }, []);
 
   const handleRun = useCallback(async () => {
     if (running) return;
@@ -123,11 +130,17 @@ export function Playground({
         } else if (event.name === "run-complete") {
           const data = safeParse<RunResult>(event.data);
           if (data) setRunResult(data);
+          // Stop iterating once we've seen the terminal event — don't wait
+          // for the server to close the stream (Next.js dev can hold it open).
+          break;
         } else if (event.name === "run-error") {
           const data = safeParse<{ error?: string }>(event.data);
           setRunError(data?.error ?? "Unknown error");
+          break;
         }
       }
+      // Best-effort close so the underlying TCP connection is released.
+      await res.body.cancel().catch(() => {});
     } catch (err) {
       if (!cancelledRef.current) setRunError(err instanceof Error ? err.message : String(err));
     } finally {
