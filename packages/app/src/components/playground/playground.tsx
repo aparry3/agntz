@@ -5,6 +5,7 @@ import { EditableSelect } from "@/components/v3/editor/editable-fields";
 import { Btn, Mono, Spinner, ag } from "@/components/v3/primitives";
 import { I } from "@/components/v3/icons";
 import { InputForm } from "./input-form";
+import { LiveTrace } from "./live-trace";
 
 interface SessionSummary {
   sessionId: string;
@@ -224,6 +225,8 @@ export function Playground({
           <span style={{ whiteSpace: "pre-wrap" }}>{runError}</span>
         </div>
       )}
+
+      {traceId && <LiveTrace key={traceId} traceId={traceId} agentId={agentId} />}
 
       {replyStream.length > 0 && (
         <ResultPane label="Replies">
