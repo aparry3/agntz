@@ -59,7 +59,32 @@ steps:
         6. Parallel vs sequential — use parallel when steps are independent and
            their outputs are merged downstream; sequential when step N depends on
            step N-1's output.
-        7. Output mapping — what should the top-level agent expose? Name each
+        7. External integrations — scan the description for any of these signals
+           and decide tool kind + auth shape before the generator runs:
+             - "MCP server at <url>", "tools exposed at <url>", a list of named
+               tools from a single server → one `kind: mcp` entry with that
+               `server:` and the named tools. Decide per-tool whether to wrap
+               (rename / pin params from state).
+             - "API at <url>", "this endpoint", "POST/GET/fetch from <url>",
+               "REST API" → one `kind: http` entry per endpoint. Extract
+               URL placeholders ({X} required, {X?} optional) from path/query.
+               Decide method, body shape, and which placeholders to pin in
+               `params:` vs leave to the LLM.
+             - Credentials: classify exactly one auth shape per HTTP tool —
+               (a) static "API key / Bearer token" → templated header with
+               `{{secrets.NAME}}`, no `auth:` block;
+               (b) "client id + client secret", "OAuth2 client credentials",
+               "service-to-service" → `auth.type: oauth2_client_credentials`
+               with `token_url`, `client_id`, `client_secret` (both as
+               `{{secrets.X}}`), and optional `scope`;
+               (c) custom login endpoint, username+password, non-standard
+               token field → `auth.type: token_exchange` with `request`,
+               `extract.token_path`, and `apply`.
+               Name each secret you'll reference (`{{secrets.SF_CLIENT_ID}}`
+               etc.) so the generator emits consistent identifiers.
+             - Mix freely: one LLM agent can have an MCP block plus several
+               HTTP entries in the same `tools:` array.
+        8. Output mapping — what should the top-level agent expose? Name each
            field and point it at the right state path.
 
         Schema reference (read carefully — template syntax, condition syntax,
@@ -80,6 +105,7 @@ steps:
         steps: string
         branching: string
         dataFlow: string
+        integrations: string
         output: string
     input:
       schema: "{{loadSchema}}"
@@ -133,6 +159,36 @@ steps:
                 vice versa. To pass values down, use a step-level `input:` transform
                 whose keys exactly match the child agent's `inputSchema`.
 
+              EXTERNAL TOOL RULES (when the plan lists MCP servers, HTTP endpoints,
+              or credentials):
+              - MCP: emit one `kind: mcp` entry per server, with the named tools
+                listed. Wrap a tool (object form with `tool:` + optional `name`,
+                `description`, `params:`) only when pinning state-derived values
+                or hiding params from the LLM; otherwise list the tool name as a
+                plain string.
+              - HTTP: emit one `kind: http` entry per endpoint. Put required
+                placeholders in the URL as `{X}` and optional ones as `{X?}`.
+                Pin user-fixed values via `params:` (hidden from the LLM); leave
+                LLM-chosen values out of `params:` so they appear in the tool
+                schema. Set `method:` explicitly when not GET; set `body_type:`
+                when sending a body.
+              - Credentials: NEVER inline literal API keys, tokens, client ids,
+                client secrets, usernames, or passwords. Reference every
+                credential as `{{secrets.UPPER_SNAKE_CASE_NAME}}` (or
+                `{{env.NAME}}` only if the plan explicitly says env). Pick names
+                that describe the provider, e.g. `{{secrets.SF_CLIENT_ID}}`,
+                `{{secrets.GITHUB_TOKEN}}`.
+              - Auth shape: follow the plan exactly — static header for
+                Bearer/API-key, `auth.type: oauth2_client_credentials` for the
+                OAuth2 client-credentials grant, `auth.type: token_exchange` for
+                custom login flows. Do not invent an `auth:` block when the plan
+                says static header, and do not collapse OAuth2 down to a static
+                header even if the user pre-supplied a token.
+              - Tool-kind agents (`kind: tool`) use a single `tool:` block, not
+                a `tools:` array. For an HTTP tool agent, set `tool.kind: http`
+                with the same url/method/body/headers/auth shape as in an LLM's
+                `tools:` array.
+
               Schema reference:
               ---
               {{schema}}
@@ -148,6 +204,7 @@ steps:
               - Steps: {{plan.steps}}
               - Branching: {{plan.branching}}
               - Data flow: {{plan.dataFlow}}
+              - External integrations (MCP/HTTP/auth/secrets): {{plan.integrations}}
               - Output mapping: {{plan.output}}
 
               {{#if errors}}

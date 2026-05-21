@@ -206,24 +206,38 @@ outputSchema:
     enum: [positive, negative, neutral]
   confidence: number
 
-# Optional: tools available to the LLM
+# Optional: tools available to the LLM.
+# Four kinds — mcp / http / local / agent. Mix freely in one array.
 tools:
+  # MCP server — one or more tools from a remote MCP endpoint.
   - kind: mcp
     server: https://mcp.example.com/sse
-    tools:
-      - search
-      - tool: fetch            # wrapped tool
+    tools:                       # omit to expose every tool the server offers
+      - search                   # plain — passes through as-is
+      - tool: fetch              # wrapped — see "Tool wrapping" below
         name: fetch_for_user
         description: "Fetch URL"
         params:
-          api_key: "{{apiKey}}"  # pinned from state, hidden from LLM
+          api_key: "{{apiKey}}"
+
+  # HTTP endpoint — one URL as one tool. See "HTTP tools" below.
+  - kind: http
+    name: weather_lookup
+    url: "https://api.example.com/v1/forecast/{location}{?units}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{secrets.WEATHER_TOKEN}}"
+
+  # Local tools registered with the runner/worker by name.
   - kind: local
     tools: [calculator]
+
+  # Another agent exposed as a callable tool.
   - kind: agent
     agent: helper-agent
 ```
 
-### Tool wrapping
+### Tool wrapping (MCP)
 
 Pin parameters from state. The LLM sees a modified schema without the pinned params:
 
@@ -233,18 +247,121 @@ tools:
     server: https://api.example.com/mcp
     tools:
       - plain_tool                   # as-is
-      - tool: search                 # original name
+      - tool: search                 # original name (must match server)
         name: search_current_user    # optional: LLM sees this name
         description: "Search by query"  # optional: LLM sees this
         params:
           user_id: "{{userId}}"      # pinned, removed from LLM schema
 ```
 
-## Tool Agent
+### HTTP tools
 
-Deterministic function call. No LLM involved.
+A single HTTP endpoint exposed to the model as one tool. The LLM sees `http__<name>`.
+
+**URL placeholders** in `url:` derive the LLM-facing parameter schema:
+- `{X}` — required (path or query)
+- `{X?}` — optional (query only)
 
 ```yaml
+- kind: http
+  name: list_repos
+  url: "https://api.github.com/users/{username}/repos{?sort,per_page?}"
+  method: GET                       # default GET; also POST / PUT / PATCH / DELETE
+  description: "List public repos for a user"
+  headers:
+    Authorization: "Bearer {{secrets.GITHUB_TOKEN}}"
+```
+
+- **`params:`** — pin placeholders to state templates (same convention as MCP wrapping). Pinned keys are removed from the LLM schema.
+- **`headers:`** — values are state-templated. Reference credentials via `{{secrets.NAME}}` (host SecretStore) or `{{env.NAME}}` (process env).
+- **Body methods** (`POST`/`PUT`/`PATCH`/`DELETE`): set `body_type` (`json` default; also `form` or `query`) and a templated `body:` map.
+
+```yaml
+- kind: http
+  name: create_issue
+  url: "https://api.example.com/issues"
+  method: POST
+  body_type: json
+  body:
+    title: "{{issueTitle}}"
+    body: "{{issueBody}}"
+  headers:
+    Authorization: "Bearer {{secrets.API_TOKEN}}"
+```
+
+### HTTP authentication
+
+Static credentials (Bearer / Basic / API key) go in `headers:` via `{{secrets.X}}`. Dynamic credentials — anything that requires fetching a token first — go in an `auth:` block on the HTTP tool. The runner fetches, caches, and refreshes-on-401 automatically.
+
+**`oauth2_client_credentials`** — RFC 6749 §4.4 client-credentials grant. Use when the user mentions "client id + client secret", "OAuth2 client credentials", or "M2M / service-to-service auth":
+
+```yaml
+- kind: http
+  name: send_message
+  url: "https://api.salesforce.com/services/data/v60.0/sobjects/Message"
+  method: POST
+  body_type: json
+  body:
+    content: "{{message}}"
+  auth:
+    type: oauth2_client_credentials
+    token_url: "https://login.salesforce.com/services/oauth2/token"
+    client_id: "{{secrets.SF_CLIENT_ID}}"
+    client_secret: "{{secrets.SF_CLIENT_SECRET}}"
+    scope: "messages:write"           # optional
+    creds_location: basic_header      # default; or "body"
+    cache_ttl: 3000                   # optional, seconds
+    refresh_on: [401]                 # default
+```
+
+**`token_exchange`** — fully parametric. Use when the user describes a custom login endpoint, non-standard token field name, or username+password exchange:
+
+```yaml
+- kind: http
+  name: list_things
+  url: "https://api.example.com/things"
+  auth:
+    type: token_exchange
+    request:
+      url: "https://api.example.com/auth/login"
+      method: POST
+      body_type: json
+      body:
+        username: "{{secrets.API_USER}}"
+        password: "{{secrets.API_PASS}}"
+    extract:
+      response_format: json           # default; or "text" for raw-body tokens
+      token_path: "$.access_token"    # JSONPath; e.g. "$.token", "$.data.accessToken"
+      expires_path: "$.expires_in"    # optional, seconds
+    apply:
+      location: header                # default; or "query"
+      name: Authorization
+      format: "Bearer {token}"        # default for header; "{token}" for query
+```
+
+**Choosing an auth shape:**
+
+| User says…                                                  | Use                            |
+| ----------------------------------------------------------- | ------------------------------ |
+| "API key" / "Bearer token" / "I have a static token"        | header + `{{secrets.X}}`, no `auth:` block |
+| "client id and client secret" / "OAuth2" / "service auth"   | `oauth2_client_credentials`    |
+| "login with username+password and get a token" / custom token shape | `token_exchange`        |
+
+### Choosing tool kind
+
+- User describes an MCP server ("I have tools at &lt;mcp-url&gt;", "use the &lt;X&gt; and &lt;Y&gt; tools from &lt;server&gt;") → `kind: mcp` with that `server:` and the named tools.
+- User describes one or more HTTP API endpoints ("fetch from /users/{id}", "POST to this URL", "this REST API") → one `kind: http` entry per endpoint.
+- User names a tool that's been registered locally (calculator, date formatter, send_slack, etc.) → `kind: local`.
+- User wants one agent to delegate to another → `kind: agent`.
+
+Many real agents combine kinds — e.g. an MCP search server plus a couple of internal HTTP endpoints in the same `tools:` array.
+
+## Tool Agent
+
+Deterministic function call. No LLM involved. The `tool:` block accepts the same four kinds as an LLM's `tools:` array, but exactly one tool per agent.
+
+```yaml
+# MCP variant
 id: send-email
 kind: tool
 
@@ -254,13 +371,32 @@ inputSchema:
   body: string
 
 tool:
-  kind: mcp              # or local
+  kind: mcp
   server: https://email.example.com/mcp
   name: send_email
   params:
     to: "{{to}}"
     subject: "{{subject}}"
     body: "{{body}}"
+```
+
+```yaml
+# HTTP variant — fully deterministic API call, no LLM
+id: post-webhook
+kind: tool
+
+inputSchema:
+  payload: object
+
+tool:
+  kind: http
+  name: post_webhook
+  url: "https://hooks.example.com/incoming"
+  method: POST
+  body_type: json
+  body: "{{payload}}"
+  headers:
+    Authorization: "Bearer {{secrets.WEBHOOK_TOKEN}}"
 ```
 
 ## Sequential Agent
@@ -465,7 +601,7 @@ output:
 2. Steps must have either `ref` or `agent`, not both
 3. All `inputSchema` properties are required but nullable
 4. `until` and `maxIterations` only apply to sequential agents
-5. Template `{{}}` references state only — no env vars
+5. Template `{{}}` references state. Two special namespaces are also available in tool `params`, HTTP `headers`/`body`/`url`, and `auth:` blocks: `{{secrets.NAME}}` (host SecretStore) and `{{env.NAME}}` (process env). Never use these in `instruction:` — they're for credential plumbing, not LLM context.
 6. Skipped steps (via `when`) produce null output
 7. Pipelines fail fast — any step failure stops the pipeline
 8. `outputSchema` is for LLM structured output; `output` is for pipeline state mapping
