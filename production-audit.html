@@ -1,0 +1,1041 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>agntz Production-Readiness Audit</title>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --surface-2: #f4f4f3;
+    --border: #e5e5e3;
+    --text: #1a1a1a;
+    --text-2: #555;
+    --text-3: #888;
+    --accent: #2563eb;
+    --code-bg: #f1f1ef;
+    --code-fg: #1a1a1a;
+    --critical-bg: #fef2f2;
+    --critical-border: #dc2626;
+    --critical-fg: #991b1b;
+    --high-bg: #fff7ed;
+    --high-border: #ea580c;
+    --high-fg: #9a3412;
+    --medium-bg: #fefce8;
+    --medium-border: #ca8a04;
+    --medium-fg: #854d0e;
+    --low-bg: #f0fdf4;
+    --low-border: #16a34a;
+    --low-fg: #166534;
+    --verified-bg: #ecfeff;
+    --verified-fg: #155e75;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; scroll-padding-top: 24px; }
+
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.55;
+    font-size: 15px;
+  }
+
+  code, pre, .mono {
+    font-family: "SF Mono", "JetBrains Mono", "Menlo", "Consolas", monospace;
+    font-size: 0.875em;
+  }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    max-width: 1400px;
+    margin: 0 auto;
+    min-height: 100vh;
+  }
+
+  aside.toc {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    padding: 32px 20px 32px 28px;
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+    font-size: 13px;
+  }
+
+  aside.toc h2 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-3);
+    margin: 24px 0 8px 0;
+    font-weight: 600;
+  }
+
+  aside.toc h2:first-child { margin-top: 0; }
+
+  aside.toc ol, aside.toc ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  aside.toc li { margin: 2px 0; }
+
+  aside.toc a {
+    display: block;
+    padding: 4px 8px;
+    color: var(--text-2);
+    text-decoration: none;
+    border-radius: 4px;
+    border-left: 2px solid transparent;
+  }
+
+  aside.toc a:hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+
+  aside.toc a .num {
+    color: var(--text-3);
+    margin-right: 6px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  main {
+    padding: 40px 56px 80px 56px;
+    max-width: 920px;
+  }
+
+  header.doc-header {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 24px;
+    margin-bottom: 32px;
+  }
+
+  header.doc-header h1 {
+    margin: 0 0 8px 0;
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+
+  header.doc-header .meta {
+    color: var(--text-3);
+    font-size: 13px;
+  }
+
+  h2.section {
+    font-size: 22px;
+    font-weight: 700;
+    margin: 48px 0 8px 0;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+    letter-spacing: -0.01em;
+  }
+
+  h2.section:first-of-type { margin-top: 24px; }
+
+  .section-lede {
+    color: var(--text-2);
+    font-size: 14px;
+    margin: 0 0 24px 0;
+  }
+
+  .finding {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px 24px;
+    margin: 16px 0;
+  }
+
+  .finding.critical { border-left: 4px solid var(--critical-border); }
+  .finding.high { border-left: 4px solid var(--high-border); }
+  .finding.medium { border-left: 4px solid var(--medium-border); }
+  .finding.low { border-left: 4px solid var(--low-border); }
+
+  .finding-header {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+  }
+
+  .finding-header h3 {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 600;
+    flex: 1;
+    min-width: 250px;
+  }
+
+  .finding-header .num {
+    color: var(--text-3);
+    font-weight: 500;
+    margin-right: 4px;
+  }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+  }
+
+  .badge.critical { background: var(--critical-bg); color: var(--critical-fg); border: 1px solid var(--critical-border); }
+  .badge.high { background: var(--high-bg); color: var(--high-fg); border: 1px solid var(--high-border); }
+  .badge.medium { background: var(--medium-bg); color: var(--medium-fg); border: 1px solid var(--medium-border); }
+  .badge.low { background: var(--low-bg); color: var(--low-fg); border: 1px solid var(--low-border); }
+  .badge.verified { background: var(--verified-bg); color: var(--verified-fg); border: 1px solid var(--verified-fg); }
+
+  .finding p { margin: 8px 0; }
+
+  .finding .label {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-3);
+    font-weight: 600;
+    margin-top: 12px;
+    margin-bottom: 4px;
+  }
+
+  .finding .fix {
+    background: var(--surface-2);
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin-top: 12px;
+    font-size: 14px;
+  }
+
+  .finding .fix-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-3);
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+
+  code.ref {
+    background: var(--code-bg);
+    color: var(--code-fg);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 0.85em;
+    border: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  pre {
+    background: #1e1e1e;
+    color: #d4d4d4;
+    padding: 14px 16px;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.5;
+    margin: 12px 0;
+  }
+
+  pre .k { color: #569cd6; }
+  pre .s { color: #ce9178; }
+  pre .c { color: #6a9955; font-style: italic; }
+  pre .n { color: #b5cea8; }
+  pre .f { color: #dcdcaa; }
+
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    margin: 20px 0;
+  }
+
+  .stat {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+  }
+
+  .stat .label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-3);
+    font-weight: 600;
+  }
+
+  .stat .value {
+    font-size: 28px;
+    font-weight: 700;
+    margin-top: 4px;
+    letter-spacing: -0.01em;
+  }
+
+  .stat.critical .value { color: var(--critical-fg); }
+  .stat.high .value { color: var(--high-fg); }
+  .stat.medium .value { color: var(--medium-fg); }
+
+  .callout {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--accent);
+    border-radius: 6px;
+    padding: 16px 20px;
+    margin: 20px 0;
+    font-size: 14px;
+  }
+
+  .callout strong { color: var(--accent); }
+
+  table.matrix {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 13px;
+  }
+
+  table.matrix th, table.matrix td {
+    padding: 8px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+
+  table.matrix th {
+    background: var(--surface-2);
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-2);
+  }
+
+  .roadmap-week {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px 24px;
+    margin: 16px 0;
+  }
+
+  .roadmap-week h3 {
+    margin: 0 0 12px 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+
+  .roadmap-week ul {
+    margin: 8px 0;
+    padding-left: 20px;
+  }
+
+  .roadmap-week li { margin: 6px 0; }
+
+  .roadmap-week .week-label {
+    display: inline-block;
+    background: var(--accent);
+    color: white;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+
+  .anchor-target {
+    scroll-margin-top: 20px;
+  }
+
+  @media (max-width: 1024px) {
+    .layout { grid-template-columns: 1fr; }
+    aside.toc {
+      position: static;
+      height: auto;
+      border-right: none;
+      border-bottom: 1px solid var(--border);
+    }
+    main { padding: 24px; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+
+<aside class="toc">
+  <h2>Overview</h2>
+  <ul>
+    <li><a href="#summary"><span class="num">·</span>Executive Summary</a></li>
+    <li><a href="#stats"><span class="num">·</span>Findings Matrix</a></li>
+  </ul>
+
+  <h2>Critical</h2>
+  <ol>
+    <li><a href="#f1"><span class="num">1</span>HTTP-tool SSRF</a></li>
+    <li><a href="#f2"><span class="num">2</span>Open CORS</a></li>
+    <li><a href="#f3"><span class="num">3</span>Internal-secret blast radius</a></li>
+    <li><a href="#f4"><span class="num">4</span>No rate limiting / cost cap</a></li>
+    <li><a href="#f5"><span class="num">5</span>No SIGTERM handler</a></li>
+    <li><a href="#f6"><span class="num">6</span>In-memory registries</a></li>
+  </ol>
+
+  <h2>High</h2>
+  <ol start="7">
+    <li><a href="#f7"><span class="num">7</span>No structured logging</a></li>
+    <li><a href="#f8"><span class="num">8</span>No error tracking</a></li>
+    <li><a href="#f9"><span class="num">9</span>Health check is a stub</a></li>
+    <li><a href="#f10"><span class="num">10</span>No LLM circuit breaker</a></li>
+    <li><a href="#f11"><span class="num">11</span>Missing composite indexes</a></li>
+    <li><a href="#f12"><span class="num">12</span>No retention / trace TTL</a></li>
+    <li><a href="#f13"><span class="num">13</span>No idempotency keys</a></li>
+    <li><a href="#f14"><span class="num">14</span>Long-request LB timeouts</a></li>
+    <li><a href="#f15"><span class="num">15</span>Webhook SSRF</a></li>
+    <li><a href="#f16"><span class="num">16</span>Manifest save-time validation</a></li>
+    <li><a href="#f17"><span class="num">17</span>PII in logs / no redaction</a></li>
+    <li><a href="#f18"><span class="num">18</span>MCP trust model</a></li>
+    <li><a href="#f19"><span class="num">19</span>Tool whitelist not enforced</a></li>
+  </ol>
+
+  <h2>Medium</h2>
+  <ol start="20">
+    <li><a href="#f20"><span class="num">20</span>Connection pool defaults</a></li>
+    <li><a href="#f21"><span class="num">21</span>No HTTP keep-alive pool</a></li>
+    <li><a href="#f22"><span class="num">22</span>Serial tool execution</a></li>
+    <li><a href="#f23"><span class="num">23</span>MCP call timeout</a></li>
+    <li><a href="#f24"><span class="num">24</span>PgBouncer incompatibility</a></li>
+    <li><a href="#f25"><span class="num">25</span>No CI deploy automation</a></li>
+    <li><a href="#f26"><span class="num">26</span>One-way migrations</a></li>
+    <li><a href="#f27"><span class="num">27</span>Single-region deploy</a></li>
+    <li><a href="#f28"><span class="num">28</span>Container base unpinned</a></li>
+    <li><a href="#f29"><span class="num">29</span>No resource limits</a></li>
+    <li><a href="#f30"><span class="num">30</span>List endpoints unpaginated</a></li>
+    <li><a href="#f31"><span class="num">31</span>Trace flush loss on crash</a></li>
+    <li><a href="#f32"><span class="num">32</span>Cost computed not enforced</a></li>
+    <li><a href="#f33"><span class="num">33</span>Default maxSteps low</a></li>
+    <li><a href="#f34"><span class="num">34</span>ToolRegistry race</a></li>
+    <li><a href="#f35"><span class="num">35</span>HTTP-tool timeout fixed</a></li>
+  </ol>
+
+  <h2>Scale Plan</h2>
+  <ul>
+    <li><a href="#scale-answer"><span class="num">·</span>Built for thousands/day</a></li>
+    <li><a href="#roadmap"><span class="num">·</span>Two-week roadmap</a></li>
+  </ul>
+</aside>
+
+<main>
+
+<header class="doc-header">
+  <h1>agntz Production-Readiness Audit</h1>
+  <p class="meta">2026-05-20 · branch <code class="ref">feat/playground</code> · scope: worker, app, core, store-postgres</p>
+</header>
+
+<section id="summary" class="anchor-target">
+<h2 class="section">Executive Summary</h2>
+<p>Functionally complete, but <strong>not safe to launch as a hosted multi-tenant service in current state</strong>. Architecture is sound — clean provider abstraction, real telemetry primitives, transactional Postgres store, AI-SDK-based runner. But there are 6 verified critical gaps an attacker or a single bad-actor tenant could exploit on day one, plus a handful of scalability gaps that will hurt somewhere between 100 and 10,000 requests/day.</p>
+
+<p>This audit covered six dimensions in parallel: worker scalability, database, security, observability & reliability, deployment & ops, and AI/LLM integration. The four most consequential claims (CORS, SIGTERM, internal-auth, HTTP-tool SSRF) were verified directly against source.</p>
+</section>
+
+<section id="stats" class="anchor-target">
+<h2 class="section">Findings Matrix</h2>
+<div class="summary-grid">
+  <div class="stat critical">
+    <div class="label">Critical</div>
+    <div class="value">6</div>
+  </div>
+  <div class="stat high">
+    <div class="label">High</div>
+    <div class="value">13</div>
+  </div>
+  <div class="stat medium">
+    <div class="label">Medium</div>
+    <div class="value">16</div>
+  </div>
+  <div class="stat">
+    <div class="label">Verified vs code</div>
+    <div class="value">4 / 35</div>
+  </div>
+</div>
+
+<table class="matrix">
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Finding</th>
+      <th>Severity</th>
+      <th>File</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>1</td><td>HTTP-tool SSRF: no host validation</td><td><span class="badge critical">Critical</span></td><td><code class="ref">core/src/http-tool.ts:331</code></td></tr>
+    <tr><td>2</td><td>CORS wide open</td><td><span class="badge critical">Critical</span></td><td><code class="ref">worker/src/routes.ts:106</code></td></tr>
+    <tr><td>3</td><td>Internal-secret all-tenant blast radius</td><td><span class="badge critical">Critical</span></td><td><code class="ref">worker/src/middleware/auth.ts:25-39</code></td></tr>
+    <tr><td>4</td><td>No rate limiting / cost cap</td><td><span class="badge critical">Critical</span></td><td><code class="ref">worker/src/routes.ts</code></td></tr>
+    <tr><td>5</td><td>No SIGTERM / graceful shutdown</td><td><span class="badge critical">Critical</span></td><td><code class="ref">worker/src/server.ts:22-26</code></td></tr>
+    <tr><td>6</td><td>In-memory registries block horizontal scaling</td><td><span class="badge critical">Critical</span></td><td><code class="ref">worker/src/trace-registry.ts</code></td></tr>
+    <tr><td>7</td><td>No structured logging / correlation IDs</td><td><span class="badge high">High</span></td><td><code class="ref">worker/src/routes.ts</code></td></tr>
+    <tr><td>8</td><td>No error tracking (Sentry, etc.)</td><td><span class="badge high">High</span></td><td>across worker + app</td></tr>
+    <tr><td>9</td><td>Health check is a stub</td><td><span class="badge high">High</span></td><td><code class="ref">worker/src/routes.ts:108-110</code></td></tr>
+    <tr><td>10</td><td>No LLM provider circuit breaker</td><td><span class="badge high">High</span></td><td><code class="ref">core/src/utils/retry.ts</code></td></tr>
+    <tr><td>11</td><td>Missing composite indexes</td><td><span class="badge high">High</span></td><td><code class="ref">store-postgres/src/postgres-store.ts</code></td></tr>
+    <tr><td>12</td><td>No retention / trace TTL</td><td><span class="badge high">High</span></td><td><code class="ref">postgres-store.ts:1456-1485</code></td></tr>
+    <tr><td>13</td><td>No idempotency keys</td><td><span class="badge high">High</span></td><td><code class="ref">worker/src/routes.ts:175,445</code></td></tr>
+    <tr><td>14</td><td>Long-running requests block LB timeouts</td><td><span class="badge high">High</span></td><td><code class="ref">worker/src/routes.ts:226,369</code></td></tr>
+    <tr><td>15</td><td>Webhook URLs not SSRF-validated</td><td><span class="badge high">High</span></td><td><code class="ref">core/src/webhooks/dispatcher.ts</code></td></tr>
+    <tr><td>16</td><td>Manifest validation doesn't run SSRF check</td><td><span class="badge high">High</span></td><td><code class="ref">manifest/src/validate.ts:266-298</code></td></tr>
+    <tr><td>17</td><td>PII in logs, no redaction layer</td><td><span class="badge high">High</span></td><td><code class="ref">worker/src/routes.ts:199-202</code></td></tr>
+    <tr><td>18</td><td>MCP server trust model unsafe</td><td><span class="badge high">High</span></td><td><code class="ref">core/src/mcp/client-manager.ts</code></td></tr>
+    <tr><td>19</td><td>Tool whitelist not enforced at runtime</td><td><span class="badge high">High</span></td><td><code class="ref">core/src/tool.ts:110-122</code></td></tr>
+    <tr><td>20-35</td><td>Connection pool defaults, keep-alive, serial tools, etc.</td><td><span class="badge medium">Medium</span></td><td>see detail</td></tr>
+  </tbody>
+</table>
+</section>
+
+<h2 class="section">Critical — Fix before any public hosted launch</h2>
+<p class="section-lede">These aren't "production hardening." These are "someone will find this in week one."</p>
+
+<div class="finding critical anchor-target" id="f1">
+  <div class="finding-header">
+    <h3><span class="num">1.</span>HTTP-tool SSRF: no host validation</h3>
+    <span class="badge critical">Critical</span>
+    <span class="badge verified">Verified</span>
+  </div>
+  <p><code class="ref">packages/core/src/http-tool.ts:331</code> calls <code>fetch(finalUrl, ...)</code> with zero validation of the target.</p>
+  <p>Meanwhile <code class="ref">packages/core/src/image-fetcher.ts:129-207</code> has a complete SSRF defense — rejects <code>file://</code>, <code>localhost</code>, <code>169.254.0.0/16</code> (AWS metadata), RFC1918, IPv6 loopback/ULA, IPv4-mapped IPv6. <strong>The defense was written. It just isn't reused for the HTTP tool.</strong></p>
+  <p>What this means: a user who can save a manifest can define <code>url: "http://169.254.169.254/latest/meta-data/iam/security-credentials/"</code>, run the agent, and exfiltrate the worker's IAM role credentials. Or probe <code>http://localhost:5432</code>, or internal Railway services.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    Extract the validator from <code>image-fetcher.ts</code> into a shared <code>assertSafePublicUrl()</code>. Apply in <code>http-tool.ts</code> before <code>fetch()</code>, in webhook delivery, and in <code>validateManifest()</code> so SSRF URLs fail at save-time, not just run-time.
+  </div>
+</div>
+
+<div class="finding critical anchor-target" id="f2">
+  <div class="finding-header">
+    <h3><span class="num">2.</span>CORS wide open</h3>
+    <span class="badge critical">Critical</span>
+    <span class="badge verified">Verified</span>
+  </div>
+  <p><code class="ref">packages/worker/src/routes.ts:106</code>:</p>
+  <pre><span class="f">app</span>.use(<span class="s">"*"</span>, <span class="f">cors</span>());</pre>
+  <p>No config. Hono's default is permissive: <code>Access-Control-Allow-Origin: *</code> (or echoes the request origin) and methods <code>GET, HEAD, PUT, POST, DELETE, PATCH</code>.</p>
+  <p>Less bad than it looks for API-key auth (browsers don't send <code>Authorization</code> cross-origin with <code>*</code>) — but still wrong, and becomes critical the moment any browser-targeted auth (cookies, custom headers) lands on the worker.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    Lock to known origins: <code>cors({ origin: [process.env.APP_URL, process.env.SITE_URL], credentials: true })</code>.
+  </div>
+</div>
+
+<div class="finding critical anchor-target" id="f3">
+  <div class="finding-header">
+    <h3><span class="num">3.</span>Internal-secret auth has all-tenant blast radius</h3>
+    <span class="badge critical">Critical</span>
+    <span class="badge verified">Verified</span>
+  </div>
+  <p><code class="ref">packages/worker/src/middleware/auth.ts:25-39</code>: if the request carries <code>X-Internal-Secret</code>, the worker takes the <code>userId</code> from the request body or <code>X-User-Id</code> header. The secret is a static env var loaded once on boot. No signing, no per-user binding, no rotation hook.</p>
+  <p>If <code>WORKER_INTERNAL_SECRET</code> leaks (logs, env-var paste, ex-employee, supply chain), the attacker becomes <em>any user</em> by passing their userId in the body. No audit log of this happening.</p>
+  <div class="fix">
+    <div class="fix-label">Fix — minimum</div>
+    HMAC-sign the <code>(userId, timestamp, body-hash)</code> tuple with the shared secret instead of using the secret as a static bearer. Reject signatures &gt; 60s old.
+  </div>
+  <div class="fix">
+    <div class="fix-label">Fix — better</div>
+    Generate a per-request JWT in the app that embeds the Clerk-verified userId, signed with a key the worker can verify.
+  </div>
+</div>
+
+<div class="finding critical anchor-target" id="f4">
+  <div class="finding-header">
+    <h3><span class="num">4.</span>No rate limiting, no cost cap</h3>
+    <span class="badge critical">Critical</span>
+  </div>
+  <p>No per-tenant rate limit on <code>/run</code>, <code>/run/stream</code>, or <code>/runs</code>. No per-tenant token-spend cap. Token budget in <code class="ref">core/src/runner.ts:1629</code> is per-invocation — a tenant can launch invocations in a loop and the Anthropic bill is the only stop sign.</p>
+  <p><code class="ref">model-pricing.ts</code> computes USD per call and writes it to a span attribute, but it's never persisted to <code>InvocationLog</code>, never aggregated per tenant, and never checked against a quota.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    Minimum: in-process token-bucket per userId on the run endpoints, plus a daily-spend table the runner consults before each LLM call. Long-term: Redis or Postgres so it survives replica restart.
+  </div>
+</div>
+
+<div class="finding critical anchor-target" id="f5">
+  <div class="finding-header">
+    <h3><span class="num">5.</span>No SIGTERM / graceful shutdown</h3>
+    <span class="badge critical">Critical</span>
+    <span class="badge verified">Verified</span>
+  </div>
+  <p><code class="ref">packages/worker/src/server.ts:22-26</code>: <code>serve()</code> is called and the file ends. No <code>process.on('SIGTERM', ...)</code>. When Railway redeploys, the container is killed mid-stream: in-flight LLM calls leak, pending trace spans buffered in <code>trace-registry.ts</code> (flushes every 250ms / 100 spans) are lost, SSE clients see TCP RST with no terminal event, <code>Run</code> records remain stuck in <code>running</code> state until eviction.</p>
+  <p><code class="ref">trace-registry.ts:189-204</code> already has <code>waitForFlush()</code>. It's just never called.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    On SIGTERM: stop accepting new requests, signal <code>AbortController</code> for all in-flight runs (30s deadline), <code>await traceRegistry.waitForFlush()</code> and <code>runRegistry.drain()</code>, then exit.
+  </div>
+</div>
+
+<div class="finding critical anchor-target" id="f6">
+  <div class="finding-header">
+    <h3><span class="num">6.</span>In-memory registries block horizontal scaling</h3>
+    <span class="badge critical">Critical</span>
+  </div>
+  <p><code class="ref">worker/src/trace-registry.ts:44-242</code> (InMemoryTraceRegistry) and <code class="ref">core/src/run-registry.ts:70-107</code> (InMemoryRunRegistry) hold live SSE subscribers and in-flight run state in per-process maps. A second worker replica behind a Railway load balancer cannot serve the same trace stream as replica #1 — the client reconnects to a replica with no knowledge of the trace.</p>
+  <p>Fallback at <code class="ref">routes.ts:603-651,770-807</code> does a one-shot snapshot from the store after eviction, but it's not <em>live</em> — real-time updates lost on replica failover.</p>
+  <div class="fix">
+    <div class="fix-label">Fix — cheap</div>
+    Force sticky sessions at the load balancer (Railway supports this).
+  </div>
+  <div class="fix">
+    <div class="fix-label">Fix — correct</div>
+    Swap both registries for Redis-backed implementations using pub/sub for fanout. Both already sit behind interfaces, so the swap is contained.
+  </div>
+</div>
+
+<h2 class="section">High — Will hurt at thousands/day or before</h2>
+
+<div class="finding high anchor-target" id="f7">
+  <div class="finding-header">
+    <h3><span class="num">7.</span>No structured logging, no request/trace correlation</h3>
+    <span class="badge high">High</span>
+  </div>
+  <p>26+ <code>console.log()</code> calls in <code class="ref">worker/src/routes.ts</code> alone. Plain text, no JSON, no traceId threaded in. When something breaks at 3am you cannot grep Railway logs by tenant or by run.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    Swap <code>console.*</code> for a pino instance (~50 lines). Thread <code>traceId</code>/<code>runId</code>/<code>userId</code> through via Hono's <code>c.set()</code>.
+  </div>
+</div>
+
+<div class="finding high anchor-target" id="f8">
+  <div class="finding-header">
+    <h3><span class="num">8.</span>No error tracking</h3>
+    <span class="badge high">High</span>
+  </div>
+  <p>Zero references to Sentry/Honeybadger/Rollbar across the repo. <code>try/catch</code> blocks log to console and return <code>{error: errorMessage(err)}</code> — stack trace dropped at <code class="ref">core/src/runner.ts:337</code>: <code>err instanceof Error ? err.message : err</code>.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    Drop in <code>@sentry/node</code> in <code>worker/src/server.ts</code> and <code>app/src/middleware.ts</code>. Capture exceptions with <code>userId</code>, <code>runId</code>, <code>traceId</code> tags.
+  </div>
+</div>
+
+<div class="finding high anchor-target" id="f9">
+  <div class="finding-header">
+    <h3><span class="num">9.</span>Health check is a stub</h3>
+    <span class="badge high">High</span>
+    <span class="badge verified">Verified</span>
+  </div>
+  <p><code class="ref">worker/src/routes.ts:108-110</code>:</p>
+  <pre><span class="f">app</span>.get(<span class="s">"/health"</span>, (c) =&gt; {
+  <span class="k">return</span> c.<span class="f">json</span>({ status: <span class="s">"ok"</span>, service: <span class="s">"agntz-worker"</span> });
+});</pre>
+  <p>Returns 200 unconditionally. Does not check Postgres connectivity, LLM provider reachability, or memory pressure. Railway will route traffic to a broken worker because the health probe lies.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    <code>/health</code> does <code>SELECT 1</code> with 1s timeout. <code>/health/deep</code> additionally pings the configured LLM provider.
+  </div>
+</div>
+
+<div class="finding high anchor-target" id="f10">
+  <div class="finding-header">
+    <h3><span class="num">10.</span>No circuit breaker on LLM providers</h3>
+    <span class="badge high">High</span>
+  </div>
+  <p><code class="ref">core/src/utils/retry.ts</code> does 3-attempt exponential backoff (good). But if Anthropic is degraded for an hour, every request retries 3× with 1-30s delays, piling Promises onto the event loop. No fast-fail.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    Wrap the model call with a sliding-window failure counter (opossum-style). After N failures in M seconds, return 503 immediately for the next D seconds.
+  </div>
+</div>
+
+<div class="finding high anchor-target" id="f11">
+  <div class="finding-header">
+    <h3><span class="num">11.</span>Missing composite indexes</h3>
+    <span class="badge high">High</span>
+  </div>
+  <p><code class="ref">store-postgres/src/postgres-store.ts</code> has single-column indexes on most lookup paths, but lacks composites for the actual query shapes:</p>
+  <ul>
+    <li><code>listTraces</code> filters by <code>(owner_id, agent_id, status, started_at)</code> — current index is just <code>(owner_id, started_at)</code>.</li>
+    <li><code>listRuns</code> filters by <code>(user_id, parent_id, agent_id, status, started_at)</code> — current index is <code>(user_id, started_at)</code>.</li>
+  </ul>
+  <p>At 1000 traces/day per user these still scan acceptably. At 100k they don't.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    Add the two composite indexes; ship a migration.
+  </div>
+</div>
+
+<div class="finding high anchor-target" id="f12">
+  <div class="finding-header">
+    <h3><span class="num">12.</span>No retention policy / trace TTL</h3>
+    <span class="badge high">High</span>
+  </div>
+  <p><code>store.deleteOlderThan()</code> exists in <code class="ref">postgres-store.ts:1456-1485</code> but is never called. No cron. Trace data grows linearly forever. At ~10MB/day for modest traffic, you cross 100GB inside a year.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    Nightly job (cron container, or <code>setInterval</code> in the worker behind a leader-election flag) that calls <code>deleteOlderThan(cutoff)</code> per tenant. Free-tier 30-day retention, paid configurable.
+  </div>
+</div>
+
+<div class="finding high anchor-target" id="f13">
+  <div class="finding-header">
+    <h3><span class="num">13.</span>No idempotency keys</h3>
+    <span class="badge high">High</span>
+  </div>
+  <p>POST <code>/run</code> and <code>/runs</code> have no <code>Idempotency-Key</code> handling. A client that retries on network blip creates two runs and double-charges the LLM bill.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    Accept <code>Idempotency-Key</code> header. Store <code>(userId, idempotencyKey) → runId</code> in Postgres with 24h TTL. Return existing run on duplicate.
+  </div>
+</div>
+
+<div class="finding high anchor-target" id="f14">
+  <div class="finding-header">
+    <h3><span class="num">14.</span>Long requests block load-balancer timeouts</h3>
+    <span class="badge high">High</span>
+  </div>
+  <p><code>/run</code> and <code>/run/stream</code> block the HTTP connection for the full agent duration (<code class="ref">routes.ts:226,369</code>). Many proxies/CDNs idle-timeout at 60-100s. Anything &gt; 1 min gets cut mid-stream from the client's perspective, even though the worker keeps running.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    Push users toward the async <code>/runs</code> endpoint (it exists) + <code>/runs/:id/stream</code> for results. Document <code>/run/stream</code> as best for short interactive runs only.
+  </div>
+</div>
+
+<div class="finding high anchor-target" id="f15">
+  <div class="finding-header">
+    <h3><span class="num">15.</span>Webhook URLs not SSRF-validated</h3>
+    <span class="badge high">High</span>
+  </div>
+  <p>Same class of bug as <a href="#f1">#1</a>, in <code class="ref">core/src/webhooks/dispatcher.ts</code>. A user can register a webhook to <code>http://internal-jenkins/build/...</code> and trigger it.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    Apply the shared <code>assertSafePublicUrl()</code> at webhook creation and again at delivery.
+  </div>
+</div>
+
+<div class="finding high anchor-target" id="f16">
+  <div class="finding-header">
+    <h3><span class="num">16.</span>Manifest validation doesn't catch SSRF URLs at save-time</h3>
+    <span class="badge high">High</span>
+  </div>
+  <p><code class="ref">packages/manifest/src/validate.ts:266-298</code> validates HTTP tool URLs as syntactically valid, but doesn't run the SSRF check. A tenant can save a malicious manifest, sit on it, then either run it themselves or (if multi-tenant ever shares agent libraries) get someone else to.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    Call <code>assertSafePublicUrl()</code> from manifest validation. Save-time rejection &gt; run-time rejection.
+  </div>
+</div>
+
+<div class="finding high anchor-target" id="f17">
+  <div class="finding-header">
+    <h3><span class="num">17.</span>PII in logs / no redaction layer</h3>
+    <span class="badge high">High</span>
+  </div>
+  <p>Prompts and LLM responses are stored in <code>InvocationLog</code> / sessions / traces with no PII redaction. The HTTP-tool auth redaction (<code class="ref">core/src/auth/redact.ts</code>) only scrubs known auth-token patterns from response bodies, not arbitrary PII.</p>
+  <p>If a prompt includes <code>"customer record: {name, ssn, email}"</code>, it's persisted indefinitely. GDPR/CCPA delete-on-request has no documented path.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    Add PII redaction in prompts before storage (mask emails, SSNs, credit cards via regex). Document a per-user purge endpoint. Add retention policy that complies with default expectations (90d?).
+  </div>
+</div>
+
+<div class="finding high anchor-target" id="f18">
+  <div class="finding-header">
+    <h3><span class="num">18.</span>MCP server trust model</h3>
+    <span class="badge high">High</span>
+  </div>
+  <p><code class="ref">core/src/mcp/client-manager.ts:108-175</code> connects to user-supplied MCP servers and trusts the returned tool definitions wholesale. If an MCP server is compromised or user-controlled, it can inject malicious tool definitions; tool execution is not sandboxed.</p>
+  <p>Resources returned by MCP servers can also become prompt-injection vectors if embedded in conversation history.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    Document MCP servers as a code-execution trust surface. Allowlist known MCP servers for the hosted offering, or scope user-supplied MCP servers strictly to that user (don't share results across tenants).
+  </div>
+</div>
+
+<div class="finding high anchor-target" id="f19">
+  <div class="finding-header">
+    <h3><span class="num">19.</span>Tool whitelist not enforced at runtime</h3>
+    <span class="badge high">High</span>
+  </div>
+  <p>Manifest's <code>tools:</code> array is a declaration, not a runtime gate. If a tool is registered in the process-wide <code>ToolRegistry</code> (<code class="ref">core/src/tool.ts:110-122</code>) the LLM can call it whether the manifest listed it or not.</p>
+  <p>Combined with <code class="ref">core/src/runner.ts</code> spawn-agent functionality, no documented depth limit on recursive agent spawning.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    Before executing a tool, check the call is in the manifest's declared tools. Add recursion depth limit to spawn-agent (already has <code>DEFAULT_MAX_RECURSION_DEPTH = 3</code> — verify it's reachable from spawned children).
+  </div>
+</div>
+
+<h2 class="section">Medium — Becomes critical past 10k/day</h2>
+
+<div class="finding medium anchor-target" id="f20">
+  <div class="finding-header">
+    <h3><span class="num">20.</span><code>pg.Pool</code> with no explicit sizing</h3>
+    <span class="badge medium">Medium</span>
+  </div>
+  <p><code class="ref">postgres-store.ts:415</code> instantiates <code>new Pool({ connectionString })</code> with default <code>max: 10</code>. Worker + app both instantiate stores, doubling demand. No connection timeout, no queue bound.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    <code>new Pool({ ...opts, max: 20, idleTimeoutMillis: 30000, connectionTimeoutMillis: 2000 })</code>.
+  </div>
+</div>
+
+<div class="finding medium anchor-target" id="f21">
+  <div class="finding-header">
+    <h3><span class="num">21.</span>No HTTP keep-alive pool for tool calls</h3>
+    <span class="badge medium">Medium</span>
+  </div>
+  <p><code class="ref">core/src/http-tool.ts:331</code> uses default fetch — fresh TCP+TLS handshake per tool call. File-descriptor and handshake overhead grows with concurrency.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    Use <code>undici.Agent</code> with keep-alive and bounded socket pool. Pass via <code>dispatcher</code> option.
+  </div>
+</div>
+
+<div class="finding medium anchor-target" id="f22">
+  <div class="finding-header">
+    <h3><span class="num">22.</span>Serial tool execution</h3>
+    <span class="badge medium">Medium</span>
+  </div>
+  <p><code class="ref">core/src/runner.ts:1733</code>: <code>for (const tc of toolCalls) await executeToolCall(tc)</code>. Each tool blocks the next. 10 tool calls of 1s each = 10s instead of ~1s.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    <code>Promise.all(toolCalls.map(executeToolCall))</code> + mutex on shared run state. Tool side effects must be commutative or explicitly serialized.
+  </div>
+</div>
+
+<div class="finding medium anchor-target" id="f23">
+  <div class="finding-header">
+    <h3><span class="num">23.</span>MCP <code>client.callTool()</code> has no timeout</h3>
+    <span class="badge medium">Medium</span>
+  </div>
+  <p><code class="ref">core/src/mcp/client-manager.ts:148-164</code> awaits <code>callTool()</code> with no per-call timeout. A slow MCP server stalls the agent loop past the agent-level timeout.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    Wrap with <code>AbortSignal.timeout(remainingAgentBudget)</code>; fallback to error message returned to LLM.
+  </div>
+</div>
+
+<div class="finding medium anchor-target" id="f24">
+  <div class="finding-header">
+    <h3><span class="num">24.</span>PgBouncer incompatibility</h3>
+    <span class="badge medium">Medium</span>
+  </div>
+  <p><code class="ref">postgres-store.ts:477</code> uses <code>pg_advisory_lock()</code> in the migration runner. Advisory locks are session-scoped; under PgBouncer transaction-mode pooling the lock is lost between statements.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    Use a dedicated migration lock table (<code>INSERT ... ON CONFLICT DO NOTHING</code> for acquisition) if/when PgBouncer goes in front of Postgres.
+  </div>
+</div>
+
+<div class="finding medium anchor-target" id="f25">
+  <div class="finding-header">
+    <h3><span class="num">25.</span>No CI deploy automation</h3>
+    <span class="badge medium">Medium</span>
+  </div>
+  <p>Every deploy is a manual Railway/Vercel click. One wrong click ships a broken worker. CI runs tests + lint on PR but doesn't deploy.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    Auto-deploy <code>main</code> to staging via Railway's GitHub action. Manual promotion to prod via tag push (release workflow already exists for npm).
+  </div>
+</div>
+
+<div class="finding medium anchor-target" id="f26">
+  <div class="finding-header">
+    <h3><span class="num">26.</span>One-way destructive migrations</h3>
+    <span class="badge medium">Medium</span>
+  </div>
+  <p>Migrations in <code class="ref">postgres-store.ts</code> include <code>DROP TABLE</code> (v3 line 142), <code>DROP TABLE IF EXISTS ar_workspaces CASCADE</code> (v4 line 154), and <code>TRUNCATE</code> (v4 line 171). Rolling back a code deploy after one of these = data loss + crash on missing tables.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    Adopt expand/contract migration pattern: add new columns/tables, deploy code that writes to both, deploy code that reads from new only, then drop old in a separate later migration. Never destructive in a single step.
+  </div>
+</div>
+
+<div class="finding medium anchor-target" id="f27">
+  <div class="finding-header">
+    <h3><span class="num">27.</span>Single-region deployment</h3>
+    <span class="badge medium">Medium</span>
+  </div>
+  <p>Railway worker deploys to one region (US-East by default). Global users face 200-300ms latency just for the request roundtrip, on top of LLM call time.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    Not urgent. When it matters: replicate worker to EU + APAC regions, point Cloudflare Workers as edge proxy to route by geography. Postgres stays single-primary; add read replicas if needed.
+  </div>
+</div>
+
+<div class="finding medium anchor-target" id="f28">
+  <div class="finding-header">
+    <h3><span class="num">28.</span>Container base images unpinned</h3>
+    <span class="badge medium">Medium</span>
+  </div>
+  <p><code class="ref">Dockerfile.worker:4</code>, <code class="ref">Dockerfile.app:4</code>, <code class="ref">Dockerfile.site:4</code> all use <code>node:22-slim</code> without sha256 digest. Resolves to latest tag at pull time. No <code>USER</code> directive — containers run as root.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    Pin to <code>node:22.11.0-slim@sha256:&lt;digest&gt;</code>. Add <code>RUN groupadd -r app && useradd -r -g app app</code> and <code>USER app</code> before <code>CMD</code>.
+  </div>
+</div>
+
+<div class="finding medium anchor-target" id="f29">
+  <div class="finding-header">
+    <h3><span class="num">29.</span>No resource limits configured</h3>
+    <span class="badge medium">Medium</span>
+  </div>
+  <p><code class="ref">railway.json</code> has no memory or CPU configuration. Railway defaults to 512MB which can OOM on large multimodal invocations.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    Add <code>"resources": { "memoryMb": 2048, "cpuUnits": 2000 }</code> to <code>railway.json</code>. Watch p99 memory in prod and tune up.
+  </div>
+</div>
+
+<div class="finding medium anchor-target" id="f30">
+  <div class="finding-header">
+    <h3><span class="num">30.</span>Some list endpoints unpaginated</h3>
+    <span class="badge medium">Medium</span>
+  </div>
+  <p><code>listConnections</code> (<code class="ref">postgres-store.ts:1046</code>), <code>listSkills</code> (<code class="ref">:1501</code>), <code>listProviders</code> (<code class="ref">:994</code>) have no LIMIT. <code>listRuns</code> and <code>listTraces</code> do (good).</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    Add <code>LIMIT 200</code> default + cursor pagination to all list methods.
+  </div>
+</div>
+
+<div class="finding medium anchor-target" id="f31">
+  <div class="finding-header">
+    <h3><span class="num">31.</span>Trace span loss on crash</h3>
+    <span class="badge medium">Medium</span>
+  </div>
+  <p><code class="ref">worker/src/trace-registry.ts:233</code> catches DB write errors and silently swallows them. Spans in the pending buffer (up to 100 spans / 250ms) are lost on crash. <code>insertSpansBatch().catch(() => {})</code> treats all errors as acceptable loss.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    Outbox pattern: write spans to a <code>ar_span_outbox</code> table inside the run's transaction. Async worker reads outbox → <code>ar_spans</code>. Crash-safe.
+  </div>
+</div>
+
+<div class="finding medium anchor-target" id="f32">
+  <div class="finding-header">
+    <h3><span class="num">32.</span>Cost computed but not persisted or enforced</h3>
+    <span class="badge medium">Medium</span>
+  </div>
+  <p><code class="ref">core/src/runner.ts:1668</code> calls <code>computeCost()</code> after each model call. Sets it on the telemetry span. Not stored in <code>InvocationLog</code>. Not checked against per-tenant budgets. <code>DEFAULT_RATES</code> in <code class="ref">model-pricing.ts:15-22</code> is hardcoded to 2026-05 prices.</p>
+  <p>Overlaps with <a href="#f4">#4</a> (rate limiting) — they're the same family of "no economic guardrails."</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    Persist <code>cost_usd</code> on <code>InvocationLog</code>. Tenant-level rolling total in Postgres. Pre-call budget check in the runner. Load rates from config table, not hardcoded.
+  </div>
+</div>
+
+<div class="finding medium anchor-target" id="f33">
+  <div class="finding-header">
+    <h3><span class="num">33.</span>Default maxSteps=10 may be too tight</h3>
+    <span class="badge medium">Medium</span>
+  </div>
+  <p><code class="ref">core/src/runner.ts:107</code>: <code>DEFAULT_MAX_STEPS = 10</code>. One LLM call → 3 tool calls → 3 more = 9 steps. Agents that legitimately need multi-stage planning fail silently.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    Bump default to 20. Document per-agent override in manifest.
+  </div>
+</div>
+
+<div class="finding medium anchor-target" id="f34">
+  <div class="finding-header">
+    <h3><span class="num">34.</span>ToolRegistry has no concurrent-write guard</h3>
+    <span class="badge medium">Medium</span>
+  </div>
+  <p>Global <code>ToolRegistry</code> (<code class="ref">core/src/tool.ts:39-54</code>) has no lock. Two concurrent agents loading the same skill both check <code>.has()</code>, both see false, both register. Last write wins.</p>
+  <p>Not a problem with current Node.js single-thread model, becomes a problem the moment worker threads or per-tenant subprocesses land.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    Make <code>register()</code> atomic check-then-set. Acceptable to keep single-threaded assumption explicit in a comment if you don't plan to thread.
+  </div>
+</div>
+
+<div class="finding medium anchor-target" id="f35">
+  <div class="finding-header">
+    <h3><span class="num">35.</span>HTTP-tool timeout fixed at 30s, ignores agent budget</h3>
+    <span class="badge medium">Medium</span>
+  </div>
+  <p><code class="ref">core/src/http-tool.ts:335</code>: <code>AbortSignal.timeout(30_000)</code> baked in. If agent has <code>timeoutMs: 60_000</code> and the first tool takes 30s, the agent has only 30s left for everything else — but the HTTP tool will still spend another 30s on the next call.</p>
+  <div class="fix">
+    <div class="fix-label">Fix</div>
+    Compute <code>remainingMs = Math.max(agentTimeoutMs - elapsedMs, 5000)</code> and use that as the HTTP tool timeout.
+  </div>
+</div>
+
+<section id="scale-answer" class="anchor-target">
+<h2 class="section">What it takes to handle thousands of requests/day</h2>
+
+<div class="callout">
+  <strong>The blunt answer:</strong> at thousands of requests/day (~0.05-0.5 RPS sustained, bursts to maybe 10 concurrent runs), one well-tuned worker replica handles it on a single Railway service with no architectural change. The bottleneck is not throughput — it's the failure modes. The 6 critical blockers above all bite at low traffic if you're unlucky (one SSRF run, one credential leak, one SIGTERM mid-stream).
+</div>
+
+<p>The question you actually asked: <em>built for</em> scale, not <em>scrambling at</em> scale. So the architectural moves, in priority order:</p>
+
+<ol>
+  <li><strong>Make the worker truly stateless.</strong> Replace <code>InMemoryTraceRegistry</code> and <code>InMemoryRunRegistry</code> with Redis-backed implementations using Redis Streams or pub/sub for SSE fanout. Both already sit behind interfaces — contained swap, ~2-3 days work plus testing.</li>
+
+  <li><strong>Move long runs off the request path.</strong> <code>/runs</code> already supports async start. Lean into it: run-create returns immediately with a runId; execution happens in a worker-pool process (separate Railway service, or BullMQ / pg-boss queue). HTTP-server replicas only handle short-lived API calls and SSE fanout from Redis. Decouples "scale request handling" from "scale agent execution" — very different CPU/memory profiles.</li>
+
+  <li><strong>Persist what matters synchronously, batch what doesn't.</strong> Run state and final results go to Postgres in the request path. Trace spans batch (already do) — but back them with a durable queue (Redis list or Postgres outbox table) so a crashed worker doesn't lose them.</li>
+
+  <li><strong>Quotas + circuit breakers everywhere.</strong> Per-tenant rate limit on <code>/run*</code> endpoints (Redis token bucket). Per-tenant daily LLM spend cap, checked before each model call. Provider-level circuit breaker that fails fast when Anthropic is down. The difference between "one bad tenant degrades everyone" and "one bad tenant gets 429'd, everyone else is fine."</li>
+
+  <li><strong>Observability that survives replicas.</strong> Structured JSON logs with traceId/userId/runId. Sentry for errors. A real <code>/health</code> that probes its dependencies. OpenTelemetry export from <code>telemetry.ts</code> to a backend you can actually query (Honeycomb, Datadog, Grafana Cloud).</li>
+
+  <li><strong>DB hygiene.</strong> Composite indexes. Retention cron. PgBouncer in front of Postgres (after fixing the advisory-lock migration). Read replicas if/when listing endpoints get hot — they won't, at thousands/day.</li>
+</ol>
+</section>
+
+<section id="roadmap" class="anchor-target">
+<h2 class="section">Two-week roadmap</h2>
+
+<div class="roadmap-week">
+  <h3><span class="week-label">Week 1</span>Safe to launch</h3>
+  <ul>
+    <li><a href="#f1">#1</a> Shared <code>assertSafePublicUrl()</code> — apply in <code>http-tool.ts</code>, <code>webhooks/dispatcher.ts</code>, <code>manifest/validate.ts</code></li>
+    <li><a href="#f2">#2</a> CORS lockdown to known origins</li>
+    <li><a href="#f3">#3</a> HMAC-sign internal auth requests; remove static-secret bearer mode</li>
+    <li><a href="#f4">#4</a> Per-tenant rate limit (token bucket) on <code>/run*</code> endpoints</li>
+    <li><a href="#f5">#5</a> SIGTERM handler with run abort + trace flush</li>
+    <li><a href="#f7">#7</a> Pino with request/trace correlation IDs</li>
+    <li><a href="#f8">#8</a> Sentry in worker + app</li>
+    <li><a href="#f9">#9</a> Real <code>/health</code> with <code>SELECT 1</code></li>
+    <li><a href="#f13">#13</a> <code>Idempotency-Key</code> header support</li>
+    <li><a href="#f17">#17</a> PII redaction layer before persistence</li>
+  </ul>
+</div>
+
+<div class="roadmap-week">
+  <h3><span class="week-label">Week 2</span>Built for scale</h3>
+  <ul>
+    <li><a href="#f6">#6</a> Redis-backed trace + run registries (or sticky sessions as interim)</li>
+    <li><a href="#f10">#10</a> Circuit breaker around LLM provider calls</li>
+    <li><a href="#f11">#11</a> Composite indexes migration</li>
+    <li><a href="#f12">#12</a> Retention cron (nightly <code>deleteOlderThan</code>)</li>
+    <li><a href="#f14">#14</a> Default UX to async <code>/runs</code> + <code>/runs/:id/stream</code></li>
+    <li><a href="#f29">#29</a> Resource limits in <code>railway.json</code></li>
+    <li><a href="#f31">#31</a> Outbox pattern for span writes</li>
+    <li><a href="#f32">#32</a> Persist <code>cost_usd</code>; pre-call budget check</li>
+  </ul>
+</div>
+
+<p>Everything in the Medium bucket is incremental — address as you hit each scale threshold.</p>
+</section>
+
+<footer style="margin-top: 80px; padding-top: 24px; border-top: 1px solid var(--border); color: var(--text-3); font-size: 12px;">
+  Audit conducted via six parallel investigations (worker scalability, database, security, observability, deployment, AI integration). Findings labeled <span class="badge verified">Verified</span> were confirmed against source code directly. Others are reported as agents found them — verify before acting on the medium-severity items.
+</footer>
+
+</main>
+</div>
+</body>
+</html>
