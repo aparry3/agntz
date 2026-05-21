@@ -1,11 +1,23 @@
 import type { Span, TraceStore, TraceSummary, TraceLiveEvent } from "@agntz/core";
 
 export interface TraceRegistry {
+  /**
+   * Reserve a trace id as "in progress" before any spans have been emitted.
+   * Lets a subscriber attach (e.g. via /traces/:id/stream) immediately after
+   * a client learns the traceId, without racing against the first spanStart.
+   * Idempotent — calling twice is a no-op.
+   */
+  register(traceId: string, ownerId: string): void;
   spanStart(span: Span): void;
   spanEnd(spanId: string, patch: Partial<Span>): void;
   traceDone(traceId: string, ownerId: string, summary: TraceSummary): void;
 
   subscribe(traceId: string, ownerId: string): AsyncIterable<TraceLiveEvent>;
+  /**
+   * Returns active spans for the trace, an empty array if the trace is
+   * registered but no spans have started yet, or `null` if the trace is
+   * unknown to this registry.
+   */
   getInProgress(traceId: string, ownerId: string): Span[] | null;
 
   /** For tests / graceful shutdown. Flushes the pending buffer synchronously. */
@@ -45,12 +57,19 @@ export class InMemoryTraceRegistry implements TraceRegistry {
   private inflightFlushes: Promise<void>[] = [];
   // Subscribers keyed by `${traceId}::${ownerId}`.
   private subscribers = new Map<string, Set<Subscriber>>();
+  // Traces that have been registered but may not yet have any active spans.
+  // Keyed by `${traceId}::${ownerId}`. Cleared on traceDone.
+  private registered = new Set<string>();
 
   constructor(opts: InMemoryTraceRegistryOptions) {
     this.store = opts.store;
     this.flushBatchSize = opts.flushBatchSize ?? 100;
     this.flushIntervalMs = opts.flushIntervalMs ?? 250;
     this.maxBufferPerOwner = opts.maxBufferPerOwner ?? 10_000;
+  }
+
+  register(traceId: string, ownerId: string): void {
+    this.registered.add(`${traceId}::${ownerId}`);
   }
 
   spanStart(span: Span): void {
@@ -93,6 +112,7 @@ export class InMemoryTraceRegistry implements TraceRegistry {
       for (const sub of subs) sub.done();
       this.subscribers.delete(key);
     }
+    this.registered.delete(key);
     // Drain pending buffer for this owner so all spans land before subscribers see trace-done finished writing.
     this.scheduleFlush(ownerId, /*immediate*/ true);
   }
@@ -162,7 +182,8 @@ export class InMemoryTraceRegistry implements TraceRegistry {
     for (const s of this.active.values()) {
       if (s.traceId === traceId && s.ownerId === ownerId) out.push({ ...s });
     }
-    return out.length > 0 ? out : null;
+    if (out.length > 0) return out;
+    return this.registered.has(`${traceId}::${ownerId}`) ? [] : null;
   }
 
   async waitForFlush(): Promise<void> {
