@@ -1,9 +1,11 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/index.ts", "src/sqlite.ts"],
+  entry: ["src/index.ts", "src/sqlite.ts", "src/cli.ts"],
   format: ["esm"],
-  dts: true,
+  // Skip .d.ts for the CLI — it's a binary, not a public API surface. The
+  // library entries still get full type emission.
+  dts: { entry: ["src/index.ts", "src/sqlite.ts"] },
   clean: true,
   sourcemap: true,
   target: "es2022",

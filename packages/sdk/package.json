@@ -15,6 +15,9 @@
       "import": "./dist/sqlite.js"
     }
   },
+  "bin": {
+    "agntz": "./dist/cli.js"
+  },
   "files": [
     "dist",
     "README.md"

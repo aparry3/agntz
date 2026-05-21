@@ -10,16 +10,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./cli": {
-      "import": "./dist/cli.js"
-    },
     "./templates": {
       "types": "./dist/templates/index.d.ts",
       "import": "./dist/templates/index.js"
     }
-  },
-  "bin": {
-    "agntz": "./dist/cli.js"
   },
   "files": [
     "dist"

@@ -29,6 +29,15 @@ import { isSystemAgentId, loadSystemAgent, listSystemAgents, getSystemAgent } fr
 import { LOCAL_TOOLS } from "./tools/registry.js";
 import { wrapWithSkillRedaction } from "./session-redact.js";
 import { buildValidationContext } from "./validation.js";
+import { rateLimit } from "./rate-limit.js";
+
+/**
+ * Hard cap for /build-agent input. The agent-builder pipeline feeds the
+ * description into multiple LLM prompts, so a runaway value costs real tokens.
+ * 4 KB is plenty for natural-language descriptions and small "current
+ * manifest + requested changes" payloads.
+ */
+const BUILD_AGENT_MAX_DESCRIPTION_LENGTH = 4096;
 
 export interface WorkerAPIOptions {
   store: UnifiedStore;
@@ -107,6 +116,97 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 
   app.get("/health", (c) => {
     return c.json({ status: "ok", service: "agntz-worker" });
+  });
+
+  // /build-agent is intentionally UNAUTHENTICATED so the public CLI can run
+  // the agent-builder without an account. Per-IP rate limit caps abuse; the
+  // route uses an ephemeral runner (no user-scoped data touched).
+  app.use(
+    "/build-agent",
+    rateLimit({ windowMs: 60 * 60_000, max: 10 }),
+  );
+  app.post("/build-agent", async (c) => {
+    const start = Date.now();
+    try {
+      const body = (await c.req.json().catch(() => ({}))) as {
+        description?: string;
+        currentManifest?: string;
+      };
+      const { description, currentManifest } = body;
+
+      if (!description || typeof description !== "string") {
+        return c.json({ error: "Missing required field: description (string)" }, 400);
+      }
+      if (description.length > BUILD_AGENT_MAX_DESCRIPTION_LENGTH) {
+        return c.json(
+          {
+            error: `description exceeds max length of ${BUILD_AGENT_MAX_DESCRIPTION_LENGTH} characters`,
+          },
+          413,
+        );
+      }
+      if (currentManifest != null && typeof currentManifest !== "string") {
+        return c.json({ error: "currentManifest must be a string when provided" }, 400);
+      }
+      if (
+        typeof currentManifest === "string" &&
+        currentManifest.length > BUILD_AGENT_MAX_DESCRIPTION_LENGTH * 4
+      ) {
+        return c.json({ error: "currentManifest exceeds max length" }, 413);
+      }
+
+      // Match the in-app builder route's input shape: when currentManifest is
+      // provided we treat it as an iterative refinement.
+      const fullDescription = currentManifest
+        ? `Current manifest:\n\`\`\`yaml\n${currentManifest}\n\`\`\`\n\nRequested changes: ${description}`
+        : description;
+
+      const manifest = await loadSystemAgent("system:agent-builder");
+      const ephemeralStore = new MemoryStore();
+      const ephemeralRunner = createRunner({
+        store: ephemeralStore,
+        tools: [...LOCAL_TOOLS],
+        defaults: {
+          model: {
+            provider: process.env.DEFAULT_MODEL_PROVIDER ?? "openai",
+            name: process.env.DEFAULT_MODEL_NAME ?? "gpt-5.4-mini",
+          },
+        },
+      });
+      const sessionId = generateSessionId();
+      const localRegistry = new InMemoryRunRegistry();
+      const spanEmitter = new SpanEmitter({
+        traceSink: (event) => {
+          if (event.type === "span-start") traceRegistry.spanStart(event.span);
+          else if (event.type === "span-end") traceRegistry.spanEnd(event.spanId, event.patch);
+          else if (event.type === "trace-done") traceRegistry.traceDone(event.summary.traceId, event.summary.ownerId, event.summary);
+        },
+        recordIO: false,
+      });
+      const ctx = createExecutionContext(ephemeralRunner, {
+        runRegistry: localRegistry,
+        spanEmitter,
+        ownerId: "public:build-agent",
+        userId: "public:build-agent",
+        sessionId,
+      });
+
+      const result = await execute(manifest, { description: fullDescription }, ctx);
+      const output = (result.output ?? {}) as Record<string, unknown>;
+
+      console.log(
+        `[build-agent] ok ${Date.now() - start}ms descLen=${description.length}`,
+      );
+
+      return c.json({
+        yaml: output.yaml ?? null,
+        explanation: output.explanation ?? null,
+        validation: output.validation ?? null,
+      });
+    } catch (error) {
+      console.error(`[build-agent] failed ${Date.now() - start}ms: ${errorMessage(error)}`);
+      return c.json({ error: errorMessage(error) }, 500);
+    }
   });
 
   app.use("/run", workerAuth({ store, internalSecret }));
