@@ -32,6 +32,7 @@ export default function AgentEditorPage() {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<SingleViewMode | PipelineViewMode>("build");
+  const [mode, setMode] = useState<"edit" | "play">("edit");
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const [showDelete, setShowDelete] = useState(false);
 
@@ -165,9 +166,23 @@ export default function AgentEditorPage() {
           >
             History
           </Btn>
-          <Btn variant="secondary" icon={<I.Play size={11} style={{ marginRight: 6 }} />}>
-            Playground
-          </Btn>
+          {mode === "edit" ? (
+            <Btn
+              variant="secondary"
+              icon={<I.Play size={11} style={{ marginRight: 6 }} />}
+              onClick={() => setMode("play")}
+            >
+              Playground
+            </Btn>
+          ) : (
+            <Btn
+              variant="secondary"
+              icon={<I.X size={11} style={{ marginRight: 6 }} />}
+              onClick={() => setMode("edit")}
+            >
+              Close playground
+            </Btn>
+          )}
         </>
       }
       onSave={handleSave}
@@ -202,6 +217,9 @@ export default function AgentEditorPage() {
           onChange={handleManifestChange}
           catalog={catalog}
           yamlPanel={<YamlPanel manifest={manifest} setManifest={setManifest} catalog={catalog} />}
+          rightPaneOverride={
+            mode === "play" ? <PlaygroundStub /> : undefined
+          }
         />
       ) : (
         <SingleAgentView
@@ -212,6 +230,9 @@ export default function AgentEditorPage() {
           onChange={(next) => handleManifestChange(next as Record<string, unknown>)}
           catalog={catalog}
           yamlPanel={<YamlPanel manifest={manifest} setManifest={setManifest} catalog={catalog} />}
+          rightPaneOverride={
+            mode === "play" ? <PlaygroundStub /> : undefined
+          }
         />
       )}
 
@@ -223,6 +244,36 @@ export default function AgentEditorPage() {
         onCancel={() => setShowDelete(false)}
       />
     </EditorShell>
+  );
+}
+
+function PlaygroundStub() {
+  return (
+    <div
+      style={{
+        padding: 16,
+        background: ag.surface,
+        borderLeft: `1px solid ${ag.line2}`,
+        minHeight: 0,
+        overflow: "auto",
+      }}
+    >
+      <div
+        style={{
+          fontSize: 10.5,
+          letterSpacing: "0.08em",
+          textTransform: "uppercase",
+          color: ag.muted,
+          fontWeight: 500,
+          marginBottom: 8,
+        }}
+      >
+        Playground
+      </div>
+      <Mono size={11.5} color={ag.muted}>
+        Coming in phase 6 — input form, run, and live trace will render here.
+      </Mono>
+    </div>
   );
 }
 
