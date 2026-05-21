@@ -60,6 +60,7 @@ export function PipelineView({
   onChange,
   catalog,
   yamlPanel,
+  rightPaneOverride,
 }: {
   rootManifest: Record<string, unknown>;
   manifestId: string;
@@ -71,6 +72,10 @@ export function PipelineView({
   /** Workspace catalog — passed to the step picker for agent references. */
   catalog?: Catalog;
   yamlPanel?: ReactNode;
+  /** When provided, replaces the inspector / instruction panel on the right
+   *  for every view mode except `yaml`. Used by the editor page to swap in
+   *  the Playground panel in play mode. */
+  rightPaneOverride?: ReactNode;
 }) {
   const root = useMemo<PipelineNode>(
     () => nodeFromAgent(rootManifest, [], { isRoot: true }),
@@ -219,7 +224,9 @@ export function PipelineView({
 
         {(view === "yaml" || view === "both") && yamlPanel}
 
-        {view === "instruction" ? (
+        {view !== "yaml" && rightPaneOverride ? (
+          rightPaneOverride
+        ) : view === "instruction" ? (
           selectedNode.kind === "llm" ? (
             <PipelineInstructionPanel
               selectedNode={selectedNode}
