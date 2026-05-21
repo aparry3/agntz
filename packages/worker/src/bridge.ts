@@ -160,7 +160,14 @@ export function createExecutionContext(
         return result.output;
       } catch (err) {
         const duration = Date.now() - start;
-        console.error(`[llm] ${manifest.id} failed ${duration}ms: ${(err as Error).message}`);
+        const e = err as Error & { cause?: unknown };
+        console.error(
+          `[llm] ${manifest.id} failed ${duration}ms: ${e?.message}\n` +
+          `userInput.len=${(renderedPrompt ?? "").length} ` +
+          `preview=${JSON.stringify((renderedPrompt ?? (state.userQuery ? String(state.userQuery) : "")).slice(0, 200))}` +
+          (e?.cause ? `\ncause=${JSON.stringify(e.cause)?.slice(0, 400)}` : "") +
+          (e?.stack ? `\nstack=${e.stack}` : "")
+        );
         throw err;
       } finally {
         // Clean up temp agent

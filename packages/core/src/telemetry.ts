@@ -512,11 +512,34 @@ function sanitizePart(
           : part.text,
     };
   }
-  // image — drop the base64 payload, keep the metadata so the trace shows
-  // that the model saw an image without ballooning the attribute.
+  if (part.type === "image") {
+    // Drop the base64 payload, keep the metadata so the trace shows that the
+    // model saw an image without ballooning the attribute.
+    return {
+      type: "image",
+      mediaType: part.mediaType,
+      size: part.image.length,
+    };
+  }
+  if (part.type === "tool-call") {
+    const rendered = `tool-call ${part.toolName}(${JSON.stringify(part.input)})`;
+    return {
+      type: "tool-call",
+      text:
+        rendered.length > PROMPT_PER_MESSAGE_CAP
+          ? rendered.slice(0, PROMPT_PER_MESSAGE_CAP)
+          : rendered,
+    };
+  }
+  // tool-result
+  const value =
+    part.output.type === "text" ? part.output.value : JSON.stringify(part.output.value);
+  const rendered = `tool-result ${part.toolName}: ${value}`;
   return {
-    type: "image",
-    mediaType: part.mediaType,
-    size: part.image.length,
+    type: "tool-result",
+    text:
+      rendered.length > PROMPT_PER_MESSAGE_CAP
+        ? rendered.slice(0, PROMPT_PER_MESSAGE_CAP)
+        : rendered,
   };
 }

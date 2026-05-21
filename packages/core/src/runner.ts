@@ -1118,14 +1118,25 @@ export class Runner {
           }
           messages.push({
             role: "assistant",
-            content: resultToolCalls
-              .map((tc) => `[Tool Call: ${tc.name}(${JSON.stringify(tc.args)})]`)
-              .join("\n"),
+            content: resultToolCalls.map((tc) => ({
+              type: "tool-call" as const,
+              toolCallId: tc.id,
+              toolName: tc.name,
+              input: tc.args,
+            })),
           });
           for (const r of stepToolCalls) {
             messages.push({
-              role: "tool" as string,
-              content: typeof r.output === "string" ? r.output : JSON.stringify(r.output),
+              role: "tool",
+              content: [{
+                type: "tool-result" as const,
+                toolCallId: r.id,
+                toolName: r.name,
+                output: {
+                  type: "text" as const,
+                  value: typeof r.output === "string" ? r.output : JSON.stringify(r.output),
+                },
+              }],
             });
           }
 
@@ -1727,7 +1738,7 @@ export class Runner {
         }
 
         // Execute tool calls
-        const toolResults: Array<{ id: string; result: string }> = [];
+        const toolResults: Array<{ id: string; name: string; result: string }> = [];
         let useSkillSucceeded = false;
 
         for (const tc of result.toolCalls) {
@@ -1776,6 +1787,7 @@ export class Runner {
 
           toolResults.push({
             id: tc.id,
+            name: tc.name,
             result: typeof record.output === "string" ? record.output : JSON.stringify(record.output),
           });
 
@@ -1806,17 +1818,29 @@ export class Runner {
           messages.push({ role: "assistant", content: result.text });
         }
 
-        // Add tool call request as assistant message
+        // Add tool call request as assistant message. AI SDK v6 requires
+        // structured `tool-call` parts here, not a formatted string.
         messages.push({
           role: "assistant",
-          content: result.toolCalls.map(tc =>
-            `[Tool Call: ${tc.name}(${JSON.stringify(tc.args)})]`
-          ).join("\n"),
+          content: result.toolCalls.map(tc => ({
+            type: "tool-call" as const,
+            toolCallId: tc.id,
+            toolName: tc.name,
+            input: tc.args,
+          })),
         });
 
-        // Add tool results
+        // Add tool results as structured `tool-result` parts.
         for (const tr of toolResults) {
-          messages.push({ role: "tool" as string, content: tr.result });
+          messages.push({
+            role: "tool",
+            content: [{
+              type: "tool-result" as const,
+              toolCallId: tr.id,
+              toolName: tr.name,
+              output: { type: "text" as const, value: tr.result },
+            }],
+          });
         }
 
         // If the model also produced text along with tool calls, that's the final output

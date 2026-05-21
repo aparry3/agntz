@@ -1204,14 +1204,13 @@ export interface ModelStreamResult {
 export interface GenerateTextOptions {
   model: ModelConfig;
   /**
-   * Conversation messages. `content` is declared `string` for back-compat
-   * with existing ModelProvider implementations; at runtime it may also
-   * carry an AI SDK parts array (e.g.
-   * `[{type:"text", text}, {type:"image", image, mediaType}]`) for
-   * multimodal user turns. Callers building parts arrays cast at the call
-   * site; the AI SDK accepts both shapes and validates them itself.
+   * Conversation messages. `content` may be a plain string (text-only
+   * messages), a multimodal parts array (`[{type:"text",text},{type:"image",image}]`),
+   * or — for assistant tool calls and tool results — an AI SDK parts array
+   * of `tool-call` / `tool-result` parts. The AI SDK validates the shape
+   * at the call site.
    */
-  messages: Array<{ role: string; content: string }>;
+  messages: Array<{ role: string; content: unknown }>;
   tools?: Array<{
     name: string;
     description: string;

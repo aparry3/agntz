@@ -18,7 +18,14 @@ import { isContentBlockArray } from "./types.js";
  */
 export type AiMessagePart =
   | { type: "text"; text: string }
-  | { type: "image"; image: string; mediaType?: string };
+  | { type: "image"; image: string; mediaType?: string }
+  | { type: "tool-call"; toolCallId: string; toolName: string; input: unknown }
+  | {
+      type: "tool-result";
+      toolCallId: string;
+      toolName: string;
+      output: { type: "text"; value: string } | { type: "json"; value: unknown };
+    };
 
 /**
  * Output message shape consumed by `ModelProvider.generateText` /

@@ -15,7 +15,7 @@ export class AISDKModelProvider implements ModelProvider {
     const model = await this.resolveModel(options.model);
 
     const messages = options.messages.map(m => ({
-      role: m.role as "system" | "user" | "assistant",
+      role: m.role as "system" | "user" | "assistant" | "tool",
       content: m.content,
     }));
 
@@ -41,14 +41,21 @@ export class AISDKModelProvider implements ModelProvider {
         })
       : undefined;
 
-    const result = await generateText({
-      model,
-      messages,
-      tools: Object.keys(tools).length > 0 ? tools : undefined,
-      experimental_output,
-      maxOutputTokens: options.maxTokens,
-      abortSignal: options.signal,
-    });
+    let result: Awaited<ReturnType<typeof generateText>>;
+    try {
+      result = await generateText({
+        model,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        messages: messages as any,
+        tools: Object.keys(tools).length > 0 ? tools : undefined,
+        experimental_output,
+        maxOutputTokens: options.maxTokens,
+        abortSignal: options.signal,
+      });
+    } catch (err) {
+      logLlmCallFailure("generateText", options.model, messages, tools, err);
+      throw err;
+    }
 
     const inputTokens = result.usage?.inputTokens ?? 0;
     const outputTokens = result.usage?.outputTokens ?? 0;
@@ -74,7 +81,7 @@ export class AISDKModelProvider implements ModelProvider {
     const model = await this.resolveModel(options.model);
 
     const messages = options.messages.map(m => ({
-      role: m.role as "system" | "user" | "assistant",
+      role: m.role as "system" | "user" | "assistant" | "tool",
       content: m.content,
     }));
 
@@ -100,13 +107,26 @@ export class AISDKModelProvider implements ModelProvider {
         })
       : undefined;
 
-    const result = streamText({
-      model,
-      messages,
-      tools: Object.keys(tools).length > 0 ? tools : undefined,
-      experimental_output,
-      maxOutputTokens: options.maxTokens,
-      abortSignal: options.signal,
+    let result: ReturnType<typeof streamText>;
+    try {
+      result = streamText({
+        model,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        messages: messages as any,
+        tools: Object.keys(tools).length > 0 ? tools : undefined,
+        experimental_output,
+        maxOutputTokens: options.maxTokens,
+        abortSignal: options.signal,
+      });
+    } catch (err) {
+      logLlmCallFailure("streamText", options.model, messages, tools, err);
+      throw err;
+    }
+    // Deferred schema validation / provider errors surface via the result
+    // promises rather than the synchronous call above. Attach a diagnostic
+    // logger so we see the messages payload when that happens too.
+    Promise.resolve(result.finishReason).catch((err) => {
+      logLlmCallFailure("streamText[deferred]", options.model, messages, tools, err);
     });
 
     const toolCallsPromise = Promise.resolve(result.toolCalls).then(tcs =>
@@ -297,4 +317,29 @@ function jsonSchemaToZod(schema: Record<string, unknown>, z: typeof import("zod"
   }
 
   return z.object(shape);
+}
+
+function logLlmCallFailure(
+  site: string,
+  model: ModelConfig,
+  messages: Array<{ role: string; content: unknown }>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tools: Record<string, any>,
+  err: unknown,
+): void {
+  const e = err as Error & { cause?: unknown };
+  const summary = messages.map((m, i) => {
+    const c = m.content;
+    if (typeof c === "string") {
+      return `  [${i}] role=${m.role} type=string len=${c.length} preview=${JSON.stringify(c.slice(0, 120))}`;
+    }
+    return `  [${i}] role=${m.role} type=${Array.isArray(c) ? "array" : typeof c} value=${JSON.stringify(c)?.slice(0, 240)}`;
+  }).join("\n");
+  console.error(
+    `[model-provider] ${site} failed model=${model.provider}/${model.name}: ${e?.message}\n` +
+    `tools=[${Object.keys(tools).join(",")}]\n` +
+    `messages (${messages.length}):\n${summary}` +
+    (e?.cause ? `\ncause=${JSON.stringify(e.cause)?.slice(0, 400)}` : "") +
+    (e?.stack ? `\nstack=${e.stack}` : "")
+  );
 }
