@@ -71,17 +71,19 @@ steps:
                Decide method, body shape, and which placeholders to pin in
                `params:` vs leave to the LLM.
              - Credentials: classify exactly one auth shape per HTTP tool —
-               (a) static "API key / Bearer token" → templated header with
-               `{{secrets.NAME}}`, no `auth:` block;
+               (a) static "API key / Bearer token" → templated `Authorization`
+               header reading from the `secrets` namespace, no `auth:` block;
                (b) "client id + client secret", "OAuth2 client credentials",
                "service-to-service" → `auth.type: oauth2_client_credentials`
-               with `token_url`, `client_id`, `client_secret` (both as
-               `{{secrets.X}}`), and optional `scope`;
+               with `token_url`, `client_id`, and `client_secret` (both read
+               from the `secrets` namespace), and optional `scope`;
                (c) custom login endpoint, username+password, non-standard
                token field → `auth.type: token_exchange` with `request`,
                `extract.token_path`, and `apply`.
-               Name each secret you'll reference (`{{secrets.SF_CLIENT_ID}}`
-               etc.) so the generator emits consistent identifiers.
+               Name each secret you'll reference (UPPER_SNAKE_CASE, e.g.
+               SF_CLIENT_ID, GITHUB_TOKEN) so the generator emits consistent
+               identifiers. See the HTTP-auth section of the schema reference
+               for exact template syntax.
              - Mix freely: one LLM agent can have an MCP block plus several
                HTTP entries in the same `tools:` array.
         8. Output mapping — what should the top-level agent expose? Name each
@@ -93,11 +95,11 @@ steps:
         {{schema}}
         ---
 
-        User's description:
-        {{description}}
-
         Return a concrete plan. Be specific about field names, state keys, and
         any `when` conditions. The generator will follow this plan literally.
+      prompt: |
+        User's description:
+        {{description}}
       outputSchema:
         overview: string
         topLevelKind: string
@@ -174,10 +176,12 @@ steps:
                 when sending a body.
               - Credentials: NEVER inline literal API keys, tokens, client ids,
                 client secrets, usernames, or passwords. Reference every
-                credential as `{{secrets.UPPER_SNAKE_CASE_NAME}}` (or
-                `{{env.NAME}}` only if the plan explicitly says env). Pick names
-                that describe the provider, e.g. `{{secrets.SF_CLIENT_ID}}`,
-                `{{secrets.GITHUB_TOKEN}}`.
+                credential via the `secrets` namespace using double-curly
+                template syntax — see the HTTP-tool examples in the schema
+                reference for the exact form. Use the `env` namespace only when
+                the plan explicitly says env. Pick UPPER_SNAKE_CASE secret
+                names that describe the provider (e.g. SF_CLIENT_ID,
+                GITHUB_TOKEN).
               - Auth shape: follow the plan exactly — static header for
                 Bearer/API-key, `auth.type: oauth2_client_credentials` for the
                 OAuth2 client-credentials grant, `auth.type: token_exchange` for
@@ -194,6 +198,10 @@ steps:
               {{schema}}
               ---
 
+              Generate a complete, valid YAML agent manifest that realizes the plan.
+              Return ONLY the YAML in the `yaml` field. In the `explanation` field,
+              briefly note how the YAML maps to the plan.
+            prompt: |
               User's description:
               {{description}}
 
@@ -215,10 +223,6 @@ steps:
               Your previous YAML (fix this):
               {{previousYaml}}
               {{/if}}
-
-              Generate a complete, valid YAML agent manifest that realizes the plan.
-              Return ONLY the YAML in the `yaml` field. In the `explanation` field,
-              briefly note how the YAML maps to the plan.
             outputSchema:
               yaml: string
               explanation: string
