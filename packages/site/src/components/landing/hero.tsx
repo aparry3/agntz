@@ -46,7 +46,19 @@ type Tab = "yaml" | "runner";
 
 export function Hero({ accent = "blue" }: { accent?: AccentName }) {
   const [tab, setTab] = useState<Tab>("yaml");
+  const [copied, setCopied] = useState(false);
   const a = ACCENTS[accent];
+
+  async function copyActive() {
+    const text = tab === "yaml" ? HERO_YAML : HERO_RUNNER;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard unavailable (insecure context, denied permission) — leave UI untouched
+    }
+  }
 
   return (
     <Section dense style={{ paddingTop: 76, paddingBottom: 88, overflow: "hidden" }}>
@@ -197,18 +209,27 @@ export function Hero({ accent = "blue" }: { accent?: AccentName }) {
                   </button>
                 ))}
               </Row>
-              <span
+              <button
+                type="button"
+                onClick={copyActive}
+                aria-label={`Copy ${tab === "yaml" ? "agent.yaml" : "runner.ts"} to clipboard`}
                 style={{
-                  paddingRight: 14,
+                  marginRight: 8,
+                  padding: "6px 10px",
+                  border: 0,
+                  background: "transparent",
                   fontFamily: "var(--mono)",
                   fontSize: 10,
                   letterSpacing: "0.14em",
                   textTransform: "uppercase",
-                  color: TOKENS.muted,
+                  color: copied ? ACCENTS.green.fg : TOKENS.muted,
+                  cursor: "pointer",
+                  borderRadius: 4,
+                  transition: "color 120ms ease",
                 }}
               >
-                copy
-              </span>
+                {copied ? "copied" : "copy"}
+              </button>
             </Row>
 
             <pre
