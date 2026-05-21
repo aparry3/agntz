@@ -66,6 +66,14 @@ const YAML_RULES: Rule[] = [
   { re: /\b\d+(?:\.\d+)?\b/g, color: "#1F7A4D" },
 ];
 
+export function highlightTS(code: string): ReactNode[] {
+  return renderTokens(String(code ?? ""), TS_RULES);
+}
+
+export function highlightYAML(code: string): ReactNode[] {
+  return renderTokens(String(code ?? ""), YAML_RULES);
+}
+
 function renderTokens(code: string, rules: Rule[]): ReactNode[] {
   const tokens = tokenize(code, rules, "#1A1916");
   return tokens.map((tk, k) =>
@@ -84,12 +92,14 @@ export function CodeBlock({
   lang = "ts",
   filename,
   copy = true,
+  wrap = false,
   style,
 }: {
   children: string;
   lang?: "ts" | "yaml";
   filename?: string;
   copy?: boolean;
+  wrap?: boolean;
   style?: CSSProperties;
 }) {
   const code = String(children).replace(/^\n/, "").replace(/\n$/, "");
@@ -155,7 +165,8 @@ export function CodeBlock({
           lineHeight: 1.7,
           color: TOKENS.ink,
           overflowX: "auto",
-          whiteSpace: "pre",
+          whiteSpace: wrap ? "pre-wrap" : "pre",
+          overflowWrap: wrap ? "anywhere" : "normal",
         }}
       >
         <code>{hl}</code>

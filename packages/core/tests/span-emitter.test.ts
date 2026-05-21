@@ -77,6 +77,21 @@ describe("SpanEmitter", () => {
     const starts = events.filter((e) => e.type === "span-start") as Array<{ span: { ownerId: string } }>;
     for (const s of starts) expect(s.span.ownerId).toBe("u_special");
   });
+
+  it("uses injected traceId for the root span when config.traceId is set", () => {
+    const events: TraceLiveEvent[] = [];
+    const emitter = new SpanEmitter({
+      traceSink: (e) => events.push(e),
+      traceId: "tr_externally_minted",
+    });
+    const m = emitter.startManifest({ ownerId: "u1", agentId: "a", kind: "llm" });
+    const inv = emitter.startInvoke({ agentId: "a", invocationId: "i", model: "m", ownerId: "u1" });
+    inv.end();
+    m.end();
+    const starts = events.filter((e) => e.type === "span-start") as Array<{ span: { traceId: string } }>;
+    expect(starts).toHaveLength(2);
+    for (const s of starts) expect(s.span.traceId).toBe("tr_externally_minted");
+  });
 });
 
 describe("computeCost", () => {

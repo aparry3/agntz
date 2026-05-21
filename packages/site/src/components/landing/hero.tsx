@@ -1,42 +1,55 @@
+"use client";
+
+import { useState } from "react";
 import { ACCENTS, type AccentName, TOKENS } from "./tokens";
-import { Btn, Card, H1, Lede, Pill, Row, Section, Stack } from "./primitives";
-import { ArrowIcon, CheckIcon, ExternalIcon, GithubIcon } from "./icons";
-import { CodeBlock } from "./code-block";
+import { Btn, H1, Lede, Pill, Row, Section, Stack } from "./primitives";
+import { ArrowIcon, CheckIcon, CodeIcon, ExternalIcon, GithubIcon, SparkIcon } from "./icons";
+import { highlightTS, highlightYAML } from "./code-block";
 
-const HERO_CODE = `import { agntz } from '@agntz/runner';
+const HERO_YAML = `# agent.yaml — the whole agent, declared.
+id: weather-bot
+kind: llm
 
-// Load YAML agents from disk, run in-process.
-const client = await agntz({ agents: './agents' });
+model:
+  provider: anthropic
+  name: claude-sonnet-4-6
 
-const { output } = await client.agents.run({
-  agentId: 'support-agent',
-  input: {
-    message: email.body,
-    customerId: email.from,
-  },
-});`;
+instruction: |
+  You are a friendly weather assistant.
+  When asked about a city, look up the
+  forecast and reply in plain language.
 
-type HeroSpan = {
-  i: number;
-  l: string;
-  v: string;
-  t: string;
-  c: string;
-  w: number;
-  o: number;
-};
+tools:
+  - kind: http
+    name: get_forecast
+    description: Current weather for a coordinate.
+    url: "https://api.open-meteo.com/v1/forecast?latitude={latitude}&longitude={longitude}&current_weather={current_weather?}"
+    method: GET`;
 
-const HERO_SPANS: HeroSpan[] = [
-  { i: 0, l: "agent.invoke", v: "support-agent", t: "1.84s", c: TOKENS.ink, w: 100, o: 0 },
-  { i: 1, l: "model.call", v: "claude-sonnet-4-6", t: "612ms", c: ACCENTS.purple.fg, w: 33, o: 0 },
-  { i: 1, l: "tool.execute", v: "lookup_customer", t: "84ms", c: ACCENTS.amber.fg, w: 5, o: 34 },
-  { i: 1, l: "tool.execute", v: "search_kb", t: "210ms", c: ACCENTS.amber.fg, w: 12, o: 40 },
-  { i: 1, l: "model.call", v: "claude-sonnet-4-6", t: "933ms", c: ACCENTS.purple.fg, w: 47, o: 53 },
-];
+const HERO_RUNNER = `// runner.ts — call your existing APIs, run anywhere.
+import { Runner } from '@agntz/runner';
 
-export function Hero({ h1, accent = "blue" }: { h1: string; accent?: AccentName }) {
+const runner = new Runner({
+  agentsDir: './agents',
+});
+
+// Sessions are resumable, multimodal, replyable.
+const { sessionId } = await runner.start('weather-bot', {
+  input: { message: "What's the weather in Lisbon today?" },
+});
+
+const { output } = await runner.run(sessionId);
+// → "Lisbon is 21°C and sunny right now, with light
+//    winds from the northwest. Expect a clear evening."`;
+
+type Tab = "yaml" | "runner";
+
+export function Hero({ accent = "blue" }: { accent?: AccentName }) {
+  const [tab, setTab] = useState<Tab>("yaml");
+  const a = ACCENTS[accent];
+
   return (
-    <Section dense style={{ paddingTop: 72, paddingBottom: 72, overflow: "hidden" }}>
+    <Section dense style={{ paddingTop: 76, paddingBottom: 88, overflow: "hidden" }}>
       <BgGrid />
 
       <div
@@ -51,53 +64,47 @@ export function Hero({ h1, accent = "blue" }: { h1: string; accent?: AccentName 
         <Stack gap={28}>
           <Row gap={8} style={{ alignItems: "center", flexWrap: "wrap" }}>
             <Pill accent="green" dot>
-              @agntz/runner · v1.0.0
+              v1.0.0 — released
             </Pill>
-            <Pill mono>MIT licensed</Pill>
-            <Pill mono>Open source</Pill>
+            <Pill mono>declarative runtime</Pill>
+            <Pill mono>open source</Pill>
           </Row>
 
-          <H1 size={68} style={{ maxWidth: 640 }}>
-            {h1}
+          <H1 size={76} style={{ maxWidth: 680, letterSpacing: "-0.04em" }}>
+            Describe your agent.
+            <br />
+            <span style={{ color: TOKENS.muted }}>Run it.</span>
           </H1>
 
-          <Lede style={{ fontSize: 19, maxWidth: 580 }}>
-            Open-source agents you define once, version automatically, and run anywhere.
-            Traces, evals, and debugging — built in, not bolted on.
+          <Lede style={{ fontSize: 19, maxWidth: 560 }}>
+            A declarative runtime for production agents. Define agents in YAML, call your existing
+            APIs, and run anywhere — local, hosted, or self-hosted.
           </Lede>
-
-          <Row gap={10} style={{ marginTop: 4, flexWrap: "wrap" }}>
-            <Btn primary size="lg" href="/docs">
-              Read the quickstart <ArrowIcon />
-            </Btn>
-            <Btn size="lg" icon={<GithubIcon />} href="https://github.com/aparry3/agntz">
-              View on GitHub <ExternalIcon />
-            </Btn>
-          </Row>
 
           <div
             style={{
               display: "inline-flex",
               alignItems: "center",
               gap: 12,
-              padding: "10px 14px",
+              padding: "12px 16px",
               background: TOKENS.surface,
               border: `1px solid ${TOKENS.line}`,
               borderRadius: 8,
               fontFamily: "var(--mono)",
-              fontSize: 13,
+              fontSize: 13.5,
               alignSelf: "flex-start",
+              boxShadow: "0 1px 0 rgba(26,25,22,0.03)",
             }}
           >
             <span style={{ color: TOKENS.muted }}>$</span>
             <span>
               <span style={{ color: TOKENS.text2 }}>npm install</span> @agntz/runner
             </span>
-            <span style={{ width: 1, height: 14, background: TOKENS.line, margin: "0 2px" }} />
+            <span style={{ width: 1, height: 16, background: TOKENS.line, margin: "0 4px" }} />
             <span
               style={{
                 color: TOKENS.muted,
-                fontSize: 11,
+                fontSize: 10.5,
                 letterSpacing: "0.14em",
                 textTransform: "uppercase",
                 cursor: "pointer",
@@ -107,134 +114,165 @@ export function Hero({ h1, accent = "blue" }: { h1: string; accent?: AccentName 
             </span>
           </div>
 
+          <Row gap={10} style={{ marginTop: 4, flexWrap: "wrap" }}>
+            <Btn primary size="lg" href="/docs">
+              Quickstart <ArrowIcon />
+            </Btn>
+            <Btn size="lg" icon={<GithubIcon />} href="https://github.com/aparry3/agntz">
+              View on GitHub <ExternalIcon />
+            </Btn>
+          </Row>
+
           <Row
             gap={20}
             style={{
-              marginTop: 6,
+              marginTop: 8,
               alignItems: "center",
               color: TOKENS.text2,
               fontSize: 13,
               flexWrap: "wrap",
             }}
           >
-            <Row gap={6} style={{ alignItems: "center" }}>
-              <span style={{ color: ACCENTS[accent].fg, display: "inline-flex" }}>
-                <CheckIcon />
-              </span>
-              Self-hostable
-            </Row>
-            <Row gap={6} style={{ alignItems: "center" }}>
-              <span style={{ color: ACCENTS[accent].fg, display: "inline-flex" }}>
-                <CheckIcon />
-              </span>
-              No lock-in
-            </Row>
-            <Row gap={6} style={{ alignItems: "center" }}>
-              <span style={{ color: ACCENTS[accent].fg, display: "inline-flex" }}>
-                <CheckIcon />
-              </span>
-              Production-ready
-            </Row>
+            {["YAML in, agent out", "Your existing APIs", "Local · Hosted · Self-host"].map(
+              (t) => (
+                <Row key={t} gap={6} style={{ alignItems: "center" }}>
+                  <span style={{ color: a.fg, display: "inline-flex" }}>
+                    <CheckIcon />
+                  </span>
+                  {t}
+                </Row>
+              ),
+            )}
           </Row>
         </Stack>
 
-        <Stack gap={14} style={{ position: "relative" }}>
-          <CodeBlock filename="app.ts" lang="ts">
-            {HERO_CODE}
-          </CodeBlock>
-
-          <Card style={{ padding: 14, boxShadow: "0 4px 16px rgba(26,25,22,0.06)" }}>
-            <Row style={{ alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-              <Row gap={8} style={{ alignItems: "center" }}>
-                <Pill accent="green" dot mono>
-                  success
-                </Pill>
-                <span
-                  style={{
-                    fontFamily: "var(--mono)",
-                    fontSize: 10.5,
-                    color: TOKENS.muted,
-                    letterSpacing: "0.06em",
-                  }}
-                >
-                  trc_01H8K2X9PY42
-                </span>
-              </Row>
-              <span style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: TOKENS.text2 }}>
-                1.84s · 4,217 tok
-              </span>
-            </Row>
-            <Stack gap={6}>
-              {HERO_SPANS.map((s, k) => (
-                <Row
-                  key={k}
-                  gap={8}
-                  style={{ alignItems: "center", fontFamily: "var(--mono)", fontSize: 10.5 }}
-                >
-                  <Row gap={6} style={{ alignItems: "center", width: 178, paddingLeft: s.i * 10 }}>
-                    <span
-                      style={{ width: 6, height: 6, borderRadius: 1, background: s.c, flexShrink: 0 }}
-                    />
-                    <span style={{ color: TOKENS.muted }}>{s.l}</span>
-                    <span
-                      style={{
-                        color: TOKENS.ink,
-                        fontWeight: 500,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      {s.v}
-                    </span>
-                  </Row>
-                  <div style={{ flex: 1, height: 10, position: "relative" }}>
-                    <div
-                      style={{
-                        position: "absolute",
-                        left: `${s.o}%`,
-                        width: `${Math.max(s.w, 1)}%`,
-                        top: 1,
-                        bottom: 1,
-                        background: s.c,
-                        opacity: s.i === 0 ? 1 : 0.85,
-                        borderRadius: 1.5,
-                        minWidth: 2,
-                      }}
-                    />
-                  </div>
-                  <span style={{ width: 44, textAlign: "right", color: TOKENS.text2 }}>{s.t}</span>
-                </Row>
-              ))}
-            </Stack>
+        <Stack gap={0} style={{ position: "relative" }}>
+          <div
+            style={{
+              background: TOKENS.surface,
+              border: `1px solid ${TOKENS.line}`,
+              borderRadius: 12,
+              overflow: "hidden",
+              boxShadow:
+                "0 24px 60px rgba(26,25,22,0.10), 0 4px 14px rgba(26,25,22,0.05)",
+            }}
+          >
             <Row
-              gap={6}
               style={{
-                marginTop: 10,
-                paddingTop: 10,
-                borderTop: `1px dashed ${TOKENS.line2}`,
                 alignItems: "center",
+                justifyContent: "space-between",
+                background: TOKENS.warm,
+                borderBottom: `1px solid ${TOKENS.line}`,
               }}
             >
+              <Row gap={0}>
+                {[
+                  { id: "yaml" as const, label: "agent.yaml" },
+                  { id: "runner" as const, label: "runner.ts" },
+                ].map((tb) => (
+                  <button
+                    key={tb.id}
+                    type="button"
+                    onClick={() => setTab(tb.id)}
+                    style={{
+                      padding: "11px 18px",
+                      border: 0,
+                      background: tab === tb.id ? TOKENS.surface : "transparent",
+                      borderRight: `1px solid ${TOKENS.line}`,
+                      borderBottom:
+                        tab === tb.id ? `2px solid ${TOKENS.ink}` : "2px solid transparent",
+                      marginBottom: -1,
+                      fontFamily: "var(--mono)",
+                      fontSize: 12,
+                      color: tab === tb.id ? TOKENS.ink : TOKENS.muted,
+                      fontWeight: tab === tb.id ? 600 : 400,
+                      cursor: "pointer",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 8,
+                    }}
+                  >
+                    <CodeIcon />
+                    {tb.label}
+                  </button>
+                ))}
+              </Row>
               <span
                 style={{
+                  paddingRight: 14,
                   fontFamily: "var(--mono)",
                   fontSize: 10,
-                  color: TOKENS.muted,
                   letterSpacing: "0.14em",
                   textTransform: "uppercase",
+                  color: TOKENS.muted,
                 }}
               >
-                version
+                copy
               </span>
-              <Pill accent={accent} dot mono>
-                support-agent · pinned · 2026-05-15 09:12
-              </Pill>
             </Row>
-          </Card>
+
+            <pre
+              style={{
+                margin: 0,
+                padding: "16px 18px",
+                fontFamily: "var(--mono)",
+                fontSize: 12.5,
+                lineHeight: 1.65,
+                color: TOKENS.ink,
+                overflowX: "auto",
+                whiteSpace: "pre-wrap",
+                overflowWrap: "anywhere",
+                minHeight: 350,
+              }}
+            >
+              <code>{tab === "yaml" ? highlightYAML(HERO_YAML) : highlightTS(HERO_RUNNER)}</code>
+            </pre>
+
+            <Row
+              style={{
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "10px 14px",
+                borderTop: `1px solid ${TOKENS.line}`,
+                background: TOKENS.warm,
+              }}
+            >
+              <Row gap={8} style={{ alignItems: "center" }}>
+                <span
+                  style={{ width: 8, height: 8, borderRadius: 99, background: ACCENTS.green.fg }}
+                />
+                <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: TOKENS.text2 }}>
+                  {tab === "yaml" ? "valid · ready to run" : "session resumable"}
+                </span>
+              </Row>
+              <span style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: TOKENS.muted }}>
+                {tab === "yaml" ? "weather-bot.yaml" : "@agntz/runner"}
+              </span>
+            </Row>
+          </div>
+
+          <div
+            style={{
+              marginTop: 14,
+              padding: "12px 16px",
+              border: `1px dashed ${a.line}`,
+              borderRadius: 8,
+              background: a.bg + "70",
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+            }}
+          >
+            <span style={{ color: a.fg, display: "inline-flex" }}>
+              <SparkIcon />
+            </span>
+            <span style={{ fontSize: 13, color: TOKENS.ink, lineHeight: 1.45 }}>
+              The YAML <i>is</i> the agent. No wiring, no compose, no loop to author —{" "}
+              <b style={{ fontWeight: 600 }}>the runtime runs it.</b>
+            </span>
+          </div>
         </Stack>
       </div>
-
     </Section>
   );
 }

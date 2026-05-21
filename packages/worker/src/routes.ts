@@ -255,10 +255,16 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
         return c.json({ error: "Missing required field: agentId" }, 400);
       }
 
-      // Pre-allocate sessionId so the run-start SSE frame is authoritative.
+      // Pre-allocate sessionId and traceId so the run-start SSE frame is
+      // authoritative — clients use the traceId to subscribe to the live
+      // trace stream before the first span has fired.
       const sessionId = body.sessionId ?? generateSessionId();
+      const traceId = `tr_${randomBytes(8).toString("hex")}`;
 
       const { runner, manifest } = await resolveRunnerAndManifestImpl(store, userId, agentId);
+      // Reserve the trace as in-progress so /traces/:id/stream subscribers
+      // attaching the moment after run-start don't race the first spanStart.
+      traceRegistry.register(traceId, userId);
       const baseRegistry = new InMemoryRunRegistry();
       const spanEmitter = new SpanEmitter({
         traceSink: (event) => {
@@ -267,6 +273,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
           else if (event.type === "trace-done") traceRegistry.traceDone(event.summary.traceId, event.summary.ownerId, event.summary);
         },
         recordIO: false,
+        traceId,
       });
       // Replies are aggregated into a per-request collector AND, when
       // `agent.reply` is set, broadcast as `reply` multiplexed events on the
@@ -356,7 +363,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
         try {
           await stream.writeSSE({
             event: "run-start",
-            data: JSON.stringify({ agentId, kind: manifest.kind, sessionId }),
+            data: JSON.stringify({ agentId, kind: manifest.kind, sessionId, traceId }),
           });
 
           const result = await execute(manifest, input ?? "", ctx);

@@ -157,6 +157,56 @@ describe("InMemoryTraceRegistry", () => {
   it("getInProgress returns null for unknown trace", () => {
     expect(registry.getInProgress("tr_nope", "u1")).toBeNull();
   });
+
+  it("register marks a trace in-progress before any spans start (returns empty array)", () => {
+    registry.register("tr_reg", "u1");
+    const got = registry.getInProgress("tr_reg", "u1");
+    expect(got).not.toBeNull();
+    expect(got!).toHaveLength(0);
+  });
+
+  it("register is owner-scoped — other owners still see null", () => {
+    registry.register("tr_reg", "u1");
+    expect(registry.getInProgress("tr_reg", "u2")).toBeNull();
+  });
+
+  it("after register, spanStart populates getInProgress with the span", () => {
+    registry.register("tr_reg2", "u1");
+    registry.spanStart(makeSpan({ spanId: "sp_post_reg", traceId: "tr_reg2", ownerId: "u1" }));
+    const got = registry.getInProgress("tr_reg2", "u1");
+    expect(got).not.toBeNull();
+    expect(got!).toHaveLength(1);
+    expect(got![0].spanId).toBe("sp_post_reg");
+  });
+
+  it("traceDone clears the registration so subsequent getInProgress returns null", () => {
+    registry.register("tr_reg3", "u1");
+    registry.traceDone("tr_reg3", "u1", makeSummary("tr_reg3", "u1"));
+    expect(registry.getInProgress("tr_reg3", "u1")).toBeNull();
+  });
+
+  it("subscribers attached after register but before first spanStart still receive subsequent events", async () => {
+    registry.register("tr_subreg", "u1");
+    const iterator = registry.subscribe("tr_subreg", "u1");
+    const events: unknown[] = [];
+    const consumeP = (async () => {
+      for await (const e of iterator) {
+        events.push(e);
+        if (e.type === "trace-done") break;
+      }
+    })();
+
+    registry.spanStart(makeSpan({ spanId: "sp_subreg_1", traceId: "tr_subreg", ownerId: "u1" }));
+    registry.spanEnd("sp_subreg_1", { endedAt: new Date().toISOString(), status: "ok" });
+    registry.traceDone("tr_subreg", "u1", makeSummary("tr_subreg", "u1"));
+
+    await consumeP;
+    expect(events.map((e) => (e as { type: string }).type)).toEqual([
+      "span-start",
+      "span-end",
+      "trace-done",
+    ]);
+  });
 });
 
 function makeSummary(traceId: string, ownerId: string): TraceSummary {

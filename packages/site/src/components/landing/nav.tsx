@@ -3,11 +3,11 @@ import { ArrowIcon, GithubIcon } from "./icons";
 import { TOKENS } from "./tokens";
 
 const NAV_LINKS: [string, string][] = [
-  ["Product", "/#how"],
+  ["Runtime", "/#shift"],
+  ["Hosted", "/#hosted"],
+  ["Self-host", "/#self-hosted"],
   ["Docs", "/docs"],
-  ["Pricing", "/#pricing"],
   ["Changelog", "#"],
-  ["Blog", "#"],
 ];
 
 const GITHUB_STARS = 0;
@@ -75,8 +75,11 @@ export function Nav() {
               </span>
             )}
           </a>
+          <a href="#" style={{ color: TOKENS.text2, fontSize: 13.5, textDecoration: "none" }}>
+            Sign in
+          </a>
           <Btn primary size="sm" href="/docs">
-            Read the docs <ArrowIcon />
+            Quickstart <ArrowIcon />
           </Btn>
         </Row>
       </div>

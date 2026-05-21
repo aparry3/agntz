@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { parse as parseYAML, stringify as stringifyYAML } from "yaml";
 import { EditorShell } from "@/components/v3/editor/editor-shell";
 import {
@@ -12,6 +12,7 @@ import {
 import { PipelineView, type PipelineViewMode } from "@/components/v3/editor/pipeline-view";
 import { YamlEditor } from "@/components/yaml-editor";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { Playground } from "@/components/playground/playground";
 import { useCatalog } from "@/lib/use-catalog";
 import { I } from "@/components/v3/icons";
 import { ag, Btn, Mono, Tag } from "@/components/v3/primitives";
@@ -23,6 +24,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export default function AgentEditorPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const catalog = useCatalog();
 
   const [manifest, setManifest] = useState("");
@@ -32,6 +34,9 @@ export default function AgentEditorPage() {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<SingleViewMode | PipelineViewMode>("build");
+  const [mode, setMode] = useState<"edit" | "play">(
+    () => (searchParams.get("mode") === "play" ? "play" : "edit")
+  );
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const [showDelete, setShowDelete] = useState(false);
 
@@ -165,9 +170,23 @@ export default function AgentEditorPage() {
           >
             History
           </Btn>
-          <Btn variant="secondary" icon={<I.Play size={11} style={{ marginRight: 6 }} />}>
-            Playground
-          </Btn>
+          {mode === "edit" ? (
+            <Btn
+              variant="secondary"
+              icon={<I.Play size={11} style={{ marginRight: 6 }} />}
+              onClick={() => setMode("play")}
+            >
+              Playground
+            </Btn>
+          ) : (
+            <Btn
+              variant="secondary"
+              icon={<I.X size={11} style={{ marginRight: 6 }} />}
+              onClick={() => setMode("edit")}
+            >
+              Close playground
+            </Btn>
+          )}
         </>
       }
       onSave={handleSave}
@@ -202,6 +221,16 @@ export default function AgentEditorPage() {
           onChange={handleManifestChange}
           catalog={catalog}
           yamlPanel={<YamlPanel manifest={manifest} setManifest={setManifest} catalog={catalog} />}
+          rightPaneOverride={
+            mode === "play" ? (
+              <Playground
+                agentId={manifestId}
+                manifest={parsed ?? { id: manifestId }}
+                dirty={dirty}
+                onSaveAndRun={handleSave}
+              />
+            ) : undefined
+          }
         />
       ) : (
         <SingleAgentView
@@ -212,6 +241,16 @@ export default function AgentEditorPage() {
           onChange={(next) => handleManifestChange(next as Record<string, unknown>)}
           catalog={catalog}
           yamlPanel={<YamlPanel manifest={manifest} setManifest={setManifest} catalog={catalog} />}
+          rightPaneOverride={
+            mode === "play" ? (
+              <Playground
+                agentId={manifestId}
+                manifest={parsed ?? { id: manifestId }}
+                dirty={dirty}
+                onSaveAndRun={handleSave}
+              />
+            ) : undefined
+          }
         />
       )}
 

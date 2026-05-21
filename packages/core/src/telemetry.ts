@@ -50,6 +50,8 @@ export interface TelemetryConfig {
   baseAttributes?: Record<string, string | number | boolean>;
   /** Native sink — invoked on every span-start / span-end / trace-done. */
   traceSink?: TraceSink;
+  /** Pre-minted trace id for the root span. When omitted, a fresh `tr_<ulid>` is generated on the first openSpan. */
+  traceId?: string;
 }
 
 // ───────────────────────────────────────────────────────────────────────
@@ -295,7 +297,7 @@ export class SpanEmitter {
 
   private openSpan(kind: SpanKind, name: string, opts: OpenOpts): SpanState {
     const parent = opts.explicitParent ?? (this.stack.length > 0 ? this.stack[this.stack.length - 1] : null);
-    const traceId = parent ? parent.traceId : `tr_${ulid()}`;
+    const traceId = parent ? parent.traceId : (this.config.traceId ?? `tr_${ulid()}`);
     const spanId = `sp_${ulid()}`;
     const startedAt = new Date().toISOString();
 

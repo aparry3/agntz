@@ -65,6 +65,7 @@ export function SingleAgentView({
   catalog,
   rightExtras,
   yamlPanel,
+  rightPaneOverride,
 }: {
   manifest: SingleAgentManifest;
   manifestId: string;
@@ -78,6 +79,10 @@ export function SingleAgentView({
   catalog?: Catalog;
   rightExtras?: ReactNode;
   yamlPanel?: ReactNode;
+  /** When provided, replaces the inspector / instruction panel on the right
+   *  for every view mode except `yaml` (which has no right column). Used by
+   *  the editor page to swap in the Playground panel in play mode. */
+  rightPaneOverride?: ReactNode;
 }) {
   const inputs = parseInputSchema(manifest.inputSchema);
   const outputs = parseSchema(manifest.outputSchema);
@@ -222,7 +227,9 @@ export function SingleAgentView({
 
         {(view === "yaml" || view === "both") && yamlPanel}
 
-        {view === "instruction" ? (
+        {view !== "yaml" && rightPaneOverride ? (
+          rightPaneOverride
+        ) : view === "instruction" ? (
           <InstructionPanel
             agentName={manifest.name ?? manifestId}
             agentId={manifestId}
