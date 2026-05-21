@@ -1,12 +1,12 @@
-import { TOKENS } from "./tokens";
+import { ACCENTS, TOKENS } from "./tokens";
 import { Row, Stack, Wordmark } from "./primitives";
 import { GithubIcon } from "./icons";
 
 const COLS = [
-  { h: "Product", items: ["Features", "Pricing", "Changelog", "Roadmap", "Status"] },
-  { h: "Developers", items: ["Docs", "SDK Reference", "Examples", "Manifest spec", "MCP"] },
-  { h: "Resources", items: ["Blog", "Discord", "Community", "Brand kit"] },
-  { h: "Company", items: ["About", "Careers", "Contact", "Privacy", "Terms"] },
+  { h: "Runtime", items: ["@agntz/runner", "Manifest spec", "Tool kinds", "Sessions", "Tracing"] },
+  { h: "Hosted", items: ["Visual builder", "Versions", "Evals", "Team plans", "SLA"] },
+  { h: "Self-host", items: ["Guide", "Docker", "Helm chart", "Architecture", "Upgrades"] },
+  { h: "Resources", items: ["Docs", "Quickstart", "Examples", "Discord", "Blog"] },
 ];
 
 export function FooterX() {
@@ -39,8 +39,8 @@ export function FooterX() {
                 maxWidth: 280,
               }}
             >
-              Open-source agents you define once, version automatically, and run anywhere. MIT
-              licensed. Built for engineers shipping AI in production.
+              A declarative runtime for production agents. Describe in YAML, run anywhere — local,
+              hosted, or self-hosted.
             </p>
             <Row gap={10} style={{ marginTop: 6 }}>
               <a
@@ -54,6 +54,43 @@ export function FooterX() {
                 }}
               >
                 <GithubIcon />
+              </a>
+              <a
+                href="#"
+                style={{
+                  display: "inline-flex",
+                  padding: 8,
+                  border: "1px solid rgba(244,241,233,0.2)",
+                  borderRadius: 6,
+                  color: TOKENS.bg,
+                  fontFamily: "var(--mono)",
+                  fontSize: 12,
+                }}
+              >
+                X
+              </a>
+              <a
+                href="#"
+                style={{
+                  display: "inline-flex",
+                  padding: "8px 12px",
+                  border: "1px solid rgba(244,241,233,0.2)",
+                  borderRadius: 6,
+                  color: TOKENS.bg,
+                  fontSize: 12,
+                  alignItems: "center",
+                  gap: 6,
+                }}
+              >
+                <span
+                  style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: 99,
+                    background: ACCENTS.green.fg,
+                  }}
+                />
+                Discord · 1.2k
               </a>
             </Row>
           </Stack>
@@ -110,9 +147,20 @@ export function FooterX() {
               letterSpacing: "0.04em",
             }}
           >
-            <span>© 2026 agntz</span>
+            <span>© 2026 agntz, inc.</span>
             <span>MIT</span>
-            <span>@agntz/runner v1.0.0</span>
+            <span>v1.0.0</span>
+            <Row gap={6} style={{ alignItems: "center" }}>
+              <span
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: 99,
+                  background: ACCENTS.green.fg,
+                }}
+              />
+              all systems normal
+            </Row>
           </Row>
           <span
             style={{
@@ -121,7 +169,7 @@ export function FooterX() {
               color: "rgba(244,241,233,0.45)",
             }}
           >
-            built with agntz · traced by agntz
+            described in YAML · run by agntz
           </span>
         </Row>
       </div>

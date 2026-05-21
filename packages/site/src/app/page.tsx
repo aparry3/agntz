@@ -1,36 +1,29 @@
-import { BottomCTA } from "@/components/landing/bottom-cta";
-import { CompositionSpotlight } from "@/components/landing/composition-spotlight";
+import { FinalCTA } from "@/components/landing/final-cta";
 import { FooterX } from "@/components/landing/footer";
 import { Hero } from "@/components/landing/hero";
-import { HostingTable } from "@/components/landing/hosting-table";
-import { HowItWorks } from "@/components/landing/how-it-works";
-import { Integrations } from "@/components/landing/integrations";
+import { HostedSpotlight } from "@/components/landing/hosted-spotlight";
 import { Nav } from "@/components/landing/nav";
-import { ObservabilitySpotlight } from "@/components/landing/observability-spotlight";
-import { Pillars } from "@/components/landing/pillars";
-import { Pricing } from "@/components/landing/pricing";
-import { VersioningSpotlight } from "@/components/landing/versioning-spotlight";
-import { WhoItsFor } from "@/components/landing/who-its-for";
+import { RunItYourWay } from "@/components/landing/run-it-your-way";
+import { RuntimeCapabilities } from "@/components/landing/runtime-capabilities";
+import { SelfHostedSpotlight } from "@/components/landing/self-hosted-spotlight";
+import { TheLoop } from "@/components/landing/the-loop";
+import { TheShift } from "@/components/landing/the-shift";
 
-const H1 = "Ship AI in your product. See every step it takes.";
-const ACCENT = "blue" as const;
+const ACCENT = "purple" as const;
 
 export default function Home() {
   return (
     <>
       <Nav />
       <main>
-        <Hero h1={H1} accent={ACCENT} />
-        <Pillars accent={ACCENT} />
-        <HowItWorks accent={ACCENT} />
-        <ObservabilitySpotlight accent={ACCENT} />
-        <VersioningSpotlight accent={ACCENT} />
-        <CompositionSpotlight accent={ACCENT} />
-        <WhoItsFor accent={ACCENT} />
-        <HostingTable accent={ACCENT} />
-        <Pricing accent={ACCENT} />
-        <Integrations accent={ACCENT} />
-        <BottomCTA accent={ACCENT} />
+        <Hero accent={ACCENT} />
+        <TheShift accent={ACCENT} />
+        <TheLoop accent={ACCENT} />
+        <RuntimeCapabilities accent={ACCENT} />
+        <RunItYourWay accent={ACCENT} />
+        <HostedSpotlight accent={ACCENT} />
+        <SelfHostedSpotlight accent={ACCENT} />
+        <FinalCTA accent={ACCENT} />
       </main>
       <FooterX />
     </>
