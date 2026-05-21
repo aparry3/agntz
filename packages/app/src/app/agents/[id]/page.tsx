@@ -12,6 +12,7 @@ import {
 import { PipelineView, type PipelineViewMode } from "@/components/v3/editor/pipeline-view";
 import { YamlEditor } from "@/components/yaml-editor";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { Playground } from "@/components/playground/playground";
 import { useCatalog } from "@/lib/use-catalog";
 import { I } from "@/components/v3/icons";
 import { ag, Btn, Mono, Tag } from "@/components/v3/primitives";
@@ -218,7 +219,14 @@ export default function AgentEditorPage() {
           catalog={catalog}
           yamlPanel={<YamlPanel manifest={manifest} setManifest={setManifest} catalog={catalog} />}
           rightPaneOverride={
-            mode === "play" ? <PlaygroundStub /> : undefined
+            mode === "play" ? (
+              <Playground
+                agentId={manifestId}
+                manifest={parsed ?? { id: manifestId }}
+                dirty={dirty}
+                onSaveAndRun={handleSave}
+              />
+            ) : undefined
           }
         />
       ) : (
@@ -231,7 +239,14 @@ export default function AgentEditorPage() {
           catalog={catalog}
           yamlPanel={<YamlPanel manifest={manifest} setManifest={setManifest} catalog={catalog} />}
           rightPaneOverride={
-            mode === "play" ? <PlaygroundStub /> : undefined
+            mode === "play" ? (
+              <Playground
+                agentId={manifestId}
+                manifest={parsed ?? { id: manifestId }}
+                dirty={dirty}
+                onSaveAndRun={handleSave}
+              />
+            ) : undefined
           }
         />
       )}
@@ -244,36 +259,6 @@ export default function AgentEditorPage() {
         onCancel={() => setShowDelete(false)}
       />
     </EditorShell>
-  );
-}
-
-function PlaygroundStub() {
-  return (
-    <div
-      style={{
-        padding: 16,
-        background: ag.surface,
-        borderLeft: `1px solid ${ag.line2}`,
-        minHeight: 0,
-        overflow: "auto",
-      }}
-    >
-      <div
-        style={{
-          fontSize: 10.5,
-          letterSpacing: "0.08em",
-          textTransform: "uppercase",
-          color: ag.muted,
-          fontWeight: 500,
-          marginBottom: 8,
-        }}
-      >
-        Playground
-      </div>
-      <Mono size={11.5} color={ag.muted}>
-        Coming in phase 6 — input form, run, and live trace will render here.
-      </Mono>
-    </div>
   );
 }
 
