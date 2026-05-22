@@ -1,6 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { TOKENS } from "./tokens";
 import { CodeIcon } from "./icons";
+import { CopyCodeButton } from "./copy-code-button";
 
 type Token = { text: string; color: string | null };
 type Rule = { re: RegExp; color: string };
@@ -141,19 +142,7 @@ export function CodeBlock({
               {filename}
             </span>
           </div>
-          {copy && (
-            <span
-              style={{
-                fontFamily: "var(--mono)",
-                fontSize: 10,
-                letterSpacing: "0.14em",
-                textTransform: "uppercase",
-                color: TOKENS.muted,
-              }}
-            >
-              copy
-            </span>
-          )}
+          {copy && <CopyCodeButton text={code} />}
         </div>
       )}
       <pre
