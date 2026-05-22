@@ -453,6 +453,8 @@ function SingleAgentInspector({
             <ModelPicker
               value={{ provider: manifest.model?.provider ?? "", name: manifest.model?.name ?? "" }}
               providers={catalog?.providers ?? []}
+              modelsByProvider={catalog?.modelsByProvider}
+              loadProviderModels={catalog?.loadProviderModels}
               loading={catalog?.loading}
               onChange={(next) => patchModel({ provider: next.provider, name: next.name })}
             />

@@ -1170,6 +1170,8 @@ function LLMStepEditor({
             name: (model.name as string | undefined) ?? "",
           }}
           providers={catalog?.providers ?? []}
+          modelsByProvider={catalog?.modelsByProvider}
+          loadProviderModels={catalog?.loadProviderModels}
           loading={catalog?.loading}
           onChange={(next) => patchModel({ provider: next.provider, name: next.name })}
         />

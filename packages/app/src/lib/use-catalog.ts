@@ -9,6 +9,22 @@ export interface ProviderCatalogEntry {
   configured: boolean;
 }
 
+export interface ProviderModelEntry {
+  id: string;
+  displayName?: string;
+  contextLength?: number;
+  pricing?: { prompt?: number; completion?: number };
+  tags?: string[];
+}
+
+export interface ProviderModelsResult {
+  models: ProviderModelEntry[];
+  /** "live" = fetched from the provider; "fallback" = curated static list. */
+  source: "live" | "fallback";
+  /** True when the provider isn't configured and live fetch was skipped. */
+  notConfigured?: boolean;
+}
+
 export interface ToolCatalogEntry {
   name: string;
   description: string;
@@ -50,6 +66,10 @@ export interface Catalog {
    * under the URL itself in `mcpToolsByServer`.
    */
   loadMcpToolsForUrl: (url: string, headers?: Record<string, string>) => Promise<string[]>;
+  /** Provider model catalogs, keyed by provider id. */
+  modelsByProvider: Record<string, ProviderModelsResult | undefined>;
+  /** Lazily fetch and cache the live model catalog for a provider. */
+  loadProviderModels: (providerId: string) => Promise<ProviderModelsResult>;
 }
 
 interface ToolInfoFromApi {
@@ -80,6 +100,8 @@ export function useCatalog(): Catalog {
   const [loading, setLoading] = useState(true);
   const [mcpToolsByServer, setMcpToolsByServer] = useState<Record<string, string[] | undefined>>({});
   const inflightMcpTools = useRef<Record<string, Promise<string[]> | undefined>>({});
+  const [modelsByProvider, setModelsByProvider] = useState<Record<string, ProviderModelsResult | undefined>>({});
+  const inflightModels = useRef<Record<string, Promise<ProviderModelsResult> | undefined>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -195,6 +217,46 @@ export function useCatalog(): Catalog {
     [mcpToolsByServer],
   );
 
+  const loadProviderModels = useCallback(async (providerId: string): Promise<ProviderModelsResult> => {
+    const cached = modelsByProvider[providerId];
+    if (cached) return cached;
+
+    const inflight = inflightModels.current[providerId];
+    if (inflight) return inflight;
+
+    const promise = (async (): Promise<ProviderModelsResult> => {
+      try {
+        const res = await fetch(`/api/providers/${encodeURIComponent(providerId)}/models`);
+        if (res.status === 409) {
+          const result: ProviderModelsResult = { models: [], source: "fallback", notConfigured: true };
+          setModelsByProvider((current) => ({ ...current, [providerId]: result }));
+          return result;
+        }
+        if (!res.ok) {
+          const result: ProviderModelsResult = { models: [], source: "fallback" };
+          setModelsByProvider((current) => ({ ...current, [providerId]: result }));
+          return result;
+        }
+        const data = (await res.json()) as ProviderModelsResult;
+        const result: ProviderModelsResult = {
+          models: Array.isArray(data.models) ? data.models : [],
+          source: data.source ?? "fallback",
+        };
+        setModelsByProvider((current) => ({ ...current, [providerId]: result }));
+        return result;
+      } catch {
+        const result: ProviderModelsResult = { models: [], source: "fallback" };
+        setModelsByProvider((current) => ({ ...current, [providerId]: result }));
+        return result;
+      } finally {
+        inflightModels.current[providerId] = undefined;
+      }
+    })();
+
+    inflightModels.current[providerId] = promise;
+    return promise;
+  }, [modelsByProvider]);
+
   return {
     providers,
     tools,
@@ -205,5 +267,7 @@ export function useCatalog(): Catalog {
     mcpToolsByServer,
     loadMcpTools,
     loadMcpToolsForUrl,
+    modelsByProvider,
+    loadProviderModels,
   };
 }
