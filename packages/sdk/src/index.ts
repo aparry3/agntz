@@ -16,7 +16,11 @@ export {
 } from "./loader.js";
 
 // Local tools
-export type { LocalToolHandler, LocalToolMap } from "./tools.js";
+export { tool } from "./tools.js";
+export type { ToolDefinition, ToolContext } from "@agntz/core";
+
+// Re-export zod so users define schemas without a separate install.
+export { z } from "zod";
 
 // Type parity with @agntz/client: re-export so user code written against the
 // HTTP client shape works against the runner with a single import-line change.

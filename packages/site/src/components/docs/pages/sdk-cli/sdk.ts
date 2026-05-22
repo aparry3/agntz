@@ -11,11 +11,18 @@ Node 20+. Universal SDK consumers (browsers, edge) should use \`@agntz/client\` 
 ## Basic usage
 
 \`\`\`ts
-import { agntz } from "@agntz/sdk";
+import { agntz, tool, z } from "@agntz/sdk";
 
 const client = await agntz({
   agents: "./agents",
-  tools: { add: async ({ a, b }) => a + b },
+  tools: [
+    tool({
+      name: "add",
+      description: "Add two numbers and return the sum",
+      input: z.object({ a: z.number(), b: z.number() }),
+      execute: async ({ a, b }) => a + b,
+    }),
+  ],
   onEvent: (event) => {
     if (event.type === "tool-call-start") console.log("→", event.toolCall.name);
   },
@@ -48,7 +55,7 @@ Returns an initialized client. Most fields are optional.
 | Field | Type | Description |
 |---|---|---|
 | \`agents\` | \`string\` | Path to a directory of \`.yaml\` files, or a single \`.yaml\` file |
-| \`tools\` | \`Record<string, Tool>\` | [Local tools](/docs/tools/local) keyed by name |
+| \`tools\` | \`ToolDefinition[]\` | [Local tools](/docs/tools/local) — array of \`tool({...})\` definitions |
 | \`store\` | \`Store\` | Optional persistence (e.g. \`sqliteStore(path)\` from \`@agntz/sdk/sqlite\`) |
 | \`skills\` | \`SkillStore\` | Skill registry resolving \`use_skill\` references |
 | \`telemetry\` | \`TelemetryOptions\` | Optional OpenTelemetry tracer + recording flags |

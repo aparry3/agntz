@@ -7,7 +7,7 @@ import type {
   GenerateTextResult,
   StreamEvent as CoreStreamEvent,
 } from "@agntz/core";
-import { agntz } from "../src/index.js";
+import { agntz, tool, z } from "../src/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixturesDir = join(__dirname, "fixtures/agents");
@@ -29,7 +29,14 @@ function plainResponse(text: string): GenerateTextResult {
   };
 }
 
-const noopTools = { add: async () => 0 };
+const noopTools = [
+  tool({
+    name: "add",
+    description: "Adds two numbers",
+    input: z.object({ a: z.number(), b: z.number() }),
+    execute: async () => 0,
+  }),
+];
 
 describe("LocalClient — runs buffer", () => {
   it("records every successful run and exposes it via runs.list/get", async () => {
@@ -101,7 +108,14 @@ describe("LocalClient — traces buffer", () => {
     ]);
     const client = await agntz({
       agents: fixturesDir,
-      tools: { add: async () => 3 },
+      tools: [
+        tool({
+          name: "add",
+          description: "Adds two numbers",
+          input: z.object({ a: z.number(), b: z.number() }),
+          execute: async () => 3,
+        }),
+      ],
       modelProvider: provider,
     });
 

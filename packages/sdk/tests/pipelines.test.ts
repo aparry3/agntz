@@ -6,7 +6,7 @@ import type {
   GenerateTextOptions,
   GenerateTextResult,
 } from "@agntz/core";
-import { agntz } from "../src/index.js";
+import { agntz, tool, z } from "../src/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixturesDir = join(__dirname, "fixtures/agents");
@@ -28,7 +28,14 @@ function plainResponse(text: string): GenerateTextResult {
   };
 }
 
-const noopTools = { add: async () => 0 };
+const noopTools = [
+  tool({
+    name: "add",
+    description: "Adds two numbers",
+    input: z.object({ a: z.number(), b: z.number() }),
+    execute: async () => 0,
+  }),
+];
 
 describe("agntz() — sequential pipelines", () => {
   it("runs a two-step sequential agent end-to-end", async () => {

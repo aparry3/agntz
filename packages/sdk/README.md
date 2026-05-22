@@ -62,15 +62,27 @@ tools:
 ```
 
 ```ts
+import { agntz, tool, z } from "@agntz/sdk";
+
 const client = await agntz({
   agents: "./agents",
-  tools: {
-    add: async ({ a, b }: { a: number; b: number }) => a + b,
-  },
+  tools: [
+    tool({
+      name: "add",
+      description: "Add two numbers and return the sum",
+      input: z.object({
+        a: z.number().describe("First operand"),
+        b: z.number().describe("Second operand"),
+      }),
+      execute: async ({ a, b }) => a + b,
+    }),
+  ],
 });
 ```
 
-Names referenced in YAML but missing from the `tools` map fail at load time, not on first model call.
+Each tool is self-describing: the `name`, `description`, and Zod `input` schema all flow through to the model's tool list, so it knows when to call the tool and how to shape arguments. `z` is re-exported from `@agntz/sdk` — no separate `zod` install needed.
+
+Names referenced in YAML but missing from the `tools` array fail at load time, not on first model call.
 
 ## HTTP tools with credentials
 

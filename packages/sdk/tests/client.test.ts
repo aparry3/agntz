@@ -6,7 +6,7 @@ import type {
   GenerateTextOptions,
   GenerateTextResult,
 } from "@agntz/core";
-import { agntz } from "../src/index.js";
+import { agntz, tool, z } from "../src/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixturesDir = join(__dirname, "fixtures/agents");
@@ -32,7 +32,14 @@ function plainResponse(text: string): GenerateTextResult {
 // Fixture dir contains two agents — one of which references a local `add`
 // tool. Tests that don't specifically exercise tool wiring still need to
 // register a noop `add` handler so load doesn't fail on the missing name.
-const noopTools = { add: async () => 0 };
+const noopTools = [
+  tool({
+    name: "add",
+    description: "Adds two numbers",
+    input: z.object({ a: z.number(), b: z.number() }),
+    execute: async () => 0,
+  }),
+];
 
 describe("agntz() — embedded client", () => {
   it("runs a basic LLM agent end-to-end", async () => {
@@ -66,7 +73,14 @@ describe("agntz() — embedded client", () => {
     ]);
     const client = await agntz({
       agents: fixturesDir,
-      tools: { add: addHandler },
+      tools: [
+        tool({
+          name: "add",
+          description: "Adds two numbers",
+          input: z.object({ a: z.number(), b: z.number() }),
+          execute: addHandler,
+        }),
+      ],
       modelProvider: provider,
     });
 

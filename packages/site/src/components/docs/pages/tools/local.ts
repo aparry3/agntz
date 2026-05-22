@@ -16,39 +16,69 @@ tools:
 \`\`\`
 
 \`\`\`ts [index.ts]
+import { agntz, tool, z } from "@agntz/sdk";
+
 const client = await agntz({
   agents: "./agents",
-  tools: {
-    add: async ({ a, b }: { a: number; b: number }) => a + b,
-  },
+  tools: [
+    tool({
+      name: "add",
+      description: "Add two numbers and return the sum",
+      input: z.object({
+        a: z.number().describe("First operand"),
+        b: z.number().describe("Second operand"),
+      }),
+      execute: async ({ a, b }) => a + b,
+    }),
+  ],
 });
 \`\`\`
 
-Names referenced in YAML but missing from the \`tools\` map fail at **load time**, not on first model call — misconfigurations surface immediately.
+Names referenced in YAML but missing from the \`tools\` array fail at **load time**, not on first model call — misconfigurations surface immediately.
 
-## Tool function shape
+## Tool shape
 
-A local tool is an async function. The runner derives the tool's JSON schema from its declared TypeScript type:
+Each tool is a self-describing object. The model sees the \`name\`, the \`description\`, and a JSON schema derived from the Zod \`input\` schema — so field-level \`.describe()\` calls flow through to the model's tool list and guide its argument choices.
+
+| Field | Type | Purpose |
+| --- | --- | --- |
+| \`name\` | string | Identifier referenced from YAML \`tools: [name]\` |
+| \`description\` | string | What the tool does — read by the model when deciding to call |
+| \`input\` | Zod schema | Validates args at call time *and* produces the JSON schema the model sees |
+| \`execute\` | async function | Receives the parsed args (typed from the schema) and a \`ToolContext\` |
+
+The \`tool()\` helper is an identity function — it exists purely to give \`execute\` typed access to the inferred argument shape. You can also pass raw \`ToolDefinition\` objects from \`@agntz/core\` if you prefer.
 
 \`\`\`ts
-type LocalTool = (params: Record<string, any>) => Promise<unknown>;
+import { tool, z } from "@agntz/sdk";
+
+const tools = [
+  tool({
+    name: "fetchInvoice",
+    description: "Look up an invoice record by its id",
+    input: z.object({
+      id: z.string().describe("Invoice id, e.g. inv_abc123"),
+    }),
+    execute: async ({ id }) => {
+      return await db.invoices.findById(id);
+    },
+  }),
+  tool({
+    name: "closeTicket",
+    description: "Close a support ticket with a reason",
+    input: z.object({
+      ticketId: z.string().describe("Ticket id"),
+      reason: z.string().describe("Short, user-facing reason for closing"),
+    }),
+    execute: async ({ ticketId, reason }) => {
+      await api.tickets.close(ticketId, reason);
+      return { ok: true };
+    },
+  }),
+];
 \`\`\`
 
-For better type inference and schema fidelity, declare your tools with explicit param types:
-
-\`\`\`ts
-const tools = {
-  fetchInvoice: async ({ id }: { id: string }) => {
-    return await db.invoices.findById(id);
-  },
-  closeTicket: async ({ ticketId, reason }: { ticketId: string; reason: string }) => {
-    await api.tickets.close(ticketId, reason);
-    return { ok: true };
-  },
-};
-\`\`\`
-
-The model sees \`fetchInvoice(id: string)\` and \`closeTicket(ticketId: string, reason: string)\` in its tool list.
+\`z\` is re-exported from \`@agntz/sdk\` so you don't need a separate \`zod\` install — the SDK already depends on it.
 
 ## Selective exposure
 
@@ -62,6 +92,8 @@ tools:
 ## Errors
 
 If a tool throws, the model receives the error message and decides whether to retry (with different args), reply to the user with an apology, or give up. The error is captured in the \`tool.execute\` span — visible in the trace.
+
+Zod validation errors are returned to the model the same way — so a model that calls \`add({ a: "two", b: 3 })\` sees a structured complaint and can correct itself on the next step.
 
 ## Why embedded-only?
 

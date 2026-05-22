@@ -24,7 +24,6 @@ import type {
 } from "@agntz/client";
 import { loadManifestsFromDir } from "./loader.js";
 import { manifestToAgentDefinition } from "./manifest-to-agent.js";
-import { toolMapToDefinitions, type LocalToolMap } from "./tools.js";
 import {
   buildRunRecord,
   RunsBuffer,
@@ -35,7 +34,16 @@ import { createTraceAggregator } from "./trace-aggregator.js";
 
 export interface AgntzLocalOptions {
   agents: string;
-  tools?: LocalToolMap;
+  /**
+   * Local tools made available to agents. Each tool is self-describing —
+   * name, description, Zod input schema, and an `execute` function. Use the
+   * `tool()` helper from this package for ergonomic type inference, or pass
+   * raw `ToolDefinition` objects from `@agntz/core` for advanced cases.
+   *
+   * Names referenced from agent manifests but missing from this array raise
+   * an error at load time.
+   */
+  tools?: ToolDefinition[];
   envProvider?: (name: string) => string | undefined;
   modelProvider?: ModelProvider;
   runsCapacity?: number;
@@ -76,8 +84,8 @@ export interface LocalTracesResource {
 
 export async function agntz(opts: AgntzLocalOptions): Promise<LocalClient> {
   const manifests = await loadManifestsFromDir(opts.agents);
-  const localToolNames = new Set(Object.keys(opts.tools ?? {}));
-  const toolDefs = opts.tools ? toolMapToDefinitions(opts.tools) : [];
+  const toolDefs: ToolDefinition[] = opts.tools ?? [];
+  const localToolNames = new Set(toolDefs.map((t) => t.name));
 
   const envProvider = opts.envProvider ?? ((name: string) => process.env[name]);
 

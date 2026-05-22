@@ -8,7 +8,7 @@ import type {
   GenerateTextOptions,
   GenerateTextResult,
 } from "@agntz/core";
-import { agntz } from "../src/index.js";
+import { agntz, tool, z } from "../src/index.js";
 import { sqliteStore } from "../src/sqlite.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -31,7 +31,14 @@ function plainResponse(text: string): GenerateTextResult {
   };
 }
 
-const noopTools = { add: async () => 0 };
+const noopTools = [
+  tool({
+    name: "add",
+    description: "Adds two numbers",
+    input: z.object({ a: z.number(), b: z.number() }),
+    execute: async () => 0,
+  }),
+];
 
 describe("@agntz/sdk/sqlite — sqliteStore()", () => {
   it("runs an agent against a sqlite-backed store", async () => {
