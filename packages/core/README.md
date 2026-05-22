@@ -484,8 +484,13 @@ defineAgent({
   model: { provider: "openai", name: "gpt-5.4" },         // OPENAI_API_KEY
   model: { provider: "anthropic", name: "claude-sonnet-4-6" },  // ANTHROPIC_API_KEY
   model: { provider: "google", name: "gemini-3-flash" },     // GOOGLE_GENERATIVE_AI_API_KEY
+  model: { provider: "openrouter", name: "anthropic/claude-sonnet-4" }, // OPENROUTER_API_KEY
 });
 ```
+
+Supported providers: `openai`, `anthropic`, `google`, `openrouter`, `mistral`, `xai`, `groq`, `deepseek`, `perplexity`, `cohere`, `azure`.
+
+**OpenRouter** is a meta-provider that proxies to 300+ models (Anthropic, Google, Meta, DeepSeek, open-source) with a single API key — use `provider: "openrouter"` and reference any model by its OpenRouter slug (e.g. `meta-llama/llama-3.3-70b-instruct`, `deepseek/deepseek-chat`). Per-request cost is reported by OpenRouter and surfaced on `TokenUsage.cost`.
 
 Or bring your own model provider:
 

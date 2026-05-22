@@ -35,6 +35,7 @@ import deploySelfHostProduction from "./pages/deploy/self-host-production";
 import deployHttpApi from "./pages/deploy/http-api";
 
 import compatibility from "./pages/compatibility";
+import models from "./pages/models";
 
 export type DocsPage = {
   slug: string;
@@ -233,6 +234,13 @@ export const DOCS_GROUPS: DocsGroup[] = [
   {
     label: "Reference",
     pages: [
+      {
+        slug: "models",
+        title: "Models & providers",
+        description:
+          "Supported providers, env vars, and using OpenRouter as a one-key gateway to 300+ models.",
+        markdown: models,
+      },
       {
         slug: "compatibility",
         title: "Compatibility matrix",

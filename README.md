@@ -282,6 +282,8 @@ defineAgent({
   model: { provider: "anthropic", name: "claude-sonnet-4-6" }, // needs ANTHROPIC_API_KEY
   // or
   model: { provider: "google", name: "gemini-3-flash" },    // needs GOOGLE_GENERATIVE_AI_API_KEY
+  // or use OpenRouter for one-key access to 300+ models (OSS + commercial)
+  model: { provider: "openrouter", name: "meta-llama/llama-3.3-70b-instruct" }, // needs OPENROUTER_API_KEY
 });
 
 // Or bring your own model provider entirely
@@ -289,6 +291,8 @@ const runner = createRunner({
   modelProvider: myCustomProvider, // implements ModelProvider interface
 });
 ```
+
+Supported providers: `openai`, `anthropic`, `google`, `openrouter`, `mistral`, `xai`, `groq`, `deepseek`, `perplexity`, `cohere`, `azure`.
 
 ## Error Handling
 

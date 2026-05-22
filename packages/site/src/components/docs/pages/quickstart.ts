@@ -6,8 +6,10 @@ The fastest path: write a YAML file, point \`@agntz/sdk\` at the directory, call
 
 \`\`\`bash
 pnpm add @agntz/sdk
-export ANTHROPIC_API_KEY=sk-ant-...     # or OPENAI_API_KEY, etc.
+export ANTHROPIC_API_KEY=sk-ant-...     # or OPENAI_API_KEY, OPENROUTER_API_KEY, etc.
 \`\`\`
+
+See [Models & providers](/docs/models) for the full list of supported providers.
 
 ## 1. Create an agent
 
