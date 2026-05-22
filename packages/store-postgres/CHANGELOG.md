@@ -1,5 +1,12 @@
 # @agntz/store-postgres
 
+## 3.0.0
+
+### Patch Changes
+
+- Updated dependencies [[`2d098f4`](https://github.com/aparry3/agntz/commit/2d098f4713151a120b12f85d4abd630835840b56)]:
+  - @agntz/core@1.2.0
+
 ## 2.0.0
 
 ### Patch Changes
