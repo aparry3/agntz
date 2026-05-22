@@ -423,10 +423,10 @@ export function renderBlocks(blocks: Block[]): ReactNode {
   });
 }
 
-// Inline parsing: code (`), links [t](u), bold (**). Bold and link contents
-// are recursively re-parsed so combinations like **[Link](/url)** or
-// [**bold link**](/url) render correctly.
-function renderInline(text: string): ReactNode {
+// Inline parsing: code (`), links [t](u), bold (**), italic (*). Bold, link,
+// and italic contents are recursively re-parsed so combinations like
+// **[Link](/url)** or [**bold link**](/url) render correctly.
+export function renderInline(text: string): ReactNode {
   let keySeq = 0;
   const nextKey = () => keySeq++;
 
@@ -473,6 +473,17 @@ function renderInline(text: string): ReactNode {
         <strong key={nextKey()} style={{ fontWeight: 600 }}>
           {parseInline(m[1])}
         </strong>
+      ),
+    },
+    {
+      // Italic: a single * not preceded or followed by another *, wrapping
+      // non-asterisk, non-newline content. Bold pattern (above) wins on overlap
+      // because it always starts at the same or lower index.
+      re: /(?<!\*)\*(?!\*)([^*\n]+?)(?<!\*)\*(?!\*)/,
+      fn: (m) => (
+        <em key={nextKey()} style={{ fontStyle: "italic" }}>
+          {parseInline(m[1])}
+        </em>
       ),
     },
   ];

@@ -1,4 +1,4 @@
-import type { DocsSection } from "./markdown";
+import { renderInline, type DocsSection } from "./markdown";
 import { TOKENS } from "@/components/landing/tokens";
 
 export function DocsToc({ sections }: { sections: DocsSection[] }) {
@@ -87,7 +87,7 @@ export function DocsToc({ sections }: { sections: DocsSection[] }) {
                   padding: "2px 0",
                 }}
               >
-                {s.text}
+                {renderInline(s.text)}
               </a>
             </li>
           ))}
