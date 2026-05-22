@@ -27,18 +27,14 @@ tools:
     method: GET`;
 
 const HERO_RUNNER = `// runner.ts — call your existing APIs, run anywhere.
-import { Runner } from '@agntz/sdk';
+import { agntz } from '@agntz/sdk';
 
-const runner = new Runner({
-  agentsDir: './agents',
+const client = await agntz({ agents: './agents' });
+
+const { output } = await client.agents.run({
+  agentId: 'weather-bot',
+  input: "What's the weather in Lisbon today?",
 });
-
-// Sessions are resumable, multimodal, replyable.
-const { sessionId } = await runner.start('weather-bot', {
-  input: { message: "What's the weather in Lisbon today?" },
-});
-
-const { output } = await runner.run(sessionId);
 // → "Lisbon is 21°C and sunny right now, with light
 //    winds from the northwest. Expect a clear evening."`;
 
@@ -263,7 +259,7 @@ export function Hero({ accent = "blue" }: { accent?: AccentName }) {
                   style={{ width: 8, height: 8, borderRadius: 99, background: ACCENTS.green.fg }}
                 />
                 <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: TOKENS.text2 }}>
-                  {tab === "yaml" ? "valid · ready to run" : "session resumable"}
+                  {tab === "yaml" ? "valid · ready to run" : "5 lines · runs anywhere"}
                 </span>
               </Row>
               <span style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: TOKENS.muted }}>

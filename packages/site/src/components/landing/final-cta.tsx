@@ -5,7 +5,7 @@ import { ArrowIcon, ExternalIcon, GithubIcon } from "./icons";
 const STEPS: [string, string, string][] = [
   ["1.", "npm i @agntz/sdk", "install"],
   ["2.", "echo 'id: hello' > agents/hello.yaml", "define"],
-  ["3.", "runner.run(await runner.start('hello'))", "run"],
+  ["3.", "client.agents.run({ agentId: 'hello' })", "run"],
 ];
 
 export function FinalCTA({ accent = "blue" }: { accent?: AccentName }) {

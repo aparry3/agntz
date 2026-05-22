@@ -268,7 +268,7 @@ export function TheShift({ accent = "blue" }: { accent?: AccentName }) {
             }}
           >
             <span style={{ color: TOKENS.muted }}>$</span>
-            <span style={{ color: TOKENS.ink }}>runner.run(sessionId)</span>
+            <span style={{ color: TOKENS.ink }}>client.agents.run(&#123;...&#125;)</span>
             <span style={{ flex: 1 }} />
             <span style={{ color: TOKENS.muted }}>// that&apos;s the whole loop</span>
           </div>
