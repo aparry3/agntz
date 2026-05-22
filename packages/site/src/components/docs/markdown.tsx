@@ -423,18 +423,19 @@ export function renderBlocks(blocks: Block[]): ReactNode {
   });
 }
 
-// Inline parsing: code (`), bold (**), italic (*), links [t](u). Order matters.
+// Inline parsing: code (`), links [t](u), bold (**). Bold and link contents
+// are recursively re-parsed so combinations like **[Link](/url)** or
+// [**bold link**](/url) render correctly.
 function renderInline(text: string): ReactNode {
-  const out: ReactNode[] = [];
-  let rest = text;
-  let key = 0;
+  let keySeq = 0;
+  const nextKey = () => keySeq++;
 
   const patterns: Array<{ re: RegExp; fn: (m: RegExpExecArray) => ReactNode }> = [
     {
       re: /`([^`]+)`/,
       fn: (m) => (
         <code
-          key={key++}
+          key={nextKey()}
           style={{
             fontFamily: "var(--mono)",
             fontSize: "0.86em",
@@ -453,7 +454,7 @@ function renderInline(text: string): ReactNode {
       re: /\[([^\]]+)\]\(([^)]+)\)/,
       fn: (m) => (
         <a
-          key={key++}
+          key={nextKey()}
           href={m[2]}
           style={{
             color: TOKENS.blue,
@@ -462,38 +463,44 @@ function renderInline(text: string): ReactNode {
             textDecorationColor: "rgba(42,74,117,0.4)",
           }}
         >
-          {m[1]}
+          {parseInline(m[1])}
         </a>
       ),
     },
     {
-      re: /\*\*([^*]+)\*\*/,
+      re: /\*\*([^*]+(?:\*[^*]+)*)\*\*/,
       fn: (m) => (
-        <strong key={key++} style={{ fontWeight: 600 }}>
-          {m[1]}
+        <strong key={nextKey()} style={{ fontWeight: 600 }}>
+          {parseInline(m[1])}
         </strong>
       ),
     },
   ];
 
-  while (rest.length > 0) {
-    let bestIdx = -1;
-    let best: { match: RegExpExecArray; node: ReactNode } | null = null;
-    for (const p of patterns) {
-      const m = p.re.exec(rest);
-      if (m && (bestIdx === -1 || m.index < bestIdx)) {
-        bestIdx = m.index;
-        best = { match: m, node: p.fn(m) };
+  function parseInline(input: string): ReactNode[] {
+    const out: ReactNode[] = [];
+    let rest = input;
+    while (rest.length > 0) {
+      let bestIdx = -1;
+      let best: { match: RegExpExecArray; node: ReactNode } | null = null;
+      for (const p of patterns) {
+        const m = p.re.exec(rest);
+        if (m && (bestIdx === -1 || m.index < bestIdx)) {
+          bestIdx = m.index;
+          best = { match: m, node: p.fn(m) };
+        }
+      }
+      if (best && bestIdx !== -1) {
+        if (bestIdx > 0) out.push(rest.slice(0, bestIdx));
+        out.push(best.node);
+        rest = rest.slice(bestIdx + best.match[0].length);
+      } else {
+        out.push(rest);
+        break;
       }
     }
-    if (best && bestIdx !== -1) {
-      if (bestIdx > 0) out.push(rest.slice(0, bestIdx));
-      out.push(best.node);
-      rest = rest.slice(bestIdx + best.match[0].length);
-    } else {
-      out.push(rest);
-      break;
-    }
+    return out;
   }
-  return out;
+
+  return parseInline(text);
 }

@@ -29,12 +29,31 @@ export async function generateMetadata({
   if (!page) {
     return { title: "Documentation" };
   }
-  const title = page.slug === "" ? "agntz documentation" : `${page.title} — agntz docs`;
+  const pageTitle =
+    page.slug === "" ? "agntz documentation" : `${page.title} — agntz docs`;
+  const description =
+    page.description ??
+    "Complete guide to defining, running, and shipping AI agents with agntz.";
+  const canonical = page.slug === "" ? "/docs" : `/docs/${page.slug}`;
+  const ogImage =
+    page.slug === "" ? "/api/og/docs" : `/api/og/docs/${page.slug}`;
   return {
-    title,
-    description: page.description,
-    alternates: {
-      canonical: page.slug === "" ? "/docs" : `/docs/${page.slug}`,
+    title: { absolute: pageTitle },
+    description,
+    alternates: { canonical },
+    openGraph: {
+      type: "article",
+      url: canonical,
+      siteName: "Agntz",
+      title: pageTitle,
+      description,
+      images: [{ url: ogImage, width: 1200, height: 630, alt: pageTitle }],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: pageTitle,
+      description,
+      images: [ogImage],
     },
   };
 }
