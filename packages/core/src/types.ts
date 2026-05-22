@@ -318,6 +318,8 @@ export interface TokenUsage {
   completionTokens: number;
   totalTokens: number;
   model?: string;
+  /** Per-call cost in USD reported by the provider (e.g. OpenRouter). */
+  cost?: number;
 }
 
 // ═══════════════════════════════════════════════════════════════════════

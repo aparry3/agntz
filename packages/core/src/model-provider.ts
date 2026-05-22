@@ -59,6 +59,7 @@ export class AISDKModelProvider implements ModelProvider {
 
     const inputTokens = result.usage?.inputTokens ?? 0;
     const outputTokens = result.usage?.outputTokens ?? 0;
+    const cost = extractProviderCost(result.providerMetadata);
 
     return {
       text: result.text ?? "",
@@ -71,6 +72,7 @@ export class AISDKModelProvider implements ModelProvider {
         promptTokens: inputTokens,
         completionTokens: outputTokens,
         totalTokens: inputTokens + outputTokens,
+        ...(cost !== undefined ? { cost } : {}),
       },
       finishReason: result.finishReason ?? "stop",
     };
@@ -132,13 +134,15 @@ export class AISDKModelProvider implements ModelProvider {
     const toolCallsPromise = Promise.resolve(result.toolCalls).then(tcs =>
       tcs.map(tc => ({ id: tc.toolCallId, name: tc.toolName, args: tc.input }))
     );
-    const usagePromise = Promise.resolve(result.usage).then(u => {
+    const usagePromise = Promise.resolve(result.usage).then(async u => {
       const inputTokens = u?.inputTokens ?? 0;
       const outputTokens = u?.outputTokens ?? 0;
+      const cost = extractProviderCost(await Promise.resolve(result.providerMetadata).catch(() => undefined));
       return {
         promptTokens: inputTokens,
         completionTokens: outputTokens,
         totalTokens: inputTokens + outputTokens,
+        ...(cost !== undefined ? { cost } : {}),
       };
     });
     const finishReasonPromise = Promise.resolve(result.finishReason) as Promise<string>;
@@ -218,10 +222,21 @@ export class AISDKModelProvider implements ModelProvider {
         const client = createAzure({ apiKey, baseURL });
         return client(name);
       }
+      case "openrouter": {
+        const { createOpenRouter } = await import("@openrouter/ai-sdk-provider");
+        const cfg = providerConfig?.config as { referer?: string; title?: string; headers?: Record<string, string> } | undefined;
+        const headers = {
+          "HTTP-Referer": cfg?.referer ?? "https://agntz.co",
+          "X-Title": cfg?.title ?? "agntz",
+          ...(cfg?.headers ?? {}),
+        };
+        const client = createOpenRouter({ apiKey, baseURL, headers });
+        return client(name, { extraBody: { usage: { include: true } } });
+      }
       default:
         throw new Error(
           `Unknown model provider "${provider}". ` +
-          `Supported: openai, anthropic, google, mistral, xai, groq, deepseek, perplexity, cohere, azure. ` +
+          `Supported: openai, anthropic, google, mistral, xai, groq, deepseek, perplexity, cohere, azure, openrouter. ` +
           `For other providers, pass a custom modelProvider to createRunner().`
         );
     }
@@ -260,6 +275,7 @@ export class AISDKModelProvider implements ModelProvider {
       perplexity: "PERPLEXITY_API_KEY",
       cohere: "COHERE_API_KEY",
       azure: "AZURE_OPENAI_API_KEY",
+      openrouter: "OPENROUTER_API_KEY",
     };
     return ENV_MAP[provider];
   }
@@ -317,6 +333,25 @@ function jsonSchemaToZod(schema: Record<string, unknown>, z: typeof import("zod"
   }
 
   return z.object(shape);
+}
+
+/**
+ * Extract per-call cost (USD) from provider response metadata. OpenRouter reports
+ * cost under `providerMetadata.openrouter.usage.cost` when `extraBody.usage.include`
+ * is set. Returns undefined when no cost is reported.
+ */
+function extractProviderCost(metadata: unknown): number | undefined {
+  if (!metadata || typeof metadata !== "object") return undefined;
+  const meta = metadata as Record<string, unknown>;
+  for (const provider of Object.keys(meta)) {
+    const entry = meta[provider];
+    if (!entry || typeof entry !== "object") continue;
+    const usage = (entry as Record<string, unknown>).usage;
+    if (!usage || typeof usage !== "object") continue;
+    const cost = (usage as Record<string, unknown>).cost;
+    if (typeof cost === "number" && Number.isFinite(cost)) return cost;
+  }
+  return undefined;
 }
 
 function logLlmCallFailure(

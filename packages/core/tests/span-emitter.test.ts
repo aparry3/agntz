@@ -122,4 +122,33 @@ describe("computeCost", () => {
     );
     expect(cost).toBe(0.5 + 0.5); // 0.5 input + 0.5 output = 1.0 USD
   });
+
+  it("prefers embedded cost over rate table", () => {
+    // OpenRouter (and similar) attach per-call cost directly to usage.
+    // Even when a rate is known, the embedded cost should win.
+    const cost = computeCost(
+      { promptTokens: 1_000_000, completionTokens: 0, totalTokens: 1_000_000, cost: 0.42 },
+      "anthropic",
+      "claude-sonnet-4-6"
+    );
+    expect(cost).toBe(0.42);
+  });
+
+  it("returns embedded cost for providers without a rate entry", () => {
+    const cost = computeCost(
+      { promptTokens: 100, completionTokens: 50, totalTokens: 150, cost: 0.001234 },
+      "openrouter",
+      "meta-llama/llama-3.3-70b-instruct"
+    );
+    expect(cost).toBe(0.001234);
+  });
+
+  it("ignores embedded cost when not a finite number", () => {
+    const cost = computeCost(
+      { promptTokens: 1_000_000, completionTokens: 0, totalTokens: 1_000_000, cost: Number.NaN },
+      "anthropic",
+      "claude-sonnet-4-6"
+    );
+    expect(cost).toBe(3.00);
+  });
 });

@@ -23,9 +23,12 @@ const DEFAULT_RATES: Record<string, ModelRate> = {
 
 /**
  * Compute cost in USD from token usage and a (provider, name) tuple.
+ * Prefers a per-call cost embedded on the usage object (e.g. OpenRouter
+ * reports cost in the response). Falls back to the static rate table.
  * Returns null when no rate is known — callers should not block on this.
  */
 export function computeCost(usage: TokenUsage, provider: string, modelName: string): number | null {
+  if (typeof usage.cost === "number" && Number.isFinite(usage.cost)) return usage.cost;
   const key = `${provider}/${modelName}`;
   const rate = DEFAULT_RATES[key];
   if (!rate) return null;
