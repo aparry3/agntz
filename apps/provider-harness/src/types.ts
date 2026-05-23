@@ -45,6 +45,8 @@ export interface TestOutput {
   ok: boolean;
   reason?: string;
   snapshot?: unknown;
+  /** If set, the test opted to skip itself (e.g. missing optional config). */
+  skip?: string;
 }
 
 export interface TestDefinition {

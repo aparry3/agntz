@@ -74,6 +74,11 @@ async function runOne(
     try {
       const output = await test.run(model, { abortSignal: controller.signal });
       const durationMs = Date.now() - start;
+
+      if (output.skip) {
+        return { ...base, bucket: 'SKIPPED', durationMs, skipReason: output.skip };
+      }
+
       const capabilitySupported = model.capabilities.has(test.capability);
 
       if (output.ok) {
