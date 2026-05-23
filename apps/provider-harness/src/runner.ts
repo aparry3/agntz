@@ -1,4 +1,5 @@
 import { classify, isMissingCredentials } from './bucket.js';
+import { envVarFor, hasCredentials } from './credentials.js';
 import { Semaphore } from './semaphore.js';
 import { compareSnapshot } from './snapshot.js';
 import type { ProviderModelEntry, TestDefinition, TestResult } from './types.js';
@@ -45,17 +46,30 @@ async function runOne(
   defaultTimeoutMs: number,
   updateSnapshots: boolean,
 ): Promise<TestResult> {
+  const base = {
+    test: test.id,
+    provider: model.provider,
+    model: model.model,
+  } as const;
+
+  // Preflight: skip providers without credentials before spending a call or a
+  // semaphore slot. Streaming auth failures surface as a generic
+  // NoOutputGeneratedError that can't be distinguished from a real empty
+  // stream, so catching this up front (per plan §11 #4) is the clean path.
+  if (!hasCredentials(model.provider)) {
+    return {
+      ...base,
+      bucket: 'SKIPPED',
+      durationMs: 0,
+      skipReason: `no ${envVarFor(model.provider)} in environment`,
+    };
+  }
+
   return semaphore.run(async () => {
     const timeoutMs = test.timeoutMs ?? defaultTimeoutMs;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort('timeout'), timeoutMs);
     const start = Date.now();
-
-    const base = {
-      test: test.id,
-      provider: model.provider,
-      model: model.model,
-    } as const;
 
     try {
       const output = await test.run(model, { abortSignal: controller.signal });

@@ -110,6 +110,14 @@ function printSummary(results: readonly TestResult[]): void {
   console.log('  ' + parts.join(' · '));
 }
 
+// Safety net: a floating rejection from a provider stream must never crash the
+// whole run. consumeStream already settles trailing stream promises, so this
+// should stay at zero — if it doesn't, that's a path we haven't hardened.
+let unhandledRejections = 0;
+process.on('unhandledRejection', () => {
+  unhandledRejections++;
+});
+
 function parseArgs(argv: readonly string[]): { updateSnapshots: boolean } {
   return {
     updateSnapshots: argv.includes('--update-snapshots') || argv.includes('-u'),
@@ -158,6 +166,9 @@ async function main(): Promise<void> {
   console.log('  Summary');
   console.log('  ───────');
   printSummary(results);
+  if (unhandledRejections > 0) {
+    console.log(`  ⚠ ${unhandledRejections} unhandled rejection(s) absorbed — a stream path needs hardening.`);
+  }
   console.log('');
 
   const written = await writeReport({ startedAt, finishedAt, matrix: MATRIX, results });
