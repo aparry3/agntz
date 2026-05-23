@@ -1,3 +1,4 @@
+import { maybeOpenIssue } from './github.js';
 import { ALL_CAPABILITIES, MATRIX } from './matrix.js';
 import { writeReport } from './report.js';
 import { runMatrix } from './runner.js';
@@ -118,9 +119,15 @@ process.on('unhandledRejection', () => {
   unhandledRejections++;
 });
 
-function parseArgs(argv: readonly string[]): { updateSnapshots: boolean } {
+function parseArgs(argv: readonly string[]): {
+  updateSnapshots: boolean;
+  reportGithub: boolean;
+  githubDryRun: boolean;
+} {
   return {
     updateSnapshots: argv.includes('--update-snapshots') || argv.includes('-u'),
+    reportGithub: argv.includes('--report-github'),
+    githubDryRun: argv.includes('--github-dry-run'),
   };
 }
 
@@ -175,6 +182,13 @@ async function main(): Promise<void> {
   console.log(`  Wrote ${written.markdownPath}`);
   console.log(`  Wrote ${written.jsonPath}`);
   console.log(`  Symlinked ${written.latestMarkdownPath} → latest`);
+
+  await maybeOpenIssue({
+    enabled: args.reportGithub || args.githubDryRun,
+    dryRun: args.githubDryRun,
+    results,
+    markdownPath: written.markdownPath,
+  });
   console.log('');
 
   const hasFailure = results.some(
