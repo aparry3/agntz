@@ -43,32 +43,32 @@ const OPENROUTER_ROUTES: readonly ProviderModelEntry[] = [
   {
     provider: 'openrouter',
     model: 'meta-llama/llama-4-maverick',
-    capabilities: caps('text', 'multiTurn', 'systemPrompt', 'streaming', 'tools', 'multimodalImage', 'structuredOutput', 'cancellation'),
-    notes: 'Llama 4 flagship via OpenRouter; natively multimodal.',
+    capabilities: caps('text', 'multiTurn', 'systemPrompt', 'streaming', 'multimodalImage', 'structuredOutput', 'cancellation'),
+    notes: 'Maverick: OpenRouter routes it to a no-tool-use endpoint, so tool caps are off for this route (harness run 2026-05-23).',
   },
   {
     provider: 'openrouter',
-    model: 'mistralai/mistral-medium-3.5',
+    model: 'mistralai/mistral-medium-3-5',
+    capabilities: caps('text', 'multiTurn', 'systemPrompt', 'streaming', 'tools', 'parallelTools', 'streamingTools', 'toolChoice', 'multimodalImage', 'structuredOutput', 'reasoning', 'cancellation'),
+    notes: 'Mistral family via OpenRouter (slug uses hyphens: mistral-medium-3-5).',
+  },
+  {
+    provider: 'openrouter',
+    model: 'deepseek/deepseek-v4-pro',
     capabilities: caps('text', 'multiTurn', 'systemPrompt', 'streaming', 'tools', 'parallelTools', 'streamingTools', 'toolChoice', 'structuredOutput', 'reasoning', 'cancellation'),
-    notes: 'Mistral family via OpenRouter; text-only.',
+    notes: 'DeepSeek family via OpenRouter; tool caps confirmed by harness run 2026-05-23.',
   },
   {
     provider: 'openrouter',
-    model: 'deepseek/deepseek-v4',
-    capabilities: caps('text', 'multiTurn', 'systemPrompt', 'streaming', 'tools', 'structuredOutput', 'reasoning', 'cancellation'),
-    notes: 'DeepSeek family via OpenRouter.',
-  },
-  {
-    provider: 'openrouter',
-    model: 'qwen/qwen-3.7-max',
-    capabilities: caps('text', 'multiTurn', 'systemPrompt', 'streaming', 'tools', 'structuredOutput', 'cancellation'),
-    notes: 'Qwen family via OpenRouter.',
+    model: 'qwen/qwen3.7-max',
+    capabilities: caps('text', 'multiTurn', 'systemPrompt', 'streaming', 'tools', 'parallelTools', 'streamingTools', 'toolChoice', 'structuredOutput', 'cancellation'),
+    notes: 'Qwen family via OpenRouter; tool caps confirmed by harness run 2026-05-23.',
   },
   {
     provider: 'openrouter',
     model: 'meta-llama/llama-4-scout',
-    capabilities: caps('text', 'multiTurn', 'systemPrompt', 'streaming', 'tools', 'multimodalImage', 'structuredOutput', 'cancellation'),
-    notes: 'Fast/cheap Llama 4 sibling via OpenRouter.',
+    capabilities: caps('text', 'multiTurn', 'systemPrompt', 'streaming', 'tools', 'parallelTools', 'streamingTools', 'toolChoice', 'multimodalImage', 'structuredOutput', 'cancellation'),
+    notes: 'Fast/cheap Llama 4 via OpenRouter; tool caps confirmed by harness run 2026-05-23.',
   },
 ];
 
@@ -144,15 +144,16 @@ export const MATRIX: readonly ProviderModelEntry[] = [
       'parallelTools',
       'streamingTools',
       'toolChoice',
+      'multimodalImage',
       'structuredOutput',
       'reasoning',
       'cancellation',
     ]),
-    notes: 'Text-only — image support sits in Mistral Small 4 / Pixtral, not Medium.',
+    notes: 'multimodalImage confirmed by harness run 2026-05-23 (matrix was too conservative).',
   },
   {
     provider: 'groq',
-    model: 'llama-4-scout',
+    model: 'meta-llama/llama-4-scout-17b-16e-instruct',
     capabilities: new Set<Capability>([
       'text',
       'multiTurn',
@@ -170,7 +171,7 @@ export const MATRIX: readonly ProviderModelEntry[] = [
   },
   {
     provider: 'cohere',
-    model: 'command-a-plus',
+    model: 'command-a-plus-05-2026',
     capabilities: new Set<Capability>([
       'text',
       'multiTurn',

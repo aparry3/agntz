@@ -9,7 +9,7 @@ export const toolRoundtrip: TestDefinition = {
     const mc = modelConfig(model);
 
     const firstMessages: Array<{ role: string; content: unknown }> = [
-      { role: 'user', content: 'What is the weather in Paris? Use the get_weather tool.' },
+      { role: 'user', content: 'What is the weather in Paris? You must call the get_weather tool to find out.' },
     ];
 
     const first = await provider.generateText({

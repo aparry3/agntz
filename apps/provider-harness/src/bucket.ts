@@ -26,6 +26,9 @@ export function classify(input: {
 
   const msg = outcome.error.message ?? '';
 
+  if (looksLikeRateLimit(msg)) {
+    return 'RATE_LIMITED';
+  }
   if (looksLikeUnsupported(msg)) {
     return capabilitySupported ? 'UNEXPECTED_UNSUPPORTED' : 'EXPECTED_UNSUPPORTED';
   }
@@ -51,10 +54,22 @@ export function isMissingCredentials(err: Error): boolean {
   return false;
 }
 
+function looksLikeRateLimit(msg: string): boolean {
+  // OpenAI: "exceeded your current quota"; Google free tier: "Quota exceeded
+  // ... limit: 5 ... Please retry in 15s"; OpenRouter free tier: "requires more
+  // credits", "Prompt tokens limit exceeded", "can only afford N". All are
+  // account/tier constraints, not SDK or model faults.
+  return /\b429\b|rate.?limit|quota|exceeded your current quota|resource[_\s]exhausted|too many requests|please retry in|requires more credits|insufficient credits|never purchased credits|upgrade to a paid account|tokens limit exceeded|can only afford/i.test(
+    msg,
+  );
+}
+
 function looksLikeUnsupported(msg: string): boolean {
-  return /unsupported|not\s+support|does\s+not\s+support|not\s+available|invalid_request_error.*unsupported|capability.*not/i.test(msg);
+  return /unsupported|not\s+support|does\s+not\s+support|not\s+available|no endpoints found that support|invalid_request_error.*unsupported|capability.*not/i.test(msg);
 }
 
 function looksLikeProviderError(msg: string): boolean {
-  return /\b5\d{2}\b|service\s+unavailable|internal\s+server\s+error|server\s+error|bad\s+gateway|gateway\s+timeout/i.test(msg);
+  // Match specific 5xx status codes, not any 3-digit number starting with 5
+  // (token counts like "512" were false-matching the old \b5\d{2}\b).
+  return /\b(500|502|503|504)\b|service\s+unavailable|internal\s+server\s+error|server\s+error|bad\s+gateway|gateway\s+timeout/i.test(msg);
 }

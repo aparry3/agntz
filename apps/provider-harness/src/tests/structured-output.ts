@@ -9,7 +9,9 @@ export const structuredOutput: TestDefinition = {
     const result = await provider.generateText({
       model: modelConfig(model),
       messages: [
-        { role: 'user', content: 'Return a person record for Alice, who is 30 years old.' },
+        // The literal word "json" is required by some providers (e.g. Qwen,
+        // OpenAI-compatible json_object mode) to enable structured output.
+        { role: 'user', content: 'Return a person record for Alice, who is 30 years old, as JSON.' },
       ],
       outputSchema: {
         name: 'person',

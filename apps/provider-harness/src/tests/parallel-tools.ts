@@ -12,7 +12,7 @@ export const parallelTools: TestDefinition = {
         {
           role: 'user',
           content:
-            'Get the current weather for BOTH Paris and Tokyo. Call get_weather once for each city in this turn.',
+            'Get the current weather for BOTH Paris and Tokyo. You must call the get_weather tool once for each city, in this single turn.',
         },
       ],
       tools: [WEATHER_TOOL],

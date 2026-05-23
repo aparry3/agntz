@@ -164,6 +164,7 @@ function countByBucket(results: readonly TestResult[]): Record<ResultBucket, num
     UNEXPECTED_UNSUPPORTED: 0,
     SDK_ERROR: 0,
     PROVIDER_ERROR: 0,
+    RATE_LIMITED: 0,
     TIMEOUT: 0,
     SKIPPED: 0,
   };

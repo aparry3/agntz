@@ -34,6 +34,7 @@ export type ResultBucket =
   | 'UNEXPECTED_UNSUPPORTED'
   | 'SDK_ERROR'
   | 'PROVIDER_ERROR'
+  | 'RATE_LIMITED'
   | 'TIMEOUT'
   | 'SKIPPED';
 

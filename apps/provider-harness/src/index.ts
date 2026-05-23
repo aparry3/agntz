@@ -60,6 +60,7 @@ const BUCKET_COLOR: Record<ResultBucket, string> = {
   UNEXPECTED_UNSUPPORTED: '\x1b[33m',
   SDK_ERROR: '\x1b[31m',
   PROVIDER_ERROR: '\x1b[34m',
+  RATE_LIMITED: '\x1b[36m',
   TIMEOUT: '\x1b[35m',
   SKIPPED: '\x1b[90m',
 };
@@ -99,6 +100,7 @@ function printSummary(results: readonly TestResult[]): void {
     UNEXPECTED_UNSUPPORTED: 0,
     SDK_ERROR: 0,
     PROVIDER_ERROR: 0,
+    RATE_LIMITED: 0,
     TIMEOUT: 0,
     SKIPPED: 0,
   };
