@@ -110,9 +110,19 @@ function printSummary(results: readonly TestResult[]): void {
   console.log('  ' + parts.join(' · '));
 }
 
+function parseArgs(argv: readonly string[]): { updateSnapshots: boolean } {
+  return {
+    updateSnapshots: argv.includes('--update-snapshots') || argv.includes('-u'),
+  };
+}
+
 async function main(): Promise<void> {
+  const args = parseArgs(process.argv.slice(2));
   console.log('');
-  console.log('  agntz · provider harness · v0.1 — Phase 2 (runner + single-turn)');
+  console.log('  agntz · provider harness · v0.1 — Phase 4 (snapshot infrastructure)');
+  if (args.updateSnapshots) {
+    console.log('  Snapshot update mode: existing snapshots will be overwritten.');
+  }
   console.log('');
   console.log(
     `  Matrix: ${MATRIX.length} models, ${ALL_CAPABILITIES.length} capability dimensions`,
@@ -133,7 +143,11 @@ async function main(): Promise<void> {
   const startedAt = new Date();
   let results;
   try {
-    results = await runMatrix({ matrix: MATRIX, tests: ALL_TESTS });
+    results = await runMatrix({
+      matrix: MATRIX,
+      tests: ALL_TESTS,
+      updateSnapshots: args.updateSnapshots,
+    });
   } finally {
     process.stderr.write = originalStderrWrite;
   }

@@ -1,5 +1,6 @@
 import { classify, isMissingCredentials } from './bucket.js';
 import { Semaphore } from './semaphore.js';
+import { compareSnapshot } from './snapshot.js';
 import type { ProviderModelEntry, TestDefinition, TestResult } from './types.js';
 
 export const DEFAULT_TIMEOUT_MS = 30_000;
@@ -10,11 +11,13 @@ export interface RunOptions {
   tests: readonly TestDefinition[];
   providerConcurrency?: number;
   defaultTimeoutMs?: number;
+  updateSnapshots?: boolean;
 }
 
 export async function runMatrix(opts: RunOptions): Promise<TestResult[]> {
   const concurrency = opts.providerConcurrency ?? DEFAULT_PROVIDER_CONCURRENCY;
   const defaultTimeoutMs = opts.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const updateSnapshots = opts.updateSnapshots ?? false;
 
   const semaphores = new Map<string, Semaphore>();
   const semaphoreFor = (provider: string): Semaphore => {
@@ -29,7 +32,7 @@ export async function runMatrix(opts: RunOptions): Promise<TestResult[]> {
   const tasks: Array<Promise<TestResult>> = [];
   for (const entry of opts.matrix) {
     for (const test of opts.tests) {
-      tasks.push(runOne(entry, test, semaphoreFor(entry.provider), defaultTimeoutMs));
+      tasks.push(runOne(entry, test, semaphoreFor(entry.provider), defaultTimeoutMs, updateSnapshots));
     }
   }
   return Promise.all(tasks);
@@ -40,6 +43,7 @@ async function runOne(
   test: TestDefinition,
   semaphore: Semaphore,
   defaultTimeoutMs: number,
+  updateSnapshots: boolean,
 ): Promise<TestResult> {
   return semaphore.run(async () => {
     const timeoutMs = test.timeoutMs ?? defaultTimeoutMs;
@@ -59,6 +63,27 @@ async function runOne(
       const capabilitySupported = model.capabilities.has(test.capability);
 
       if (output.ok) {
+        if (output.snapshot !== undefined) {
+          const snap = await compareSnapshot({
+            testId: test.id,
+            provider: model.provider,
+            model: model.model,
+            value: output.snapshot,
+            update: updateSnapshots,
+          });
+          if (snap.kind === 'mismatch') {
+            return {
+              ...base,
+              bucket: 'SDK_ERROR',
+              durationMs,
+              error: {
+                name: 'SnapshotMismatch',
+                message: `structural snapshot drift for ${test.id} (${snap.path})`,
+              },
+              snapshotDiff: snap.diff,
+            };
+          }
+        }
         return {
           ...base,
           bucket: classify({ capabilitySupported, outcome: { kind: 'pass' } }),

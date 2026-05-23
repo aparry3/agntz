@@ -111,6 +111,14 @@ function buildMarkdown(input: ReportInput): string {
         if (r.error.stack) lines.push(r.error.stack);
         lines.push('```');
       }
+      if (r.snapshotDiff) {
+        lines.push('');
+        lines.push('Snapshot diff:');
+        lines.push('');
+        lines.push('```diff');
+        lines.push(r.snapshotDiff);
+        lines.push('```');
+      }
       lines.push('');
     }
   }
