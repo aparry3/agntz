@@ -1,4 +1,5 @@
 import { ALL_CAPABILITIES, MATRIX } from './matrix.js';
+import { writeReport } from './report.js';
 import { runMatrix } from './runner.js';
 import { ALL_TESTS } from './tests/index.js';
 import type { Capability, ProviderModelEntry, ResultBucket, TestResult } from './types.js';
@@ -129,18 +130,26 @@ async function main(): Promise<void> {
   // essentials we actually need.
   const originalStderrWrite = process.stderr.write.bind(process.stderr);
   process.stderr.write = (() => true) as typeof process.stderr.write;
+  const startedAt = new Date();
   let results;
   try {
     results = await runMatrix({ matrix: MATRIX, tests: ALL_TESTS });
   } finally {
     process.stderr.write = originalStderrWrite;
   }
+  const finishedAt = new Date();
 
   printResults(results);
   console.log('');
   console.log('  Summary');
   console.log('  ───────');
   printSummary(results);
+  console.log('');
+
+  const written = await writeReport({ startedAt, finishedAt, matrix: MATRIX, results });
+  console.log(`  Wrote ${written.markdownPath}`);
+  console.log(`  Wrote ${written.jsonPath}`);
+  console.log(`  Symlinked ${written.latestMarkdownPath} → latest`);
   console.log('');
 
   const hasFailure = results.some(
