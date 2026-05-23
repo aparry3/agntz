@@ -1,0 +1,1941 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Provider Harness · Planning</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT@0,9..144,300..900,0..100;1,9..144,300..900,0..100&family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400;1,500&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap"
+  rel="stylesheet"
+/>
+<style>
+  :root {
+    --ink:        #161426;
+    --ink-2:      #3d3e58;
+    --ink-3:      #6f6e84;
+    --ink-mute:   #908ea0;
+    --paper:      #f3ede0;
+    --paper-2:    #ebe3d0;
+    --paper-3:    #e2d8c0;
+    --paper-soft: #f8f2e6;
+    --rule:       #c9bc9e;
+    --rule-soft:  #dccfb1;
+    --accent:     #b04823;
+    --accent-2:   #8a6a3a;
+    --accent-3:   #d68d4f;
+    --soft:       #f3d8b9;
+    --code-bg:    #eae1c9;
+    --code-bg-2:  #1a1726;
+    --code-fg-2:  #efe5cf;
+
+    --pass:       #4a7a3a;
+    --pass-soft:  rgba(74, 122, 58, 0.12);
+    --warn:       #b07a23;
+    --warn-soft:  rgba(176, 122, 35, 0.14);
+    --fail:       #b04823;
+    --fail-soft:  rgba(176, 72, 35, 0.14);
+    --info:       #2d4a7a;
+    --info-soft:  rgba(45, 74, 122, 0.12);
+    --neutral:    #6f6e84;
+    --neutral-soft: rgba(111, 110, 132, 0.12);
+
+    --font-display: 'Fraunces', 'Iowan Old Style', Georgia, serif;
+    --font-body:    'IBM Plex Sans', system-ui, sans-serif;
+    --font-mono:    'JetBrains Mono', ui-monospace, monospace;
+
+    --measure:    40rem;
+
+    --display-xl: clamp(4rem, 13vw, 11rem);
+    --display-l:  clamp(2.75rem, 5vw, 4.25rem);
+    --display-m:  clamp(2rem, 3vw, 2.75rem);
+    --display-s:  clamp(1.4rem, 1.8vw, 1.65rem);
+
+    --t-body:     1.0625rem;
+    --t-small:    0.875rem;
+    --t-tiny:     0.75rem;
+    --t-marginal: 0.8125rem;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; color-scheme: light; }
+
+  body {
+    margin: 0;
+    font-family: var(--font-body);
+    font-size: var(--t-body);
+    line-height: 1.65;
+    color: var(--ink);
+    background:
+      radial-gradient(ellipse 1200px 800px at 80% -10%, rgba(208, 165, 100, 0.18), transparent 60%),
+      radial-gradient(ellipse 800px 600px at -10% 60%, rgba(176, 72, 35, 0.07), transparent 60%),
+      var(--paper);
+    background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.55;
+    mix-blend-mode: multiply;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.10 0 0 0 0 0.08 0 0 0 0 0.05 0 0 0 0.05 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  }
+
+  ::selection { background: var(--accent); color: var(--paper); }
+
+  a { color: var(--accent); text-decoration: none; border-bottom: 1px solid rgba(176,72,35,0.35); }
+  a:hover { border-bottom-color: var(--accent); }
+
+  .shell {
+    position: relative;
+    z-index: 1;
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 0 clamp(1.25rem, 4vw, 3rem);
+  }
+
+  /* ── topbar ─────────────────────────────────────────────────── */
+  .topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 1.75rem 0 1.5rem;
+    border-bottom: 1px solid var(--rule);
+    font-size: var(--t-tiny);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  .topbar .monogram {
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-variation-settings: 'opsz' 144, 'SOFT' 30;
+    font-size: 1.2rem;
+    letter-spacing: -0.02em;
+    text-transform: none;
+    color: var(--ink);
+  }
+  .topbar .monogram em { color: var(--accent); font-style: normal; }
+  .topbar .meta { display: flex; gap: 1.5rem; }
+  .topbar .meta > * + *::before {
+    content: '·';
+    margin-right: 1.5rem;
+    color: var(--rule);
+  }
+
+  /* ── hero ───────────────────────────────────────────────────── */
+  .hero {
+    padding: clamp(3rem, 9vw, 7.5rem) 0 clamp(3rem, 6vw, 5rem);
+    position: relative;
+  }
+  .hero .edition {
+    font-size: var(--t-small);
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin-bottom: 2rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+  .hero .edition::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--rule);
+    max-width: 320px;
+  }
+  .hero h1 {
+    margin: 0;
+    font-family: var(--font-display);
+    font-weight: 380;
+    font-size: var(--display-xl);
+    line-height: 0.88;
+    letter-spacing: -0.045em;
+    font-variation-settings: 'opsz' 144, 'SOFT' 50;
+    color: var(--ink);
+  }
+  .hero h1 em {
+    font-style: italic;
+    font-variation-settings: 'opsz' 144, 'SOFT' 80;
+    color: var(--accent);
+    font-weight: 320;
+  }
+  .hero .lede {
+    margin-top: 2.5rem;
+    max-width: 38rem;
+    font-family: var(--font-display);
+    font-style: italic;
+    font-variation-settings: 'opsz' 96, 'SOFT' 70;
+    font-weight: 350;
+    font-size: clamp(1.35rem, 2.2vw, 1.75rem);
+    line-height: 1.4;
+    color: var(--ink-2);
+    letter-spacing: -0.005em;
+  }
+  .hero .byline {
+    margin-top: 3rem;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 2rem;
+    padding-top: 2rem;
+    border-top: 1px solid var(--rule);
+    max-width: 60rem;
+  }
+  .hero .byline dt {
+    font-size: var(--t-tiny);
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin-bottom: 0.4rem;
+  }
+  .hero .byline dd {
+    margin: 0;
+    font-family: var(--font-display);
+    font-weight: 380;
+    font-size: 1.0625rem;
+    color: var(--ink);
+  }
+  .hero-mark {
+    position: absolute;
+    right: -4vw;
+    bottom: -2rem;
+    font-family: var(--font-display);
+    font-style: italic;
+    font-weight: 200;
+    font-variation-settings: 'opsz' 144, 'SOFT' 100;
+    font-size: clamp(14rem, 36vw, 28rem);
+    color: rgba(176, 72, 35, 0.08);
+    line-height: 1;
+    pointer-events: none;
+    user-select: none;
+    letter-spacing: -0.06em;
+  }
+  @media (max-width: 800px) { .hero-mark { display: none; } }
+
+  /* ── contents ───────────────────────────────────────────────── */
+  .contents {
+    padding: 3rem 0 5rem;
+    border-top: 1px solid var(--rule);
+    border-bottom: 1px solid var(--rule);
+    margin-top: 2rem;
+  }
+  .contents .label {
+    font-size: var(--t-tiny);
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin-bottom: 2.5rem;
+  }
+  .contents ol {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1px;
+    background: var(--rule-soft);
+    border: 1px solid var(--rule-soft);
+  }
+  @media (max-width: 720px) {
+    .contents ol { grid-template-columns: 1fr; }
+  }
+  .contents li {
+    background: var(--paper);
+    padding: 1.25rem 1.5rem;
+    transition: background 200ms ease;
+  }
+  .contents li:hover { background: var(--paper-soft); }
+  .contents li a {
+    color: var(--ink);
+    border: none;
+    display: flex;
+    align-items: baseline;
+    gap: 1.25rem;
+    width: 100%;
+  }
+  .contents .num {
+    font-family: var(--font-display);
+    font-weight: 380;
+    font-size: 1.5rem;
+    font-variation-settings: 'opsz' 96, 'SOFT' 30;
+    color: var(--accent);
+    letter-spacing: -0.02em;
+    min-width: 2rem;
+  }
+  .contents .title {
+    font-family: var(--font-display);
+    font-weight: 400;
+    font-size: 1.15rem;
+    font-variation-settings: 'opsz' 24;
+    line-height: 1.25;
+  }
+
+  /* ── sections ───────────────────────────────────────────────── */
+  section.chapter {
+    padding: clamp(4rem, 8vw, 7rem) 0;
+    border-bottom: 1px solid var(--rule-soft);
+    position: relative;
+  }
+  .chapter-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 200px) minmax(0, var(--measure)) minmax(0, 1fr);
+    gap: clamp(1.5rem, 4vw, 4rem);
+    align-items: start;
+  }
+  @media (max-width: 960px) {
+    .chapter-grid { grid-template-columns: 1fr; }
+  }
+  .chapter-grid.wide {
+    grid-template-columns: minmax(0, 200px) minmax(0, 1fr);
+  }
+  @media (max-width: 960px) {
+    .chapter-grid.wide { grid-template-columns: 1fr; }
+  }
+  .chapter-number {
+    font-family: var(--font-display);
+    font-weight: 220;
+    font-variation-settings: 'opsz' 144, 'SOFT' 50;
+    font-size: clamp(3rem, 6vw, 5.5rem);
+    line-height: 0.9;
+    color: var(--accent);
+    letter-spacing: -0.04em;
+    position: sticky;
+    top: 1.5rem;
+  }
+  .chapter-number .small {
+    display: block;
+    font-size: 0.85rem;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-variation-settings: 'opsz' 12;
+    font-weight: 500;
+    margin-bottom: 0.6rem;
+  }
+  @media (max-width: 960px) {
+    .chapter-number { position: static; margin-bottom: 1rem; }
+  }
+  .chapter-body { max-width: var(--measure); }
+  .chapter-body.wide { max-width: 100%; }
+  .chapter-body h2 {
+    font-family: var(--font-display);
+    font-weight: 350;
+    font-variation-settings: 'opsz' 96, 'SOFT' 40;
+    font-size: var(--display-l);
+    line-height: 0.98;
+    letter-spacing: -0.035em;
+    margin: 0 0 1.75rem;
+    color: var(--ink);
+  }
+  .chapter-body h2 em {
+    color: var(--accent);
+    font-style: italic;
+    font-variation-settings: 'opsz' 96, 'SOFT' 80;
+  }
+  .chapter-body h3 {
+    font-family: var(--font-display);
+    font-weight: 450;
+    font-variation-settings: 'opsz' 36;
+    font-size: 1.5rem;
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+    margin: 2.75rem 0 0.85rem;
+    color: var(--ink);
+  }
+  .chapter-body h3 .marker {
+    color: var(--accent);
+    font-style: italic;
+    margin-right: 0.5rem;
+  }
+  .chapter-body p { margin: 0 0 1.15rem; }
+  .chapter-body p:last-child { margin-bottom: 0; }
+  .chapter-body p strong { font-weight: 600; color: var(--ink); }
+  .chapter-body p em {
+    font-style: italic;
+    font-family: var(--font-display);
+    font-variation-settings: 'opsz' 12;
+  }
+  .chapter-body ul {
+    margin: 0 0 1.5rem;
+    padding-left: 0;
+    list-style: none;
+  }
+  .chapter-body ul li {
+    position: relative;
+    padding-left: 1.75rem;
+    margin-bottom: 0.6rem;
+  }
+  .chapter-body ul li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0.7em;
+    width: 0.85rem;
+    height: 1px;
+    background: var(--accent);
+  }
+  .chapter-body ol {
+    margin: 0 0 1.5rem;
+    padding-left: 0;
+    list-style: none;
+    counter-reset: ol;
+  }
+  .chapter-body ol > li {
+    counter-increment: ol;
+    position: relative;
+    padding-left: 2.5rem;
+    margin-bottom: 0.7rem;
+  }
+  .chapter-body ol > li::before {
+    content: counter(ol, decimal-leading-zero);
+    position: absolute;
+    left: 0;
+    top: 0.15em;
+    font-family: var(--font-display);
+    font-variation-settings: 'opsz' 14, 'SOFT' 30;
+    font-weight: 480;
+    font-style: italic;
+    color: var(--accent);
+    font-size: 0.95em;
+  }
+
+  /* marginalia */
+  .marginalia {
+    font-family: var(--font-body);
+    font-size: var(--t-marginal);
+    line-height: 1.55;
+    color: var(--ink-2);
+    padding-top: 0.5rem;
+    position: sticky;
+    top: 1.5rem;
+  }
+  @media (max-width: 960px) {
+    .marginalia {
+      position: static;
+      margin-top: 1.5rem;
+      padding: 1.25rem;
+      background: rgba(202, 188, 158, 0.18);
+      border-left: 2px solid var(--accent);
+    }
+  }
+  .marginalia .note { margin-bottom: 1.5rem; }
+  .marginalia .note .term {
+    display: block;
+    font-family: var(--font-display);
+    font-style: italic;
+    font-variation-settings: 'opsz' 14, 'SOFT' 80;
+    font-weight: 500;
+    color: var(--accent);
+    font-size: 0.95rem;
+    margin-bottom: 0.25rem;
+    letter-spacing: -0.005em;
+  }
+
+  /* pull quote */
+  .pullquote {
+    margin: 3rem 0;
+    padding: 1.5rem 0 1.5rem 2rem;
+    border-left: 2px solid var(--accent);
+    font-family: var(--font-display);
+    font-style: italic;
+    font-variation-settings: 'opsz' 72, 'SOFT' 80;
+    font-weight: 320;
+    font-size: clamp(1.4rem, 2vw, 1.8rem);
+    line-height: 1.35;
+    color: var(--ink);
+    letter-spacing: -0.015em;
+    max-width: 32rem;
+  }
+
+  /* code */
+  pre.code {
+    position: relative;
+    margin: 1.5rem 0 1.75rem;
+    padding: 1.5rem;
+    background: var(--code-bg-2);
+    color: var(--code-fg-2);
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    line-height: 1.65;
+    overflow-x: auto;
+    box-shadow: 0 1px 0 rgba(0,0,0,0.05), 0 12px 32px -16px rgba(22, 20, 38, 0.4);
+  }
+  pre.code .label {
+    position: absolute;
+    top: 1rem;
+    right: 1.25rem;
+    font-size: 0.6875rem;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: rgba(239, 229, 207, 0.4);
+    font-family: var(--font-body);
+    font-weight: 500;
+  }
+  pre.code code { font-family: inherit; }
+  .k  { color: #d68d4f; }
+  .s  { color: #a3b86b; }
+  .n  { color: #efe5cf; }
+  .c  { color: #908590; font-style: italic; }
+  .p  { color: #c4b89e; }
+  .v  { color: #c08fb8; }
+  .t  { color: #8fb9c0; }
+  .b  { color: #d68d4f; font-weight: 600; }
+  code.inline {
+    font-family: var(--font-mono);
+    font-size: 0.875em;
+    padding: 0.1em 0.4em;
+    background: var(--paper-3);
+    border-radius: 2px;
+    color: var(--ink);
+  }
+
+  /* test-card grid */
+  .tests {
+    margin: 2rem 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1px;
+    background: var(--rule-soft);
+    border: 1px solid var(--rule-soft);
+  }
+  .test-card {
+    background: var(--paper-soft);
+    padding: 1.5rem 1.4rem 1.4rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+  }
+  .test-card .num {
+    font-family: var(--font-display);
+    font-style: italic;
+    font-variation-settings: 'opsz' 36, 'SOFT' 80;
+    color: var(--accent);
+    font-size: 0.95rem;
+    font-weight: 380;
+    letter-spacing: 0.04em;
+  }
+  .test-card .name {
+    font-family: var(--font-display);
+    font-weight: 480;
+    font-variation-settings: 'opsz' 24;
+    font-size: 1.2rem;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+  }
+  .test-card .desc {
+    font-size: 0.875rem;
+    color: var(--ink-2);
+    line-height: 1.5;
+  }
+  .test-card .tags {
+    margin-top: auto;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    padding-top: 0.5rem;
+  }
+
+  /* badges */
+  .badge {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    letter-spacing: 0.02em;
+    font-weight: 500;
+    text-transform: lowercase;
+    white-space: nowrap;
+  }
+  .badge.pass    { background: var(--pass-soft);    color: var(--pass); }
+  .badge.warn    { background: var(--warn-soft);    color: var(--warn); }
+  .badge.fail    { background: var(--fail-soft);    color: var(--fail); }
+  .badge.info    { background: var(--info-soft);    color: var(--info); }
+  .badge.neutral { background: var(--neutral-soft); color: var(--neutral); }
+
+  /* matrix */
+  .matrix-wrap {
+    margin: 2rem 0 1rem;
+    overflow-x: auto;
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    background: var(--paper);
+  }
+  table.matrix {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+    min-width: 760px;
+  }
+  table.matrix th, table.matrix td {
+    padding: 0.7rem 0.8rem;
+    border-bottom: 1px solid var(--rule-soft);
+    text-align: center;
+    vertical-align: middle;
+  }
+  table.matrix thead th {
+    background: var(--paper-2);
+    font-family: var(--font-body);
+    font-size: var(--t-tiny);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 600;
+    border-bottom: 1px solid var(--rule);
+    padding: 1rem 0.8rem;
+  }
+  table.matrix tbody th {
+    text-align: left;
+    background: var(--paper-soft);
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--ink);
+    padding: 0.7rem 1rem;
+    border-right: 1px solid var(--rule-soft);
+    white-space: nowrap;
+  }
+  table.matrix tbody th .sub {
+    display: block;
+    font-family: var(--font-body);
+    font-size: 0.7rem;
+    color: var(--ink-3);
+    font-weight: 400;
+    letter-spacing: 0.02em;
+    margin-top: 0.1rem;
+  }
+  .cell {
+    display: inline-flex;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 50%;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+  .cell.yes { background: var(--pass-soft); color: var(--pass); }
+  .cell.no  { background: var(--neutral-soft); color: var(--neutral); }
+  .cell.partial { background: var(--warn-soft); color: var(--warn); }
+
+  /* result bucket flow */
+  .buckets {
+    margin: 2.5rem 0;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    background: var(--rule-soft);
+    border: 1px solid var(--rule-soft);
+  }
+  @media (max-width: 760px) {
+    .buckets { grid-template-columns: 1fr; }
+  }
+  .bucket {
+    background: var(--paper-soft);
+    padding: 1.4rem 1.3rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .bucket .label {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .bucket.pass .label { color: var(--pass); }
+  .bucket.warn .label { color: var(--warn); }
+  .bucket.fail .label { color: var(--fail); }
+  .bucket.info .label { color: var(--info); }
+  .bucket.neutral .label { color: var(--neutral); }
+  .bucket .signal {
+    font-family: var(--font-display);
+    font-style: italic;
+    font-variation-settings: 'opsz' 24, 'SOFT' 70;
+    font-size: 1.1rem;
+    font-weight: 480;
+    color: var(--ink);
+    line-height: 1.3;
+  }
+  .bucket .desc {
+    font-size: 0.8125rem;
+    color: var(--ink-2);
+    line-height: 1.5;
+  }
+
+  /* decision flow */
+  .flow {
+    margin: 2.5rem 0;
+    padding: 2rem 1.75rem;
+    background: var(--paper-soft);
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    font-family: var(--font-mono);
+    font-size: 0.825rem;
+    line-height: 1.85;
+    color: var(--ink-2);
+    overflow-x: auto;
+    white-space: pre;
+  }
+  .flow .keyword { color: var(--accent); font-weight: 600; }
+  .flow .branch  { color: var(--info); font-weight: 600; }
+  .flow .out-pass { color: var(--pass); font-weight: 600; }
+  .flow .out-fail { color: var(--fail); font-weight: 600; }
+  .flow .out-warn { color: var(--warn); font-weight: 600; }
+  .flow .out-info { color: var(--info); font-weight: 600; }
+  .flow .out-neutral { color: var(--neutral); font-weight: 600; }
+  .flow .comment { color: var(--ink-3); font-style: italic; }
+
+  /* phases */
+  .phases {
+    margin: 2.5rem 0;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+  .phase {
+    padding: 1.75rem 0;
+    border-top: 1px solid var(--rule-soft);
+    display: grid;
+    grid-template-columns: 100px 1fr;
+    gap: 2.5rem;
+    align-items: start;
+  }
+  .phase:last-child { border-bottom: 1px solid var(--rule-soft); }
+  @media (max-width: 720px) {
+    .phase { grid-template-columns: 1fr; gap: 0.5rem; }
+  }
+  .phase .stage {
+    font-family: var(--font-display);
+    font-style: italic;
+    font-variation-settings: 'opsz' 36, 'SOFT' 80;
+    color: var(--accent);
+    font-size: 1.5rem;
+    font-weight: 380;
+  }
+  .phase .stage strong {
+    display: block;
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-style: normal;
+    font-weight: 600;
+    font-size: 0.7rem;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    margin-bottom: 0.3rem;
+  }
+  .phase h4 {
+    margin: 0 0 0.65rem;
+    font-family: var(--font-display);
+    font-weight: 480;
+    font-variation-settings: 'opsz' 24;
+    font-size: 1.3rem;
+    letter-spacing: -0.01em;
+  }
+  .phase .what {
+    color: var(--ink-2);
+    margin: 0 0 0.75rem;
+    font-size: 0.95rem;
+  }
+  .phase .demo {
+    font-family: var(--font-display);
+    font-style: italic;
+    font-variation-settings: 'opsz' 14;
+    color: var(--accent-2);
+    font-size: 0.95rem;
+  }
+  .phase .demo::before {
+    content: '→ after this phase: ';
+    color: var(--ink-3);
+    font-style: normal;
+    font-family: var(--font-body);
+    font-size: 0.75rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    display: block;
+    margin-bottom: 0.25rem;
+  }
+
+  /* decision table */
+  table.table {
+    margin: 1.75rem 0;
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.92rem;
+  }
+  table.table th, table.table td {
+    text-align: left;
+    padding: 0.85rem 1rem;
+    border-bottom: 1px solid var(--rule-soft);
+    vertical-align: top;
+  }
+  table.table th {
+    background: var(--paper-2);
+    font-size: var(--t-tiny);
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 600;
+  }
+  table.table tr:last-child td { border-bottom: 1px solid var(--rule); }
+  table.table td.choice {
+    font-family: var(--font-display);
+    font-style: italic;
+    font-variation-settings: 'opsz' 14, 'SOFT' 70;
+    color: var(--accent);
+    font-size: 1.05rem;
+    font-weight: 480;
+    white-space: nowrap;
+  }
+
+  /* snapshot example */
+  .snapshot {
+    margin: 2rem 0;
+    padding: 1.5rem;
+    background: var(--paper-soft);
+    border: 1px solid var(--rule-soft);
+    border-radius: 3px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+  }
+  @media (max-width: 760px) {
+    .snapshot { grid-template-columns: 1fr; }
+  }
+  .snapshot .label {
+    font-size: var(--t-tiny);
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 600;
+    margin-bottom: 0.6rem;
+  }
+  .snapshot pre {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    line-height: 1.55;
+    color: var(--ink-2);
+    white-space: pre-wrap;
+  }
+
+  /* ornament */
+  .rule-ornament {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1.25rem;
+    margin: 4rem auto;
+    max-width: 18rem;
+    color: var(--rule);
+  }
+  .rule-ornament::before, .rule-ornament::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--rule);
+  }
+  .rule-ornament .glyph {
+    font-family: var(--font-display);
+    font-style: italic;
+    font-variation-settings: 'opsz' 36, 'SOFT' 80;
+    color: var(--accent);
+    font-size: 1.4rem;
+  }
+
+  /* footer */
+  footer.colophon {
+    padding: 6rem 0 5rem;
+    border-top: 1px solid var(--rule);
+    margin-top: 4rem;
+    display: grid;
+    grid-template-columns: 2fr 1fr 1fr;
+    gap: 3rem;
+  }
+  @media (max-width: 760px) {
+    footer.colophon { grid-template-columns: 1fr; gap: 1.5rem; }
+  }
+  footer .col h5 {
+    font-size: var(--t-tiny);
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    margin: 0 0 1rem;
+    color: var(--ink-3);
+    font-weight: 600;
+  }
+  footer .col p { margin: 0; font-size: 0.95rem; color: var(--ink-2); }
+  footer .endmark {
+    font-family: var(--font-display);
+    font-style: italic;
+    font-weight: 280;
+    font-variation-settings: 'opsz' 144, 'SOFT' 80;
+    font-size: 4rem;
+    line-height: 0.9;
+    color: var(--accent);
+    letter-spacing: -0.03em;
+  }
+  footer .endmark span { color: var(--ink); font-style: normal; font-weight: 380; }
+
+  /* anim */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .hero h1 { animation: fadeUp 900ms ease-out both; }
+  .hero .lede { animation: fadeUp 900ms ease-out 180ms both; }
+  .hero .byline { animation: fadeUp 900ms ease-out 320ms both; }
+  .hero .edition { animation: fadeUp 600ms ease-out 80ms both; }
+  .hero-mark { animation: fadeUp 1400ms ease-out 400ms both; }
+</style>
+</head>
+
+<body>
+<div class="shell">
+
+  <!-- TOPBAR -->
+  <header class="topbar">
+    <div class="monogram">agntz<em>.</em></div>
+    <div class="meta">
+      <span>Planning</span>
+      <span>v0.1 — Draft</span>
+      <span>23 May 2026</span>
+    </div>
+  </header>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="edition">Working document · provider harness</div>
+    <h1>Smoke tests<br/>for the <em>SDK seams</em>.</h1>
+    <p class="lede">
+      A matrix harness that exercises each provider × model combination
+      against the capabilities they're supposed to support — catching the
+      class of bug where our SDK silently drops a tool call, or a model
+      quietly changes its message contract.
+    </p>
+    <dl class="byline">
+      <div><dt>Location</dt><dd>apps/provider-harness</dd></div>
+      <div><dt>Runtime</dt><dd>Manual (cron later)</dd></div>
+      <div><dt>Status</dt><dd>Pre-implementation</dd></div>
+      <div><dt>Authored</dt><dd>Aaron + Claude</dd></div>
+    </dl>
+    <div class="hero-mark">H</div>
+  </section>
+
+  <!-- TOC -->
+  <nav class="contents">
+    <div class="label">Contents</div>
+    <ol>
+      <li><a href="#why"><span class="num">01</span><span class="title">Why this exists</span></a></li>
+      <li><a href="#scope"><span class="num">02</span><span class="title">What we test (and don't)</span></a></li>
+      <li><a href="#cases"><span class="num">03</span><span class="title">The test catalogue</span></a></li>
+      <li><a href="#buckets"><span class="num">04</span><span class="title">Result buckets</span></a></li>
+      <li><a href="#matrix"><span class="num">05</span><span class="title">The capability matrix</span></a></li>
+      <li><a href="#architecture"><span class="num">06</span><span class="title">Runner architecture</span></a></li>
+      <li><a href="#snapshot"><span class="num">07</span><span class="title">Structural snapshots</span></a></li>
+      <li><a href="#openrouter"><span class="num">08</span><span class="title">OpenRouter subset</span></a></li>
+      <li><a href="#phases"><span class="num">09</span><span class="title">Phased delivery</span></a></li>
+      <li><a href="#decisions"><span class="num">10</span><span class="title">Decisions locked in</span></a></li>
+      <li><a href="#open"><span class="num">11</span><span class="title">Open questions</span></a></li>
+    </ol>
+  </nav>
+
+  <!-- 01 WHY -->
+  <section class="chapter" id="why">
+    <div class="chapter-grid">
+      <div class="chapter-number">01<span class="small">Motivation</span></div>
+      <div class="chapter-body">
+        <h2>A bug we want to <em>never</em> ship again.</h2>
+
+        <p>
+          Last week a model's tool calls weren't getting appended to the
+          messages array correctly. The model worked. The SDK didn't crash.
+          A user noticed because their downstream logic broke. By the time
+          we found it, we'd already shipped.
+        </p>
+
+        <p>
+          That class of bug — a quiet SDK regression on one provider, one
+          model, one capability — has two properties that make it hard to
+          catch with normal tests:
+        </p>
+        <ol>
+          <li>It only shows up against a real provider. Mocks won't reproduce it.</li>
+          <li>It only shows up in roundtripped state — the model returned <em>something</em>, the SDK accepted it, the next turn was wrong. End-to-end is the only viewpoint.</li>
+        </ol>
+
+        <p>
+          The harness is the answer: a small, cheap, deterministic battery
+          of capability tests run against every (provider, model) combination
+          we claim to support. Run it on demand or on a cron. If something
+          breaks, we want to find out before a user does.
+        </p>
+
+        <div class="pullquote">
+          The harness exists to catch SDK regressions and quiet model changes — not to grade output quality.
+        </div>
+      </div>
+      <aside class="marginalia">
+        <div class="note">
+          <span class="term">Two failure surfaces</span>
+          Bugs that originate in <em>our</em> SDK code (most actionable) and
+          changes from <em>their</em> side — a model swapping its message
+          shape, dropping a capability, or tightening a content policy.
+        </div>
+        <div class="note">
+          <span class="term">The recent bug</span>
+          Tool-call entries weren't being appended to <code class="inline">messages</code>
+          on a specific model. A structural snapshot of the post-tool-result
+          turn would have caught it instantly. See <a href="#snapshot">§07</a>.
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- 02 SCOPE -->
+  <section class="chapter" id="scope">
+    <div class="chapter-grid">
+      <div class="chapter-number">02<span class="small">Scope</span></div>
+      <div class="chapter-body">
+        <h2>Functionality, <em>not</em> accuracy.</h2>
+
+        <p>
+          The harness asks one question per test: <em>did the SDK and the
+          model do the structural thing they were supposed to do?</em> Not
+          how well, not how fast, not how cheaply.
+        </p>
+
+        <h3><span class="marker">§</span>In scope</h3>
+        <ul>
+          <li>The SDK accepts a valid request shape and returns a valid response shape.</li>
+          <li>Streaming yields chunks of the expected type and a final usage record.</li>
+          <li>Tool calls roundtrip — call, result, next assistant turn — with messages in the documented structure.</li>
+          <li>Multimodal inputs are accepted by models that claim to support them, and politely rejected by models that don't.</li>
+          <li>Negative paths return typed, catchable errors (not raw HTTP fragments or silent successes).</li>
+        </ul>
+
+        <h3><span class="marker">§</span>Out of scope</h3>
+        <ul>
+          <li>Output quality, accuracy, factuality, reasoning ability.</li>
+          <li>Latency and throughput benchmarks.</li>
+          <li>Cost optimisation. We confirm <em>presence</em> of cost data; we don't compare values.</li>
+          <li>Provider-specific features outside agntz's surface area (e.g. assistants API, custom embeddings).</li>
+        </ul>
+
+        <p>
+          The discipline matters because it determines what counts as a
+          regression. <em>"Claude got the answer wrong"</em> is not a harness
+          failure. <em>"Claude returned a malformed tool-call entry"</em> is.
+        </p>
+      </div>
+      <aside class="marginalia">
+        <div class="note">
+          <span class="term">Why not vitest?</span>
+          Vitest is great for unit tests but fights matrix orchestration.
+          We want full control over result bucketing, per-provider concurrency,
+          and the difference between "model said no, as expected" and "SDK
+          crashed." That's a runner we write, not one we configure.
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- 03 CASES -->
+  <section class="chapter" id="cases">
+    <div class="chapter-grid wide">
+      <div class="chapter-number">03<span class="small">Catalogue</span></div>
+      <div class="chapter-body wide">
+        <h2>What the harness <em>actually</em> runs.</h2>
+
+        <p style="max-width: var(--measure);">
+          Each test is a small data object: a name, the capability it
+          requires, a request to send, and an expectation. The runner
+          combines this with the capability matrix to know whether a
+          failure means "SDK bug" or "expected — this model doesn't
+          support that."
+        </p>
+
+        <div class="tests">
+
+          <div class="test-card">
+            <div class="num">01</div>
+            <div class="name">Single-turn text</div>
+            <div class="desc">"Reply with the word OK." Smallest possible round trip. Catches auth, base routing, response shape.</div>
+            <div class="tags"><span class="badge info">text</span></div>
+          </div>
+
+          <div class="test-card">
+            <div class="num">02</div>
+            <div class="name">Multi-turn text</div>
+            <div class="desc">Three-message conversation. Validates that history is preserved and roles alternate cleanly.</div>
+            <div class="tags"><span class="badge info">multi-turn</span></div>
+          </div>
+
+          <div class="test-card">
+            <div class="num">03</div>
+            <div class="name">System prompt</div>
+            <div class="desc">"Always reply in Pig Latin." Verifies system role placement and that the model receives it.</div>
+            <div class="tags"><span class="badge info">system</span></div>
+          </div>
+
+          <div class="test-card">
+            <div class="num">04</div>
+            <div class="name">Streaming text</div>
+            <div class="desc">Single-turn streamed. Stream completes without error, final usage record arrives.</div>
+            <div class="tags"><span class="badge info">stream</span></div>
+          </div>
+
+          <div class="test-card">
+            <div class="num">05</div>
+            <div class="name">Tool call roundtrip</div>
+            <div class="desc">One tool, model invokes it, we return a result, model produces a final response. <strong>Messages array snapshot.</strong></div>
+            <div class="tags"><span class="badge info">tools</span><span class="badge fail">bug-class</span></div>
+          </div>
+
+          <div class="test-card">
+            <div class="num">06</div>
+            <div class="name">Parallel tool calls</div>
+            <div class="desc">Prompt that should elicit 2+ tool calls in one assistant turn. Validates the multi-call shape.</div>
+            <div class="tags"><span class="badge info">tools</span><span class="badge fail">bug-class</span></div>
+          </div>
+
+          <div class="test-card">
+            <div class="num">07</div>
+            <div class="name">Streaming + tool calls</div>
+            <div class="desc">Tool calls arrive as stream events. Separate failure surface from non-streaming tools.</div>
+            <div class="tags"><span class="badge info">stream</span><span class="badge info">tools</span></div>
+          </div>
+
+          <div class="test-card">
+            <div class="num">08</div>
+            <div class="name">Tool choice variants</div>
+            <div class="desc">auto, none, required, specific-tool. Some providers silently ignore the directive — we catch that here.</div>
+            <div class="tags"><span class="badge info">tools</span></div>
+          </div>
+
+          <div class="test-card">
+            <div class="num">09</div>
+            <div class="name">Multimodal — image URL</div>
+            <div class="desc">Tiny remote image; model describes a feature of it. Expected unsupported on text-only models.</div>
+            <div class="tags"><span class="badge info">multimodal</span></div>
+          </div>
+
+          <div class="test-card">
+            <div class="num">10</div>
+            <div class="name">Multimodal — image base64</div>
+            <div class="desc">Same content, base64-encoded inline. Different code path on most providers; deserves its own test.</div>
+            <div class="tags"><span class="badge info">multimodal</span></div>
+          </div>
+
+          <div class="test-card">
+            <div class="num">11</div>
+            <div class="name">Structured output / JSON</div>
+            <div class="desc">JSON mode or schema-constrained output. Common silent-failure surface; supported by ~half the catalogue.</div>
+            <div class="tags"><span class="badge info">structured</span></div>
+          </div>
+
+          <div class="test-card">
+            <div class="num">12</div>
+            <div class="name">Reasoning / thinking</div>
+            <div class="desc">For models that expose extended thinking (Claude 4.7, GPT-5.5, Gemini 3.5). Verify reasoning tokens appear in usage.</div>
+            <div class="tags"><span class="badge info">reasoning</span></div>
+          </div>
+
+          <div class="test-card">
+            <div class="num">13</div>
+            <div class="name">AbortSignal cancellation</div>
+            <div class="desc">Start a streamed call, abort midway. Verify the upstream call is actually cancelled, not just the consumer.</div>
+            <div class="tags"><span class="badge info">control</span></div>
+          </div>
+
+          <div class="test-card">
+            <div class="num">14</div>
+            <div class="name">Telemetry shape</div>
+            <div class="desc">Usage object has input/output tokens; finish reason returned; cost present where promised (OpenRouter).</div>
+            <div class="tags"><span class="badge info">telemetry</span></div>
+          </div>
+
+          <div class="test-card">
+            <div class="num">15</div>
+            <div class="name">Long input</div>
+            <div class="desc">~10k tokens of synthetic input. Catches truncation, encoding, and message-array size bugs.</div>
+            <div class="tags"><span class="badge info">limits</span></div>
+          </div>
+
+          <div class="test-card">
+            <div class="num">16</div>
+            <div class="name">Invalid API key</div>
+            <div class="desc">Negative path. Expect a typed, catchable error — not a 500 dressed up as a 200, not a raw HTTP throw.</div>
+            <div class="tags"><span class="badge info">errors</span></div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="rule-ornament"><span class="glyph">§</span></div>
+
+  <!-- 04 BUCKETS -->
+  <section class="chapter" id="buckets">
+    <div class="chapter-grid">
+      <div class="chapter-number">04<span class="small">Triage</span></div>
+      <div class="chapter-body">
+        <h2>Six buckets, one <em>decision</em>.</h2>
+
+        <p>
+          A pass/fail boolean isn't enough. When a multimodal test "fails"
+          on a text-only model, that's expected and green. When a tool-call
+          test fails because our SDK threw, that's a red alert. The bucketer
+          encodes that nuance.
+        </p>
+
+        <div class="buckets">
+          <div class="bucket pass">
+            <div class="label">Pass</div>
+            <div class="signal">All good</div>
+            <div class="desc">Capability claimed, capability delivered, response shape matches expectation.</div>
+          </div>
+          <div class="bucket pass">
+            <div class="label">Expected unsupported</div>
+            <div class="signal">Politely declined</div>
+            <div class="desc">Matrix says model doesn't support this; model said so cleanly. Counts as green.</div>
+          </div>
+          <div class="bucket warn">
+            <div class="label">Unexpected unsupported</div>
+            <div class="signal">Model regressed</div>
+            <div class="desc">Matrix says supported; model returned a "not supported" error. Either the model changed or our matrix is wrong.</div>
+          </div>
+          <div class="bucket fail">
+            <div class="label">SDK error</div>
+            <div class="signal">Our bug</div>
+            <div class="desc">Our SDK threw, swallowed, or produced malformed state. The thing this harness exists to find.</div>
+          </div>
+          <div class="bucket info">
+            <div class="label">Provider error</div>
+            <div class="signal">Their bug</div>
+            <div class="desc">Provider returned a 5xx, malformed response, or stream that ended uncleanly. Worth retrying once.</div>
+          </div>
+          <div class="bucket neutral">
+            <div class="label">Timeout</div>
+            <div class="signal">Inconclusive</div>
+            <div class="desc">Call exceeded the per-test budget. Triage separately — might be a real hang, might be a slow model.</div>
+          </div>
+        </div>
+
+        <h3><span class="marker">§</span>How the runner decides</h3>
+
+        <div class="flow"><span class="comment"># given a test and a (provider, model)</span>
+<span class="keyword">if</span> matrix[provider][model][capability] === <span class="branch">supported</span>:
+  <span class="keyword">if</span> request succeeded and shape matches    → <span class="out-pass">PASS</span>
+  <span class="keyword">if</span> SDK threw before the network          → <span class="out-fail">SDK_ERROR</span>
+  <span class="keyword">if</span> SDK threw on the response shape       → <span class="out-fail">SDK_ERROR</span>
+  <span class="keyword">if</span> provider replied "unsupported"        → <span class="out-warn">UNEXPECTED_UNSUPPORTED</span>
+  <span class="keyword">if</span> provider 5xx or stream cut            → <span class="out-info">PROVIDER_ERROR</span>
+  <span class="keyword">if</span> ran past per-test budget              → <span class="out-neutral">TIMEOUT</span>
+
+<span class="keyword">else</span>: <span class="comment"># capability not claimed by this model</span>
+  <span class="keyword">if</span> provider replied "unsupported"        → <span class="out-pass">EXPECTED_UNSUPPORTED</span>
+  <span class="keyword">if</span> request succeeded                     → <span class="out-warn">UNEXPECTED_UNSUPPORTED</span>  <span class="comment"># matrix outdated — capability added</span>
+  <span class="keyword">if</span> SDK threw                             → <span class="out-fail">SDK_ERROR</span>           <span class="comment"># we should refuse cleanly</span>
+  <span class="keyword">if</span> provider 5xx                          → <span class="out-info">PROVIDER_ERROR</span>
+        </div>
+
+        <p>
+          The cases that page a human are <code class="inline">SDK_ERROR</code>
+          (always) and <code class="inline">UNEXPECTED_UNSUPPORTED</code>
+          (either the matrix is stale or the model changed). Everything else
+          is a yellow or green and can be reviewed at leisure.
+        </p>
+      </div>
+      <aside class="marginalia">
+        <div class="note">
+          <span class="term">Why "expected unsupported" is green</span>
+          A text-only model saying "I can't process images" is the system
+          working as designed. It tells us the SDK successfully sent the
+          request <em>and</em> the model gave us a clean refusal. Both
+          surfaces verified.
+        </div>
+        <div class="note">
+          <span class="term">SDK vs provider error</span>
+          The seam is whether our code produced or accepted malformed
+          state. A 503 from the provider is theirs. A <code class="inline">TypeError</code>
+          from our parser is ours.
+        </div>
+        <div class="note">
+          <span class="term">Provider errors get a single retry</span>
+          5xx and stream cuts are usually transient. One retry with backoff
+          before marking <code class="inline">PROVIDER_ERROR</code> keeps
+          the report quiet.
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- 05 MATRIX -->
+  <section class="chapter" id="matrix">
+    <div class="chapter-grid wide">
+      <div class="chapter-number">05<span class="small">Matrix</span></div>
+      <div class="chapter-body wide">
+        <h2>The capability matrix is the <em>contract</em>.</h2>
+
+        <p style="max-width: var(--measure);">
+          For each (provider, model) we declare what the model is supposed
+          to be able to do. That declaration is the harness's source of
+          truth. When reality and declaration diverge, we want to know
+          which one is wrong.
+        </p>
+
+        <pre class="code"><span class="label">types</span><code><span class="k">type</span> <span class="t">Provider</span> =
+  | <span class="s">'anthropic'</span> | <span class="s">'openai'</span> | <span class="s">'google'</span> | <span class="s">'mistral'</span>
+  | <span class="s">'groq'</span> | <span class="s">'cohere'</span> | <span class="s">'azure'</span> | <span class="s">'openrouter'</span>;
+
+<span class="k">type</span> <span class="t">Capability</span> =
+  | <span class="s">'text'</span>            <span class="c">// always true if model exists</span>
+  | <span class="s">'multiTurn'</span>
+  | <span class="s">'systemPrompt'</span>
+  | <span class="s">'streaming'</span>
+  | <span class="s">'tools'</span>
+  | <span class="s">'parallelTools'</span>
+  | <span class="s">'streamingTools'</span>
+  | <span class="s">'toolChoice'</span>
+  | <span class="s">'multimodalImage'</span>
+  | <span class="s">'structuredOutput'</span>
+  | <span class="s">'reasoning'</span>
+  | <span class="s">'cancellation'</span>;
+
+<span class="k">interface</span> <span class="t">ProviderModelEntry</span> <span class="p">{</span>
+  <span class="n">provider</span><span class="p">:</span> <span class="t">Provider</span><span class="p">;</span>
+  <span class="n">model</span><span class="p">:</span> <span class="t">string</span><span class="p">;</span>
+  <span class="n">capabilities</span><span class="p">:</span> <span class="t">ReadonlySet</span><span class="p">&lt;</span><span class="t">Capability</span><span class="p">&gt;;</span>
+  <span class="n">notes</span><span class="p">?:</span> <span class="t">string</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="k">const</span> <span class="n">MATRIX</span><span class="p">:</span> <span class="t">ProviderModelEntry</span><span class="p">[] = [</span>
+  <span class="p">{</span> <span class="n">provider</span><span class="p">:</span> <span class="s">'anthropic'</span><span class="p">,</span>
+    <span class="n">model</span><span class="p">:</span> <span class="s">'claude-opus-4-7'</span><span class="p">,</span>
+    <span class="n">capabilities</span><span class="p">:</span> <span class="k">new</span> <span class="t">Set</span><span class="p">([</span><span class="s">'text'</span><span class="p">,</span> <span class="s">'multiTurn'</span><span class="p">,</span> <span class="s">'systemPrompt'</span><span class="p">,</span>
+                            <span class="s">'streaming'</span><span class="p">,</span> <span class="s">'tools'</span><span class="p">,</span> <span class="s">'parallelTools'</span><span class="p">,</span>
+                            <span class="s">'streamingTools'</span><span class="p">,</span> <span class="s">'toolChoice'</span><span class="p">,</span>
+                            <span class="s">'multimodalImage'</span><span class="p">,</span> <span class="s">'reasoning'</span><span class="p">,</span>
+                            <span class="s">'cancellation'</span><span class="p">])</span> <span class="p">},</span>
+  <span class="c">// ... one entry per (provider, model) we claim to support</span>
+<span class="p">];</span></code></pre>
+
+        <h3 style="max-width: var(--measure);"><span class="marker">§</span>Starter matrix</h3>
+        <p style="max-width: var(--measure);">
+          One model per provider for the initial run. Cheap, fast, and
+          covers each provider's code path in agntz core. Expand later.
+        </p>
+
+        <div class="matrix-wrap">
+          <table class="matrix">
+            <thead>
+              <tr>
+                <th>Provider / Model</th>
+                <th>text</th>
+                <th>multi-turn</th>
+                <th>system</th>
+                <th>stream</th>
+                <th>tools</th>
+                <th>parallel tools</th>
+                <th>stream tools</th>
+                <th>tool choice</th>
+                <th>image</th>
+                <th>structured</th>
+                <th>reasoning</th>
+                <th>cancel</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th>anthropic<span class="sub">claude-opus-4-7</span></th>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell partial">~</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+              </tr>
+              <tr>
+                <th>openai<span class="sub">gpt-5.5</span></th>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+              </tr>
+              <tr>
+                <th>google<span class="sub">gemini-3.5-flash</span></th>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+              </tr>
+              <tr>
+                <th>mistral<span class="sub">mistral-medium-3.5</span></th>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell partial">~</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell no">—</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell partial">~</span></td>
+                <td><span class="cell yes">✓</span></td>
+              </tr>
+              <tr>
+                <th>groq<span class="sub">llama-4-scout</span></th>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell partial">~</span></td>
+                <td><span class="cell partial">~</span></td>
+                <td><span class="cell partial">~</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell no">—</span></td>
+                <td><span class="cell yes">✓</span></td>
+              </tr>
+              <tr>
+                <th>cohere<span class="sub">command-a-plus</span></th>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell partial">~</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell partial">~</span></td>
+                <td><span class="cell yes">✓</span></td>
+              </tr>
+              <tr>
+                <th>openrouter<span class="sub">8-route subset (§08)</span></th>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell yes">✓</span></td>
+                <td><span class="cell partial">~</span></td>
+                <td><span class="cell partial">~</span></td>
+                <td><span class="cell partial">~</span></td>
+                <td><span class="cell partial">~</span></td>
+                <td><span class="cell partial">~</span></td>
+                <td><span class="cell partial">~</span></td>
+                <td><span class="cell partial">~</span></td>
+                <td><span class="cell yes">✓</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p style="max-width: var(--measure); font-size: 0.85rem; color: var(--ink-3);">
+          <span class="cell yes" style="width: 1.1rem; height: 1.1rem; font-size: 0.65rem; vertical-align: middle;">✓</span>
+          supported &nbsp;·&nbsp;
+          <span class="cell no" style="width: 1.1rem; height: 1.1rem; font-size: 0.65rem; vertical-align: middle;">—</span>
+          not supported &nbsp;·&nbsp;
+          <span class="cell partial" style="width: 1.1rem; height: 1.1rem; font-size: 0.65rem; vertical-align: middle;">~</span>
+          per-model (filled in at config time, not by row).
+          Cell values above are placeholders pending verification — the
+          first run of the harness <em>is</em> the verification.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 06 ARCHITECTURE -->
+  <section class="chapter" id="architecture">
+    <div class="chapter-grid">
+      <div class="chapter-number">06<span class="small">Runtime</span></div>
+      <div class="chapter-body">
+        <h2>One runner, <em>parallel</em> per provider.</h2>
+
+        <p>
+          The harness is a plain TypeScript program. No test framework. The
+          entry point reads the matrix, expands it into a flat task list
+          (every test × every applicable model), schedules work with a
+          per-provider concurrency limit, and aggregates results.
+        </p>
+
+        <pre class="code"><span class="label">types</span><code><span class="k">interface</span> <span class="t">TestDefinition</span> <span class="p">{</span>
+  <span class="n">id</span><span class="p">:</span> <span class="t">string</span><span class="p">;</span>
+  <span class="n">capability</span><span class="p">:</span> <span class="t">Capability</span><span class="p">;</span>
+  <span class="n">timeoutMs</span><span class="p">?:</span> <span class="t">number</span><span class="p">;</span>            <span class="c">// default 30s</span>
+  <span class="n">run</span><span class="p">:</span> <span class="p">(</span><span class="n">model</span><span class="p">:</span> <span class="t">ProviderModelEntry</span><span class="p">,</span> <span class="n">ctx</span><span class="p">:</span> <span class="t">RunCtx</span><span class="p">)</span> <span class="p">=&gt;</span> <span class="t">Promise</span><span class="p">&lt;</span><span class="t">TestOutput</span><span class="p">&gt;;</span>
+<span class="p">}</span>
+
+<span class="k">type</span> <span class="t">ResultBucket</span> =
+  | <span class="s">'PASS'</span>
+  | <span class="s">'EXPECTED_UNSUPPORTED'</span>
+  | <span class="s">'UNEXPECTED_UNSUPPORTED'</span>
+  | <span class="s">'SDK_ERROR'</span>
+  | <span class="s">'PROVIDER_ERROR'</span>
+  | <span class="s">'TIMEOUT'</span><span class="p">;</span>
+
+<span class="k">interface</span> <span class="t">TestResult</span> <span class="p">{</span>
+  <span class="n">test</span><span class="p">:</span> <span class="t">string</span><span class="p">;</span>
+  <span class="n">provider</span><span class="p">:</span> <span class="t">Provider</span><span class="p">;</span>
+  <span class="n">model</span><span class="p">:</span> <span class="t">string</span><span class="p">;</span>
+  <span class="n">bucket</span><span class="p">:</span> <span class="t">ResultBucket</span><span class="p">;</span>
+  <span class="n">durationMs</span><span class="p">:</span> <span class="t">number</span><span class="p">;</span>
+  <span class="n">error</span><span class="p">?:</span> <span class="p">{</span> <span class="n">name</span><span class="p">:</span> <span class="t">string</span><span class="p">;</span> <span class="n">message</span><span class="p">:</span> <span class="t">string</span><span class="p">;</span> <span class="n">stack</span><span class="p">?:</span> <span class="t">string</span> <span class="p">};</span>
+  <span class="n">snapshotDiff</span><span class="p">?:</span> <span class="t">string</span><span class="p">;</span>          <span class="c">// for structural snapshot tests</span>
+<span class="p">}</span></code></pre>
+
+        <h3><span class="marker">§</span>Concurrency</h3>
+        <p>
+          Each provider has its own semaphore (default 4). All providers
+          run in parallel; within a provider, at most N concurrent calls.
+          This keeps us under rate limits while still finishing in ~minutes.
+        </p>
+
+        <h3><span class="marker">§</span>File structure</h3>
+        <pre class="code"><span class="label">layout</span><code><span class="n">apps/provider-harness/</span>
+  <span class="n">package.json</span>
+  <span class="n">tsconfig.json</span>
+  <span class="n">src/</span>
+    <span class="n">index.ts</span>             <span class="c">// entry — `pnpm --filter provider-harness run`</span>
+    <span class="n">matrix.ts</span>            <span class="c">// the capability matrix (data)</span>
+    <span class="n">runner.ts</span>            <span class="c">// orchestrator + semaphores</span>
+    <span class="n">bucket.ts</span>            <span class="c">// result categorisation</span>
+    <span class="n">report.ts</span>            <span class="c">// JSON + Markdown writers</span>
+    <span class="n">types.ts</span>
+    <span class="n">tests/</span>
+      <span class="n">single-turn.ts</span>
+      <span class="n">multi-turn.ts</span>
+      <span class="n">tool-roundtrip.ts</span>  <span class="c">// + snapshot</span>
+      <span class="n">parallel-tools.ts</span>
+      <span class="n">streaming.ts</span>
+      <span class="n">streaming-tools.ts</span>
+      <span class="n">tool-choice.ts</span>
+      <span class="n">multimodal-url.ts</span>
+      <span class="n">multimodal-base64.ts</span>
+      <span class="n">structured.ts</span>
+      <span class="n">reasoning.ts</span>
+      <span class="n">cancellation.ts</span>
+      <span class="n">telemetry.ts</span>
+      <span class="n">long-input.ts</span>
+      <span class="n">invalid-key.ts</span>
+    <span class="n">__snapshots__/</span>        <span class="c">// structural snapshots per (test, provider, model)</span>
+  <span class="n">reports/</span>              <span class="c">// gitignored; latest.{json,md} symlinks</span></code></pre>
+      </div>
+      <aside class="marginalia">
+        <div class="note">
+          <span class="term">Why a plain TS program</span>
+          We need result <em>categorisation</em>, not pass/fail. We need
+          per-provider concurrency. We need to attach structural snapshots
+          to specific cases. Vitest can do bits of this with great effort;
+          a 100-line orchestrator is easier and more honest.
+        </div>
+        <div class="note">
+          <span class="term">Where reports go</span>
+          <code class="inline">reports/{ISO-timestamp}.json</code> and
+          <code class="inline">reports/{ISO-timestamp}.md</code>, plus a
+          <code class="inline">latest.{json,md}</code> symlink. Directory is
+          gitignored — these are run artifacts, not source.
+        </div>
+        <div class="note">
+          <span class="term">Tiny prompts, tiny outputs</span>
+          Every test is sized for cents, not dollars. "Reply with the word
+          OK." Multimodal uses a 32×32 pixel image. Tool tests invoke a
+          mock <code class="inline">get_weather(city)</code> with one arg.
+          Whole-suite cost target: under $0.50 per run.
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- 07 SNAPSHOT -->
+  <section class="chapter" id="snapshot">
+    <div class="chapter-grid">
+      <div class="chapter-number">07<span class="small">Snapshots</span></div>
+      <div class="chapter-body">
+        <h2>Snapshot the <em>shape</em>, not the words.</h2>
+
+        <p>
+          The tool-call bug was structural: an entry that was supposed to
+          be on the messages array wasn't. Text varies between calls and
+          models — that's noise. The <em>shape</em> of the post-tool-call
+          state should not vary, and that's what we snapshot.
+        </p>
+
+        <p>
+          For each snapshot test, we serialise the SDK's resulting
+          <code class="inline">messages</code> array (and any other state
+          we care about) with text content replaced by placeholders. On
+          subsequent runs we diff against the stored snapshot.
+        </p>
+
+        <div class="snapshot">
+          <div>
+            <div class="label">Snapshot — anthropic / claude-opus-4-7</div>
+            <pre>{
+  "messages": [
+    { "role": "user",      "content": "&lt;text&gt;" },
+    { "role": "assistant", "content": [
+        { "type": "tool_use",
+          "id":   "&lt;id&gt;",
+          "name": "get_weather",
+          "input": { "city": "&lt;string&gt;" } }
+    ] },
+    { "role": "user",      "content": [
+        { "type": "tool_result",
+          "tool_use_id": "&lt;id&gt;",
+          "content":     "&lt;text&gt;" }
+    ] },
+    { "role": "assistant", "content": [
+        { "type": "text", "text": "&lt;text&gt;" }
+    ] }
+  ]
+}</pre>
+          </div>
+          <div>
+            <div class="label">Snapshot — openai / gpt-5.5</div>
+            <pre>{
+  "messages": [
+    { "role": "user",      "content": "&lt;text&gt;" },
+    { "role": "assistant", "content": null,
+      "tool_calls": [
+        { "id":   "&lt;id&gt;",
+          "type": "function",
+          "function": {
+            "name":      "get_weather",
+            "arguments": "&lt;json-string&gt;" } }
+      ] },
+    { "role": "tool",
+      "tool_call_id": "&lt;id&gt;",
+      "content":      "&lt;text&gt;" },
+    { "role": "assistant", "content": "&lt;text&gt;" }
+  ]
+}</pre>
+          </div>
+        </div>
+
+        <p>
+          Different providers have different message shapes — that's fine.
+          We snapshot per (test, provider, model). A drift is either a real
+          SDK change (worth a code review) or a real provider change
+          (worth a matrix update). Either way, we want to see it.
+        </p>
+
+        <h3><span class="marker">§</span>Update workflow</h3>
+        <ul>
+          <li><strong>First run:</strong> snapshot doesn't exist → write it, mark <code class="inline">PASS</code>.</li>
+          <li><strong>Normal run:</strong> diff against stored → equal is <code class="inline">PASS</code>, different is <code class="inline">SDK_ERROR</code> with the diff attached to the result.</li>
+          <li><strong>Intentional change:</strong> <code class="inline">pnpm run --update-snapshots</code> regenerates. The git diff is the audit trail.</li>
+        </ul>
+      </div>
+      <aside class="marginalia">
+        <div class="note">
+          <span class="term">Why this would have caught the bug</span>
+          The recent bug shipped a messages array missing a tool-call entry
+          on a specific model. A snapshot of "what the array looks like
+          after a tool roundtrip" would have diffed on the first run after
+          the regression. The diff would have pointed straight at the
+          missing entry.
+        </div>
+        <div class="note">
+          <span class="term">Placeholder substitution rules</span>
+          Recursively replace string values that aren't structural — keep
+          keys, types, array lengths; replace text content, ids, and
+          timestamps with sentinels (<code class="inline">&lt;text&gt;</code>,
+          <code class="inline">&lt;id&gt;</code>,
+          <code class="inline">&lt;timestamp&gt;</code>).
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- 08 OPENROUTER -->
+  <section class="chapter" id="openrouter">
+    <div class="chapter-grid">
+      <div class="chapter-number">08<span class="small">Routes</span></div>
+      <div class="chapter-body">
+        <h2>OpenRouter as a <em>family</em>, not a list.</h2>
+
+        <p>
+          OpenRouter exposes hundreds of models. Testing all of them isn't
+          the point — testing OpenRouter's pass-through behaviour across
+          model families is. Pick representatives.
+        </p>
+
+        <h3><span class="marker">§</span>The 8 routes</h3>
+        <ol>
+          <li><code class="inline">anthropic/claude-opus-4-7</code> — Claude family (released April 2026)</li>
+          <li><code class="inline">openai/gpt-5.5</code> — OpenAI family (released April 2026)</li>
+          <li><code class="inline">google/gemini-3.5-flash</code> — Gemini family (Flash released May 19; Pro coming June)</li>
+          <li><code class="inline">meta-llama/llama-4-maverick</code> — Llama family flagship (released April 2026)</li>
+          <li><code class="inline">mistralai/mistral-medium-3.5</code> — Mistral family flagship (released April 2026)</li>
+          <li><code class="inline">deepseek/deepseek-v4</code> — DeepSeek family (preview released April 2026)</li>
+          <li><code class="inline">qwen/qwen-3.7-max</code> — Qwen family (released May 2026)</li>
+          <li><code class="inline">meta-llama/llama-4-scout</code> — fast / cheap end (smaller Llama 4 sibling)</li>
+        </ol>
+
+        <p>
+          If OpenRouter is changing its translation layer or rate-limiting a
+          particular upstream, these eight will surface it. The matrix
+          entries for these are filled in per-route, since capabilities
+          differ across families.
+        </p>
+      </div>
+      <aside class="marginalia">
+        <div class="note">
+          <span class="term">Why route diversity</span>
+          OpenRouter normalises across upstream APIs, but the
+          normalisation isn't uniform. A bug in their Claude translation
+          won't reproduce in their Llama translation. Family coverage gives
+          us the most signal per dollar.
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <div class="rule-ornament"><span class="glyph">§</span></div>
+
+  <!-- 09 PHASES -->
+  <section class="chapter" id="phases">
+    <div class="chapter-grid">
+      <div class="chapter-number">09<span class="small">Delivery</span></div>
+      <div class="chapter-body">
+        <h2>Six phases, each <em>shippable</em>.</h2>
+
+        <p>
+          Each phase ends in a state we can demonstrate by running the
+          harness. No phase leaves us with code that needs a follow-up
+          before it can be exercised.
+        </p>
+
+        <div class="phases">
+
+          <div class="phase">
+            <div class="stage"><strong>Phase</strong>01</div>
+            <div>
+              <h4>Skeleton + types + matrix</h4>
+              <p class="what">Bootstrap <code class="inline">apps/provider-harness</code>. Define <code class="inline">Capability</code>, <code class="inline">ProviderModelEntry</code>, <code class="inline">TestResult</code>, <code class="inline">ResultBucket</code>. Hand-write the starter matrix (one model per provider). Entry point loads the matrix and prints it.</p>
+              <p class="demo">running <code class="inline">pnpm --filter provider-harness run</code> prints the matrix.</p>
+            </div>
+          </div>
+
+          <div class="phase">
+            <div class="stage"><strong>Phase</strong>02</div>
+            <div>
+              <h4>Runner core + first test</h4>
+              <p class="what">Per-provider semaphore, parallel orchestration, bucketing logic. Wire up the single-turn test against the full matrix. Stdout-only report for now.</p>
+              <p class="demo">running the harness exercises single-turn against every configured model in parallel.</p>
+            </div>
+          </div>
+
+          <div class="phase">
+            <div class="stage"><strong>Phase</strong>03</div>
+            <div>
+              <h4>Report writers</h4>
+              <p class="what">JSON report to <code class="inline">reports/{ISO}.json</code>; Markdown matrix to <code class="inline">reports/{ISO}.md</code>; <code class="inline">latest.{json,md}</code> symlinks. Both gitignored.</p>
+              <p class="demo">every run produces a readable artifact you can open in your editor.</p>
+            </div>
+          </div>
+
+          <div class="phase">
+            <div class="stage"><strong>Phase</strong>04</div>
+            <div>
+              <h4>Real test coverage</h4>
+              <p class="what">Implement all 16 tests from <a href="#cases">§03</a>. Build the snapshot infrastructure for tool-roundtrip and parallel-tools tests. Wire each test's capability tag so the bucketer can correctly interpret unsupported responses.</p>
+              <p class="demo">the bug class that prompted this work is now under continuous structural watch.</p>
+            </div>
+          </div>
+
+          <div class="phase">
+            <div class="stage"><strong>Phase</strong>05</div>
+            <div>
+              <h4>OpenRouter subset</h4>
+              <p class="what">Add the 8 routes from <a href="#openrouter">§08</a> with per-route capability entries. No code change beyond matrix additions.</p>
+              <p class="demo">OpenRouter's pass-through correctness is verified against family-representative models.</p>
+            </div>
+          </div>
+
+          <div class="phase">
+            <div class="stage"><strong>Phase</strong>06</div>
+            <div>
+              <h4>GitHub issue on regression <span style="font-style: italic; color: var(--ink-3);">— optional</span></h4>
+              <p class="what"><code class="inline">--report-github</code> flag. On any <code class="inline">SDK_ERROR</code> or <code class="inline">UNEXPECTED_UNSUPPORTED</code>, <code class="inline">gh issue create</code> with the Markdown report attached and a <code class="inline">provider-regression</code> label. Default off; manual runs are silent.</p>
+              <p class="demo">a later GH Actions cron can run the harness with the flag and you subscribe to the label.</p>
+            </div>
+          </div>
+
+        </div>
+      </div>
+      <aside class="marginalia">
+        <div class="note">
+          <span class="term">Pacing</span>
+          Implementer + spec review per task, no per-task quality review.
+          Quality review at the end of each phase. The phases are small
+          enough that this is the right unit.
+        </div>
+        <div class="note">
+          <span class="term">After phase 6</span>
+          Cron triggering, Slack alerts, regression auto-bisection,
+          per-model performance trends — all future work that the
+          current shape doesn't preclude.
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- 10 DECISIONS -->
+  <section class="chapter" id="decisions">
+    <div class="chapter-grid">
+      <div class="chapter-number">10<span class="small">Choices</span></div>
+      <div class="chapter-body">
+        <h2>The small set of <em>locked-in</em> calls.</h2>
+
+        <p>
+          These are the design decisions that shape the rest of the work.
+          Calling them out so they're easy to revisit if any one of them
+          starts to feel wrong during implementation.
+        </p>
+
+        <table class="table">
+          <thead>
+            <tr>
+              <th style="width: 22%;">Decision</th>
+              <th style="width: 30%;">Choice</th>
+              <th>Why</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Location</td>
+              <td class="choice">apps/provider-harness</td>
+              <td>Not a published package; not a workspace dependency. A standalone runnable app, mirroring <code class="inline">apps/web</code>'s pattern.</td>
+            </tr>
+            <tr>
+              <td>Runner</td>
+              <td class="choice">Plain TypeScript</td>
+              <td>Matrix orchestration, custom buckets, structural snapshots — we want explicit control over all three. Vitest fights this; a simple script doesn't.</td>
+            </tr>
+            <tr>
+              <td>Trigger</td>
+              <td class="choice">Manual only (initially)</td>
+              <td>One entry point, run by hand. Cron and CI integration come later if and when we want them.</td>
+            </tr>
+            <tr>
+              <td>Reporting</td>
+              <td class="choice">JSON + Markdown to disk</td>
+              <td>Self-contained artifacts. Open in editor, diff with git, attach to issues. GitHub issue creation behind a flag.</td>
+            </tr>
+            <tr>
+              <td>Concurrency</td>
+              <td class="choice">Per-provider semaphore, default 4</td>
+              <td>All providers parallel; bounded within a provider to avoid rate limits.</td>
+            </tr>
+            <tr>
+              <td>Snapshots</td>
+              <td class="choice">Structural, with placeholders</td>
+              <td>Model output isn't deterministic. Our roundtrip shape should be. Snapshot what's stable; substitute what isn't.</td>
+            </tr>
+            <tr>
+              <td>Matrix coverage</td>
+              <td class="choice">One model per provider to start</td>
+              <td>Cheap, fast, covers all of agntz core's provider code paths. Expand once the harness has shape.</td>
+            </tr>
+            <tr>
+              <td>OpenRouter</td>
+              <td class="choice">8 family-representative routes</td>
+              <td>Validates OpenRouter's pass-through across families without testing every route.</td>
+            </tr>
+            <tr>
+              <td>Prompts</td>
+              <td class="choice">Tiny — single tokens where possible</td>
+              <td>Cost target under $0.50 per full run. Functionality, not language modeling.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- 11 OPEN -->
+  <section class="chapter" id="open">
+    <div class="chapter-grid">
+      <div class="chapter-number">11<span class="small">Open</span></div>
+      <div class="chapter-body">
+        <h2>Things still to <em>decide</em>.</h2>
+
+        <p>
+          None of these block Phase 1. Recording them so they don't get
+          lost between phases.
+        </p>
+
+        <ol>
+          <li><strong>Per-test budget.</strong> Default timeout 30s per call. Long-input and streaming-tools may need more. Decide per test in Phase 4.</li>
+          <li><strong>Snapshot update policy.</strong> Today: <code class="inline">--update-snapshots</code> regenerates everything. Future: per-test selective update? Probably YAGNI unless we hit it.</li>
+          <li><strong>Multiple-models-per-provider.</strong> Starter matrix has one. When do we add a second? When the first one passes everything and we want broader coverage. Probably after Phase 5.</li>
+          <li><strong>API key handling.</strong> Read from <code class="inline">.env</code>. If a provider's key isn't present, skip that provider entirely (not <code class="inline">SDK_ERROR</code>). Display "skipped — no credentials" in the report.</li>
+          <li><strong>Reasoning model output shape.</strong> Reasoning tokens vs thinking content — exact field placement differs by provider. May need a small per-provider assertion helper.</li>
+          <li><strong>Cron home.</strong> When we do add a cron (post-Phase 6): Vercel cron, GitHub Actions schedule, or a remote agent? Punt to that conversation.</li>
+        </ol>
+
+        <div class="pullquote">
+          The point of writing them down is not to answer them now. It's to make sure they aren't forgotten when their time comes.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- COLOPHON -->
+  <footer class="colophon">
+    <div class="col">
+      <h5>Document</h5>
+      <p>Provider Harness · Planning · v0.1 — Draft</p>
+      <p>Authored by Aaron and Claude on 23 May 2026, as the working artifact for a multi-provider smoke harness for the agntz SDK.</p>
+    </div>
+    <div class="col">
+      <h5>Companion</h5>
+      <p><a href="memrez-design.html">memrez-design.html</a></p>
+      <p style="margin-top: 0.5rem;">Sister planning doc, same shelf.</p>
+    </div>
+    <div class="col">
+      <h5>End</h5>
+      <div class="endmark"><span>·</span></div>
+    </div>
+  </footer>
+
+</div>
+</body>
+</html>
