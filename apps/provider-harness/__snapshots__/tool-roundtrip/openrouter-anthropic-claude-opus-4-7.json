@@ -7,8 +7,8 @@
         "city": "<string>"
       },
       "providerMetadata": {
-        "openai": {
-          "itemId": "<string>"
+        "openrouter": {
+          "reasoning_details": []
         }
       }
     }
@@ -29,8 +29,8 @@
             "city": "<string>"
           },
           "providerOptions": {
-            "openai": {
-              "itemId": "<string>"
+            "openrouter": {
+              "reasoning_details": []
             }
           }
         }

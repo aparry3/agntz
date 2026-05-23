@@ -7,8 +7,10 @@
         "city": "<string>"
       },
       "providerMetadata": {
-        "openai": {
-          "itemId": "<string>"
+        "anthropic": {
+          "caller": {
+            "type": "direct"
+          }
         }
       }
     }
@@ -29,8 +31,10 @@
             "city": "<string>"
           },
           "providerOptions": {
-            "openai": {
-              "itemId": "<string>"
+            "anthropic": {
+              "caller": {
+                "type": "direct"
+              }
             }
           }
         }

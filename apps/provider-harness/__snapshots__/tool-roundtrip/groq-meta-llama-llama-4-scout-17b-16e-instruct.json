@@ -5,11 +5,6 @@
       "name": "get_weather",
       "args": {
         "city": "<string>"
-      },
-      "providerMetadata": {
-        "openai": {
-          "itemId": "<string>"
-        }
       }
     }
   ],
@@ -27,11 +22,6 @@
           "toolName": "get_weather",
           "input": {
             "city": "<string>"
-          },
-          "providerOptions": {
-            "openai": {
-              "itemId": "<string>"
-            }
           }
         }
       ]

@@ -7,8 +7,16 @@
         "city": "<string>"
       },
       "providerMetadata": {
-        "openai": {
-          "itemId": "<string>"
+        "openrouter": {
+          "reasoning_details": [
+            {
+              "type": "reasoning.encrypted",
+              "data": "<string>",
+              "id": "<id>",
+              "format": "<string>",
+              "index": 0
+            }
+          ]
         }
       }
     }
@@ -29,8 +37,16 @@
             "city": "<string>"
           },
           "providerOptions": {
-            "openai": {
-              "itemId": "<string>"
+            "openrouter": {
+              "reasoning_details": [
+                {
+                  "type": "reasoning.encrypted",
+                  "data": "<string>",
+                  "id": "<id>",
+                  "format": "<string>",
+                  "index": 0
+                }
+              ]
             }
           }
         }

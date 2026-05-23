@@ -7,8 +7,8 @@
         "city": "<string>"
       },
       "providerMetadata": {
-        "openai": {
-          "itemId": "<string>"
+        "google": {
+          "thoughtSignature": "<string>"
         }
       }
     }
@@ -29,8 +29,8 @@
             "city": "<string>"
           },
           "providerOptions": {
-            "openai": {
-              "itemId": "<string>"
+            "google": {
+              "thoughtSignature": "<string>"
             }
           }
         }
