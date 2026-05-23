@@ -34,7 +34,8 @@ export type ResultBucket =
   | 'UNEXPECTED_UNSUPPORTED'
   | 'SDK_ERROR'
   | 'PROVIDER_ERROR'
-  | 'TIMEOUT';
+  | 'TIMEOUT'
+  | 'SKIPPED';
 
 export interface TestRunContext {
   abortSignal?: AbortSignal;
@@ -61,4 +62,5 @@ export interface TestResult {
   durationMs: number;
   error?: { name: string; message: string; stack?: string };
   snapshotDiff?: string;
+  skipReason?: string;
 }

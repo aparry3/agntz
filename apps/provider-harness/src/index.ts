@@ -1,5 +1,7 @@
 import { ALL_CAPABILITIES, MATRIX } from './matrix.js';
-import type { Capability, ProviderModelEntry } from './types.js';
+import { runMatrix } from './runner.js';
+import { ALL_TESTS } from './tests/index.js';
+import type { Capability, ProviderModelEntry, ResultBucket, TestResult } from './types.js';
 
 const SHORT_LABEL: Record<Capability, string> = {
   text: 'text',
@@ -50,26 +52,106 @@ function printMatrix(entries: readonly ProviderModelEntry[]): void {
   }
 }
 
-function printNotes(entries: readonly ProviderModelEntry[]): void {
-  const withNotes = entries.filter((e) => e.notes);
-  if (withNotes.length === 0) return;
-  console.log('');
-  console.log('  Notes');
-  console.log('  ─────');
-  for (const entry of withNotes) {
-    console.log(`  ${entry.provider}/${entry.model} — ${entry.notes}`);
+const BUCKET_COLOR: Record<ResultBucket, string> = {
+  PASS: '\x1b[32m',
+  EXPECTED_UNSUPPORTED: '\x1b[32m',
+  UNEXPECTED_UNSUPPORTED: '\x1b[33m',
+  SDK_ERROR: '\x1b[31m',
+  PROVIDER_ERROR: '\x1b[34m',
+  TIMEOUT: '\x1b[35m',
+  SKIPPED: '\x1b[90m',
+};
+const RESET = '\x1b[0m';
+
+function bucketCell(b: ResultBucket): string {
+  return `${BUCKET_COLOR[b]}${pad(b, 24)}${RESET}`;
+}
+
+function printResults(results: readonly TestResult[]): void {
+  const slugW = Math.max(...results.map((r) => `${r.provider}/${r.model}`.length)) + 2;
+  const testW = Math.max(...results.map((r) => r.test.length)) + 2;
+
+  // Stable ordering: by matrix order × test order (Promise.all preserves this).
+  for (const r of results) {
+    const slug = `${r.provider}/${r.model}`;
+    const detail =
+      r.bucket === 'SKIPPED'
+        ? `  ${r.skipReason ?? ''}`
+        : r.bucket === 'PASS' || r.bucket === 'EXPECTED_UNSUPPORTED'
+          ? `  ${r.durationMs}ms`
+          : `  ${r.durationMs}ms  ${r.error?.message ?? ''}`;
+    console.log(
+      '  ' +
+        pad(slug, slugW) +
+        pad(r.test, testW) +
+        bucketCell(r.bucket) +
+        detail,
+    );
   }
 }
 
-console.log('');
-console.log('  agntz · provider harness · v0.1 — Phase 1 (skeleton)');
-console.log('');
-console.log(
-  `  Loaded capability matrix — ${MATRIX.length} models, ${ALL_CAPABILITIES.length} capability dimensions`,
-);
-console.log('');
-printMatrix(MATRIX);
-printNotes(MATRIX);
-console.log('');
-console.log('  Phase 1 stops here. Phase 2 wires up the runner.');
-console.log('');
+function printSummary(results: readonly TestResult[]): void {
+  const counts: Record<ResultBucket, number> = {
+    PASS: 0,
+    EXPECTED_UNSUPPORTED: 0,
+    UNEXPECTED_UNSUPPORTED: 0,
+    SDK_ERROR: 0,
+    PROVIDER_ERROR: 0,
+    TIMEOUT: 0,
+    SKIPPED: 0,
+  };
+  for (const r of results) counts[r.bucket]++;
+
+  const parts: string[] = [`${results.length} results`];
+  for (const [bucket, n] of Object.entries(counts) as [ResultBucket, number][]) {
+    if (n > 0) parts.push(`${n} ${bucket}`);
+  }
+  console.log('  ' + parts.join(' · '));
+}
+
+async function main(): Promise<void> {
+  console.log('');
+  console.log('  agntz · provider harness · v0.1 — Phase 2 (runner + single-turn)');
+  console.log('');
+  console.log(
+    `  Matrix: ${MATRIX.length} models, ${ALL_CAPABILITIES.length} capability dimensions`,
+  );
+  console.log(`  Tests: ${ALL_TESTS.length}`);
+  console.log('');
+  printMatrix(MATRIX);
+  console.log('');
+  console.log(`  Running ${ALL_TESTS.length} test(s) × ${MATRIX.length} models in parallel...`);
+  console.log('');
+
+  // Silence core's per-call diagnostic logging during the run — it dumps full
+  // stack traces for every failure (including the SKIPPED cases) and drowns
+  // the harness's structured output. The TestResult.error field captures the
+  // essentials we actually need.
+  const originalStderrWrite = process.stderr.write.bind(process.stderr);
+  process.stderr.write = (() => true) as typeof process.stderr.write;
+  let results;
+  try {
+    results = await runMatrix({ matrix: MATRIX, tests: ALL_TESTS });
+  } finally {
+    process.stderr.write = originalStderrWrite;
+  }
+
+  printResults(results);
+  console.log('');
+  console.log('  Summary');
+  console.log('  ───────');
+  printSummary(results);
+  console.log('');
+
+  const hasFailure = results.some(
+    (r) => r.bucket === 'SDK_ERROR' || r.bucket === 'UNEXPECTED_UNSUPPORTED',
+  );
+  process.exit(hasFailure ? 1 : 0);
+}
+
+main().catch((err) => {
+  console.error('');
+  console.error('  Harness crashed before completing:');
+  console.error(err);
+  process.exit(2);
+});

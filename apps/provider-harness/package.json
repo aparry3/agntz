@@ -5,8 +5,11 @@
   "description": "Multi-provider smoke harness for the agntz SDK — runs capability tests across (provider, model) combinations",
   "type": "module",
   "scripts": {
-    "start": "tsx src/index.ts",
+    "start": "tsx --env-file-if-exists=.env.local --env-file-if-exists=../../.env.local src/index.ts",
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@agntz/core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
