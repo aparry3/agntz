@@ -16,6 +16,7 @@ const PRESERVE_VALUE_FOR_KEYS = new Set([
   'role',
   'type',
   'name',
+  'toolName',
   'finishReason',
   'finish_reason',
   'stop_reason',
