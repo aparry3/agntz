@@ -44,6 +44,9 @@ export const toolRoundtrip: TestDefinition = {
           toolCallId: tc.id,
           toolName: tc.name,
           input: tc.args,
+          // Echo provider metadata (e.g. Gemini thought_signature) back so the
+          // follow-up turn is accepted — mirrors what @agntz/core's runner does.
+          ...(tc.providerMetadata != null ? { providerOptions: tc.providerMetadata } : {}),
         })),
       },
       ...first.toolCalls.map((tc) => ({

@@ -918,7 +918,7 @@ export class Runner {
             : undefined;
 
           let resultText: string;
-          let resultToolCalls: Array<{ id: string; name: string; args: unknown }>;
+          let resultToolCalls: Array<{ id: string; name: string; args: unknown; providerMetadata?: unknown }>;
           let stepFinishReason: string;
           let stepUsage: TokenUsage;
 
@@ -1123,6 +1123,9 @@ export class Runner {
               toolCallId: tc.id,
               toolName: tc.name,
               input: tc.args,
+              // Echo provider metadata (e.g. Gemini thought_signature) back as
+              // providerOptions so the next turn is accepted. No-op when absent.
+              ...(tc.providerMetadata != null ? { providerOptions: tc.providerMetadata } : {}),
             })),
           });
           for (const r of stepToolCalls) {
@@ -1827,6 +1830,9 @@ export class Runner {
             toolCallId: tc.id,
             toolName: tc.name,
             input: tc.args,
+            // Echo provider metadata (e.g. Gemini thought_signature) back as
+            // providerOptions so the next turn is accepted. No-op when absent.
+            ...(tc.providerMetadata != null ? { providerOptions: tc.providerMetadata } : {}),
           })),
         });
 

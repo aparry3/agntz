@@ -19,7 +19,7 @@ import { isContentBlockArray } from "./types.js";
 export type AiMessagePart =
   | { type: "text"; text: string }
   | { type: "image"; image: string; mediaType?: string }
-  | { type: "tool-call"; toolCallId: string; toolName: string; input: unknown }
+  | { type: "tool-call"; toolCallId: string; toolName: string; input: unknown; providerOptions?: unknown }
   | {
       type: "tool-result";
       toolCallId: string;

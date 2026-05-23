@@ -67,6 +67,7 @@ export class AISDKModelProvider implements ModelProvider {
         id: tc.toolCallId,
         name: tc.toolName,
         args: tc.input,
+        providerMetadata: tc.providerMetadata,
       })),
       usage: {
         promptTokens: inputTokens,
@@ -132,7 +133,7 @@ export class AISDKModelProvider implements ModelProvider {
     });
 
     const toolCallsPromise = Promise.resolve(result.toolCalls).then(tcs =>
-      tcs.map(tc => ({ id: tc.toolCallId, name: tc.toolName, args: tc.input }))
+      tcs.map(tc => ({ id: tc.toolCallId, name: tc.toolName, args: tc.input, providerMetadata: tc.providerMetadata }))
     );
     const usagePromise = Promise.resolve(result.usage).then(async u => {
       const inputTokens = u?.inputTokens ?? 0;

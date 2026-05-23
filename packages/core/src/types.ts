@@ -1196,7 +1196,7 @@ export interface ModelProvider {
 
 export interface ModelStreamResult {
   textStream: AsyncIterable<string>;
-  toolCalls: Promise<Array<{ id: string; name: string; args: unknown }>>;
+  toolCalls: Promise<Array<{ id: string; name: string; args: unknown; providerMetadata?: unknown }>>;
   usage: Promise<TokenUsage>;
   finishReason: Promise<string>;
   /** Collect all text + tool calls into a final result */
@@ -1238,6 +1238,13 @@ export interface GenerateTextResult {
     id: string;
     name: string;
     args: unknown;
+    /**
+     * Opaque, provider-specific metadata attached to this tool call (e.g.
+     * Gemini 3.x `thought_signature`). Some providers require it echoed back
+     * on the next turn via the tool-call part's `providerOptions`; the runner
+     * replays it for that reason. Undefined for providers that don't emit it.
+     */
+    providerMetadata?: unknown;
   }>;
   usage: TokenUsage;
   finishReason: string;
