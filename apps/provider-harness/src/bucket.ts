@@ -32,6 +32,13 @@ export function classify(input: {
   if (looksLikeUnsupported(msg)) {
     return capabilitySupported ? 'UNEXPECTED_UNSUPPORTED' : 'EXPECTED_UNSUPPORTED';
   }
+  // A capability the matrix says is unsupported that produces no output (e.g.
+  // OpenRouter routing a model to an endpoint without the feature) is expected.
+  // Gated on !capabilitySupported so an empty stream on a *supported* capability
+  // still reads as a real SDK_ERROR.
+  if (!capabilitySupported && /no output generated/i.test(msg)) {
+    return 'EXPECTED_UNSUPPORTED';
+  }
   if (looksLikeProviderError(msg)) {
     return 'PROVIDER_ERROR';
   }
