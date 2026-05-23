@@ -15,6 +15,11 @@ export function assertNonEmptyText(text: unknown): TestOutput {
   return { ok: true };
 }
 
+export function isAbortError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return err.name === 'AbortError' || err.name === 'TimeoutError' || /\babort/i.test(err.message);
+}
+
 // Shared single-arg tool used across the tool-calling tests. Minimal schema
 // keeps token cost down while still exercising the call → result roundtrip.
 export const WEATHER_TOOL = {
