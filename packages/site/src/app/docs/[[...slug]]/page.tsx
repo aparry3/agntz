@@ -9,6 +9,7 @@ import { DocsToc } from "@/components/docs/toc";
 import { CopyMarkdownButton } from "@/components/docs/copy-md-button";
 import { PageNav } from "@/components/docs/page-nav";
 import { adjacent, allPages, findPageBySlug } from "@/components/docs/manifest";
+import { LanguageProvider, LanguageToggle } from "@/components/language";
 
 type Params = { slug?: string[] };
 
@@ -75,54 +76,58 @@ export default async function DocsPage({
   return (
     <>
       <Nav />
-      <main style={{ background: TOKENS.bg, paddingBottom: 80 }}>
-        <div
-          style={{
-            width: "min(1320px, calc(100% - 32px))",
-            margin: "0 auto",
-            paddingTop: 28,
-            display: "grid",
-            gridTemplateColumns: "232px minmax(0, 1fr) 220px",
-            gap: 40,
-            alignItems: "start",
-          }}
-        >
-          <DocsSidebar activeSlug={page.slug} />
-
-          <article
+      <LanguageProvider>
+        <main style={{ background: TOKENS.bg, paddingBottom: 80 }}>
+          <div
             style={{
-              minWidth: 0,
-              maxWidth: 760,
-              color: TOKENS.ink,
+              width: "min(1320px, calc(100% - 32px))",
+              margin: "0 auto",
+              paddingTop: 28,
+              display: "grid",
+              gridTemplateColumns: "232px minmax(0, 1fr) 220px",
+              gap: 40,
+              alignItems: "start",
             }}
           >
-            <div
+            <DocsSidebar activeSlug={page.slug} />
+
+            <article
               style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 8,
-                fontFamily: "var(--mono)",
-                fontSize: 11,
-                letterSpacing: "0.18em",
-                textTransform: "uppercase",
-                color: TOKENS.text2,
-                marginBottom: 14,
+                minWidth: 0,
+                maxWidth: 760,
+                color: TOKENS.ink,
               }}
             >
-              <span style={{ width: 18, height: 1, background: TOKENS.text2 }} />
-              Documentation
-            </div>
+              <div
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  fontFamily: "var(--mono)",
+                  fontSize: 11,
+                  letterSpacing: "0.18em",
+                  textTransform: "uppercase",
+                  color: TOKENS.text2,
+                  marginBottom: 14,
+                }}
+              >
+                <span style={{ width: 18, height: 1, background: TOKENS.text2 }} />
+                Documentation
+              </div>
 
-            <CopyMarkdownButton markdown={page.markdown} rawHref={rawHref} />
+              <LanguageToggle style={{ marginBottom: 12 }} />
 
-            {renderBlocks(blocks)}
+              <CopyMarkdownButton markdown={page.markdown} rawHref={rawHref} />
 
-            <PageNav prev={prev} next={next} />
-          </article>
+              {renderBlocks(blocks)}
 
-          <DocsToc sections={sections} />
-        </div>
-      </main>
+              <PageNav prev={prev} next={next} />
+            </article>
+
+            <DocsToc sections={sections} />
+          </div>
+        </main>
+      </LanguageProvider>
       <FooterX />
     </>
   );

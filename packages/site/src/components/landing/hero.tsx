@@ -4,7 +4,8 @@ import { useState } from "react";
 import { ACCENTS, type AccentName, TOKENS } from "./tokens";
 import { Btn, H1, Lede, Pill, Row, Section, Stack } from "./primitives";
 import { ArrowIcon, CheckIcon, CodeIcon, ExternalIcon, GithubIcon, SparkIcon } from "./icons";
-import { highlightTS, highlightYAML } from "./code-block";
+import { highlightPython, highlightTS, highlightYAML } from "./code-block";
+import { LanguageToggle, usePreferredLanguage } from "../language";
 
 const HERO_YAML = `# agent.yaml — the whole agent, declared.
 id: weather-bot
@@ -26,7 +27,7 @@ tools:
     url: "https://api.open-meteo.com/v1/forecast?latitude={latitude}&longitude={longitude}&current_weather={current_weather?}"
     method: GET`;
 
-const HERO_RUNNER = `// runner.ts — call your existing APIs, run anywhere.
+const HERO_RUNNER_TS = `// runner.ts — call your existing APIs, run anywhere.
 import { agntz } from '@agntz/sdk';
 
 const client = await agntz({ agents: './agents' });
@@ -38,15 +39,36 @@ const { output } = await client.agents.run({
 // → "Lisbon is 21°C and sunny right now, with light
 //    winds from the northwest. Expect a clear evening."`;
 
+const HERO_RUNNER_PY = `# runner.py — call your existing APIs, run anywhere.
+from agntz import LiteLLMModelProvider, agntz
+
+client = agntz(
+    agents="./agents",
+    model_provider=LiteLLMModelProvider(),
+)
+
+result = client.agents.run(
+    agent_id="weather-bot",
+    input="What's the weather in Lisbon today?",
+)
+print(result.output)
+# → "Lisbon is 21°C and sunny right now, with light
+#    winds from the northwest. Expect a clear evening."`;
+
 type Tab = "yaml" | "runner";
 
 export function Hero({ accent = "blue" }: { accent?: AccentName }) {
   const [tab, setTab] = useState<Tab>("yaml");
   const [copied, setCopied] = useState(false);
+  const { language } = usePreferredLanguage();
   const a = ACCENTS[accent];
+  const runnerCode = language === "python" ? HERO_RUNNER_PY : HERO_RUNNER_TS;
+  const runnerLabel = language === "python" ? "runner.py" : "runner.ts";
+  const installPrefix = language === "python" ? "pip install" : "npm install";
+  const installPackage = language === "python" ? '"agntz[litellm]"' : "@agntz/sdk";
 
   async function copyActive() {
-    const text = tab === "yaml" ? HERO_YAML : HERO_RUNNER;
+    const text = tab === "yaml" ? HERO_YAML : runnerCode;
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
@@ -76,6 +98,7 @@ export function Hero({ accent = "blue" }: { accent?: AccentName }) {
             </Pill>
             <Pill mono>declarative runtime</Pill>
             <Pill mono>open source</Pill>
+            <LanguageToggle compact label="Hero examples" />
           </Row>
 
           <H1 size={76} style={{ maxWidth: 680, letterSpacing: "-0.04em" }}>
@@ -106,7 +129,7 @@ export function Hero({ accent = "blue" }: { accent?: AccentName }) {
           >
             <span style={{ color: TOKENS.muted }}>$</span>
             <span>
-              <span style={{ color: TOKENS.text2 }}>npm install</span> @agntz/sdk
+              <span style={{ color: TOKENS.text2 }}>{installPrefix}</span> {installPackage}
             </span>
             <span style={{ width: 1, height: 16, background: TOKENS.line, margin: "0 4px" }} />
             <span
@@ -176,7 +199,7 @@ export function Hero({ accent = "blue" }: { accent?: AccentName }) {
               <Row gap={0}>
                 {[
                   { id: "yaml" as const, label: "agent.yaml" },
-                  { id: "runner" as const, label: "runner.ts" },
+                  { id: "runner" as const, label: runnerLabel },
                 ].map((tb) => (
                   <button
                     key={tb.id}
@@ -208,7 +231,7 @@ export function Hero({ accent = "blue" }: { accent?: AccentName }) {
               <button
                 type="button"
                 onClick={copyActive}
-                aria-label={`Copy ${tab === "yaml" ? "agent.yaml" : "runner.ts"} to clipboard`}
+                aria-label={`Copy ${tab === "yaml" ? "agent.yaml" : runnerLabel} to clipboard`}
                 style={{
                   marginRight: 8,
                   padding: "6px 10px",
@@ -242,7 +265,13 @@ export function Hero({ accent = "blue" }: { accent?: AccentName }) {
                 minHeight: 350,
               }}
             >
-              <code>{tab === "yaml" ? highlightYAML(HERO_YAML) : highlightTS(HERO_RUNNER)}</code>
+              <code>
+                {tab === "yaml"
+                  ? highlightYAML(HERO_YAML)
+                  : language === "python"
+                    ? highlightPython(runnerCode)
+                    : highlightTS(runnerCode)}
+              </code>
             </pre>
 
             <Row
@@ -259,11 +288,15 @@ export function Hero({ accent = "blue" }: { accent?: AccentName }) {
                   style={{ width: 8, height: 8, borderRadius: 99, background: ACCENTS.green.fg }}
                 />
                 <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: TOKENS.text2 }}>
-                  {tab === "yaml" ? "valid · ready to run" : "5 lines · runs anywhere"}
+                  {tab === "yaml"
+                    ? "valid · ready to run"
+                    : language === "python"
+                      ? "python · runs locally"
+                      : "5 lines · runs anywhere"}
                 </span>
               </Row>
               <span style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: TOKENS.muted }}>
-                {tab === "yaml" ? "weather-bot.yaml" : "@agntz/sdk"}
+                {tab === "yaml" ? "weather-bot.yaml" : language === "python" ? "agntz" : "@agntz/sdk"}
               </span>
             </Row>
           </div>

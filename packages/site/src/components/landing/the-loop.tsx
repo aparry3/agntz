@@ -1,7 +1,10 @@
+"use client";
+
 import type { ReactNode } from "react";
 import { ACCENTS, type AccentName, TOKENS } from "./tokens";
 import { Card, H2, Lede, Row, Section, Stack } from "./primitives";
 import { BranchIcon, CodeIcon, SparkIcon } from "./icons";
+import { usePreferredLanguage } from "../language";
 
 type Step = {
   n: number;
@@ -58,6 +61,20 @@ const STEPS: Step[] = [
 
 export function TheLoop({ accent = "blue" }: { accent?: AccentName }) {
   const a = ACCENTS[accent];
+  const { language } = usePreferredLanguage();
+  const steps = STEPS.map((step) =>
+    step.n === 2 && language === "python"
+      ? {
+          ...step,
+          snippet: [
+            "result = client.agents.run(",
+            "    agent_id='support-agent',",
+            "    input='...',",
+            ")",
+          ],
+        }
+      : step,
+  );
 
   return (
     <Section id="loop" kicker="The loop">
@@ -100,7 +117,7 @@ export function TheLoop({ accent = "blue" }: { accent?: AccentName }) {
             position: "relative",
           }}
         >
-          {STEPS.map((s) => (
+          {steps.map((s) => (
             <Card
               key={s.n}
               style={{

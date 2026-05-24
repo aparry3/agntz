@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { TOKENS } from "@/components/landing/tokens";
 import { CodeBlock } from "@/components/landing/code-block";
+import { LanguageCodeBlock, type CodeLanguage, type CodeVariant } from "@/components/language";
 
 export type DocsSection = {
   level: 1 | 2 | 3;
@@ -23,7 +24,8 @@ type Block =
   | { kind: "ol"; items: string[] }
   | { kind: "blockquote"; text: string }
   | { kind: "table"; headers: string[]; rows: string[][]; aligns: ("left" | "center" | "right")[] }
-  | { kind: "code"; lang: "ts" | "yaml" | "text"; filename?: string; code: string }
+  | { kind: "code"; lang: CodeLanguage; filename?: string; code: string; group?: string }
+  | { kind: "codeGroup"; group: string; variants: CodeVariant[] }
   | { kind: "hr" };
 
 const slugify = (s: string) =>
@@ -43,11 +45,14 @@ export function parseDocs(markdown: string): ParsedDocs {
   while (i < lines.length) {
     const line = lines[i];
 
-    // Fenced code block: ```lang [filename]
-    const fence = /^```(\w+)?(?:\s+\[([^\]]+)\])?\s*$/.exec(line);
+    // Fenced code block: ```lang [filename] {group=name}
+    const fence = /^```(\w+)?(?:\s+\[([^\]]+)\])?(?:\s+\{group=([A-Za-z0-9_-]+)\})?\s*$/.exec(
+      line,
+    );
     if (fence) {
       const rawLang = fence[1] ?? "text";
       const filename = fence[2];
+      const group = fence[3];
       const buf: string[] = [];
       i++;
       while (i < lines.length && !/^```\s*$/.test(lines[i])) {
@@ -55,13 +60,21 @@ export function parseDocs(markdown: string): ParsedDocs {
         i++;
       }
       i++; // skip closing ```
-      const normalisedLang: "ts" | "yaml" | "text" =
+      const normalisedLang: CodeLanguage =
         rawLang === "yaml" || rawLang === "yml"
           ? "yaml"
-          : rawLang === "ts" || rawLang === "tsx" || rawLang === "js" || rawLang === "jsx" || rawLang === "diff"
-          ? "ts"
-          : "text";
-      blocks.push({ kind: "code", lang: normalisedLang, filename, code: buf.join("\n") });
+          : rawLang === "python" || rawLang === "py"
+            ? "python"
+            : rawLang === "bash" || rawLang === "sh" || rawLang === "shell"
+              ? "bash"
+              : rawLang === "ts" ||
+                  rawLang === "tsx" ||
+                  rawLang === "js" ||
+                  rawLang === "jsx" ||
+                  rawLang === "diff"
+                ? "ts"
+                : "text";
+      blocks.push({ kind: "code", lang: normalisedLang, filename, code: buf.join("\n"), group });
       continue;
     }
 
@@ -181,7 +194,35 @@ export function parseDocs(markdown: string): ParsedDocs {
     blocks.push({ kind: "p", text: buf.join(" ") });
   }
 
-  return { sections, blocks };
+  return { sections, blocks: groupCodeBlocks(blocks) };
+}
+
+function groupCodeBlocks(blocks: Block[]): Block[] {
+  const grouped: Block[] = [];
+  let i = 0;
+  while (i < blocks.length) {
+    const block = blocks[i];
+    if (block.kind !== "code" || !block.group) {
+      grouped.push(block);
+      i++;
+      continue;
+    }
+
+    const variants: CodeVariant[] = [];
+    const group = block.group;
+    while (i < blocks.length) {
+      const candidate = blocks[i];
+      if (candidate.kind !== "code" || candidate.group !== group) break;
+      variants.push({
+        lang: candidate.lang,
+        code: candidate.code,
+        filename: candidate.filename,
+      });
+      i++;
+    }
+    grouped.push({ kind: "codeGroup", group, variants });
+  }
+  return grouped;
 }
 
 function splitRow(line: string): string[] {
@@ -403,9 +444,15 @@ export function renderBlocks(blocks: Block[]): ReactNode {
       case "code":
         return (
           <div key={i} style={{ margin: "0 0 18px" }}>
-            <CodeBlock lang={block.lang === "yaml" ? "yaml" : "ts"} filename={block.filename}>
+            <CodeBlock lang={block.lang} filename={block.filename}>
               {block.code}
             </CodeBlock>
+          </div>
+        );
+      case "codeGroup":
+        return (
+          <div key={i} style={{ margin: "0 0 18px" }}>
+            <LanguageCodeBlock variants={block.variants} />
           </div>
         );
       case "hr":
