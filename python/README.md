@@ -89,3 +89,10 @@ python -m venv .venv
 .venv/bin/python -m ruff check .
 .venv/bin/python -m basedpyright
 ```
+
+## CLI
+
+```bash
+agntz validate ./agents
+agntz run ./agents support --input '{"userQuery":"hello"}'
+```
