@@ -12,6 +12,7 @@ from .memory import (
     LocalRunRecord,
     LocalSessionSummary,
     LocalTraceRecord,
+    LocalTraceSpanRecord,
 )
 
 
@@ -142,6 +143,48 @@ class SQLiteStore:
         query += " ORDER BY rowid ASC"
         rows = self._conn.execute(query, params).fetchall()
         return [_row_to_trace(row) for row in rows]
+
+    def put_trace_span(self, span: LocalTraceSpanRecord) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO trace_spans (
+              span_id, trace_id, parent_id, run_id, session_id, name, kind,
+              started_at, ended_at, status, error, attributes_json,
+              events_json, scores_json, cost_usd
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                span.span_id,
+                span.trace_id,
+                span.parent_id,
+                span.run_id,
+                span.session_id,
+                span.name,
+                span.kind,
+                span.started_at,
+                span.ended_at,
+                span.status,
+                span.error,
+                _dumps(span.attributes or {}),
+                _dumps(span.events or []),
+                _dumps(span.scores or {}),
+                span.cost_usd,
+            ),
+        )
+        self._conn.commit()
+
+    def list_trace_spans(self, trace_id: str) -> list[LocalTraceSpanRecord]:
+        rows = self._conn.execute(
+            """
+            SELECT *
+            FROM trace_spans
+            WHERE trace_id = ?
+            ORDER BY id ASC
+            """,
+            (trace_id,),
+        ).fetchall()
+        return [_row_to_trace_span(row) for row in rows]
 
     def append_messages(
         self,
@@ -288,6 +331,31 @@ class SQLiteStore:
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id)"
         )
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS trace_spans (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              span_id TEXT NOT NULL,
+              trace_id TEXT NOT NULL,
+              parent_id TEXT,
+              run_id TEXT,
+              session_id TEXT,
+              name TEXT NOT NULL,
+              kind TEXT NOT NULL,
+              started_at REAL NOT NULL,
+              ended_at REAL,
+              status TEXT NOT NULL,
+              error TEXT,
+              attributes_json TEXT,
+              events_json TEXT,
+              scores_json TEXT,
+              cost_usd REAL
+            )
+            """
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_trace_spans_trace ON trace_spans(trace_id)"
+        )
         self._conn.commit()
 
 
@@ -315,6 +383,26 @@ def _row_to_trace(row: sqlite3.Row) -> LocalTraceRecord:
         ended_at=row["ended_at"],
         output=_loads(row["output_json"]),
         error=row["error"],
+    )
+
+
+def _row_to_trace_span(row: sqlite3.Row) -> LocalTraceSpanRecord:
+    return LocalTraceSpanRecord(
+        span_id=row["span_id"],
+        trace_id=row["trace_id"],
+        parent_id=row["parent_id"],
+        run_id=row["run_id"],
+        session_id=row["session_id"],
+        name=row["name"],
+        kind=row["kind"],
+        started_at=row["started_at"],
+        ended_at=row["ended_at"],
+        status=row["status"],
+        error=row["error"],
+        attributes=_loads(row["attributes_json"]) or {},
+        events=_loads(row["events_json"]) or [],
+        scores=_loads(row["scores_json"]) or {},
+        cost_usd=row["cost_usd"],
     )
 
 

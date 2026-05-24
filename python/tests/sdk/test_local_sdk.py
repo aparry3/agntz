@@ -124,7 +124,12 @@ def test_local_sdk_runs_llm_and_records_run(tmp_path: Path) -> None:
     detail = client.traces.get(trace_id)
     assert detail is not None
     assert detail["summary"]["agentId"] == "support"
+    assert detail["summary"]["spanCount"] == len(detail["spans"])
     assert detail["spans"][0]["runId"] == rows[0].id
+    assert any(
+        span["kind"] == "model" and span["name"] == "support"
+        for span in detail["spans"]
+    )
     events = list(client.traces.stream(trace_id))
     assert [event.type for event in events] == ["snapshot"]
     assert events[0].summary is not None
@@ -233,6 +238,16 @@ tools:
     assert provider.calls[0][0][0].name == "add"
     assert provider.calls[1][1] is not None
     assert provider.calls[1][1][0].output == {"result": 5.0}
+    traces = client.traces.list(agent_id="tool-user", status="ok")
+    trace_id = traces["rows"][0]["traceId"]
+    detail = client.traces.get(trace_id)
+    assert detail is not None
+    assert [span["kind"] for span in detail["spans"]] == [
+        "run",
+        "model",
+        "tool",
+        "model",
+    ]
 
 
 def test_local_sdk_runs_pipeline_and_streams_terminal_events(tmp_path: Path) -> None:
@@ -378,6 +393,7 @@ def test_local_sdk_can_persist_runs_to_sqlite(tmp_path: Path) -> None:
     try:
         rows = reopened.list_runs(agent_id="support", status="completed")
         traces = reopened.list_traces(agent_id="support", status="ok")
+        trace_spans = reopened.list_trace_spans(traces[0].trace_id)
         sessions = reopened.list_sessions(agent_id="support")
         messages = reopened.get_messages(result.session_id)
         fetched = reopened.get_run(persisted[0].id)
@@ -386,6 +402,8 @@ def test_local_sdk_can_persist_runs_to_sqlite(tmp_path: Path) -> None:
 
     assert len(rows) == 1
     assert len(traces) == 1
+    assert len(trace_spans) == 1
+    assert trace_spans[0].kind == "model"
     assert traces[0].output == result.output
     assert fetched is not None
     assert fetched.output == result.output

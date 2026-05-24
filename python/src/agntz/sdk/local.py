@@ -24,6 +24,7 @@ from agntz.core import (
     invoke_http_tool,
     invoke_mcp_tool,
 )
+from agntz.core.ids import nanoid
 from agntz.core.ids import run_id as new_run_id
 from agntz.core.ids import session_id as new_session_id
 from agntz.core.ids import trace_id as new_trace_id
@@ -39,6 +40,7 @@ from agntz.stores import (
     LocalRunRecord,
     LocalSessionSummary,
     LocalTraceRecord,
+    LocalTraceSpanRecord,
     MemoryStore,
     RunStore,
 )
@@ -270,7 +272,7 @@ class LocalTracesResource:
     ) -> dict[str, list[dict[str, Any]]]:
         return {
             "rows": [
-                trace.summary()
+                self._summary(trace)
                 for trace in self._client.store.list_traces(agent_id=agent_id, status=status)
             ]
         }
@@ -279,12 +281,35 @@ class LocalTracesResource:
         trace = self._client.store.get_trace(trace_id)
         if trace is None:
             return None
-        return {"summary": trace.summary(), "spans": [_trace_span(trace)]}
+        child_spans = self._client.store.list_trace_spans(trace_id)
+        spans = [_trace_span(trace)] + [span.as_dict() for span in child_spans]
+        return {"summary": self._summary(trace), "spans": spans}
 
     def stream(self, trace_id: str) -> Iterator[Event]:
         detail = self.get(trace_id)
         if detail is not None:
             yield Event(type="snapshot", summary=detail["summary"], spans=detail["spans"])
+
+    def _summary(self, trace: LocalTraceRecord) -> dict[str, Any]:
+        child_spans = self._client.store.list_trace_spans(trace.trace_id)
+        total_tokens = 0
+        total_cost_usd = 0.0
+        has_cost = False
+        for span in child_spans:
+            attributes = span.attributes or {}
+            usage = attributes.get("usage")
+            if isinstance(usage, dict):
+                total = usage.get("totalTokens")
+                if isinstance(total, int):
+                    total_tokens += total
+            if span.cost_usd is not None:
+                total_cost_usd += span.cost_usd
+                has_cost = True
+        return trace.summary(
+            span_count=1 + len(child_spans),
+            total_tokens=total_tokens,
+            total_cost_usd=total_cost_usd if has_cost else None,
+        )
 
 
 def _trace_span(trace: LocalTraceRecord) -> dict[str, Any]:
@@ -299,7 +324,7 @@ def _trace_span(trace: LocalTraceRecord) -> dict[str, Any]:
         "kind": "run",
         "startedAt": trace.started_at,
         "endedAt": trace.ended_at,
-        "durationMs": trace.summary()["durationMs"],
+        "durationMs": _duration_ms(trace.started_at, trace.ended_at),
         "status": trace.status,
         "error": trace.error,
         "attributes": {"agentId": trace.agent_id},
@@ -343,7 +368,7 @@ class _LocalExecutionContext:
             for message in self._client.store.get_messages(self.session_id)
         ]
         tool_results: list[ToolResult] = []
-        result = await self._client.model_provider.generate_text(
+        result = await self._generate_text(
             manifest=manifest,
             instruction=instruction,
             prompt=prompt,
@@ -363,7 +388,7 @@ class _LocalExecutionContext:
                 )
                 for call in result.tool_calls
             ]
-            result = await self._client.model_provider.generate_text(
+            result = await self._generate_text(
                 manifest=manifest,
                 instruction=instruction,
                 prompt=prompt,
@@ -379,6 +404,61 @@ class _LocalExecutionContext:
             except json.JSONDecodeError:
                 return output
         return output
+
+    async def _generate_text(
+        self,
+        *,
+        manifest: LLMAgentManifest,
+        instruction: str,
+        prompt: str | None,
+        state: AgentState,
+        messages: list[ModelMessage],
+        tools: list[ModelTool],
+        tool_results: list[ToolResult],
+    ) -> GenerateTextResult:
+        started_at = time.time()
+        try:
+            result = await self._client.model_provider.generate_text(
+                manifest=manifest,
+                instruction=instruction,
+                prompt=prompt,
+                state=state,
+                messages=messages,
+                tools=tools,
+                tool_results=tool_results,
+            )
+        except Exception as exc:
+            self._record_span(
+                name=manifest.id,
+                kind="model",
+                started_at=started_at,
+                ended_at=time.time(),
+                status="error",
+                error=str(exc),
+                attributes={
+                    "agentId": manifest.id,
+                    "provider": manifest.model.provider,
+                    "model": manifest.model.name,
+                },
+            )
+            raise
+        attributes: dict[str, Any] = {
+            "agentId": manifest.id,
+            "provider": manifest.model.provider,
+            "model": result.model or manifest.model.name,
+            "toolCallCount": len(result.tool_calls),
+        }
+        if result.usage:
+            attributes["usage"] = result.usage
+        self._record_span(
+            name=manifest.id,
+            kind="model",
+            started_at=started_at,
+            ended_at=time.time(),
+            status="ok",
+            attributes=attributes,
+        )
+        return result
 
     def _model_tools_for_manifest(self, manifest: LLMAgentManifest) -> list[ModelTool]:
         tools: list[ModelTool] = []
@@ -435,6 +515,36 @@ class _LocalExecutionContext:
         call: ToolCall,
         state: AgentState,
     ) -> Any:
+        started_at = time.time()
+        try:
+            result = await self._execute_model_tool_call_inner(manifest, call, state)
+        except Exception as exc:
+            self._record_span(
+                name=call.name,
+                kind="tool",
+                started_at=started_at,
+                ended_at=time.time(),
+                status="error",
+                error=str(exc),
+                attributes={"agentId": manifest.id, "toolCallId": call.id},
+            )
+            raise
+        self._record_span(
+            name=call.name,
+            kind="tool",
+            started_at=started_at,
+            ended_at=time.time(),
+            status="ok",
+            attributes={"agentId": manifest.id, "toolCallId": call.id},
+        )
+        return result
+
+    async def _execute_model_tool_call_inner(
+        self,
+        manifest: LLMAgentManifest,
+        call: ToolCall,
+        state: AgentState,
+    ) -> Any:
         for entry in manifest.tools or []:
             kind = entry.get("kind")
             if kind == "local" and call.name in entry.get("tools", []):
@@ -479,6 +589,31 @@ class _LocalExecutionContext:
         raise RuntimeError(f"Model requested unknown tool '{call.name}'")
 
     async def invoke_tool(self, config: ToolCallConfig, state: AgentState) -> Any:
+        started_at = time.time()
+        try:
+            result = await self._invoke_tool(config, state)
+        except Exception as exc:
+            self._record_span(
+                name=config.name,
+                kind="tool",
+                started_at=started_at,
+                ended_at=time.time(),
+                status="error",
+                error=str(exc),
+                attributes={"agentId": self.agent_id, "toolKind": config.kind},
+            )
+            raise
+        self._record_span(
+            name=config.name,
+            kind="tool",
+            started_at=started_at,
+            ended_at=time.time(),
+            status="ok",
+            attributes={"agentId": self.agent_id, "toolKind": config.kind},
+        )
+        return result
+
+    async def _invoke_tool(self, config: ToolCallConfig, state: AgentState) -> Any:
         if config.kind == "http":
             return await invoke_http_tool(config, state, http_client=self._client.http_client)
         if config.kind == "mcp":
@@ -492,6 +627,34 @@ class _LocalExecutionContext:
             raise RuntimeError(f"Local tool '{config.name}' was not registered")
         params = dict(config.params or {})
         return await definition.run(params)
+
+    def _record_span(
+        self,
+        *,
+        name: str,
+        kind: str,
+        started_at: float,
+        ended_at: float,
+        status: str,
+        attributes: dict[str, Any],
+        error: str | None = None,
+    ) -> None:
+        self._client.store.put_trace_span(
+            LocalTraceSpanRecord(
+                span_id=f"span_{nanoid()}",
+                trace_id=self.trace_id,
+                parent_id=self.trace_id,
+                run_id=self.run_id,
+                session_id=self.session_id,
+                name=name,
+                kind=kind,
+                started_at=started_at,
+                ended_at=ended_at,
+                status=status,
+                error=error,
+                attributes=attributes,
+            )
+        )
 
     async def resolve_agent(self, agent_id: str) -> AgentManifest:
         try:
@@ -529,6 +692,12 @@ def _run_blocking(awaitable: Any) -> Any:
 
 def _iso_now() -> str:
     return datetime.now(tz=UTC).isoformat()
+
+
+def _duration_ms(started_at: float, ended_at: float | None) -> int | None:
+    if ended_at is None:
+        return None
+    return int((ended_at - started_at) * 1000)
 
 
 def _message_content(value: Any) -> str | list[dict[str, Any]]:

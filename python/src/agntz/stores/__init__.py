@@ -5,6 +5,7 @@ from .memory import (
     LocalRunRecord,
     LocalSessionSummary,
     LocalTraceRecord,
+    LocalTraceSpanRecord,
     MemoryStore,
     RunStore,
 )
@@ -15,6 +16,7 @@ __all__ = [
     "LocalRunRecord",
     "LocalSessionSummary",
     "LocalTraceRecord",
+    "LocalTraceSpanRecord",
     "MemoryStore",
     "RunStore",
     "SQLiteStore",

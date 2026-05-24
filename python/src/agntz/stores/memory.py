@@ -30,7 +30,13 @@ class LocalTraceRecord:
     output: Any = None
     error: str | None = None
 
-    def summary(self) -> dict[str, Any]:
+    def summary(
+        self,
+        *,
+        span_count: int = 1,
+        total_tokens: int = 0,
+        total_cost_usd: float | None = None,
+    ) -> dict[str, Any]:
         duration_ms = None
         if self.ended_at is not None:
             duration_ms = int((self.ended_at - self.started_at) * 1000)
@@ -42,10 +48,53 @@ class LocalTraceRecord:
             "startedAt": self.started_at,
             "endedAt": self.ended_at,
             "durationMs": duration_ms,
-            "spanCount": 1,
+            "spanCount": span_count,
             "status": self.status,
-            "totalTokens": 0,
-            "totalCostUsd": None,
+            "totalTokens": total_tokens,
+            "totalCostUsd": total_cost_usd,
+        }
+
+
+@dataclass(frozen=True)
+class LocalTraceSpanRecord:
+    span_id: str
+    trace_id: str
+    parent_id: str | None
+    name: str
+    kind: str
+    started_at: float
+    ended_at: float | None
+    status: str
+    run_id: str | None = None
+    session_id: str | None = None
+    error: str | None = None
+    attributes: dict[str, Any] | None = None
+    events: list[dict[str, Any]] | None = None
+    scores: dict[str, Any] | None = None
+    cost_usd: float | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        duration_ms = None
+        if self.ended_at is not None:
+            duration_ms = int((self.ended_at - self.started_at) * 1000)
+        return {
+            "spanId": self.span_id,
+            "traceId": self.trace_id,
+            "parentId": self.parent_id,
+            "ownerId": "local",
+            "runId": self.run_id,
+            "sessionId": self.session_id,
+            "name": self.name,
+            "kind": self.kind,
+            "startedAt": self.started_at,
+            "endedAt": self.ended_at,
+            "durationMs": duration_ms,
+            "status": self.status,
+            "error": self.error,
+            "attributes": self.attributes or {},
+            "events": self.events or [],
+            "scores": self.scores or {},
+            "costUsd": self.cost_usd,
         }
 
 
@@ -92,6 +141,10 @@ class RunStore(Protocol):
         status: str | None = None,
     ) -> list[LocalTraceRecord]: ...
 
+    def put_trace_span(self, span: LocalTraceSpanRecord) -> None: ...
+
+    def list_trace_spans(self, trace_id: str) -> list[LocalTraceSpanRecord]: ...
+
     def append_messages(
         self,
         session_id: str,
@@ -115,6 +168,7 @@ class MemoryStore:
     def __init__(self) -> None:
         self._runs: dict[str, LocalRunRecord] = {}
         self._traces: dict[str, LocalTraceRecord] = {}
+        self._trace_spans: dict[str, list[LocalTraceSpanRecord]] = {}
         self._sessions: dict[str, LocalSessionSummary] = {}
         self._messages: dict[str, list[LocalMessageRecord]] = {}
 
@@ -136,6 +190,12 @@ class MemoryStore:
         if status is not None:
             rows = [row for row in rows if row.status == status]
         return rows
+
+    def put_trace_span(self, span: LocalTraceSpanRecord) -> None:
+        self._trace_spans.setdefault(span.trace_id, []).append(span)
+
+    def list_trace_spans(self, trace_id: str) -> list[LocalTraceSpanRecord]:
+        return list(self._trace_spans.get(trace_id, []))
 
     def append_messages(
         self,

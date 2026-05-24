@@ -20,7 +20,13 @@ from .core import (
     tool,
 )
 from .sdk import LocalClient, agntz
-from .stores import LocalMessageRecord, LocalSessionSummary, MemoryStore, SQLiteStore
+from .stores import (
+    LocalMessageRecord,
+    LocalSessionSummary,
+    LocalTraceSpanRecord,
+    MemoryStore,
+    SQLiteStore,
+)
 
 __all__ = [
     "__version__",
@@ -33,6 +39,7 @@ __all__ = [
     "LocalClient",
     "LocalMessageRecord",
     "LocalSessionSummary",
+    "LocalTraceSpanRecord",
     "ModelMessage",
     "ModelProvider",
     "ModelTool",
