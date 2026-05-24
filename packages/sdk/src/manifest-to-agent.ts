@@ -58,6 +58,9 @@ function llmManifestToAgentDefinition(
       topP: manifest.model.topP,
     },
     examples: manifest.examples,
+    outputSchema: manifest.outputSchema
+      ? manifestSchemaToJsonSchema(manifest.outputSchema)
+      : undefined,
     tools: tools.length > 0 ? tools : undefined,
     spawnable: manifest.spawnable
       ? convertSpawnable(manifest, manifest.spawnable, localToolNames)
@@ -125,3 +128,43 @@ function convertSpawnable(
   });
 }
 
+function manifestSchemaToJsonSchema(schema: Record<string, unknown>): Record<string, unknown> {
+  const properties: Record<string, unknown> = {};
+  const required: string[] = [];
+
+  for (const [key, value] of Object.entries(schema)) {
+    properties[key] = typeof value === "string" ? { type: value } : enforceStrictObject(value);
+    required.push(key);
+  }
+
+  return {
+    type: "object",
+    properties,
+    required,
+    additionalProperties: false,
+  };
+}
+
+function enforceStrictObject(value: unknown): unknown {
+  if (!value || typeof value !== "object") return value;
+  const obj = value as Record<string, unknown>;
+  const out: Record<string, unknown> = { ...obj };
+
+  if (obj.type === "object") {
+    if (!("additionalProperties" in out)) out.additionalProperties = false;
+    const props = obj.properties as Record<string, unknown> | undefined;
+    if (props) {
+      const walked: Record<string, unknown> = {};
+      for (const [key, child] of Object.entries(props)) {
+        walked[key] = enforceStrictObject(child);
+      }
+      out.properties = walked;
+    }
+  }
+
+  if (obj.type === "array" && obj.items) {
+    out.items = enforceStrictObject(obj.items);
+  }
+
+  return out;
+}

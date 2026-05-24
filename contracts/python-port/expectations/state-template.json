@@ -1,0 +1,38 @@
+{
+  "initialInput": {
+    "userQuery": "Refund request"
+  },
+  "initialState": {
+    "userQuery": "Refund request"
+  },
+  "templates": {
+    "simpleReference": {
+      "template": "{{userQuery}}",
+      "value": "Refund request"
+    },
+    "interpolated": {
+      "template": "Request: {{userQuery}}",
+      "value": "Request: Refund request"
+    },
+    "missingValue": {
+      "template": "Unknown: {{missing}}",
+      "value": "Unknown: "
+    }
+  },
+  "outputMapping": {
+    "mapping": {
+      "answer": "{{classify.answer}}",
+      "confidence": "{{classify.confidence}}"
+    },
+    "state": {
+      "classify": {
+        "answer": "Use the refund workflow.",
+        "confidence": 0.82
+      }
+    },
+    "value": {
+      "answer": "Use the refund workflow.",
+      "confidence": 0.82
+    }
+  }
+}

@@ -1,0 +1,14 @@
+id: calculator
+kind: tool
+description: Adds two numbers through a local tool.
+tool:
+  kind: local
+  name: add
+input:
+  a: "{{a}}"
+  b: "{{b}}"
+inputSchema:
+  a: number
+  b: number
+output:
+  total: "{{result}}"

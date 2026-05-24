@@ -1,0 +1,24 @@
+id: support-flow
+kind: sequential
+description: Collects context and writes a support response.
+inputSchema:
+  userQuery: string
+steps:
+  - id: classify
+    agent: support
+    input:
+      userQuery: "{{userQuery}}"
+  - id: summarize
+    agent:
+      id: summarizer
+      kind: llm
+      model:
+        provider: openai
+        name: gpt-5.4
+      instruction: Summarize the support answer.
+      prompt: "{{classify.answer}}"
+    input:
+      userQuery: "{{classify.answer}}"
+output:
+  answer: "{{summarize}}"
+  confidence: "{{classify.confidence}}"

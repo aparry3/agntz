@@ -1,0 +1,18 @@
+id: support
+kind: llm
+name: Support Assistant
+description: Answers support questions with a concise plan.
+model:
+  provider: openai
+  name: gpt-5.4
+  temperature: 0.2
+instruction: |
+  You are a careful support agent.
+prompt: |
+  Help with this request: {{userQuery}}
+inputSchema:
+  userQuery: string
+outputSchema:
+  answer: string
+  confidence: number
+reply: true

@@ -63,6 +63,40 @@ describe("manifestToAgentDefinition — tool kind conversion", () => {
     expect(def.tools).toEqual([{ type: "agent", agentId: "reviewer" }]);
   });
 
+  it("converts manifest outputSchema to strict JSON Schema for embedded runs", () => {
+    const manifest = baseLlm({
+      outputSchema: {
+        answer: "string",
+        confidence: "number",
+        nested: {
+          type: "object",
+          properties: {
+            approved: { type: "boolean" },
+          },
+        },
+      },
+    });
+
+    const def = manifestToAgentDefinition(manifest, new Set());
+
+    expect(def.outputSchema).toEqual({
+      type: "object",
+      properties: {
+        answer: { type: "string" },
+        confidence: { type: "number" },
+        nested: {
+          type: "object",
+          properties: {
+            approved: { type: "boolean" },
+          },
+          additionalProperties: false,
+        },
+      },
+      required: ["answer", "confidence", "nested"],
+      additionalProperties: false,
+    });
+  });
+
   it("translates spawnable refs (ref + inline) for the core runner", () => {
     const manifest = baseLlm({
       spawnable: [

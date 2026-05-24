@@ -1,0 +1,49 @@
+{
+  "runRequest": {
+    "method": "POST",
+    "path": "/run",
+    "body": {
+      "agentId": "support",
+      "input": "hello",
+      "sessionId": "sess_abc"
+    }
+  },
+  "streamRequest": {
+    "method": "POST",
+    "path": "/run/stream",
+    "accept": "text/event-stream"
+  },
+  "streamEvents": [
+    {
+      "event": "run-start",
+      "data": {
+        "agentId": "support",
+        "kind": "llm",
+        "sessionId": "sess_abc"
+      },
+      "normalizedType": "start"
+    },
+    {
+      "event": "reply",
+      "data": {
+        "text": "Working on it",
+        "ts": "2026-05-24T00:00:00.000Z",
+        "sessionId": "sess_abc",
+        "runId": "run_abc",
+        "seq": 1
+      },
+      "normalizedType": "reply"
+    },
+    {
+      "event": "run-complete",
+      "data": {
+        "output": "done",
+        "state": {
+          "support": "done"
+        },
+        "sessionId": "sess_abc"
+      },
+      "normalizedType": "complete"
+    }
+  ]
+}
