@@ -72,6 +72,50 @@ const OPENROUTER_ROUTES: readonly ProviderModelEntry[] = [
   },
 ];
 
+// Prior-generation models — one immediately-previous model per provider, so the
+// harness catches SDK regressions that only surface on older model surfaces
+// (different finish-reason shapes, tool schemas, multimodal handling, etc.).
+// IDs and caps are best-effort from the app's model catalog (supported-providers.ts);
+// the first live run confirms availability and flips any wrong capability cell.
+const PRIOR_GENERATION: readonly ProviderModelEntry[] = [
+  {
+    provider: 'anthropic',
+    model: 'claude-opus-4-6',
+    capabilities: caps('text', 'multiTurn', 'systemPrompt', 'streaming', 'tools', 'parallelTools', 'streamingTools', 'toolChoice', 'multimodalImage', 'structuredOutput', 'reasoning', 'cancellation'),
+    notes: 'Prior gen of claude-opus-4-7.',
+  },
+  {
+    provider: 'openai',
+    model: 'gpt-5.4',
+    capabilities: caps('text', 'multiTurn', 'systemPrompt', 'streaming', 'tools', 'parallelTools', 'streamingTools', 'toolChoice', 'multimodalImage', 'structuredOutput', 'reasoning', 'cancellation'),
+    notes: 'Prior gen of gpt-5.5.',
+  },
+  {
+    provider: 'google',
+    model: 'gemini-3-flash',
+    capabilities: caps('text', 'multiTurn', 'systemPrompt', 'streaming', 'tools', 'parallelTools', 'streamingTools', 'toolChoice', 'multimodalImage', 'structuredOutput', 'reasoning', 'cancellation'),
+    notes: 'Prior gen of gemini-3.5-flash.',
+  },
+  {
+    provider: 'mistral',
+    model: 'mistral-medium-3',
+    capabilities: caps('text', 'multiTurn', 'systemPrompt', 'streaming', 'tools', 'parallelTools', 'streamingTools', 'toolChoice', 'multimodalImage', 'structuredOutput', 'cancellation'),
+    notes: 'Prior gen of mistral-medium-3.5.',
+  },
+  {
+    provider: 'groq',
+    model: 'llama-3.3-70b-versatile',
+    capabilities: caps('text', 'multiTurn', 'systemPrompt', 'streaming', 'tools', 'parallelTools', 'streamingTools', 'toolChoice', 'structuredOutput', 'cancellation'),
+    notes: 'Prior gen on Groq (Llama 3.3 70B). Text-only — no image input, unlike Llama 4.',
+  },
+  {
+    provider: 'cohere',
+    model: 'command-a-03-2025',
+    capabilities: caps('text', 'multiTurn', 'systemPrompt', 'streaming', 'tools', 'parallelTools', 'streamingTools', 'toolChoice', 'structuredOutput', 'cancellation'),
+    notes: 'Prior gen of command-a-plus-05-2026; predates the unified vision/reasoning surface.',
+  },
+];
+
 // Cells are best-effort declarations pending verification by the harness itself.
 // Capabilities that the planning doc marked as uncertain are included optimistically;
 // the first run will surface anything that needs to flip via UNEXPECTED_UNSUPPORTED.
@@ -188,5 +232,6 @@ export const MATRIX: readonly ProviderModelEntry[] = [
     ]),
     notes: 'Command A+ unifies Command A / Vision / Reasoning / Translate (May 2026).',
   },
+  ...PRIOR_GENERATION,
   ...OPENROUTER_ROUTES,
 ];
