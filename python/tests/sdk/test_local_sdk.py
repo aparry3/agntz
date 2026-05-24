@@ -161,6 +161,49 @@ inputSchema:
     assert result.output == {"temp": 72}
 
 
+def test_local_sdk_invokes_mcp_tool(tmp_path: Path) -> None:
+    agents_dir = _copy_agents(tmp_path)
+    (agents_dir / "mcp-search.yaml").write_text(
+        """
+id: search
+kind: tool
+tool:
+  kind: mcp
+  name: search
+  server: https://mcp.example.test
+  params:
+    query: "{{userQuery}}"
+inputSchema:
+  userQuery: string
+""",
+        encoding="utf-8",
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.read())
+        assert request.method == "POST"
+        assert request.url.path == "/"
+        assert body["method"] == "tools/call"
+        assert body["params"] == {
+            "name": "search",
+            "arguments": {"query": "refund policy"},
+        }
+        return httpx.Response(
+            200,
+            json={"jsonrpc": "2.0", "id": body["id"], "result": {"ok": True}},
+        )
+
+    client = agntz(
+        agents=str(agents_dir),
+        model_provider=FakeProvider(),
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    result = client.agents.run(agent_id="search", input={"userQuery": "refund policy"})
+
+    assert result.output == {"ok": True}
+
+
 def test_litellm_provider_model_slug_mapping() -> None:
     assert isinstance(LiteLLMModelProvider(), LiteLLMModelProvider)
     assert format_litellm_model("openai", "gpt-5.4") == "gpt-5.4"

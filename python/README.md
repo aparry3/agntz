@@ -80,6 +80,21 @@ client = agntz(
 runs = client.runs.list(status="completed")
 ```
 
+## MCP tool agents
+
+Embedded Python runs support top-level MCP tool manifests over HTTP JSON-RPC:
+
+```yaml
+id: search
+kind: tool
+tool:
+  kind: mcp
+  server: https://mcp.example.com
+  name: search
+  params:
+    query: "{{userQuery}}"
+```
+
 ## Development
 
 ```bash

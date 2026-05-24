@@ -16,6 +16,7 @@ from agntz.core import (
     ModelProvider,
     ToolDefinition,
     invoke_http_tool,
+    invoke_mcp_tool,
 )
 from agntz.core.ids import run_id as new_run_id
 from agntz.core.ids import session_id as new_session_id
@@ -192,6 +193,8 @@ class _LocalExecutionContext:
     async def invoke_tool(self, config: ToolCallConfig, state: AgentState) -> Any:
         if config.kind == "http":
             return await invoke_http_tool(config, state, http_client=self._client.http_client)
+        if config.kind == "mcp":
+            return await invoke_mcp_tool(config, state, http_client=self._client.http_client)
         if config.kind != "local":
             raise RuntimeError(
                 f"Embedded Python SDK does not support {config.kind} tools yet"
