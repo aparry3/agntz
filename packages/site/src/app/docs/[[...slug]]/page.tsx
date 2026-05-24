@@ -100,22 +100,32 @@ export default async function DocsPage({
             >
               <div
                 style={{
-                  display: "inline-flex",
+                  display: "flex",
                   alignItems: "center",
-                  gap: 8,
-                  fontFamily: "var(--mono)",
-                  fontSize: 11,
-                  letterSpacing: "0.18em",
-                  textTransform: "uppercase",
-                  color: TOKENS.text2,
-                  marginBottom: 14,
+                  justifyContent: "space-between",
+                  gap: 16,
+                  flexWrap: "wrap",
+                  marginBottom: 16,
                 }}
               >
-                <span style={{ width: 18, height: 1, background: TOKENS.text2 }} />
-                Documentation
-              </div>
+                <div
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                    fontFamily: "var(--mono)",
+                    fontSize: 11,
+                    letterSpacing: "0.18em",
+                    textTransform: "uppercase",
+                    color: TOKENS.text2,
+                  }}
+                >
+                  <span style={{ width: 18, height: 1, background: TOKENS.text2 }} />
+                  Documentation
+                </div>
 
-              <LanguageToggle style={{ marginBottom: 12 }} />
+                <LanguageToggle />
+              </div>
 
               <CopyMarkdownButton markdown={page.markdown} rawHref={rawHref} />
 
