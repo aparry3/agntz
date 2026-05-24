@@ -62,6 +62,17 @@ def test_local_sdk_runs_llm_and_records_run(tmp_path: Path) -> None:
     assert len(rows) == 1
     assert rows[0].id.startswith("run_")
     assert rows[0].output == result.output
+    traces = client.traces.list(agent_id="support", status="ok")
+    assert len(traces["rows"]) == 1
+    trace_id = traces["rows"][0]["traceId"]
+    detail = client.traces.get(trace_id)
+    assert detail is not None
+    assert detail["summary"]["agentId"] == "support"
+    assert detail["spans"][0]["runId"] == rows[0].id
+    events = list(client.traces.stream(trace_id))
+    assert [event.type for event in events] == ["snapshot"]
+    assert events[0].summary is not None
+    assert events[0].summary["traceId"] == trace_id
 
 
 def test_local_sdk_runs_registered_pydantic_tool(tmp_path: Path) -> None:
@@ -227,11 +238,14 @@ def test_local_sdk_can_persist_runs_to_sqlite(tmp_path: Path) -> None:
     reopened = SQLiteStore(db_path)
     try:
         rows = reopened.list_runs(agent_id="support", status="completed")
+        traces = reopened.list_traces(agent_id="support", status="ok")
         fetched = reopened.get_run(persisted[0].id)
     finally:
         reopened.close()
 
     assert len(rows) == 1
+    assert len(traces) == 1
+    assert traces[0].output == result.output
     assert fetched is not None
     assert fetched.output == result.output
     assert fetched.input == {"userQuery": "Refund request"}

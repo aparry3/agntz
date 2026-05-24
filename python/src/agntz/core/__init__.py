@@ -1,7 +1,7 @@
 """Core runtime contracts for the Python SDK."""
 
 from .http_tool import invoke_http_tool
-from .ids import nanoid, run_id, session_id
+from .ids import nanoid, run_id, session_id, trace_id
 from .litellm_provider import LiteLLMModelProvider, format_litellm_model
 from .mcp_tool import invoke_mcp_tool
 from .model_provider import GenerateTextResult, MissingModelProvider, ModelProvider
@@ -19,5 +19,6 @@ __all__ = [
     "nanoid",
     "run_id",
     "session_id",
+    "trace_id",
     "tool",
 ]

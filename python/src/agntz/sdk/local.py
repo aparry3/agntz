@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import Iterable, Iterator
 from typing import Any
 
@@ -20,6 +21,7 @@ from agntz.core import (
 )
 from agntz.core.ids import run_id as new_run_id
 from agntz.core.ids import session_id as new_session_id
+from agntz.core.ids import trace_id as new_trace_id
 from agntz.manifest import execute, load_manifests_from_dir
 from agntz.manifest.types import (
     AgentManifest,
@@ -27,7 +29,7 @@ from agntz.manifest.types import (
     LLMAgentManifest,
     ToolCallConfig,
 )
-from agntz.stores import LocalRunRecord, MemoryStore, RunStore
+from agntz.stores import LocalRunRecord, LocalTraceRecord, MemoryStore, RunStore
 
 
 class LocalClient:
@@ -47,7 +49,7 @@ class LocalClient:
         self.http_client = http_client
         self.agents = LocalAgentsResource(self)
         self.runs = LocalRunsResource(self)
-        self.traces = LocalTracesResource()
+        self.traces = LocalTracesResource(self)
 
     async def _execute(
         self,
@@ -59,6 +61,8 @@ class LocalClient:
         manifest = self.manifests[agent_id]
         resolved_session_id = session_id or new_session_id()
         local_run_id = new_run_id()
+        local_trace_id = new_trace_id()
+        started_at = time.time()
         ctx = _LocalExecutionContext(self)
         self.store.put_run(
             LocalRunRecord(
@@ -68,6 +72,16 @@ class LocalClient:
                 session_id=resolved_session_id,
                 status="running",
                 input=input,
+            )
+        )
+        self.store.put_trace(
+            LocalTraceRecord(
+                trace_id=local_trace_id,
+                run_id=local_run_id,
+                agent_id=agent_id,
+                session_id=resolved_session_id,
+                status="running",
+                started_at=started_at,
             )
         )
         try:
@@ -84,6 +98,18 @@ class LocalClient:
                     error=str(exc),
                 )
             )
+            self.store.put_trace(
+                LocalTraceRecord(
+                    trace_id=local_trace_id,
+                    run_id=local_run_id,
+                    agent_id=agent_id,
+                    session_id=resolved_session_id,
+                    status="error",
+                    started_at=started_at,
+                    ended_at=time.time(),
+                    error=str(exc),
+                )
+            )
             raise
         self.store.put_run(
             LocalRunRecord(
@@ -93,6 +119,18 @@ class LocalClient:
                 session_id=resolved_session_id,
                 status="completed",
                 input=input,
+                output=result.output,
+            )
+        )
+        self.store.put_trace(
+            LocalTraceRecord(
+                trace_id=local_trace_id,
+                run_id=local_run_id,
+                agent_id=agent_id,
+                session_id=resolved_session_id,
+                status="ok",
+                started_at=started_at,
+                ended_at=time.time(),
                 output=result.output,
             )
         )
@@ -158,11 +196,54 @@ class LocalRunsResource:
 
 
 class LocalTracesResource:
-    def list(self) -> dict[str, list[Any]]:
-        return {"rows": []}
+    def __init__(self, client: LocalClient) -> None:
+        self._client = client
 
-    def get(self, trace_id: str) -> None:
-        return None
+    def list(
+        self,
+        *,
+        agent_id: str | None = None,
+        status: str | None = None,
+    ) -> dict[str, list[dict[str, Any]]]:
+        return {
+            "rows": [
+                trace.summary()
+                for trace in self._client.store.list_traces(agent_id=agent_id, status=status)
+            ]
+        }
+
+    def get(self, trace_id: str) -> dict[str, Any] | None:
+        trace = self._client.store.get_trace(trace_id)
+        if trace is None:
+            return None
+        return {"summary": trace.summary(), "spans": [_trace_span(trace)]}
+
+    def stream(self, trace_id: str) -> Iterator[Event]:
+        detail = self.get(trace_id)
+        if detail is not None:
+            yield Event(type="snapshot", summary=detail["summary"], spans=detail["spans"])
+
+
+def _trace_span(trace: LocalTraceRecord) -> dict[str, Any]:
+    return {
+        "spanId": trace.trace_id,
+        "traceId": trace.trace_id,
+        "parentId": None,
+        "ownerId": "local",
+        "runId": trace.run_id,
+        "sessionId": trace.session_id,
+        "name": trace.agent_id,
+        "kind": "run",
+        "startedAt": trace.started_at,
+        "endedAt": trace.ended_at,
+        "durationMs": trace.summary()["durationMs"],
+        "status": trace.status,
+        "error": trace.error,
+        "attributes": {"agentId": trace.agent_id},
+        "events": [],
+        "scores": {},
+        "costUsd": None,
+    }
 
 
 class _LocalExecutionContext:

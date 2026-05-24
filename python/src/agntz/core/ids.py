@@ -17,3 +17,7 @@ def run_id() -> str:
 
 def session_id() -> str:
     return f"sess_{nanoid()}"
+
+
+def trace_id() -> str:
+    return f"trace_{nanoid()}"

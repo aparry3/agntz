@@ -7,7 +7,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from .memory import LocalRunRecord
+from .memory import LocalRunRecord, LocalTraceRecord
 
 
 class SQLiteStore:
@@ -78,6 +78,66 @@ class SQLiteStore:
         rows = self._conn.execute(query, params).fetchall()
         return [_row_to_run(row) for row in rows]
 
+    def put_trace(self, trace: LocalTraceRecord) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO traces (
+              trace_id, run_id, agent_id, session_id, status,
+              started_at, ended_at, output_json, error
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(trace_id) DO UPDATE SET
+              run_id=excluded.run_id,
+              agent_id=excluded.agent_id,
+              session_id=excluded.session_id,
+              status=excluded.status,
+              started_at=excluded.started_at,
+              ended_at=excluded.ended_at,
+              output_json=excluded.output_json,
+              error=excluded.error
+            """,
+            (
+                trace.trace_id,
+                trace.run_id,
+                trace.agent_id,
+                trace.session_id,
+                trace.status,
+                trace.started_at,
+                trace.ended_at,
+                _dumps(trace.output),
+                trace.error,
+            ),
+        )
+        self._conn.commit()
+
+    def get_trace(self, trace_id: str) -> LocalTraceRecord | None:
+        row = self._conn.execute(
+            "SELECT * FROM traces WHERE trace_id = ?",
+            (trace_id,),
+        ).fetchone()
+        return _row_to_trace(row) if row is not None else None
+
+    def list_traces(
+        self,
+        *,
+        agent_id: str | None = None,
+        status: str | None = None,
+    ) -> list[LocalTraceRecord]:
+        query = "SELECT * FROM traces"
+        clauses: list[str] = []
+        params: list[str] = []
+        if agent_id is not None:
+            clauses.append("agent_id = ?")
+            params.append(agent_id)
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(status)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY rowid ASC"
+        rows = self._conn.execute(query, params).fetchall()
+        return [_row_to_trace(row) for row in rows]
+
     def _migrate(self) -> None:
         self._conn.execute(
             """
@@ -88,6 +148,21 @@ class SQLiteStore:
               session_id TEXT NOT NULL,
               status TEXT NOT NULL,
               input_json TEXT,
+              output_json TEXT,
+              error TEXT
+            )
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS traces (
+              trace_id TEXT PRIMARY KEY,
+              run_id TEXT NOT NULL,
+              agent_id TEXT NOT NULL,
+              session_id TEXT NOT NULL,
+              status TEXT NOT NULL,
+              started_at REAL NOT NULL,
+              ended_at REAL,
               output_json TEXT,
               error TEXT
             )
@@ -104,6 +179,20 @@ def _row_to_run(row: sqlite3.Row) -> LocalRunRecord:
         session_id=row["session_id"],
         status=row["status"],
         input=_loads(row["input_json"]),
+        output=_loads(row["output_json"]),
+        error=row["error"],
+    )
+
+
+def _row_to_trace(row: sqlite3.Row) -> LocalTraceRecord:
+    return LocalTraceRecord(
+        trace_id=row["trace_id"],
+        run_id=row["run_id"],
+        agent_id=row["agent_id"],
+        session_id=row["session_id"],
+        status=row["status"],
+        started_at=row["started_at"],
+        ended_at=row["ended_at"],
         output=_loads(row["output_json"]),
         error=row["error"],
     )
