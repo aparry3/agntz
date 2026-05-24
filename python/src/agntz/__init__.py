@@ -8,6 +8,8 @@ from .client import (
     NotFoundError,
     StreamError,
 )
+from .core import GenerateTextResult, ModelProvider, ToolDefinition, tool
+from .sdk import LocalClient, agntz
 
 __all__ = [
     "__version__",
@@ -15,8 +17,14 @@ __all__ = [
     "AgntzError",
     "AsyncAgntzClient",
     "AuthenticationError",
+    "GenerateTextResult",
+    "LocalClient",
+    "ModelProvider",
     "NotFoundError",
     "StreamError",
+    "ToolDefinition",
+    "agntz",
+    "tool",
 ]
 
 __version__ = "0.1.0"

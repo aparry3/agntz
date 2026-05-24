@@ -2,7 +2,13 @@
 
 from .conditions import evaluate_condition
 from .executor import execute, execute_with_state
-from .parser import ManifestParseError, load_manifest_file, normalize_manifest, parse_manifest
+from .parser import (
+    ManifestParseError,
+    load_manifest_file,
+    load_manifests_from_dir,
+    normalize_manifest,
+    parse_manifest,
+)
 from .state import (
     apply_input_transform,
     apply_output_mapping,
@@ -47,6 +53,7 @@ __all__ = [
     "get_state_key",
     "interpolate",
     "load_manifest_file",
+    "load_manifests_from_dir",
     "normalize_id",
     "normalize_manifest",
     "parse_manifest",
