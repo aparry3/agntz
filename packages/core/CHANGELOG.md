@@ -1,5 +1,13 @@
 # @agntz/core
 
+## 1.2.1
+
+### Patch Changes
+
+- [#43](https://github.com/aparry3/agntz/pull/43) [`c43b184`](https://github.com/aparry3/agntz/commit/c43b184ee004bd7298fa8a48ba1d465048c5b96b) Thanks [@aparry3](https://github.com/aparry3)! - Fix multi-turn tool calls with Gemini 3.x. Gemini attaches an opaque `thought_signature` to each function call and **requires it echoed back** on the next turn; the runner was discarding it, so any tool round-trip on a Gemini 3 model failed with `Function call is missing a thought_signature`.
+
+  Tool calls now carry the provider's opaque metadata through `GenerateTextResult.toolCalls[].providerMetadata`, and the runner replays it as the tool-call part's `providerOptions` on the following turn. This is a no-op for providers that don't emit it (OpenAI, Anthropic, Mistral, Cohere, …) and for Gemini 2.5, which doesn't require the round-trip.
+
 ## 1.2.0
 
 ### Minor Changes
