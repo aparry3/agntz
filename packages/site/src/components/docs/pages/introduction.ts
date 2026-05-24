@@ -1,6 +1,6 @@
 export default `# Introduction
 
-**agntz** is an open-source agent framework where agents are declared as YAML — not code — and run unchanged in three places: embedded in your app (\`@agntz/sdk\`), on the hosted cloud (\`agntz.co\`), or on infrastructure you control (self-host). Every run is traced. Every save is a version. Bring your own model keys.
+**agntz** is an open-source agent framework where agents are declared as YAML — not code — and run unchanged in three places: embedded in your app (\`@agntz/sdk\` for TypeScript, \`agntz\` for Python), on the hosted cloud (\`agntz.co\`), or on infrastructure you control (self-host). Every run is traced. Every save is a version. Bring your own model keys.
 
 These docs are optimized for both humans and LLMs. Every page is also available as raw markdown — see the **Copy** button at the top of each page, or fetch [/llms.txt](/llms.txt) for the full corpus.
 
@@ -16,22 +16,22 @@ These docs are optimized for both humans and LLMs. Every page is also available 
 Three things stay the same as you scale from your laptop to production:
 
 1. **The YAML schema.** One \`manifest.yaml\` runs in embedded mode, hosted mode, and self-hosted mode.
-2. **The client API.** \`client.agents.run({ agentId, input })\` — same call against \`@agntz/sdk\` and \`@agntz/client\`.
+2. **The client API.** \`client.agents.run(...)\` — the same resource shape in TypeScript and Python, with language-native argument names.
 3. **The observability model.** Runs, spans, and traces work identically in every edition.
 
 ## Choose your starting point
 
 | If you want to… | Use | Read |
 |---|---|---|
-| Run an agent on your laptop in 60 seconds | \`@agntz/sdk\` | [Quickstart](/docs/quickstart) |
+| Run an agent on your laptop in 60 seconds | \`@agntz/sdk\` or \`agntz\` | [Quickstart](/docs/quickstart) |
 | Build agents from the terminal | \`agntz\` CLI | [CLI quickstart](/docs/cli-quickstart) |
 | Author and run agents in a hosted UI | agntz.co | [Hosted cloud](/docs/deploy/hosted-cloud) |
-| Call hosted agents from your backend | \`@agntz/client\` | [@agntz/client](/docs/sdk-cli/client) |
+| Call hosted agents from your backend | \`@agntz/client\` or \`AgntzClient\` | [Hosted client](/docs/sdk-cli/client) |
 | Deploy your own hosted stack | Docker / Vercel + Railway | [Self-host](/docs/deploy/self-host-production) |
 
 ## Install
 
-\`\`\`bash
+\`\`\`bash {group=intro-install select=ts}
 # Embedded: run agents in-process from YAML files
 pnpm add @agntz/sdk
 
@@ -45,7 +45,15 @@ pnpm add @agntz/store-sqlite
 npm i -g @agntz/sdk
 \`\`\`
 
-Node 20+ in all cases. \`@agntz/client\` is universal (browsers + Node + edge runtimes); \`@agntz/sdk\` is Node-only because it reads YAML from disk.
+\`\`\`bash {group=intro-install select=python}
+# Embedded local SDK + hosted client
+pip install agntz
+
+# Local model execution through LiteLLM
+pip install "agntz[litellm]"
+\`\`\`
+
+Node 20+ for TypeScript. Python 3.11+ for Python. \`@agntz/client\` is universal across browser, Node, and edge runtimes; embedded SDKs read YAML from disk and run in your process.
 
 Set the provider API key your agents will use:
 

@@ -1,6 +1,6 @@
 export default `# Local tools
 
-JavaScript / TypeScript functions registered at runtime, referenced by name in YAML. The simplest and fastest tool kind — no network, no auth — but **embedded-only**.
+Local tools are functions registered at runtime and referenced by name in YAML. They are the simplest and fastest tool kind — no network and no auth — but they only work in embedded mode because hosted workers cannot execute arbitrary user code.
 
 \`\`\`yaml [agents/calculator.yaml]
 id: calculator
@@ -15,7 +15,7 @@ tools:
     tools: [add]
 \`\`\`
 
-\`\`\`ts [index.ts]
+\`\`\`ts [index.ts] {group=local-tool-basic}
 import { agntz, tool, z } from "@agntz/sdk";
 
 const client = await agntz({
@@ -34,22 +34,48 @@ const client = await agntz({
 });
 \`\`\`
 
-Names referenced in YAML but missing from the \`tools\` array fail at **load time**, not on first model call — misconfigurations surface immediately.
+\`\`\`python [main.py] {group=local-tool-basic}
+from pydantic import BaseModel, Field
+from agntz import LiteLLMModelProvider, agntz, tool
+
+
+class AddInput(BaseModel):
+    a: float = Field(description="First operand")
+    b: float = Field(description="Second operand")
+
+
+def add(args: AddInput) -> float:
+    return args.a + args.b
+
+
+client = agntz(
+    agents="./agents",
+    tools=[
+        tool(
+            name="add",
+            description="Add two numbers and return the sum",
+            input_schema=AddInput,
+            execute=add,
+        )
+    ],
+    model_provider=LiteLLMModelProvider(),
+)
+\`\`\`
+
+Names referenced in YAML but missing from the local tool registry fail before a successful run. This keeps misconfigurations out of production traffic.
 
 ## Tool shape
 
-Each tool is a self-describing object. The model sees the \`name\`, the \`description\`, and a JSON schema derived from the Zod \`input\` schema — so field-level \`.describe()\` calls flow through to the model's tool list and guide its argument choices.
+Each tool is self-describing. The model sees the \`name\`, \`description\`, and JSON Schema derived from your validation schema.
 
-| Field | Type | Purpose |
+| TypeScript field | Python field | Purpose |
 | --- | --- | --- |
-| \`name\` | string | Identifier referenced from YAML \`tools: [name]\` |
-| \`description\` | string | What the tool does — read by the model when deciding to call |
-| \`input\` | Zod schema | Validates args at call time *and* produces the JSON schema the model sees |
-| \`execute\` | async function | Receives the parsed args (typed from the schema) and a \`ToolContext\` |
+| \`name\` | \`name\` | Identifier referenced from YAML \`tools: [name]\` |
+| \`description\` | \`description\` | What the tool does; read by the model |
+| \`input\` | \`input_schema\` | Zod or Pydantic schema used for validation and JSON Schema |
+| \`execute\` | \`execute\` | Function called with parsed args |
 
-The \`tool()\` helper is an identity function — it exists purely to give \`execute\` typed access to the inferred argument shape. You can also pass raw \`ToolDefinition\` objects from \`@agntz/core\` if you prefer.
-
-\`\`\`ts
+\`\`\`ts {group=local-tool-shape}
 import { tool, z } from "@agntz/sdk";
 
 const tools = [
@@ -63,22 +89,33 @@ const tools = [
       return await db.invoices.findById(id);
     },
   }),
-  tool({
-    name: "closeTicket",
-    description: "Close a support ticket with a reason",
-    input: z.object({
-      ticketId: z.string().describe("Ticket id"),
-      reason: z.string().describe("Short, user-facing reason for closing"),
-    }),
-    execute: async ({ ticketId, reason }) => {
-      await api.tickets.close(ticketId, reason);
-      return { ok: true };
-    },
-  }),
 ];
 \`\`\`
 
-\`z\` is re-exported from \`@agntz/sdk\` so you don't need a separate \`zod\` install — the SDK already depends on it.
+\`\`\`python {group=local-tool-shape}
+from pydantic import BaseModel, Field
+from agntz import tool
+
+
+class FetchInvoiceInput(BaseModel):
+    id: str = Field(description="Invoice id, e.g. inv_abc123")
+
+
+def fetch_invoice(args: FetchInvoiceInput):
+    return db.invoices.find_by_id(args.id)
+
+
+tools = [
+    tool(
+        name="fetchInvoice",
+        description="Look up an invoice record by its id",
+        input_schema=FetchInvoiceInput,
+        execute=fetch_invoice,
+    )
+]
+\`\`\`
+
+TypeScript uses Zod because \`@agntz/sdk\` already depends on it. Python uses Pydantic because it is the native validation and schema path for Python applications.
 
 ## Selective exposure
 
@@ -91,13 +128,13 @@ tools:
 
 ## Errors
 
-If a tool throws, the model receives the error message and decides whether to retry (with different args), reply to the user with an apology, or give up. The error is captured in the \`tool.execute\` span — visible in the trace.
+If a tool throws, the model receives the error message and can decide whether to retry with different args, reply to the user, or give up. The error is captured in the tool span and appears in traces.
 
-Zod validation errors are returned to the model the same way — so a model that calls \`add({ a: "two", b: 3 })\` sees a structured complaint and can correct itself on the next step.
+Validation errors are returned to the model the same way, so a model that calls \`add({ a: "two", b: 3 })\` sees a structured complaint and can correct itself on the next step.
 
 ## Why embedded-only?
 
 > **Note:** Local tools are an embedded-mode primitive. The hosted edition has no way to run arbitrary user code in a sandbox, so promote local tools to HTTP endpoints or MCP servers when you graduate. The YAML can switch between local and HTTP/MCP without touching the agent's instruction — only the \`tools:\` block changes.
 
-If you want a single manifest that runs in both modes today, prefer [HTTP](/docs/tools/http) or [MCP](/docs/tools/mcp) tools from the start.
+If you want a single manifest that runs in both local and hosted modes, prefer [HTTP](/docs/tools/http) or [MCP](/docs/tools/mcp) tools from the start.
 `;

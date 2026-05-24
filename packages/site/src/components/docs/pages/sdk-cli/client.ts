@@ -1,16 +1,20 @@
-export default `# @agntz/client
+export default `# Hosted client
 
-The hosted client. Calls agents on \`agntz.co\` or your self-hosted worker over HTTPS. Universal — runs in Node, the browser, edge runtimes, and Workers.
+The hosted client calls agents on \`agntz.co\` or your self-hosted worker over HTTPS. TypeScript uses \`@agntz/client\`; Python uses \`agntz.AgntzClient\` or \`agntz.AsyncAgntzClient\`. Both talk to the same worker API.
 
-\`\`\`bash
+\`\`\`bash {group=client-install select=ts}
 pnpm add @agntz/client
 \`\`\`
 
-Same API surface as [@agntz/sdk](/docs/sdk-cli/sdk) — code is portable between embedded and hosted modes.
+\`\`\`bash {group=client-install select=python}
+pip install agntz
+\`\`\`
+
+Same resource shape as the embedded SDK — code is portable between local and hosted modes once your local tools are HTTP or MCP tools.
 
 ## Basic usage
 
-\`\`\`ts
+\`\`\`ts [index.ts] {group=client-basic}
 import { AgntzClient } from "@agntz/client";
 
 const client = new AgntzClient({
@@ -18,104 +22,145 @@ const client = new AgntzClient({
   baseUrl: "https://api.agntz.co",       // or your self-hosted worker URL
 });
 
-// Non-streaming
 const { output, state } = await client.agents.run({
   agentId: "support-agent",
   input: { message: email.body, customerId: email.from },
 });
+\`\`\`
 
-// Streaming with cancellation
-const controller = new AbortController();
+\`\`\`python [main.py] {group=client-basic}
+import os
+from agntz import AgntzClient
+
+client = AgntzClient(
+    api_key=os.environ["AGNTZ_API_KEY"],
+    base_url="https://api.agntz.co",
+)
+
+result = client.agents.run(
+    agent_id="support-agent",
+    input={"message": email.body, "customerId": email.from},
+)
+output = result.output
+state = result.state
+\`\`\`
+
+## Async usage
+
+\`\`\`ts {group=client-async}
 for await (const event of client.agents.stream({
   agentId: "support-agent",
   input: { message: "Hello" },
-  signal: controller.signal,
 })) {
   if (event.type === "complete") console.log("output", event.output);
   if (event.type === "error") console.error(event.error);
 }
+\`\`\`
 
-// Runs lifecycle
-const run = await client.runs.start({ agentId: "support-agent", input: { /* ... */ } });
-const fresh = await client.runs.get(run.id);
-await client.runs.cancel(run.id);   // cascades to all descendants
+\`\`\`python {group=client-async}
+import os
+from agntz import AsyncAgntzClient
 
-// Traces
-const traces = await client.traces.list({ status: "error", limit: 20 });
-const detail = await client.traces.get(traces.rows[0].id);
+async with AsyncAgntzClient(
+    api_key=os.environ["AGNTZ_API_KEY"],
+    base_url="https://api.agntz.co",
+) as client:
+    async for event in client.agents.stream(
+        agent_id="support-agent",
+        input={"message": "Hello"},
+    ):
+        if event.type == "complete":
+            print("output", event.output)
+        if event.type == "error":
+            print("error", event.error)
 \`\`\`
 
 ## Constructor options
 
-\`\`\`ts
+\`\`\`ts {group=client-constructor}
 new AgntzClient({
   apiKey: "ar_live_...",
-  baseUrl?: "https://api.agntz.co",     // default
-  fetch?: typeof fetch,                  // override (e.g. for testing)
-  defaultHeaders?: Record<string, string>,
+  baseUrl: "https://api.agntz.co",
 });
+\`\`\`
+
+\`\`\`python {group=client-constructor}
+AgntzClient(
+    api_key="ar_live_...",
+    base_url="https://api.agntz.co",
+)
 \`\`\`
 
 ## API surface
 
-### \`client.agents.run({ agentId, input, sessionId? })\`
+### \`client.agents.run(...)\`
 
-Run an agent to completion. Returns \`{ output, state, runId, sessionId, replies }\`.
+Run an agent to completion. Returns \`{ output, state, sessionId, replies }\` in TypeScript and the same fields as Python attributes such as \`result.session_id\`.
 
-### \`client.agents.stream({ agentId, input, sessionId?, signal? })\`
+### \`client.agents.stream(...)\`
 
-Async iterator over SSE stream events. Always yields a terminal event (\`complete\` or \`error\`). Pass an \`AbortSignal\` to cancel mid-stream — the underlying request is aborted and the run is cancelled server-side.
+Streams SSE events. Always yields a terminal \`complete\` or \`error\` event.
 
 ### \`client.runs.*\`
 
-\`\`\`ts
+\`\`\`ts {group=client-runs}
+const run = await client.runs.start({ agentId, input: { /* ... */ } });
+const fresh = await client.runs.get(run.id);
+await client.runs.cancel(run.id);
+
 const { rows, nextCursor } = await client.runs.list({
   agentId,
-  status,        // "running" | "complete" | "error" | "cancelled"
+  status,
   limit,
-  cursor,
 });
+\`\`\`
 
-const run = await client.runs.get(runId);
-await client.runs.cancel(runId);                  // cascades
+\`\`\`python {group=client-runs}
+run = client.runs.start(agent_id=agent_id, input={})
+fresh = client.runs.get(run.id)
+client.runs.cancel(run.id)
 
-// Start a run without awaiting completion — useful for long-running workflows
-const handle = await client.runs.start({ agentId, input });
-// later
-const final = await client.runs.get(handle.id);
-
-// Multiplexed event stream for a run subtree (parent + descendants)
-for await (const ev of client.runs.stream({ runId: handle.id })) { /* ... */ }
+rows = client.runs.list(
+    agent_id=agent_id,
+    status="completed",
+    limit=20,
+)
 \`\`\`
 
 ### \`client.traces.*\`
 
-\`\`\`ts
+\`\`\`ts {group=client-traces}
 const trace = await client.traces.get(runId);
 const list = await client.traces.list({ status: "error" });
 await client.traces.delete(traceId);
+\`\`\`
 
-// Live spans as a run executes
-for await (const ev of client.traces.stream(runId)) {
-  if (ev.type === "span-end") console.log(ev.span.name, ev.span.durationMs);
-}
+\`\`\`python {group=client-traces}
+trace = client.traces.get(run_id)
+traces = client.traces.list(status="error")
+client.traces.delete(trace_id)
 \`\`\`
 
 ## Sessions
 
-Pass the same \`sessionId\` across calls to continue a conversation. The hosted runtime auto-loads and appends history.
+Pass the same session id across calls to continue a conversation. The hosted runtime auto-loads and appends history.
 
-\`\`\`ts
-await client.agents.run({ agentId: "support", input: "Hi",       sessionId: "user-42" });
+\`\`\`ts {group=client-sessions}
+await client.agents.run({ agentId: "support", input: "Hi", sessionId: "user-42" });
 await client.agents.run({ agentId: "support", input: "follow-up", sessionId: "user-42" });
+\`\`\`
+
+\`\`\`python {group=client-sessions}
+client.agents.run(agent_id="support", input="Hi", session_id="user-42")
+client.agents.run(agent_id="support", input="follow-up", session_id="user-42")
 \`\`\`
 
 Sessions are managed automatically and scoped to your user. See [Sessions](/docs/concepts/sessions).
 
 ## Errors
 
-\`\`\`ts
-import { AgntzError, AuthenticationError, NotFoundError, RateLimitError, StreamError } from "@agntz/client";
+\`\`\`ts {group=client-errors}
+import { AuthenticationError, NotFoundError, RateLimitError } from "@agntz/client";
 
 try {
   await client.agents.run({ agentId: "unknown", input: {} });
@@ -123,37 +168,44 @@ try {
   if (err instanceof NotFoundError) {
     // 404 — unknown agent id
   }
-  if (err instanceof AuthenticationError) {
-    // 401 — invalid or revoked API key
-  }
   if (err instanceof RateLimitError) {
-    // 429 — back off; err.retryAfter is the suggested delay (seconds)
-  }
-  if (err instanceof StreamError) {
-    // SSE protocol failure
+    // 429 — back off
   }
 }
 \`\`\`
 
-All errors extend \`AgntzError\`. The embedded runner re-exports the same types so error-handling code is portable.
+\`\`\`python {group=client-errors}
+from agntz import AuthenticationError, NotFoundError
+
+try:
+    client.agents.run(agent_id="unknown", input={})
+except NotFoundError:
+    # 404 — unknown agent id
+    pass
+except AuthenticationError:
+    # 401 — invalid or revoked API key
+    pass
+\`\`\`
 
 ## Authentication
 
-Two modes are accepted by the worker:
-
-- **External clients** — \`Authorization: Bearer ar_live_...\` (this is what \`@agntz/client\` sends). Keys are issued in **Settings → API Keys** on \`agntz.co\` or your self-hosted UI.
-- **Internal callers** (the app calling the worker) — \`X-Internal-Secret\` + \`userId\` in the body. See [HTTP API reference](/docs/deploy/http-api#authentication).
-
-For browser usage, **never embed an \`ar_live_*\` key client-side**. Proxy through your own backend and inject the key server-side.
+External clients send \`Authorization: Bearer ar_live_...\`. Keys are issued in **Settings → API Keys** on \`agntz.co\` or your self-hosted UI. For browser usage, never embed an \`ar_live_*\` key client-side; proxy through your own backend and inject the key server-side.
 
 ## Self-host with the same client
 
-The hosted client works against any agntz worker — the public \`api.agntz.co\` or your own deployment. Just point \`baseUrl\` at your worker URL and use an API key you minted there.
+The hosted client works against any Agntz worker — the public \`api.agntz.co\` or your own deployment.
 
-\`\`\`ts
+\`\`\`ts {group=client-self-host}
 const client = new AgntzClient({
   apiKey: process.env.AGNTZ_API_KEY!,
   baseUrl: "https://agntz-worker.mycompany.com",
 });
+\`\`\`
+
+\`\`\`python {group=client-self-host}
+client = AgntzClient(
+    api_key=os.environ["AGNTZ_API_KEY"],
+    base_url="https://agntz-worker.mycompany.com",
+)
 \`\`\`
 `;

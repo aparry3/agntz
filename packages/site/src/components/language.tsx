@@ -12,6 +12,7 @@ export type CodeVariant = {
   lang: CodeLanguage;
   code: string;
   filename?: string;
+  select?: SnippetLanguage;
 };
 
 type LanguageContextValue = {
@@ -148,8 +149,8 @@ export function LanguageCodeBlock({
 }) {
   const { language } = usePreferredLanguage();
   const variant =
-    variants.find((item) => item.lang === language) ??
-    variants.find((item) => item.lang === "ts") ??
+    variants.find((item) => (item.select ?? item.lang) === language) ??
+    variants.find((item) => (item.select ?? item.lang) === "ts") ??
     variants[0];
   if (!variant) return null;
   return (

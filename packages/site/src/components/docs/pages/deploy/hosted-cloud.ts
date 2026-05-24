@@ -16,7 +16,7 @@ The hosted edition at **agntz.co** gives you the same runtime plus a managed mul
 
 Create an agent in the UI, then call it with the same SDK code you'd use locally — just point the SDK at the hosted worker:
 
-\`\`\`ts
+\`\`\`ts {group=hosted-cloud-call}
 import { AgntzClient } from "@agntz/client";
 
 const client = new AgntzClient({
@@ -28,6 +28,21 @@ const { output } = await client.agents.run({
   agentId: "support-agent",     // the id you set in the UI editor
   input: { message: "Hello" },
 });
+\`\`\`
+
+\`\`\`python {group=hosted-cloud-call}
+import os
+from agntz import AgntzClient
+
+client = AgntzClient(
+    api_key=os.environ["AGNTZ_API_KEY"],
+    base_url="https://api.agntz.co",
+)
+
+result = client.agents.run(
+    agent_id="support-agent",     # the id you set in the UI editor
+    input={"message": "Hello"},
+)
 \`\`\`
 
 Every UI-side change is versioned, every run is traced — same observability model as embedded.

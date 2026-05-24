@@ -24,7 +24,14 @@ type Block =
   | { kind: "ol"; items: string[] }
   | { kind: "blockquote"; text: string }
   | { kind: "table"; headers: string[]; rows: string[][]; aligns: ("left" | "center" | "right")[] }
-  | { kind: "code"; lang: CodeLanguage; filename?: string; code: string; group?: string }
+  | {
+      kind: "code";
+      lang: CodeLanguage;
+      filename?: string;
+      code: string;
+      group?: string;
+      select?: "ts" | "python";
+    }
   | { kind: "codeGroup"; group: string; variants: CodeVariant[] }
   | { kind: "hr" };
 
@@ -46,13 +53,11 @@ export function parseDocs(markdown: string): ParsedDocs {
     const line = lines[i];
 
     // Fenced code block: ```lang [filename] {group=name}
-    const fence = /^```(\w+)?(?:\s+\[([^\]]+)\])?(?:\s+\{group=([A-Za-z0-9_-]+)\})?\s*$/.exec(
-      line,
-    );
+    const fence = /^```(\w+)?(?:\s+\[([^\]]+)\])?(?:\s+\{([^}]+)\})?\s*$/.exec(line);
     if (fence) {
       const rawLang = fence[1] ?? "text";
       const filename = fence[2];
-      const group = fence[3];
+      const meta = parseFenceMeta(fence[3]);
       const buf: string[] = [];
       i++;
       while (i < lines.length && !/^```\s*$/.test(lines[i])) {
@@ -74,7 +79,14 @@ export function parseDocs(markdown: string): ParsedDocs {
                   rawLang === "diff"
                 ? "ts"
                 : "text";
-      blocks.push({ kind: "code", lang: normalisedLang, filename, code: buf.join("\n"), group });
+      blocks.push({
+        kind: "code",
+        lang: normalisedLang,
+        filename,
+        code: buf.join("\n"),
+        group: meta.group,
+        select: meta.select,
+      });
       continue;
     }
 
@@ -217,12 +229,29 @@ function groupCodeBlocks(blocks: Block[]): Block[] {
         lang: candidate.lang,
         code: candidate.code,
         filename: candidate.filename,
+        select: candidate.select,
       });
       i++;
     }
     grouped.push({ kind: "codeGroup", group, variants });
   }
   return grouped;
+}
+
+function parseFenceMeta(value: string | undefined): {
+  group?: string;
+  select?: "ts" | "python";
+} {
+  const meta: { group?: string; select?: "ts" | "python" } = {};
+  if (!value) return meta;
+  for (const part of value.split(/\s+/)) {
+    const [key, raw] = part.split("=");
+    if (key === "group" && raw) meta.group = raw;
+    if ((key === "select" || key === "for") && (raw === "ts" || raw === "python")) {
+      meta.select = raw;
+    }
+  }
+  return meta;
 }
 
 function splitRow(line: string): string[] {

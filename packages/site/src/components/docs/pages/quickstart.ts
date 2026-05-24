@@ -1,11 +1,16 @@
 export default `# Quickstart
 
-The fastest path: write a YAML file, point \`@agntz/sdk\` at the directory, call it. No server, no signup, no infrastructure.
+The fastest path: write a YAML file, point an Agntz SDK at the directory, call it. No server, no signup, no infrastructure. The YAML is shared between TypeScript and Python; the client code follows each language's conventions.
 
 ## Install
 
-\`\`\`bash
+\`\`\`bash {group=quickstart-install select=ts}
 pnpm add @agntz/sdk
+export ANTHROPIC_API_KEY=sk-ant-...     # or OPENAI_API_KEY, OPENROUTER_API_KEY, etc.
+\`\`\`
+
+\`\`\`bash {group=quickstart-install select=python}
+pip install "agntz[litellm]"
 export ANTHROPIC_API_KEY=sk-ant-...     # or OPENAI_API_KEY, OPENROUTER_API_KEY, etc.
 \`\`\`
 
@@ -29,7 +34,7 @@ The agent's \`id\` is how you'll address it from code. \`kind: llm\` means a sin
 
 ## 2. Run it
 
-\`\`\`ts [index.ts]
+\`\`\`ts [index.ts] {group=quickstart-run}
 import { agntz } from "@agntz/sdk";
 
 const client = await agntz({ agents: "./agents" });
@@ -42,15 +47,35 @@ const result = await client.agents.run({
 console.log(result.output);
 \`\`\`
 
-\`\`\`bash
+\`\`\`python [main.py] {group=quickstart-run}
+from agntz import LiteLLMModelProvider, agntz
+
+client = agntz(
+    agents="./agents",
+    model_provider=LiteLLMModelProvider(),
+)
+
+result = client.agents.run(
+    agent_id="support",
+    input="How do I reset my password?",
+)
+
+print(result.output)
+\`\`\`
+
+\`\`\`bash {group=quickstart-command select=ts}
 node --experimental-strip-types index.ts
 \`\`\`
 
-That's it. The runner parses every \`.yaml\` file under \`./agents\`, validates them against the schema, registers them with an in-process runtime, and exposes the same \`client.agents.run / stream\`, \`client.runs.list\`, \`client.traces.get\` surface as the hosted SDK.
+\`\`\`bash {group=quickstart-command select=python}
+python main.py
+\`\`\`
 
-## 3. Stream tokens
+That's it. The SDK parses every \`.yaml\` file under \`./agents\`, validates it against the schema, registers it with the runtime, and exposes the same \`client.agents.run\`, \`client.runs.list\`, and \`client.traces.get\` surface as the hosted client.
 
-\`\`\`ts
+## 3. Stream or inspect
+
+\`\`\`ts {group=quickstart-stream}
 for await (const event of client.agents.stream({
   agentId: "support",
   input: "Walk me through password reset",
@@ -60,26 +85,48 @@ for await (const event of client.agents.stream({
 }
 \`\`\`
 
-See [Stream events](/docs/sdk-cli/sdk#stream-events) for the full event union.
+\`\`\`python {group=quickstart-stream}
+for event in client.agents.stream(
+    agent_id="support",
+    input="Walk me through password reset",
+):
+    if event.type == "complete":
+        print(event.output)
+\`\`\`
 
-## 4. Use the same code against the hosted cloud later
+TypeScript local runs expose token deltas for LLM streaming today. Python local runs expose start and complete events in this first slice; the hosted Python client streams the worker's SSE events.
 
-When you outgrow embedded mode — durable run history, multi-user isolation, agent management UI — change one line:
+## 4. Use the same call against the hosted cloud later
 
-\`\`\`diff
+When you outgrow embedded mode — durable run history, multi-user isolation, agent management UI — switch constructors and keep the same resource shape:
+
+\`\`\`diff {group=quickstart-hosted}
 - import { agntz } from "@agntz/sdk";
 + import { AgntzClient } from "@agntz/client";
 
 - const client = await agntz({ agents: "./agents" });
-+ const client = new AgntzClient({ apiKey: process.env.AGNTZ_API_KEY! });
++ const client = new AgntzClient({
++   apiKey: process.env.AGNTZ_API_KEY!,
++   baseUrl: "https://api.agntz.co",
++ });
 \`\`\`
 
-The \`agents.run\`, \`agents.stream\`, \`runs.list\`, and \`traces.get\` calls work identically. YAML manifests move to the hosted registry; in-process \`tools\` become MCP servers or HTTP endpoints.
+\`\`\`python {group=quickstart-hosted}
+import os
+from agntz import AgntzClient
+
+client = AgntzClient(
+    api_key=os.environ["AGNTZ_API_KEY"],
+    base_url="https://api.agntz.co",
+)
+\`\`\`
+
+The \`agents.run\`, \`runs.list\`, and \`traces.get\` calls work across local and hosted clients. YAML manifests move to the hosted registry; in-process local tools become MCP servers or HTTP endpoints.
 
 ## Next steps
 
 - **Add structured I/O.** Declare an [\`inputSchema\` and \`outputSchema\`](/docs/schema/input-state-output) to type-check the agent's contract.
 - **Add tools.** Wire up [HTTP](/docs/tools/http), [MCP](/docs/tools/mcp), or [local](/docs/tools/local) tools.
 - **Chain agents.** Compose multi-step workflows with [sequential and parallel pipelines](/docs/concepts/agent-kinds).
-- **Persist sessions.** Install \`@agntz/store-sqlite\` for [durable conversation history](/docs/concepts/sessions).
+- **Persist sessions.** Use SQLite for [durable conversation history](/docs/concepts/sessions).
 `;
