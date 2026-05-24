@@ -22,12 +22,12 @@
     "id": "support-flow",
     "kind": "sequential",
     "stateKey": "supportFlow",
-    "stepIds": ["classify", "summarize"]
+    "stepKeys": ["classify", "summarize"]
   },
   "parallel.yaml": {
     "id": "review-pack",
     "kind": "parallel",
     "stateKey": "reviewPack",
-    "stepIds": ["support", "tone"]
+    "branchKeys": ["support", "tone"]
   }
 }

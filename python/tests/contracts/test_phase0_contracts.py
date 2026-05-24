@@ -47,8 +47,11 @@ def test_manifest_kind_contract_fixtures_match_yaml() -> None:
         if "outputSchema" in expected:
             assert manifest["outputSchema"] == expected["outputSchema"]
 
-        if "stepIds" in expected:
-            assert [step["id"] for step in manifest["steps"]] == expected["stepIds"]
+        if "stepKeys" in expected:
+            assert [step["stateKey"] for step in manifest["steps"]] == expected["stepKeys"]
+
+        if "branchKeys" in expected:
+            assert [step["stateKey"] for step in manifest["branches"]] == expected["branchKeys"]
 
 
 def test_client_wire_contract_pins_hosted_request_and_stream_shape() -> None:

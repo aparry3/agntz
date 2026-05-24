@@ -4,11 +4,11 @@ description: Collects context and writes a support response.
 inputSchema:
   userQuery: string
 steps:
-  - id: classify
-    agent: support
+  - stateKey: classify
+    ref: support
     input:
       userQuery: "{{userQuery}}"
-  - id: summarize
+  - stateKey: summarize
     agent:
       id: summarizer
       kind: llm

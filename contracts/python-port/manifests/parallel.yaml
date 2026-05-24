@@ -3,12 +3,12 @@ kind: parallel
 description: Reviews an input with two independent agents.
 inputSchema:
   userQuery: string
-steps:
-  - id: support
-    agent: support
+branches:
+  - stateKey: support
+    ref: support
     input:
       userQuery: "{{userQuery}}"
-  - id: tone
+  - stateKey: tone
     agent:
       id: tone-reviewer
       kind: llm
