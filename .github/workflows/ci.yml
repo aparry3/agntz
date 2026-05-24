@@ -81,3 +81,7 @@ jobs:
       - name: Type check Python SDK
         working-directory: python
         run: python -m basedpyright
+
+      - name: Build Python SDK
+        working-directory: python
+        run: python -m build

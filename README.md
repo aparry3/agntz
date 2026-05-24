@@ -1,6 +1,6 @@
 # agntz
 
-A TypeScript SDK for defining, running, and evaluating AI agents. Agents are portable, JSON-serializable configurations — not code. Plug in any storage backend, any model provider, any tools.
+TypeScript and Python SDKs for defining, running, and evaluating AI agents. Agents are portable, JSON-serializable configurations — not code. Plug in any storage backend, any model provider, any tools.
 
 ```typescript
 import { createRunner, defineAgent } from "agntz";
@@ -32,8 +32,17 @@ console.log(result.output);
 
 ## Install
 
+TypeScript:
+
 ```bash
 npm install agntz
+```
+
+Python:
+
+```bash
+pip install agntz
+pip install "agntz[litellm]" # for local model execution through LiteLLM
 ```
 
 Set your API key:
