@@ -1,7 +1,10 @@
+"use client";
+
 import type { ReactNode } from "react";
 import { ACCENTS, type AccentName, TOKENS } from "./tokens";
 import { Card, H2, Lede, Row, Section, Stack } from "./primitives";
 import { ArrowIcon, CheckIcon, CodeIcon, ServerIcon, SparkIcon } from "./icons";
+import { LanguageToggle, usePreferredLanguage } from "../language";
 
 type Option = {
   tag: string;
@@ -64,6 +67,20 @@ const OPTIONS: Option[] = [
 
 export function RunItYourWay({ accent = "blue" }: { accent?: AccentName }) {
   const a = ACCENTS[accent];
+  const { language } = usePreferredLanguage();
+  const options = OPTIONS.map((option) =>
+    option.tag === "local"
+      ? {
+          ...option,
+          name: language === "python" ? "agntz" : "@agntz/sdk",
+          tagline:
+            language === "python"
+              ? "Embed it in your Python app."
+              : "Embed it in your Node app.",
+          cmd: language === "python" ? 'pip install "agntz[litellm]"' : "npm i @agntz/sdk",
+        }
+      : option,
+  );
 
   return (
     <Section id="run-it-your-way" kicker="Run it your way">
@@ -88,7 +105,7 @@ export function RunItYourWay({ accent = "blue" }: { accent?: AccentName }) {
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 18 }}>
-        {OPTIONS.map((o) => (
+        {options.map((o) => (
           <Card
             key={o.tag}
             style={{
@@ -130,6 +147,7 @@ export function RunItYourWay({ accent = "blue" }: { accent?: AccentName }) {
                   {o.tag}
                 </span>
               </Row>
+              {o.tag === "local" && <LanguageToggle compact label="Local runtime" />}
             </Row>
 
             <Stack gap={6}>

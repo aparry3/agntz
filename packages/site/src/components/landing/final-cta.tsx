@@ -1,15 +1,28 @@
+"use client";
+
 import { ACCENTS, type AccentName, TOKENS } from "./tokens";
 import { Btn, Card, H1, Lede, Row, Section, Stack } from "./primitives";
 import { ArrowIcon, ExternalIcon, GithubIcon } from "./icons";
+import { LanguageToggle, usePreferredLanguage } from "../language";
 
-const STEPS: [string, string, string][] = [
+const TS_STEPS: [string, string, string][] = [
   ["1.", "npm i @agntz/sdk", "install"],
   ["2.", "echo 'id: hello' > agents/hello.yaml", "define"],
   ["3.", "client.agents.run({ agentId: 'hello' })", "run"],
 ];
 
+const PYTHON_STEPS: [string, string, string][] = [
+  ["1.", "pip install \"agntz[litellm]\"", "install"],
+  ["2.", "echo 'id: hello' > agents/hello.yaml", "define"],
+  ["3.", "client.agents.run(agent_id='hello')", "run"],
+];
+
 export function FinalCTA({ accent = "blue" }: { accent?: AccentName }) {
   const a = ACCENTS[accent];
+  const { language } = usePreferredLanguage();
+  const steps = language === "python" ? PYTHON_STEPS : TS_STEPS;
+  const installPrefix = language === "python" ? "pip install" : "npm install";
+  const installPackage = language === "python" ? '"agntz[litellm]"' : "@agntz/sdk";
 
   return (
     <Section dark style={{ padding: "112px 0 120px" }}>
@@ -86,8 +99,8 @@ export function FinalCTA({ accent = "blue" }: { accent?: AccentName }) {
               }}
             >
               <span style={{ color: "rgba(244,241,233,0.45)" }}>$</span>
-              <span style={{ color: "rgba(244,241,233,0.75)" }}>npm install</span>
-              <span style={{ color: TOKENS.bg }}>@agntz/sdk</span>
+              <span style={{ color: "rgba(244,241,233,0.75)" }}>{installPrefix}</span>
+              <span style={{ color: TOKENS.bg }}>{installPackage}</span>
               <span
                 style={{
                   width: 1,
@@ -155,8 +168,13 @@ export function FinalCTA({ accent = "blue" }: { accent?: AccentName }) {
             >
               from zero to traced run
             </span>
+            <LanguageToggle
+              compact
+              label="CTA examples"
+              style={{ marginTop: 12, background: "rgba(244,241,233,0.05)" }}
+            />
             <Stack gap={10} style={{ marginTop: 14 }}>
-              {STEPS.map(([n, c, label]) => (
+              {steps.map(([n, c, label]) => (
                 <Stack
                   key={n}
                   gap={4}

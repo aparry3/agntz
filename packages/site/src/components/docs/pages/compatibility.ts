@@ -1,49 +1,72 @@
 export default `# Compatibility matrix
 
-What runs where, today. Embedded refers to \`@agntz/sdk\` (in-process). Hosted refers to both \`agntz.co\` and self-hosted workers (same codebase).
+What runs where, today. Embedded means in-process SDK execution: \`@agntz/sdk\` for TypeScript and \`agntz\` for Python. Hosted means \`agntz.co\` and self-hosted workers.
 
-| Feature | Embedded (\`@agntz/sdk\`) | Hosted (\`agntz.co\` / self-host) |
-|---|:---:|:---:|
-| LLM agents | ✓ | ✓ |
-| Sequential / parallel / tool kinds | ✓ | ✓ |
-| Local tools (in-process JS/TS) | ✓ | (use MCP / HTTP instead) |
-| HTTP tools | ✓ | ✓ |
-| HTTP tools — OAuth2 / token exchange | ✓ | ✓ |
-| MCP tools (raw URL + headers) | ✓ | ✓ |
-| Agent-as-tool | ✓ | ✓ |
-| Spawnable subagents | ✓ | ✓ |
-| Skills (\`use_skill\` tool) | ✓ | ✓ |
-| Reply tool (intermediate messages) | ✓ | ✓ |
-| Sessions | ✓ (memory or sqlite) | ✓ (managed) |
-| Runs & traces | ✓ (in-memory ring buffer) | ✓ (persisted in Postgres) |
-| Streaming for LLM agents | ✓ (full event stream) | ✓ |
-| Streaming for pipelines | ✓ (single \`complete\` event) | ✓ |
-| OpenTelemetry export | ✓ | ✓ |
-| \`{{env.X}}\` template refs | ✓ | (opt-in per server) |
-| \`{{secrets.X}}\` template refs | × | ✓ |
-| Versioning + pinning | × | ✓ |
-| Multi-user isolation | × | ✓ |
-| API key auth | × | ✓ |
-| Web UI (editor, playground, traces) | × | ✓ |
-| Evals UI | × | (roadmap) |
+| Feature | TS embedded | Python embedded | Hosted worker |
+|---|:---:|:---:|:---:|
+| LLM agents | ✓ | ✓ | ✓ |
+| Sequential / parallel / tool kinds | ✓ | ✓ | ✓ |
+| Local tools | ✓ (JS/TS) | ✓ (Python) | (use MCP / HTTP instead) |
+| HTTP tools | ✓ | ✓ | ✓ |
+| HTTP tools — OAuth2 / token exchange | ✓ | partial | ✓ |
+| MCP tools (raw URL + headers) | ✓ | ✓ (HTTP JSON-RPC) | ✓ |
+| Agent-as-tool | ✓ | ✓ | ✓ |
+| Spawnable subagents | ✓ | not yet | ✓ |
+| Skills (\`use_skill\` tool) | ✓ | not yet | ✓ |
+| Reply tool (intermediate messages) | ✓ | persisted messages only | ✓ |
+| Sessions | ✓ (memory or sqlite) | ✓ (memory or sqlite) | ✓ (managed) |
+| Runs & traces | ✓ (ring buffer / sqlite) | ✓ (memory or sqlite) | ✓ (Postgres) |
+| Local streaming for LLM agents | ✓ (full event stream) | start / complete snapshots | N/A |
+| Hosted SSE streaming | ✓ | ✓ | ✓ |
+| OpenTelemetry export | ✓ | not yet | ✓ |
+| \`{{env.X}}\` template refs | ✓ | not yet | opt-in per server |
+| \`{{secrets.X}}\` template refs | × | × | ✓ |
+| Versioning + pinning | × | × | ✓ |
+| Multi-user isolation | × | × | ✓ |
+| API key auth | × | × | ✓ |
+| Web UI (editor, playground, traces) | × | × | ✓ |
+| Evals UI | × | × | roadmap |
 
 ## Migration paths
 
 ### Embedded → hosted
 
-Most of the way is a one-line code change (see [@agntz/sdk → Switching to hosted](/docs/sdk-cli/sdk#switching-to-hosted)). The two things you'll have to fix up:
+Most of the way is a constructor change (see [Embedded SDK → Switching to hosted](/docs/sdk-cli/sdk#switching-to-hosted)). The main fixes are:
 
 - **Local tools** — promote to HTTP endpoints or MCP servers. The YAML \`tools:\` block is the only place the change is visible.
-- **\`{{env.X}}\` → \`{{secrets.X}}\`** — multi-tenant workers don't share an environment with your code. Use \`{{secrets.X}}\` and configure values in **Settings → Secrets**.
+- **\`{{env.X}}\` → \`{{secrets.X}}\`** — multi-tenant workers do not share an environment with your code. Use \`{{secrets.X}}\` and configure values in **Settings → Secrets**.
+
+### TypeScript embedded → Python embedded
+
+Keep the same YAML manifest. Translate only the host language code:
+
+\`\`\`ts {group=compat-run}
+await client.agents.run({
+  agentId: "support",
+  input: { message: "Hello" },
+  sessionId: "user-42",
+});
+\`\`\`
+
+\`\`\`python {group=compat-run}
+client.agents.run(
+    agent_id="support",
+    input={"message": "Hello"},
+    session_id="user-42",
+)
+\`\`\`
+
+The Python SDK follows Python naming conventions, so wire names become \`agent_id\` and \`session_id\` while YAML fields remain unchanged.
 
 ### Hosted → self-hosted
 
-The hosted client (\`@agntz/client\`) works against any worker — \`api.agntz.co\` or your own. Switch by setting \`baseUrl\` and using an API key minted on your self-hosted UI.
+The hosted clients work against any worker — \`api.agntz.co\` or your own. Switch by setting \`baseUrl\` / \`base_url\` and using an API key minted on your self-hosted UI.
 
 ## Resources
 
 - **GitHub:** [github.com/aparry3/agntz](https://github.com/aparry3/agntz) — source, issues, discussions.
 - **npm:** \`@agntz/sdk\`, \`@agntz/client\`, \`@agntz/store-sqlite\`, \`@agntz/store-postgres\`, \`@agntz/manifest\`.
+- **Python:** \`agntz\` package with optional \`agntz[litellm]\` local model support.
 - **License:** MIT.
 - **AI-friendly:** Every page exposes its raw markdown via the Copy button; the full corpus is at [/llms.txt](/llms.txt).
 `;

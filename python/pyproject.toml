@@ -1,0 +1,56 @@
+[project]
+name = "agntz"
+version = "0.1.0"
+description = "Python SDK and hosted client for Agntz"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Agntz" }]
+dependencies = [
+  "httpx>=0.28.0",
+  "pydantic>=2.8.0",
+  "PyYAML>=6.0.0",
+]
+
+[project.optional-dependencies]
+litellm = [
+  "litellm>=1.75.0",
+]
+dev = [
+  "build>=1.2.0",
+  "basedpyright>=1.31.0",
+  "pytest>=8.3.0",
+  "pytest-asyncio>=0.24.0",
+  "ruff>=0.8.0",
+]
+
+[project.scripts]
+agntz = "agntz.cli:main"
+
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agntz"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.basedpyright]
+include = ["src", "tests"]
+typeCheckingMode = "standard"
+pythonVersion = "3.11"
+reportUnknownMemberType = "none"
+reportUnknownVariableType = "none"
+reportUnknownArgumentType = "none"

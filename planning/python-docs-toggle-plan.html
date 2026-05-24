@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agntz Python + TypeScript Docs Toggle Plan</title>
+  <style>
+    :root {
+      --ink: #171321;
+      --muted: #5f5a6d;
+      --soft: #827c91;
+      --paper: #f7f1e6;
+      --panel: #fffaf1;
+      --panel-2: #efe5d3;
+      --line: #d2c3aa;
+      --accent: #b24a24;
+      --accent-2: #315f78;
+      --accent-3: #5f7a3a;
+      --warn: #a46d1f;
+      --code: #201b2b;
+      --code-text: #f5ead6;
+      --radius: 8px;
+      --shadow: 0 16px 50px rgba(45, 35, 20, 0.12);
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --serif: Georgia, "Times New Roman", serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(135deg, rgba(178, 74, 36, 0.08), transparent 34%),
+        linear-gradient(220deg, rgba(49, 95, 120, 0.10), transparent 40%),
+        var(--paper);
+      font-family: var(--sans);
+      line-height: 1.58;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+      border-bottom: 1px solid rgba(178, 74, 36, 0.35);
+    }
+
+    a:hover {
+      border-bottom-color: var(--accent);
+    }
+
+    .shell {
+      width: min(1180px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 22px 0;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .brand {
+      color: var(--ink);
+      font-weight: 750;
+      letter-spacing: 0.05em;
+    }
+
+    .hero {
+      padding: clamp(52px, 9vw, 104px) 0 48px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 340px;
+      gap: clamp(32px, 6vw, 72px);
+      align-items: start;
+    }
+
+    .eyebrow {
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      margin-bottom: 18px;
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0;
+      letter-spacing: 0;
+      line-height: 1.05;
+    }
+
+    h1 {
+      max-width: 880px;
+      font-family: var(--serif);
+      font-size: clamp(46px, 7vw, 86px);
+      font-weight: 500;
+    }
+
+    h2 {
+      margin-bottom: 20px;
+      font-family: var(--serif);
+      font-size: clamp(34px, 5vw, 54px);
+      font-weight: 500;
+    }
+
+    h3 {
+      margin-bottom: 10px;
+      font-size: 18px;
+      font-weight: 750;
+    }
+
+    .lede {
+      max-width: 760px;
+      margin: 26px 0 0;
+      color: var(--muted);
+      font-size: clamp(18px, 2.2vw, 22px);
+    }
+
+    .summary-card,
+    .panel,
+    .phase,
+    .note {
+      background: rgba(255, 250, 241, 0.82);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .summary-card {
+      padding: 22px;
+      position: sticky;
+      top: 18px;
+    }
+
+    .summary-card h2 {
+      margin-bottom: 14px;
+      font-family: var(--sans);
+      font-size: 15px;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .summary-card dl {
+      display: grid;
+      gap: 14px;
+      margin: 0;
+    }
+
+    .summary-card dt {
+      color: var(--soft);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .summary-card dd {
+      margin: 4px 0 0;
+      color: var(--ink);
+      font-weight: 650;
+    }
+
+    .toc {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 0 0 40px;
+    }
+
+    .toc a,
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 11px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255, 250, 241, 0.75);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    section {
+      padding: 52px 0;
+      border-top: 1px solid rgba(210, 195, 170, 0.72);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .panel {
+      padding: 24px;
+      box-shadow: none;
+    }
+
+    .panel p,
+    .phase p,
+    .note p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .phase-list {
+      display: grid;
+      gap: 16px;
+    }
+
+    .phase {
+      display: grid;
+      grid-template-columns: 92px minmax(0, 1fr);
+      gap: 20px;
+      padding: 22px;
+      box-shadow: none;
+    }
+
+    .phase-number {
+      color: var(--accent);
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    ul,
+    ol {
+      margin: 12px 0 0;
+      padding-left: 20px;
+      color: var(--muted);
+    }
+
+    li {
+      margin: 6px 0;
+    }
+
+    strong {
+      color: var(--ink);
+    }
+
+    code {
+      padding: 2px 5px;
+      border: 1px solid rgba(210, 195, 170, 0.75);
+      border-radius: 5px;
+      background: rgba(239, 229, 211, 0.72);
+      color: var(--ink);
+      font-family: var(--mono);
+      font-size: 0.9em;
+    }
+
+    pre {
+      overflow: auto;
+      margin: 16px 0 0;
+      padding: 16px 18px;
+      border-radius: var(--radius);
+      background: var(--code);
+      color: var(--code-text);
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.65;
+      white-space: pre;
+    }
+
+    pre code {
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      font-size: inherit;
+    }
+
+    .table-wrap {
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255, 250, 241, 0.82);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 760px;
+      font-size: 14px;
+    }
+
+    th,
+    td {
+      padding: 13px 14px;
+      border-bottom: 1px solid rgba(210, 195, 170, 0.72);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: rgba(239, 229, 211, 0.8);
+      color: var(--ink);
+      font-size: 12px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .note {
+      padding: 20px;
+      border-left: 4px solid var(--accent-2);
+      box-shadow: none;
+    }
+
+    .callout {
+      border-left-color: var(--accent-3);
+    }
+
+    .warning {
+      border-left-color: var(--warn);
+    }
+
+    footer {
+      padding: 42px 0 58px;
+      border-top: 1px solid var(--line);
+      color: var(--soft);
+      font-size: 13px;
+    }
+
+    @media (max-width: 920px) {
+      .hero,
+      .grid,
+      .phase {
+        grid-template-columns: 1fr;
+      }
+
+      .summary-card {
+        position: static;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="topbar">
+      <div class="brand">agntz planning</div>
+      <div>Docs language toggle - May 24, 2026</div>
+    </div>
+
+    <header class="hero">
+      <div>
+        <div class="eyebrow">Pre-merge documentation plan</div>
+        <h1>Python and TypeScript docs toggle for Agntz</h1>
+        <p class="lede">
+          The Python SDK is now on the branch, but the public site still reads as
+          TypeScript-first. This plan adds a language toggle to docs and landing
+          snippets so Python users can follow the same path from install to agent
+          execution without translating TypeScript examples by hand.
+        </p>
+      </div>
+
+      <aside class="summary-card" aria-label="Plan summary">
+        <h2>Summary</h2>
+        <dl>
+          <div>
+            <dt>Primary surfaces</dt>
+            <dd><code>/docs</code> and landing snippets</dd>
+          </div>
+          <div>
+            <dt>Languages</dt>
+            <dd>TypeScript and Python</dd>
+          </div>
+          <div>
+            <dt>Core constraint</dt>
+            <dd>Shared YAML, language-specific SDK calls</dd>
+          </div>
+          <div>
+            <dt>Output</dt>
+            <dd>Reusable toggle, updated docs, verified site build</dd>
+          </div>
+        </dl>
+      </aside>
+    </header>
+
+    <nav class="toc" aria-label="Page contents">
+      <a href="#principles">Principles</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#docs-coverage">Docs coverage</a>
+      <a href="#landing">Landing page</a>
+      <a href="#phases">Phases</a>
+      <a href="#verification">Verification</a>
+    </nav>
+
+    <section id="principles">
+      <h2>Design principles</h2>
+      <div class="grid">
+        <article class="panel">
+          <h3>One concept path</h3>
+          <p>
+            Users should learn the same Agntz concepts regardless of language:
+            YAML manifests, local SDK, hosted client, sessions, runs, traces,
+            tools, and deployment.
+          </p>
+        </article>
+        <article class="panel">
+          <h3>Shared YAML stays shared</h3>
+          <p>
+            Agent definitions are the portable contract. YAML snippets should
+            not be duplicated unless the feature itself differs by runtime.
+          </p>
+        </article>
+        <article class="panel">
+          <h3>Language-specific code toggles</h3>
+          <p>
+            SDK snippets should switch between TypeScript and Python at the
+            same point in the reading flow, similar to common docs systems like
+            LangChain.
+          </p>
+        </article>
+        <article class="panel">
+          <h3>No false parity claims</h3>
+          <p>
+            The docs should clearly mark first-slice gaps, such as local Python
+            token streaming and the eval product not being reimplemented yet.
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <section id="architecture">
+      <h2>Implementation architecture</h2>
+      <div class="phase-list">
+        <article class="phase">
+          <div class="phase-number">Layer 1</div>
+          <div>
+            <h3>Shared language preference</h3>
+            <p>
+              Add a docs/site language state with <code>"ts"</code> and
+              <code>"python"</code>. Persist it to <code>localStorage</code>,
+              optionally hydrate from <code>?lang=python</code>, and expose a
+              compact segmented control at the top of docs pages.
+            </p>
+          </div>
+        </article>
+
+        <article class="phase">
+          <div class="phase-number">Layer 2</div>
+          <div>
+            <h3>Grouped code fences in docs markdown</h3>
+            <p>
+              Extend <code>packages/site/src/components/docs/markdown.tsx</code>
+              so paired fences render as one language-aware snippet.
+            </p>
+            <pre><code>```ts [index.ts] {group=quickstart-run}
+...
+```
+
+```python [main.py] {group=quickstart-run}
+...
+```</code></pre>
+            <p>
+              Ungrouped YAML, bash, HTTP, and text snippets remain always
+              visible. Raw markdown and <code>/llms.txt</code> should still
+              include both language examples.
+            </p>
+          </div>
+        </article>
+
+        <article class="phase">
+          <div class="phase-number">Layer 3</div>
+          <div>
+            <h3>Code block language support</h3>
+            <p>
+              Add Python highlighting to
+              <code>packages/site/src/components/landing/code-block.tsx</code>
+              and let docs code blocks pass <code>lang="python"</code>. Keep
+              copy behavior scoped to the visible snippet in rendered docs.
+            </p>
+          </div>
+        </article>
+
+        <article class="phase">
+          <div class="phase-number">Layer 4</div>
+          <div>
+            <h3>Landing snippet toggle</h3>
+            <p>
+              Reuse the same language state or a small matching hook for the
+              landing page. Hero snippets, install commands, and CTA snippets
+              should switch between TypeScript and Python.
+            </p>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section id="docs-coverage">
+      <h2>Docs coverage</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Page</th>
+              <th>Current issue</th>
+              <th>Planned update</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>/docs/quickstart</code></td>
+              <td>Install and runner snippets are TypeScript-only.</td>
+              <td>Add Python install and <code>agntz(...)</code> local run snippets behind the toggle.</td>
+            </tr>
+            <tr>
+              <td><code>/docs/sdk-cli/sdk</code></td>
+              <td>Embedded SDK page only describes <code>@agntz/sdk</code>.</td>
+              <td>Document TypeScript embedded and Python embedded side by side.</td>
+            </tr>
+            <tr>
+              <td><code>/docs/sdk-cli/client</code></td>
+              <td>Hosted client examples are TypeScript-only.</td>
+              <td>Add <code>AgntzClient</code> and <code>AsyncAgntzClient</code> Python snippets.</td>
+            </tr>
+            <tr>
+              <td><code>/docs/tools/local</code></td>
+              <td>Local tools page assumes Zod and TypeScript functions.</td>
+              <td>Add Python <code>tool(...)</code> and Pydantic examples.</td>
+            </tr>
+            <tr>
+              <td><code>/docs/concepts/sessions</code></td>
+              <td>Session examples use <code>sessionId</code> only.</td>
+              <td>Toggle <code>sessionId</code> and <code>session_id</code> examples and explain shared behavior.</td>
+            </tr>
+            <tr>
+              <td><code>/docs/concepts/runs-and-traces</code></td>
+              <td>Examples target TS resources.</td>
+              <td>Add Python <code>client.runs</code>, <code>client.traces</code>, and SQLite snippets.</td>
+            </tr>
+            <tr>
+              <td><code>/docs/deploy/hosted-cloud</code></td>
+              <td>Hosted call examples are TypeScript-only.</td>
+              <td>Show both hosted TS and Python client calls against the same worker.</td>
+            </tr>
+            <tr>
+              <td><code>/docs/compatibility</code></td>
+              <td>Compatibility matrix predates Python SDK.</td>
+              <td>Add Python embedded column or notes and mark known first-slice gaps.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="landing">
+      <h2>Landing page snippet updates</h2>
+      <div class="grid">
+        <article class="panel">
+          <h3>Hero</h3>
+          <ul>
+            <li>Keep <code>agent.yaml</code> as the shared first tab.</li>
+            <li>Toggle <code>runner.ts</code> and <code>runner.py</code>.</li>
+            <li>Toggle install pill between <code>npm install @agntz/sdk</code> and <code>pip install "agntz[litellm]"</code>.</li>
+          </ul>
+        </article>
+        <article class="panel">
+          <h3>The Shift</h3>
+          <ul>
+            <li>Keep the declarative YAML example shared.</li>
+            <li>Toggle the final call snippet between <code>client.agents.run({...})</code> and <code>client.agents.run(...)</code>.</li>
+            <li>Do not make the comparison feel like a language war. The point is runtime vs hand-wired loop.</li>
+          </ul>
+        </article>
+        <article class="panel">
+          <h3>Final CTA</h3>
+          <ul>
+            <li>Toggle install and run command lines.</li>
+            <li>Keep the CTA visually compact and first-action oriented.</li>
+          </ul>
+        </article>
+        <article class="panel">
+          <h3>Audit</h3>
+          <ul>
+            <li>Search all landing <code>CodeBlock</code> usages.</li>
+            <li>Add Python alternatives only where the snippet represents SDK usage.</li>
+            <li>Do not duplicate Docker, YAML, or conceptual examples unnecessarily.</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section id="phases">
+      <h2>Implementation phases</h2>
+      <div class="phase-list">
+        <article class="phase">
+          <div class="phase-number">Phase 1</div>
+          <div>
+            <h3>Docs language toggle infrastructure</h3>
+            <p>
+              Add provider, hook, segmented toggle component, Python code
+              highlighting, and grouped markdown rendering.
+            </p>
+            <ul>
+              <li>Commit: <code>site: add docs language toggle infrastructure</code></li>
+              <li>Expected files: docs markdown renderer, code block, docs page shell, new toggle component.</li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="phase">
+          <div class="phase-number">Phase 2</div>
+          <div>
+            <h3>Add Python SDK snippets to docs</h3>
+            <p>
+              Update priority docs pages with grouped TypeScript/Python snippets,
+              shared YAML, and precise parity wording.
+            </p>
+            <ul>
+              <li>Commit: <code>docs: add python sdk snippets</code></li>
+              <li>Focus pages: quickstart, SDK, client, local tools, sessions, runs and traces.</li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="phase">
+          <div class="phase-number">Phase 3</div>
+          <div>
+            <h3>Add Python landing snippets</h3>
+            <p>
+              Update hero, install pill, shift snippet, and final CTA so the
+              product site signals Python support immediately.
+            </p>
+            <ul>
+              <li>Commit: <code>site: add python landing snippets</code></li>
+              <li>Verify desktop and mobile layouts because the hero is dense.</li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="phase">
+          <div class="phase-number">Phase 4</div>
+          <div>
+            <h3>Compatibility and release readiness</h3>
+            <p>
+              Update compatibility language, raw markdown behavior, and
+              <code>/llms.txt</code> expectations, then run the full site checks.
+            </p>
+            <ul>
+              <li>Commit: <code>docs: update compatibility for python sdk</code></li>
+              <li>Make known gaps explicit without weakening the quickstart path.</li>
+            </ul>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section id="verification">
+      <h2>Verification checklist</h2>
+      <div class="grid">
+        <article class="panel">
+          <h3>Automated checks</h3>
+          <ul>
+            <li><code>pnpm --filter @agntz/site typecheck</code></li>
+            <li><code>pnpm --filter @agntz/site build</code></li>
+            <li><code>pnpm --filter @agntz/manifest typecheck</code> if shared docs imports move.</li>
+            <li><code>git diff --check</code></li>
+          </ul>
+        </article>
+
+        <article class="panel">
+          <h3>Manual inspection</h3>
+          <ul>
+            <li><code>/docs</code> top-level toggle placement.</li>
+            <li><code>/docs/quickstart</code> TS and Python snippet switching.</li>
+            <li><code>/docs/sdk-cli/sdk</code> and <code>/docs/sdk-cli/client</code>.</li>
+            <li>Landing hero at desktop and mobile widths.</li>
+          </ul>
+        </article>
+      </div>
+
+      <div class="note callout" style="margin-top: 18px;">
+        <h3>Definition of done</h3>
+        <p>
+          A Python user can land on the site, switch to Python, install the
+          package, load the same YAML, run an agent locally, use a hosted client,
+          understand sessions/traces/tools, and see the current parity limits
+          without leaving the docs flow.
+        </p>
+      </div>
+    </section>
+
+    <section id="risks">
+      <h2>Risks and mitigations</h2>
+      <div class="grid">
+        <article class="note warning">
+          <h3>Parser complexity</h3>
+          <p>
+            Grouped markdown fences should stay simple. Avoid a general MDX-like
+            parser. Use one explicit <code>{group=name}</code> convention and
+            test it with the existing docs pages.
+          </p>
+        </article>
+        <article class="note warning">
+          <h3>Stale snippets</h3>
+          <p>
+            Keep snippets aligned with the Python README and tests. Favor compact
+            examples that map to covered API surfaces instead of aspirational
+            samples.
+          </p>
+        </article>
+        <article class="note warning">
+          <h3>Landing clutter</h3>
+          <p>
+            Do not add a second full product narrative for Python. The landing
+            page should signal both SDKs while preserving the existing focused
+            story: declarative YAML, runtime owns the loop.
+          </p>
+        </article>
+        <article class="note warning">
+          <h3>Raw docs behavior</h3>
+          <p>
+            Rendered docs can hide one snippet at a time, but raw markdown and
+            <code>/llms.txt</code> should preserve both language variants for AI
+            readers and copy workflows.
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <footer>
+      <div>
+        Plan file: <code>planning/python-docs-toggle-plan.html</code>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

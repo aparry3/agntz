@@ -1,9 +1,12 @@
+"use client";
+
 import { ACCENTS, type AccentName, TOKENS } from "./tokens";
 import { Card, H2, Lede, Pill, Row, Section } from "./primitives";
 import { ArrowIcon } from "./icons";
 import { CodeBlock } from "./code-block";
+import { LanguageToggle, usePreferredLanguage } from "../language";
 
-const LIB_CODE = `// With a library — you wire the agent yourself.
+const LIB_CODE_TS = `// With a library — you wire the agent yourself.
 import Anthropic from '@anthropic-ai/sdk';
 
 const client = new Anthropic();
@@ -58,6 +61,63 @@ while (safety++ < 10) {
     { role: 'user',      content: results }];
 }`;
 
+const LIB_CODE_PY = `# With a library — you wire the agent yourself.
+import anthropic
+import httpx
+
+client = anthropic.Anthropic()
+tools = [{
+    "name": "get_forecast",
+    "description": "Current weather for a coordinate.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "latitude": {"type": "number"},
+            "longitude": {"type": "number"},
+            "current_weather": {"type": "boolean"},
+        },
+        "required": ["latitude", "longitude"],
+    },
+}]
+
+def call_tool(name, args):
+    if name != "get_forecast":
+        raise RuntimeError("unknown")
+    response = httpx.get(
+        "https://api.open-meteo.com/v1/forecast",
+        params=args,
+    )
+    return response.json()
+
+messages = [{"role": "user", "content": input["message"]}]
+safety = 0
+
+while safety < 10:
+    safety += 1
+    resp = client.messages.create(
+        model="claude-sonnet-4-6",
+        system="You are a friendly weather assistant...",
+        tools=tools,
+        messages=messages,
+        max_tokens=1024,
+    )
+
+    # You own retries, token windowing, summarization,
+    # session persistence, tracing, error handling...
+
+    if resp.stop_reason == "end_turn":
+        break
+    uses = [block for block in resp.content if block.type == "tool_use"]
+    results = [{
+        "type": "tool_result",
+        "tool_use_id": use.id,
+        "content": call_tool(use.name, use.input),
+    } for use in uses]
+    messages += [
+        {"role": "assistant", "content": resp.content},
+        {"role": "user", "content": results},
+    ]`;
+
 const AGNTZ_CODE = `# With agntz — the runtime owns the loop.
 id: weather-bot
 kind: llm
@@ -79,7 +139,7 @@ tools:
     method: GET`;
 
 const ROWS: [string, string][] = [
-  ["200+ lines of TypeScript", "30 lines of YAML"],
+  ["200+ lines of glue code", "30 lines of YAML"],
   ["Import, compose, wire tools", "Define, run"],
   ["You own the agent loop", "The runtime owns the loop"],
   ["Hand-write tool adapters", "Point at your OpenAPI or manifest"],
@@ -88,6 +148,14 @@ const ROWS: [string, string][] = [
 
 export function TheShift({ accent = "blue" }: { accent?: AccentName }) {
   const a = ACCENTS[accent];
+  const { language } = usePreferredLanguage();
+  const libraryCode = language === "python" ? LIB_CODE_PY : LIB_CODE_TS;
+  const libraryLabel = language === "python" ? "anthropic" : "@anthropic-ai/sdk";
+  const libraryFilename = language === "python" ? "weather-bot.py" : "weather-bot.ts";
+  const runSnippet =
+    language === "python"
+      ? "client.agents.run(agent_id=\"weather-bot\", input={...})"
+      : "client.agents.run({...})";
 
   return (
     <Section id="shift" kicker="The shift" style={{ background: TOKENS.surface }}>
@@ -130,8 +198,9 @@ export function TheShift({ accent = "blue" }: { accent?: AccentName }) {
               />
               <span style={{ fontWeight: 600, fontSize: 15 }}>With a library</span>
               <Pill mono style={{ marginLeft: 4 }}>
-                @anthropic-ai/sdk
+                {libraryLabel}
               </Pill>
+              <LanguageToggle compact label="Library example" />
             </Row>
             <span style={{ fontSize: 13, color: TOKENS.text2 }}>
               Primitives. You build the agent.
@@ -228,8 +297,8 @@ export function TheShift({ accent = "blue" }: { accent?: AccentName }) {
               imperative · same weather-bot, hand-wired
             </span>
           </Row>
-          <CodeBlock filename="weather-bot.ts" lang="ts">
-            {LIB_CODE}
+          <CodeBlock filename={libraryFilename} lang={language === "python" ? "python" : "ts"}>
+            {libraryCode}
           </CodeBlock>
         </div>
         <div>
@@ -268,7 +337,7 @@ export function TheShift({ accent = "blue" }: { accent?: AccentName }) {
             }}
           >
             <span style={{ color: TOKENS.muted }}>$</span>
-            <span style={{ color: TOKENS.ink }}>client.agents.run(&#123;...&#125;)</span>
+            <span style={{ color: TOKENS.ink }}>{runSnippet}</span>
             <span style={{ flex: 1 }} />
             <span style={{ color: TOKENS.muted }}>// that&apos;s the whole loop</span>
           </div>

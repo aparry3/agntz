@@ -67,12 +67,31 @@ const YAML_RULES: Rule[] = [
   { re: /\b\d+(?:\.\d+)?\b/g, color: "#1F7A4D" },
 ];
 
+const PYTHON_RULES: Rule[] = [
+  { re: /#[^\n]*/g, color: "#7c8a7e" },
+  {
+    re: /'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|'''[\s\S]*?'''|"""[\s\S]*?"""/g,
+    color: "#7a5d2a",
+  },
+  {
+    re: /\b(import|from|as|class|def|return|async|await|with|for|in|if|elif|else|try|except|finally|True|False|None)\b/g,
+    color: "#7e3b8c",
+  },
+  { re: /\bself\b|\bos\b|\bprint\b/g, color: "#7e3b8c" },
+  { re: /\b\d+(?:\.\d+)?\b/g, color: "#1F7A4D" },
+  { re: /\b([A-Z][A-Za-z0-9_]*)\b/g, color: "#2A4A75" },
+];
+
 export function highlightTS(code: string): ReactNode[] {
   return renderTokens(String(code ?? ""), TS_RULES);
 }
 
 export function highlightYAML(code: string): ReactNode[] {
   return renderTokens(String(code ?? ""), YAML_RULES);
+}
+
+export function highlightPython(code: string): ReactNode[] {
+  return renderTokens(String(code ?? ""), PYTHON_RULES);
 }
 
 function renderTokens(code: string, rules: Rule[]): ReactNode[] {
@@ -97,14 +116,21 @@ export function CodeBlock({
   style,
 }: {
   children: string;
-  lang?: "ts" | "yaml";
+  lang?: "ts" | "yaml" | "python" | "bash" | "text";
   filename?: string;
   copy?: boolean;
   wrap?: boolean;
   style?: CSSProperties;
 }) {
   const code = String(children).replace(/^\n/, "").replace(/\n$/, "");
-  const hl = lang === "yaml" ? renderTokens(code, YAML_RULES) : renderTokens(code, TS_RULES);
+  const hl =
+    lang === "yaml"
+      ? renderTokens(code, YAML_RULES)
+      : lang === "python"
+        ? renderTokens(code, PYTHON_RULES)
+        : lang === "bash" || lang === "text"
+          ? renderTokens(code, [])
+          : renderTokens(code, TS_RULES);
   return (
     <div
       style={{

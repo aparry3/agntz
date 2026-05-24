@@ -1,0 +1,24 @@
+id: review-pack
+kind: parallel
+description: Reviews an input with two independent agents.
+inputSchema:
+  userQuery: string
+branches:
+  - stateKey: support
+    ref: support
+    input:
+      userQuery: "{{userQuery}}"
+  - stateKey: tone
+    agent:
+      id: tone-reviewer
+      kind: llm
+      model:
+        provider: anthropic
+        name: claude-sonnet-4.5
+      instruction: Check the tone of the answer.
+      prompt: "{{userQuery}}"
+    input:
+      userQuery: "{{userQuery}}"
+output:
+  support: "{{support.answer}}"
+  tone: "{{tone}}"

@@ -1,0 +1,33 @@
+{
+  "simple-llm.yaml": {
+    "id": "support",
+    "kind": "llm",
+    "stateKey": "support",
+    "model": {
+      "provider": "openai",
+      "name": "gpt-5.4"
+    },
+    "outputSchema": {
+      "answer": "string",
+      "confidence": "number"
+    }
+  },
+  "local-tool.yaml": {
+    "id": "calculator",
+    "kind": "tool",
+    "stateKey": "calculator",
+    "toolKind": "local"
+  },
+  "sequential.yaml": {
+    "id": "support-flow",
+    "kind": "sequential",
+    "stateKey": "supportFlow",
+    "stepKeys": ["classify", "summarize"]
+  },
+  "parallel.yaml": {
+    "id": "review-pack",
+    "kind": "parallel",
+    "stateKey": "reviewPack",
+    "branchKeys": ["support", "tone"]
+  }
+}

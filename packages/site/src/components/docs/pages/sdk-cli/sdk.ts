@@ -1,16 +1,20 @@
-export default `# @agntz/sdk
+export default `# Embedded SDK
 
-The embedded runner. Reads YAML manifests from disk, registers them in an in-process runtime, and runs them locally with no network hop. Same API shape as [@agntz/client](/docs/sdk-cli/client) — code is portable between embedded and hosted modes.
+The embedded runner reads YAML manifests from disk, registers them in an in-process runtime, and runs them locally with no network hop. Use \`@agntz/sdk\` in TypeScript or \`agntz\` in Python. Both load the same agent YAML and expose the same resource shape with language-native option names.
 
-\`\`\`bash
+\`\`\`bash {group=sdk-install select=ts}
 pnpm add @agntz/sdk
 \`\`\`
 
-Node 20+. Universal SDK consumers (browsers, edge) should use \`@agntz/client\` instead — the SDK reads YAML from the filesystem.
+\`\`\`bash {group=sdk-install select=python}
+pip install "agntz[litellm]"
+\`\`\`
+
+Node 20+ for TypeScript. Python 3.11+ for Python. Universal clients that cannot read from the local filesystem should use the hosted client instead.
 
 ## Basic usage
 
-\`\`\`ts
+\`\`\`ts [index.ts] {group=sdk-basic}
 import { agntz, tool, z } from "@agntz/sdk";
 
 const client = await agntz({
@@ -28,60 +32,85 @@ const client = await agntz({
   },
 });
 
-// Non-streaming
 const { output, state } = await client.agents.run({
   agentId: "support",
   input: { message: "Hello" },
 });
+\`\`\`
 
-// Streaming
-for await (const event of client.agents.stream({
-  agentId: "support",
-  input: { message: "Hello" },
-})) {
-  if (event.type === "reply") process.stdout.write(event.text);
-  if (event.type === "complete") console.log("\\nfinal:", event.output);
-}
+\`\`\`python [main.py] {group=sdk-basic}
+from pydantic import BaseModel
+from agntz import LiteLLMModelProvider, agntz, tool
 
-// Runs & traces (in-memory ring buffer, default 1000)
-const { rows } = await client.runs.list({ limit: 10 });
-const trace = await client.traces.get(rows[0].id);
+
+class AddInput(BaseModel):
+    a: float
+    b: float
+
+
+def add(args: AddInput) -> float:
+    return args.a + args.b
+
+
+client = agntz(
+    agents="./agents",
+    tools=[
+        tool(
+            name="add",
+            description="Add two numbers and return the sum",
+            input_schema=AddInput,
+            execute=add,
+        )
+    ],
+    model_provider=LiteLLMModelProvider(),
+)
+
+result = client.agents.run(
+    agent_id="support",
+    input={"message": "Hello"},
+)
+output = result.output
+state = result.state
 \`\`\`
 
 ## \`agntz(options)\`
 
-Returns an initialized client. Most fields are optional.
+Returns an initialized local client. Validation errors throw at startup, so misconfigured agents do not make it past process boot.
 
-| Field | Type | Description |
+| TypeScript option | Python option | Description |
 |---|---|---|
-| \`agents\` | \`string\` | Path to a directory of \`.yaml\` files, or a single \`.yaml\` file |
-| \`tools\` | \`ToolDefinition[]\` | [Local tools](/docs/tools/local) — array of \`tool({...})\` definitions |
-| \`store\` | \`Store\` | Optional persistence (e.g. \`sqliteStore(path)\` from \`@agntz/sdk/sqlite\`) |
-| \`skills\` | \`SkillStore\` | Skill registry resolving \`use_skill\` references |
-| \`telemetry\` | \`TelemetryOptions\` | Optional OpenTelemetry tracer + recording flags |
-| \`onEvent\` | \`(event) => void\` | Synchronous event hook fired for every stream event (across all runs) |
-| \`defaultModel\` | \`ModelConfig\` | Default \`provider\` + \`name\` for agents missing \`model:\` |
-
-Loading is **sync from the caller's perspective** — \`agntz\` returns a promise that resolves once all manifests have been parsed, validated, and registered. Validation errors throw at this point, so misconfigured agents never make it past startup.
+| \`agents\` | \`agents\` | Path to a directory of \`.yaml\` files |
+| \`tools\` | \`tools\` | Local tool definitions |
+| \`store\` | \`store\` | Optional persistence |
+| \`defaultModel\` | \`model_provider\` | Python passes a concrete provider; TypeScript can default model config |
+| \`onEvent\` | N/A | TypeScript event hook for full local event stream |
 
 ## Runtime API
 
-### \`client.agents.run({ agentId, input, sessionId? })\`
+### Run an agent
 
-Run an agent to completion. Returns \`{ output, state, runId, sessionId, replies }\`.
-
-\`\`\`ts
-const { output, state } = await client.agents.run({
+\`\`\`ts {group=sdk-run}
+const { output, state, sessionId } = await client.agents.run({
   agentId: "summarize",
   input: { text: longArticle },
+  sessionId: "user-42",
 });
 \`\`\`
 
-### \`client.agents.stream({ agentId, input, sessionId?, signal? })\`
+\`\`\`python {group=sdk-run}
+result = client.agents.run(
+    agent_id="summarize",
+    input={"text": long_article},
+    session_id="user-42",
+)
+output = result.output
+state = result.state
+session_id = result.session_id
+\`\`\`
 
-Async iterator over stream events. Always yields a terminal event (\`complete\` or \`error\`).
+### Stream or inspect
 
-\`\`\`ts
+\`\`\`ts {group=sdk-stream}
 for await (const event of client.agents.stream({
   agentId: "summarize",
   input: { text: longArticle },
@@ -92,57 +121,35 @@ for await (const event of client.agents.stream({
 }
 \`\`\`
 
-### \`client.runs.*\`
-
-\`\`\`ts
-const { rows, nextCursor } = await client.runs.list({ agentId, status, limit, cursor });
-const run = await client.runs.get(runId);
-await client.runs.cancel(runId);              // cascades to descendant runs
+\`\`\`python {group=sdk-stream}
+for event in client.agents.stream(
+    agent_id="summarize",
+    input={"text": long_article},
+):
+    if event.type == "complete":
+        print(event.output)
 \`\`\`
 
-In embedded mode runs live in a ring buffer (default capacity 1000); install \`@agntz/store-sqlite\` for durability.
+TypeScript local streaming includes token deltas and tool-loop events. Python local streaming currently emits start and complete snapshots; use the hosted Python client for full worker SSE streaming.
 
-### \`client.traces.*\`
+### Runs and traces
 
-\`\`\`ts
-const trace = await client.traces.get(runId);
-for await (const event of client.traces.stream(runId)) {
-  if (event.type === "span-end") console.log(event.span.name, event.span.durationMs);
-}
+\`\`\`ts {group=sdk-runs}
+const { rows } = await client.runs.list({ agentId, status, limit: 10 });
+const run = await client.runs.get(rows[0].id);
+const trace = await client.traces.get(rows[0].id);
 \`\`\`
 
-### \`client.manifests\`
-
-A \`Map<string, ManifestRecord>\` of all loaded agents. Useful for introspection — e.g. listing every agent at boot time.
-
-\`\`\`ts
-for (const [id, manifest] of client.manifests) {
-  console.log(id, manifest.kind, manifest.description);
-}
+\`\`\`python {group=sdk-runs}
+runs = client.runs.list(agent_id=agent_id, status="completed")
+run = client.runs.get(runs[0].id)
+trace_rows = client.traces.list(agent_id=agent_id)
+trace = client.traces.get(trace_rows["rows"][0]["traceId"])
 \`\`\`
 
-## Stream events
+## Persistence
 
-| \`event.type\` | When | Payload |
-|---|---|---|
-| \`start\` | First event of a run | \`{ runId, kind }\` |
-| \`text-delta\` | Streaming token from the model | \`{ text }\` |
-| \`tool-call-start\` | Model invoked a tool | \`{ toolCall }\` |
-| \`tool-call-end\` | Tool returned | \`{ toolCall, result }\` |
-| \`reply\` | Model called the \`reply\` tool (if enabled) | \`{ text }\` |
-| \`step-complete\` | One tool-loop iteration finished | \`{ step }\` |
-| \`complete\` | Terminal — full result | \`{ output, state, usage }\` |
-| \`error\` | Terminal — failure | \`{ error }\` |
-
-Always handle \`complete\` and \`error\` as terminal. \`break\` from a \`for await\` loop cleans up the underlying stream automatically.
-
-Pipelines emit a single \`complete\` event at the end (no token-level streaming). LLM agents emit \`text-delta\` events as the model streams.
-
-## Persistence — \`@agntz/store-sqlite\`
-
-Install the SQLite adapter and pass \`store:\`:
-
-\`\`\`ts
+\`\`\`ts {group=sdk-persistence}
 import { agntz } from "@agntz/sdk";
 import { sqliteStore } from "@agntz/sdk/sqlite";
 
@@ -152,38 +159,65 @@ const client = await agntz({
 });
 \`\`\`
 
-The same store backs sessions, runs, and traces — durability across the whole SDK surface, single file.
+\`\`\`python {group=sdk-persistence}
+from agntz import LiteLLMModelProvider, SQLiteStore, agntz
+
+client = agntz(
+    agents="./agents",
+    store=SQLiteStore("./agntz.db"),
+    model_provider=LiteLLMModelProvider(),
+)
+\`\`\`
+
+The same store backs sessions, runs, and traces. Python's SQLite store persists messages and trace spans in the same file.
 
 ## Errors
 
-\`\`\`ts
-import { AgntzError, AuthenticationError, NotFoundError, StreamError } from "@agntz/sdk";
+\`\`\`ts {group=sdk-errors}
+import { AgntzError, NotFoundError, StreamError } from "@agntz/sdk";
 
 try {
   await client.agents.run({ agentId: "unknown", input: {} });
 } catch (err) {
   if (err instanceof NotFoundError) {
-    // 404 — unknown agent id
-  }
-  if (err instanceof StreamError) {
-    // SSE / stream protocol failure
+    // unknown agent id
   }
 }
 \`\`\`
 
-All errors extend \`AgntzError\`. The hosted client (\`@agntz/client\`) re-exports the same types, so error-handling code is portable.
+\`\`\`python {group=sdk-errors}
+try:
+    client.agents.run(agent_id="unknown", input={})
+except RuntimeError as exc:
+    print(exc)
+\`\`\`
+
+The hosted clients expose structured HTTP error classes. Local embedded execution raises Python or TypeScript runtime errors directly.
 
 ## Switching to hosted
 
-When you're ready to graduate, the only code change is the import and constructor:
+When you're ready to graduate, swap constructors and keep the same resource shape:
 
-\`\`\`diff
+\`\`\`diff {group=sdk-hosted}
 - import { agntz } from "@agntz/sdk";
 + import { AgntzClient } from "@agntz/client";
 
 - const client = await agntz({ agents: "./agents" });
-+ const client = new AgntzClient({ apiKey: process.env.AGNTZ_API_KEY! });
++ const client = new AgntzClient({
++   apiKey: process.env.AGNTZ_API_KEY!,
++   baseUrl: "https://api.agntz.co",
++ });
 \`\`\`
 
-\`agents.run\`, \`agents.stream\`, \`runs.list\`, and \`traces.get\` work identically. Local tools must be promoted to HTTP or MCP servers (see [Compatibility matrix](/docs/compatibility)).
+\`\`\`python {group=sdk-hosted}
+import os
+from agntz import AgntzClient
+
+client = AgntzClient(
+    api_key=os.environ["AGNTZ_API_KEY"],
+    base_url="https://api.agntz.co",
+)
+\`\`\`
+
+\`agents.run\`, \`runs.list\`, and \`traces.get\` stay the same. Local tools must be promoted to HTTP or MCP servers when the runtime moves out of your process.
 `;
