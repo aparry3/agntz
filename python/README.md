@@ -67,6 +67,19 @@ client = agntz(
 )
 ```
 
+## Persist local runs with SQLite
+
+```python
+from agntz import SQLiteStore, agntz
+
+client = agntz(
+    agents="./agents",
+    store=SQLiteStore("./agntz.sqlite"),
+)
+
+runs = client.runs.list(status="completed")
+```
+
 ## Development
 
 ```bash

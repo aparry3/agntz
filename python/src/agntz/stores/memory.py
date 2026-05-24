@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 
 @dataclass(frozen=True)
@@ -16,6 +16,19 @@ class LocalRunRecord:
     input: Any
     output: Any = None
     error: str | None = None
+
+
+class RunStore(Protocol):
+    def put_run(self, run: LocalRunRecord) -> None: ...
+
+    def get_run(self, run_id: str) -> LocalRunRecord | None: ...
+
+    def list_runs(
+        self,
+        *,
+        agent_id: str | None = None,
+        status: str | None = None,
+    ) -> list[LocalRunRecord]: ...
 
 
 class MemoryStore:

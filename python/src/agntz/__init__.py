@@ -10,6 +10,7 @@ from .client import (
 )
 from .core import GenerateTextResult, LiteLLMModelProvider, ModelProvider, ToolDefinition, tool
 from .sdk import LocalClient, agntz
+from .stores import MemoryStore, SQLiteStore
 
 __all__ = [
     "__version__",
@@ -21,7 +22,9 @@ __all__ = [
     "LiteLLMModelProvider",
     "LocalClient",
     "ModelProvider",
+    "MemoryStore",
     "NotFoundError",
+    "SQLiteStore",
     "StreamError",
     "ToolDefinition",
     "agntz",

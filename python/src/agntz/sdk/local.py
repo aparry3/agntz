@@ -26,7 +26,7 @@ from agntz.manifest.types import (
     LLMAgentManifest,
     ToolCallConfig,
 )
-from agntz.stores import LocalRunRecord, MemoryStore
+from agntz.stores import LocalRunRecord, MemoryStore, RunStore
 
 
 class LocalClient:
@@ -36,7 +36,7 @@ class LocalClient:
         manifests: dict[str, AgentManifest],
         tools: dict[str, ToolDefinition],
         model_provider: ModelProvider | None,
-        store: MemoryStore | None = None,
+        store: RunStore | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self.manifests = manifests
@@ -214,7 +214,7 @@ def agntz(
     agents: str,
     tools: Iterable[ToolDefinition] | None = None,
     model_provider: ModelProvider | None = None,
-    store: MemoryStore | None = None,
+    store: RunStore | None = None,
     http_client: httpx.AsyncClient | None = None,
 ) -> LocalClient:
     manifests = load_manifests_from_dir(agents)

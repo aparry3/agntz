@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 from pydantic import BaseModel
 
-from agntz import GenerateTextResult, LiteLLMModelProvider, agntz, tool
+from agntz import GenerateTextResult, LiteLLMModelProvider, SQLiteStore, agntz, tool
 from agntz.core import format_litellm_model
 from agntz.manifest import LLMAgentManifest
 from agntz.manifest.types import AgentState
@@ -169,3 +169,26 @@ def test_litellm_provider_model_slug_mapping() -> None:
     assert format_litellm_model("anthropic", "claude-sonnet-4.5") == (
         "anthropic/claude-sonnet-4.5"
     )
+
+
+def test_local_sdk_can_persist_runs_to_sqlite(tmp_path: Path) -> None:
+    agents_dir = _copy_agents(tmp_path)
+    db_path = tmp_path / "agntz.sqlite"
+    store = SQLiteStore(db_path)
+    client = agntz(agents=str(agents_dir), model_provider=FakeProvider(), store=store)
+
+    result = client.agents.run(agent_id="support", input={"userQuery": "Refund request"})
+    persisted = client.runs.list(agent_id="support", status="completed")
+    store.close()
+
+    reopened = SQLiteStore(db_path)
+    try:
+        rows = reopened.list_runs(agent_id="support", status="completed")
+        fetched = reopened.get_run(persisted[0].id)
+    finally:
+        reopened.close()
+
+    assert len(rows) == 1
+    assert fetched is not None
+    assert fetched.output == result.output
+    assert fetched.input == {"userQuery": "Refund request"}
