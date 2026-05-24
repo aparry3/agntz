@@ -49,6 +49,9 @@ class ToolCallConfig(ManifestModel):
     method: str | None = None
     description: str | None = None
     headers: dict[str, str] | None = None
+    body_type: Literal["json", "form", "query"] | None = Field(default=None, alias="body_type")
+    body: Any = None
+    auth: dict[str, Any] | None = None
 
 
 class LLMAgentManifest(AgentManifestBase):

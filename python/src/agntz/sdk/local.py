@@ -7,8 +7,16 @@ import json
 from collections.abc import Iterable, Iterator
 from typing import Any
 
+import httpx
+
 from agntz.client.models import Event, RunResult
-from agntz.core import GenerateTextResult, MissingModelProvider, ModelProvider, ToolDefinition
+from agntz.core import (
+    GenerateTextResult,
+    MissingModelProvider,
+    ModelProvider,
+    ToolDefinition,
+    invoke_http_tool,
+)
 from agntz.core.ids import run_id as new_run_id
 from agntz.core.ids import session_id as new_session_id
 from agntz.manifest import execute, load_manifests_from_dir
@@ -29,11 +37,13 @@ class LocalClient:
         tools: dict[str, ToolDefinition],
         model_provider: ModelProvider | None,
         store: MemoryStore | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self.manifests = manifests
         self.tools = tools
         self.model_provider = model_provider or MissingModelProvider()
         self.store = store or MemoryStore()
+        self.http_client = http_client
         self.agents = LocalAgentsResource(self)
         self.runs = LocalRunsResource(self)
         self.traces = LocalTracesResource()
@@ -180,9 +190,11 @@ class _LocalExecutionContext:
         return output
 
     async def invoke_tool(self, config: ToolCallConfig, state: AgentState) -> Any:
+        if config.kind == "http":
+            return await invoke_http_tool(config, state, http_client=self._client.http_client)
         if config.kind != "local":
             raise RuntimeError(
-                f"Embedded Python SDK only supports local tools in Phase 3: {config.kind}"
+                f"Embedded Python SDK does not support {config.kind} tools yet"
             )
         definition = self._client.tools.get(config.name)
         if definition is None:
@@ -203,6 +215,7 @@ def agntz(
     tools: Iterable[ToolDefinition] | None = None,
     model_provider: ModelProvider | None = None,
     store: MemoryStore | None = None,
+    http_client: httpx.AsyncClient | None = None,
 ) -> LocalClient:
     manifests = load_manifests_from_dir(agents)
     tool_map = {definition.name: definition for definition in tools or []}
@@ -211,6 +224,7 @@ def agntz(
         tools=tool_map,
         model_provider=model_provider,
         store=store,
+        http_client=http_client,
     )
 
 

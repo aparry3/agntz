@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 from typing import Any
 
+import httpx
 from pydantic import BaseModel
 
-from agntz import GenerateTextResult, agntz, tool
+from agntz import GenerateTextResult, LiteLLMModelProvider, agntz, tool
+from agntz.core import format_litellm_model
 from agntz.manifest import LLMAgentManifest
 from agntz.manifest.types import AgentState
 
@@ -109,3 +112,60 @@ def test_local_sdk_arun_inside_event_loop(tmp_path: Path) -> None:
     import asyncio
 
     assert asyncio.run(run()).startswith("sess_")
+
+
+def test_local_sdk_invokes_http_tool(tmp_path: Path) -> None:
+    agents_dir = _copy_agents(tmp_path)
+    (agents_dir / "http-weather.yaml").write_text(
+        """
+id: weather
+kind: tool
+tool:
+  kind: http
+  name: weather
+  url: https://api.example.test/weather/{city}
+  method: POST
+  headers:
+    X-Api-Key: "{{apiKey}}"
+  params:
+    city: "{{city}}"
+  body_type: json
+  body:
+    units: "{{units}}"
+inputSchema:
+  city: string
+  units: string
+  apiKey: string
+""",
+        encoding="utf-8",
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/weather/Detroit"
+        assert request.headers["x-api-key"] == "secret"
+        assert json.loads(request.read()) == {"units": "imperial"}
+        return httpx.Response(200, json={"temp": 72})
+
+    client = agntz(
+        agents=str(agents_dir),
+        model_provider=FakeProvider(),
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    result = client.agents.run(
+        agent_id="weather",
+        input={"city": "Detroit", "units": "imperial", "apiKey": "secret"},
+    )
+
+    assert result.output == {"temp": 72}
+
+
+def test_litellm_provider_model_slug_mapping() -> None:
+    assert isinstance(LiteLLMModelProvider(), LiteLLMModelProvider)
+    assert format_litellm_model("openai", "gpt-5.4") == "gpt-5.4"
+    assert format_litellm_model("google", "gemini-3.5-flash") == "gemini/gemini-3.5-flash"
+    assert format_litellm_model("openrouter", "openai/gpt-5.4") == "openrouter/openai/gpt-5.4"
+    assert format_litellm_model("anthropic", "claude-sonnet-4.5") == (
+        "anthropic/claude-sonnet-4.5"
+    )

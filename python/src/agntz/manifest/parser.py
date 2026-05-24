@@ -106,6 +106,9 @@ def _normalize_tool(raw: dict[str, Any]) -> ToolAgentManifest:
             method=tool.get("method"),
             description=tool.get("description"),
             headers=tool.get("headers"),
+            body_type=tool.get("body_type"),
+            body=tool.get("body"),
+            auth=tool.get("auth"),
         ),
     )
 

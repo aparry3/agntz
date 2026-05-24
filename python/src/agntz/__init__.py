@@ -8,7 +8,7 @@ from .client import (
     NotFoundError,
     StreamError,
 )
-from .core import GenerateTextResult, ModelProvider, ToolDefinition, tool
+from .core import GenerateTextResult, LiteLLMModelProvider, ModelProvider, ToolDefinition, tool
 from .sdk import LocalClient, agntz
 
 __all__ = [
@@ -18,6 +18,7 @@ __all__ = [
     "AsyncAgntzClient",
     "AuthenticationError",
     "GenerateTextResult",
+    "LiteLLMModelProvider",
     "LocalClient",
     "ModelProvider",
     "NotFoundError",
