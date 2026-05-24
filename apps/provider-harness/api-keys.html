@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>agntz · Provider API keys</title>
+<style>
+  :root {
+    --bg: #0b0b0e;
+    --panel: #141419;
+    --panel-2: #17171d;
+    --border: #26262f;
+    --border-soft: #1f1f27;
+    --text: #ecedf1;
+    --muted: #9596a3;
+    --faint: #6c6d7a;
+    --accent: #8b7cff;
+    --accent-soft: rgba(139, 124, 255, 0.14);
+    --ok: #4ade80;
+    --code-bg: #0e0e12;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: radial-gradient(1200px 600px at 70% -10%, rgba(139,124,255,0.10), transparent 60%), var(--bg);
+    color: var(--text);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    padding: 56px 24px 80px;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; }
+  header { margin-bottom: 36px; }
+  .kicker {
+    display: inline-block; font-size: 12px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--accent); background: var(--accent-soft); padding: 5px 10px; border-radius: 999px; margin-bottom: 16px;
+  }
+  h1 { font-size: 30px; line-height: 1.15; margin: 0 0 10px; font-weight: 650; letter-spacing: -0.01em; }
+  .lede { color: var(--muted); max-width: 64ch; margin: 0; }
+  .lede code { color: var(--text); }
+
+  .panel {
+    margin-top: 28px; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 14px; overflow: hidden;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    text-align: left; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint);
+    font-weight: 600; padding: 14px 18px; border-bottom: 1px solid var(--border); background: var(--panel-2);
+  }
+  tbody td { padding: 15px 18px; border-bottom: 1px solid var(--border-soft); vertical-align: middle; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: rgba(255,255,255,0.018); }
+  .provider { font-weight: 600; white-space: nowrap; }
+  .sub { display: block; color: var(--faint); font-weight: 400; font-size: 12.5px; margin-top: 2px; }
+  code, .env {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px;
+  }
+  .env { color: #c9c5ff; background: var(--code-bg); border: 1px solid var(--border-soft); padding: 3px 7px; border-radius: 6px; white-space: nowrap; }
+  .badge {
+    display: inline-block; font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px;
+    border: 1px solid transparent; white-space: nowrap;
+  }
+  .badge.in { color: var(--ok); background: rgba(74,222,128,0.10); border-color: rgba(74,222,128,0.22); }
+  .badge.out { color: var(--faint); background: transparent; border-color: var(--border); }
+  .notes { color: var(--muted); font-size: 13px; }
+  a.key {
+    display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+    color: var(--text); text-decoration: none; font-size: 13px; font-weight: 550;
+    border: 1px solid var(--border); background: var(--panel-2); padding: 7px 12px; border-radius: 8px;
+    transition: border-color .15s ease, background .15s ease, transform .05s ease;
+  }
+  a.key:hover { border-color: var(--accent); background: var(--accent-soft); }
+  a.key:active { transform: translateY(1px); }
+  a.key .arrow { color: var(--accent); }
+
+  .section-label td {
+    background: var(--panel-2); color: var(--faint); font-size: 11px; letter-spacing: .08em;
+    text-transform: uppercase; font-weight: 600; padding: 10px 18px;
+  }
+
+  .env-block { margin-top: 28px; }
+  .env-block h2 { font-size: 16px; margin: 0 0 6px; font-weight: 600; }
+  .env-block p { color: var(--muted); margin: 0 0 14px; font-size: 13.5px; }
+  .env-block p code { color: var(--text); }
+  pre {
+    margin: 0; background: var(--code-bg); border: 1px solid var(--border); border-radius: 12px;
+    padding: 18px 20px; overflow-x: auto; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12.5px; line-height: 1.7; color: var(--text);
+  }
+  pre .c { color: var(--faint); }
+  footer { margin-top: 32px; color: var(--faint); font-size: 12.5px; }
+  footer a { color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="kicker">agntz · provider-harness</span>
+    <h1>Get your provider API keys</h1>
+    <p class="lede">
+      Each link opens the provider's console where you create a key. Paste keys into
+      <code>.env.local</code> at the repo root using the env-var name shown — those are the exact names the
+      SDK reads. Providers marked <span class="badge in" style="padding:1px 7px">harness</span> are in the
+      current smoke-test matrix; a missing key just makes that provider <code>SKIPPED</code>.
+    </p>
+  </header>
+
+  <div class="panel">
+    <table>
+      <thead>
+        <tr>
+          <th>Provider</th>
+          <th>Env var (<code>.env.local</code>)</th>
+          <th>Get a key</th>
+          <th>Harness</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="section-label"><td colspan="5">In the harness matrix</td></tr>
+
+        <tr>
+          <td class="provider">OpenAI<span class="sub">GPT-5.x</span></td>
+          <td><span class="env">OPENAI_API_KEY</span></td>
+          <td><a class="key" href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">Get key <span class="arrow">↗</span></a></td>
+          <td><span class="badge in">harness</span></td>
+          <td class="notes">Requires a billing method on the account.</td>
+        </tr>
+        <tr>
+          <td class="provider">Anthropic<span class="sub">Claude</span></td>
+          <td><span class="env">ANTHROPIC_API_KEY</span></td>
+          <td><a class="key" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Get key <span class="arrow">↗</span></a></td>
+          <td><span class="badge in">harness</span></td>
+          <td class="notes">Console → Settings → API keys.</td>
+        </tr>
+        <tr>
+          <td class="provider">Google<span class="sub">Gemini</span></td>
+          <td><span class="env">GOOGLE_GENERATIVE_AI_API_KEY</span></td>
+          <td><a class="key" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Get key <span class="arrow">↗</span></a></td>
+          <td><span class="badge in">harness</span></td>
+          <td class="notes">Via Google AI Studio. Free tier available.</td>
+        </tr>
+        <tr>
+          <td class="provider">Mistral</td>
+          <td><span class="env">MISTRAL_API_KEY</span></td>
+          <td><a class="key" href="https://console.mistral.ai/api-keys" target="_blank" rel="noopener">Get key <span class="arrow">↗</span></a></td>
+          <td><span class="badge in">harness</span></td>
+          <td class="notes">La Plateforme console.</td>
+        </tr>
+        <tr>
+          <td class="provider">Groq</td>
+          <td><span class="env">GROQ_API_KEY</span></td>
+          <td><a class="key" href="https://console.groq.com/keys" target="_blank" rel="noopener">Get key <span class="arrow">↗</span></a></td>
+          <td><span class="badge in">harness</span></td>
+          <td class="notes">Free tier; hosts Llama models.</td>
+        </tr>
+        <tr>
+          <td class="provider">Cohere</td>
+          <td><span class="env">COHERE_API_KEY</span></td>
+          <td><a class="key" href="https://dashboard.cohere.com/api-keys" target="_blank" rel="noopener">Get key <span class="arrow">↗</span></a></td>
+          <td><span class="badge in">harness</span></td>
+          <td class="notes">Trial (rate-limited) + production keys.</td>
+        </tr>
+        <tr>
+          <td class="provider">OpenRouter<span class="sub">gateway</span></td>
+          <td><span class="env">OPENROUTER_API_KEY</span></td>
+          <td><a class="key" href="https://openrouter.ai/keys" target="_blank" rel="noopener">Get key <span class="arrow">↗</span></a></td>
+          <td><span class="badge in">harness</span></td>
+          <td class="notes">One key fronts many model families (8 routes tested).</td>
+        </tr>
+
+        <tr class="section-label"><td colspan="5">Supported by the SDK · not in the current matrix</td></tr>
+
+        <tr>
+          <td class="provider">xAI<span class="sub">Grok</span></td>
+          <td><span class="env">XAI_API_KEY</span></td>
+          <td><a class="key" href="https://console.x.ai/" target="_blank" rel="noopener">Get key <span class="arrow">↗</span></a></td>
+          <td><span class="badge out">—</span></td>
+          <td class="notes">Console → API Keys.</td>
+        </tr>
+        <tr>
+          <td class="provider">DeepSeek</td>
+          <td><span class="env">DEEPSEEK_API_KEY</span></td>
+          <td><a class="key" href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener">Get key <span class="arrow">↗</span></a></td>
+          <td><span class="badge out">—</span></td>
+          <td class="notes">Also reachable via the OpenRouter route.</td>
+        </tr>
+        <tr>
+          <td class="provider">Perplexity</td>
+          <td><span class="env">PERPLEXITY_API_KEY</span></td>
+          <td><a class="key" href="https://www.perplexity.ai/settings/api" target="_blank" rel="noopener">Get key <span class="arrow">↗</span></a></td>
+          <td><span class="badge out">—</span></td>
+          <td class="notes">Settings → API. Sonar models.</td>
+        </tr>
+        <tr>
+          <td class="provider">Azure OpenAI</td>
+          <td><span class="env">AZURE_OPENAI_API_KEY</span></td>
+          <td><a class="key" href="https://oai.azure.com/" target="_blank" rel="noopener">Get key <span class="arrow">↗</span></a></td>
+          <td><span class="badge out">—</span></td>
+          <td class="notes">Needs an Azure OpenAI resource; key under Keys &amp; Endpoint.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="env-block">
+    <h2>Quick <code>.env.local</code> template</h2>
+    <p>Drop this in the repo root (<code>./.env.local</code>) and fill in the keys you have. The harness reads it on <code>pnpm --filter @agntz/provider-harness start</code>; any blank/absent key → that provider is skipped.</p>
+    <pre><span class="c"># --- harness providers ---</span>
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
+GOOGLE_GENERATIVE_AI_API_KEY=
+MISTRAL_API_KEY=
+GROQ_API_KEY=
+COHERE_API_KEY=
+OPENROUTER_API_KEY=
+
+<span class="c"># --- other SDK-supported providers (optional) ---</span>
+XAI_API_KEY=
+DEEPSEEK_API_KEY=
+PERPLEXITY_API_KEY=
+AZURE_OPENAI_API_KEY=</pre>
+  </div>
+
+  <footer>
+    Links current as of May 2026. If any console has moved, the provider's docs/dashboard home will redirect you to the keys page.
+  </footer>
+</div>
+</body>
+</html>
