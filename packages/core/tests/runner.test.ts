@@ -162,6 +162,59 @@ describe("Runner", () => {
     expect(provider.calls).toHaveLength(2);
   });
 
+  it("replays tool-call providerMetadata as providerOptions on the next turn (Gemini thought_signature)", async () => {
+    const provider = new MockModelProvider([
+      {
+        text: "",
+        toolCalls: [{
+          id: "call_1",
+          name: "get_time",
+          args: {},
+          // Gemini 3.x attaches a thought_signature here and requires it back.
+          providerMetadata: { google: { thoughtSignature: "sig-abc-123" } },
+        }],
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+        finishReason: "tool-calls",
+      },
+      mockResponse("The current time is 10:42 PM."),
+    ]);
+
+    const getTime = defineTool({
+      name: "get_time",
+      description: "Get the current time",
+      input: z.object({}),
+      async execute() {
+        return { time: "10:42 PM" };
+      },
+    });
+
+    const runner = createRunner({ modelProvider: provider, tools: [getTime] });
+    runner.registerAgent(
+      defineAgent({
+        id: "time-agent",
+        name: "Time Agent",
+        systemPrompt: "You tell people the time.",
+        model: { provider: "google", name: "gemini-3.5-flash" },
+        tools: [{ type: "inline", name: "get_time" }],
+      })
+    );
+
+    await runner.invoke("time-agent", "What time is it?");
+
+    // The second model call must replay the tool call with its provider
+    // metadata echoed back as providerOptions — without it Gemini 3.x rejects
+    // the turn ("Function call is missing a thought_signature").
+    expect(provider.calls).toHaveLength(2);
+    const parts = provider.calls[1].messages.flatMap((m) =>
+      Array.isArray(m.content) ? (m.content as Array<Record<string, unknown>>) : [],
+    );
+    const toolCallPart = parts.find((p) => p.type === "tool-call");
+    expect(toolCallPart).toBeDefined();
+    expect(toolCallPart?.providerOptions).toEqual({
+      google: { thoughtSignature: "sig-abc-123" },
+    });
+  });
+
   it("passes toolContext to tool execute", async () => {
     const capturedCtx: Record<string, unknown> = {};
 
