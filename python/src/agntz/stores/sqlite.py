@@ -7,7 +7,12 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from .memory import LocalRunRecord, LocalTraceRecord
+from .memory import (
+    LocalMessageRecord,
+    LocalRunRecord,
+    LocalSessionSummary,
+    LocalTraceRecord,
+)
 
 
 class SQLiteStore:
@@ -138,6 +143,94 @@ class SQLiteStore:
         rows = self._conn.execute(query, params).fetchall()
         return [_row_to_trace(row) for row in rows]
 
+    def append_messages(
+        self,
+        session_id: str,
+        messages: list[LocalMessageRecord],
+        *,
+        agent_id: str | None = None,
+    ) -> None:
+        if not messages:
+            return
+        existing = self._conn.execute(
+            "SELECT created_at, agent_id FROM sessions WHERE id = ?",
+            (session_id,),
+        ).fetchone()
+        created_at = existing["created_at"] if existing is not None else messages[0].timestamp
+        session_agent_id = agent_id or (existing["agent_id"] if existing is not None else None)
+        updated_at = messages[-1].timestamp
+        with self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO sessions (id, agent_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                  agent_id=COALESCE(excluded.agent_id, sessions.agent_id),
+                  updated_at=excluded.updated_at
+                """,
+                (session_id, session_agent_id, created_at, updated_at),
+            )
+            self._conn.executemany(
+                """
+                INSERT INTO messages (
+                  session_id, agent_id, role, content_json,
+                  tool_calls_json, tool_call_id, timestamp
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        message.session_id,
+                        message.agent_id,
+                        message.role,
+                        _dumps(message.content),
+                        _dumps(message.tool_calls),
+                        message.tool_call_id,
+                        message.timestamp,
+                    )
+                    for message in messages
+                ],
+            )
+
+    def get_messages(self, session_id: str) -> list[LocalMessageRecord]:
+        rows = self._conn.execute(
+            """
+            SELECT session_id, agent_id, role, content_json,
+                   tool_calls_json, tool_call_id, timestamp
+            FROM messages
+            WHERE session_id = ?
+            ORDER BY id ASC
+            """,
+            (session_id,),
+        ).fetchall()
+        return [_row_to_message(row) for row in rows]
+
+    def list_sessions(
+        self,
+        *,
+        agent_id: str | None = None,
+    ) -> list[LocalSessionSummary]:
+        query = """
+            SELECT s.id, s.agent_id, s.created_at, s.updated_at, COUNT(m.id) AS message_count
+            FROM sessions s
+            LEFT JOIN messages m ON m.session_id = s.id
+        """
+        clauses: list[str] = []
+        params: list[str] = []
+        if agent_id is not None:
+            clauses.append("s.agent_id = ?")
+            params.append(agent_id)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " GROUP BY s.id ORDER BY s.updated_at DESC"
+        rows = self._conn.execute(query, params).fetchall()
+        return [_row_to_session(row) for row in rows]
+
+    def delete_session(self, session_id: str) -> None:
+        with self._conn:
+            self._conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+            self._conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+
     def _migrate(self) -> None:
         self._conn.execute(
             """
@@ -168,6 +261,33 @@ class SQLiteStore:
             )
             """
         )
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sessions (
+              id TEXT PRIMARY KEY,
+              agent_id TEXT,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            )
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS messages (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              session_id TEXT NOT NULL,
+              agent_id TEXT,
+              role TEXT NOT NULL,
+              content_json TEXT NOT NULL,
+              tool_calls_json TEXT,
+              tool_call_id TEXT,
+              timestamp TEXT NOT NULL
+            )
+            """
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id)"
+        )
         self._conn.commit()
 
 
@@ -195,6 +315,28 @@ def _row_to_trace(row: sqlite3.Row) -> LocalTraceRecord:
         ended_at=row["ended_at"],
         output=_loads(row["output_json"]),
         error=row["error"],
+    )
+
+
+def _row_to_message(row: sqlite3.Row) -> LocalMessageRecord:
+    return LocalMessageRecord(
+        session_id=row["session_id"],
+        agent_id=row["agent_id"],
+        role=row["role"],
+        content=_loads(row["content_json"]),
+        tool_calls=_loads(row["tool_calls_json"]),
+        tool_call_id=row["tool_call_id"],
+        timestamp=row["timestamp"],
+    )
+
+
+def _row_to_session(row: sqlite3.Row) -> LocalSessionSummary:
+    return LocalSessionSummary(
+        session_id=row["id"],
+        agent_id=row["agent_id"],
+        message_count=int(row["message_count"]),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
     )
 
 

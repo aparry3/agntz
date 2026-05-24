@@ -31,6 +31,14 @@ class ToolResult:
 
 
 @dataclass(frozen=True)
+class ModelMessage:
+    role: str
+    content: str | list[dict[str, Any]]
+    tool_calls: list[dict[str, Any]] | None = None
+    tool_call_id: str | None = None
+
+
+@dataclass(frozen=True)
 class GenerateTextResult:
     output: Any
     text: str | None = None
@@ -47,6 +55,7 @@ class ModelProvider(Protocol):
         instruction: str,
         prompt: str | None,
         state: AgentState,
+        messages: list[ModelMessage] | None = None,
         tools: list[ModelTool] | None = None,
         tool_results: list[ToolResult] | None = None,
     ) -> GenerateTextResult: ...
@@ -60,6 +69,7 @@ class MissingModelProvider:
         instruction: str,
         prompt: str | None,
         state: AgentState,
+        messages: list[ModelMessage] | None = None,
         tools: list[ModelTool] | None = None,
         tool_results: list[ToolResult] | None = None,
     ) -> GenerateTextResult:

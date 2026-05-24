@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from agntz import (
     GenerateTextResult,
     LiteLLMModelProvider,
+    ModelMessage,
     ModelTool,
     SQLiteStore,
     ToolCall,
@@ -34,6 +35,7 @@ class FakeProvider:
         instruction: str,
         prompt: str | None,
         state: AgentState,
+        messages: list[ModelMessage] | None = None,
         tools: list[ModelTool] | None = None,
         tool_results: list[ToolResult] | None = None,
     ) -> GenerateTextResult:
@@ -60,6 +62,7 @@ class ToolCallingProvider:
         instruction: str,
         prompt: str | None,
         state: AgentState,
+        messages: list[ModelMessage] | None = None,
         tools: list[ModelTool] | None = None,
         tool_results: list[ToolResult] | None = None,
     ) -> GenerateTextResult:
@@ -70,6 +73,25 @@ class ToolCallingProvider:
                 tool_calls=[ToolCall(id="call_1", name="add", input={"a": 2, "b": 3})],
             )
         return GenerateTextResult(output={"answer": tool_results[0].output["result"]})
+
+
+class SessionAwareProvider:
+    def __init__(self) -> None:
+        self.messages: list[list[ModelMessage]] = []
+
+    async def generate_text(
+        self,
+        *,
+        manifest: LLMAgentManifest,
+        instruction: str,
+        prompt: str | None,
+        state: AgentState,
+        messages: list[ModelMessage] | None = None,
+        tools: list[ModelTool] | None = None,
+        tool_results: list[ToolResult] | None = None,
+    ) -> GenerateTextResult:
+        self.messages.append(list(messages or []))
+        return GenerateTextResult(output=f"turn {len(self.messages)}")
 
 
 class AddInput(BaseModel):
@@ -107,6 +129,46 @@ def test_local_sdk_runs_llm_and_records_run(tmp_path: Path) -> None:
     assert [event.type for event in events] == ["snapshot"]
     assert events[0].summary is not None
     assert events[0].summary["traceId"] == trace_id
+
+
+def test_local_sdk_records_sessions_and_replays_history(tmp_path: Path) -> None:
+    provider = SessionAwareProvider()
+    client = agntz(agents=str(_copy_agents(tmp_path)), model_provider=provider)
+
+    first = client.agents.run(
+        agent_id="support",
+        input={"userQuery": "first"},
+        session_id="customer-1",
+    )
+    second = client.agents.run(
+        agent_id="support",
+        input={"userQuery": "second"},
+        session_id=first.session_id,
+    )
+
+    assert second.session_id == "customer-1"
+    assert [message.role for message in provider.messages[0]] == ["user"]
+    assert [message.role for message in provider.messages[1]] == [
+        "user",
+        "assistant",
+        "user",
+    ]
+    assert provider.messages[1][0].content == '{"userQuery":"first"}'
+    assert provider.messages[1][1].content == "turn 1"
+    assert provider.messages[1][2].content == '{"userQuery":"second"}'
+    messages = client.sessions.get_messages("customer-1")
+    assert [(message.role, message.content) for message in messages] == [
+        ("user", '{"userQuery":"first"}'),
+        ("assistant", "turn 1"),
+        ("user", '{"userQuery":"second"}'),
+        ("assistant", "turn 2"),
+    ]
+    sessions = client.sessions.list(agent_id="support")
+    assert len(sessions) == 1
+    assert sessions[0].session_id == "customer-1"
+    assert sessions[0].message_count == 4
+    client.sessions.delete("customer-1")
+    assert client.sessions.get_messages("customer-1") == []
 
 
 def test_local_sdk_runs_registered_pydantic_tool(tmp_path: Path) -> None:
@@ -316,6 +378,8 @@ def test_local_sdk_can_persist_runs_to_sqlite(tmp_path: Path) -> None:
     try:
         rows = reopened.list_runs(agent_id="support", status="completed")
         traces = reopened.list_traces(agent_id="support", status="ok")
+        sessions = reopened.list_sessions(agent_id="support")
+        messages = reopened.get_messages(result.session_id)
         fetched = reopened.get_run(persisted[0].id)
     finally:
         reopened.close()
@@ -326,3 +390,7 @@ def test_local_sdk_can_persist_runs_to_sqlite(tmp_path: Path) -> None:
     assert fetched is not None
     assert fetched.output == result.output
     assert fetched.input == {"userQuery": "Refund request"}
+    assert len(sessions) == 1
+    assert sessions[0].message_count == 2
+    assert [message.role for message in messages] == ["user", "assistant"]
+    assert messages[0].content == '{"userQuery":"Refund request"}'

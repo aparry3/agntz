@@ -6,6 +6,7 @@ import asyncio
 import json
 import time
 from collections.abc import Iterable, Iterator
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -14,6 +15,7 @@ from agntz.client.models import Event, RunResult
 from agntz.core import (
     GenerateTextResult,
     MissingModelProvider,
+    ModelMessage,
     ModelProvider,
     ModelTool,
     ToolCall,
@@ -32,7 +34,14 @@ from agntz.manifest.types import (
     LLMAgentManifest,
     ToolCallConfig,
 )
-from agntz.stores import LocalRunRecord, LocalTraceRecord, MemoryStore, RunStore
+from agntz.stores import (
+    LocalMessageRecord,
+    LocalRunRecord,
+    LocalSessionSummary,
+    LocalTraceRecord,
+    MemoryStore,
+    RunStore,
+)
 
 
 class LocalClient:
@@ -52,6 +61,7 @@ class LocalClient:
         self.http_client = http_client
         self.agents = LocalAgentsResource(self)
         self.runs = LocalRunsResource(self)
+        self.sessions = LocalSessionsResource(self)
         self.traces = LocalTracesResource(self)
 
     async def _execute(
@@ -66,7 +76,26 @@ class LocalClient:
         local_run_id = new_run_id()
         local_trace_id = new_trace_id()
         started_at = time.time()
-        ctx = _LocalExecutionContext(self)
+        ctx = _LocalExecutionContext(
+            self,
+            agent_id=agent_id,
+            session_id=resolved_session_id,
+            run_id=local_run_id,
+            trace_id=local_trace_id,
+        )
+        self.store.append_messages(
+            resolved_session_id,
+            [
+                LocalMessageRecord(
+                    session_id=resolved_session_id,
+                    agent_id=agent_id,
+                    role="user",
+                    content=_message_content(input),
+                    timestamp=_iso_now(),
+                )
+            ],
+            agent_id=agent_id,
+        )
         self.store.put_run(
             LocalRunRecord(
                 id=local_run_id,
@@ -124,6 +153,19 @@ class LocalClient:
                 input=input,
                 output=result.output,
             )
+        )
+        self.store.append_messages(
+            resolved_session_id,
+            [
+                LocalMessageRecord(
+                    session_id=resolved_session_id,
+                    agent_id=agent_id,
+                    role="assistant",
+                    content=_message_content(result.output),
+                    timestamp=_iso_now(),
+                )
+            ],
+            agent_id=agent_id,
         )
         self.store.put_trace(
             LocalTraceRecord(
@@ -198,6 +240,24 @@ class LocalRunsResource:
         return self._client.store.list_runs(agent_id=agent_id, status=status)
 
 
+class LocalSessionsResource:
+    def __init__(self, client: LocalClient) -> None:
+        self._client = client
+
+    def list(
+        self,
+        *,
+        agent_id: str | None = None,
+    ) -> list[LocalSessionSummary]:
+        return self._client.store.list_sessions(agent_id=agent_id)
+
+    def get_messages(self, session_id: str) -> list[LocalMessageRecord]:
+        return self._client.store.get_messages(session_id)
+
+    def delete(self, session_id: str) -> None:
+        self._client.store.delete_session(session_id)
+
+
 class LocalTracesResource:
     def __init__(self, client: LocalClient) -> None:
         self._client = client
@@ -250,8 +310,20 @@ def _trace_span(trace: LocalTraceRecord) -> dict[str, Any]:
 
 
 class _LocalExecutionContext:
-    def __init__(self, client: LocalClient) -> None:
+    def __init__(
+        self,
+        client: LocalClient,
+        *,
+        agent_id: str,
+        session_id: str,
+        run_id: str,
+        trace_id: str,
+    ) -> None:
         self._client = client
+        self.agent_id = agent_id
+        self.session_id = session_id
+        self.run_id = run_id
+        self.trace_id = trace_id
 
     async def invoke_llm(
         self,
@@ -261,12 +333,22 @@ class _LocalExecutionContext:
         state: AgentState,
     ) -> Any:
         model_tools = self._model_tools_for_manifest(manifest)
+        messages = [
+            ModelMessage(
+                role=message.role,
+                content=message.content,
+                tool_calls=message.tool_calls,
+                tool_call_id=message.tool_call_id,
+            )
+            for message in self._client.store.get_messages(self.session_id)
+        ]
         tool_results: list[ToolResult] = []
         result = await self._client.model_provider.generate_text(
             manifest=manifest,
             instruction=instruction,
             prompt=prompt,
             state=state,
+            messages=messages,
             tools=model_tools,
             tool_results=tool_results,
         )
@@ -286,6 +368,7 @@ class _LocalExecutionContext:
                 instruction=instruction,
                 prompt=prompt,
                 state=state,
+                messages=messages,
                 tools=model_tools,
                 tool_results=tool_results,
             )
@@ -442,6 +525,39 @@ def _run_blocking(awaitable: Any) -> Any:
     except RuntimeError:
         return asyncio.run(awaitable)
     raise RuntimeError("Use await client.agents.arun(...) when already inside an event loop")
+
+
+def _iso_now() -> str:
+    return datetime.now(tz=UTC).isoformat()
+
+
+def _message_content(value: Any) -> str | list[dict[str, Any]]:
+    if isinstance(value, str):
+        return value
+    blocks = _content_blocks(value)
+    if blocks is not None:
+        return blocks
+    return json.dumps(value, separators=(",", ":"), sort_keys=True)
+
+
+def _content_blocks(value: Any) -> list[dict[str, Any]] | None:
+    if not isinstance(value, list) or not value:
+        return None
+    blocks: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            return None
+        kind = item.get("type")
+        if kind == "text" and isinstance(item.get("text"), str):
+            blocks.append(dict(item))
+            continue
+        if kind == "image" and (
+            isinstance(item.get("url"), str) or isinstance(item.get("base64"), str)
+        ):
+            blocks.append(dict(item))
+            continue
+        return None
+    return blocks
 
 
 def _schema_for_tool_definition(definition: ToolDefinition) -> dict[str, Any]:

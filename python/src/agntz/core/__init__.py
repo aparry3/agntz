@@ -7,6 +7,7 @@ from .mcp_tool import invoke_mcp_tool
 from .model_provider import (
     GenerateTextResult,
     MissingModelProvider,
+    ModelMessage,
     ModelProvider,
     ModelTool,
     ToolCall,
@@ -18,6 +19,7 @@ __all__ = [
     "GenerateTextResult",
     "LiteLLMModelProvider",
     "MissingModelProvider",
+    "ModelMessage",
     "ModelProvider",
     "ModelTool",
     "ToolDefinition",

@@ -11,6 +11,7 @@ from .client import (
 from .core import (
     GenerateTextResult,
     LiteLLMModelProvider,
+    ModelMessage,
     ModelProvider,
     ModelTool,
     ToolCall,
@@ -19,7 +20,7 @@ from .core import (
     tool,
 )
 from .sdk import LocalClient, agntz
-from .stores import MemoryStore, SQLiteStore
+from .stores import LocalMessageRecord, LocalSessionSummary, MemoryStore, SQLiteStore
 
 __all__ = [
     "__version__",
@@ -30,6 +31,9 @@ __all__ = [
     "GenerateTextResult",
     "LiteLLMModelProvider",
     "LocalClient",
+    "LocalMessageRecord",
+    "LocalSessionSummary",
+    "ModelMessage",
     "ModelProvider",
     "ModelTool",
     "MemoryStore",

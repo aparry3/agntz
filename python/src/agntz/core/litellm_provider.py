@@ -8,7 +8,7 @@ from typing import Any
 from agntz.manifest import LLMAgentManifest
 from agntz.manifest.types import AgentState
 
-from .model_provider import GenerateTextResult, ModelTool, ToolCall, ToolResult
+from .model_provider import GenerateTextResult, ModelMessage, ModelTool, ToolCall, ToolResult
 
 
 class LiteLLMModelProvider:
@@ -21,6 +21,7 @@ class LiteLLMModelProvider:
         instruction: str,
         prompt: str | None,
         state: AgentState,
+        messages: list[ModelMessage] | None = None,
         tools: list[ModelTool] | None = None,
         tool_results: list[ToolResult] | None = None,
     ) -> GenerateTextResult:
@@ -29,12 +30,15 @@ class LiteLLMModelProvider:
         except ImportError as exc:
             raise RuntimeError("Install agntz[litellm] to use LiteLLMModelProvider") from exc
 
-        messages: list[dict[str, Any]] = [
-            {"role": "system", "content": instruction},
-            {"role": "user", "content": prompt or state.get("userQuery", "")},
-        ]
+        request_messages: list[dict[str, Any]] = [{"role": "system", "content": instruction}]
+        if messages:
+            request_messages.extend(_to_litellm_message(message) for message in messages)
+        else:
+            request_messages.append(
+                {"role": "user", "content": prompt or state.get("userQuery", "")}
+            )
         if tool_results:
-            messages.append(
+            request_messages.append(
                 {
                     "role": "user",
                     "content": "Tool results:\n"
@@ -43,7 +47,7 @@ class LiteLLMModelProvider:
             )
         request: dict[str, Any] = {
             "model": format_litellm_model(manifest.model.provider, manifest.model.name),
-            "messages": messages,
+            "messages": request_messages,
             "temperature": manifest.model.temperature,
             "max_tokens": manifest.model.max_tokens,
             "top_p": manifest.model.top_p,
@@ -110,3 +114,12 @@ def _parse_tool_arguments(value: Any) -> dict[str, Any]:
             return {}
         return parsed if isinstance(parsed, dict) else {}
     return {}
+
+
+def _to_litellm_message(message: ModelMessage) -> dict[str, Any]:
+    row: dict[str, Any] = {"role": message.role, "content": message.content}
+    if message.tool_calls:
+        row["tool_calls"] = message.tool_calls
+    if message.tool_call_id:
+        row["tool_call_id"] = message.tool_call_id
+    return row
