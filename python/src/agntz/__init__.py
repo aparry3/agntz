@@ -8,7 +8,16 @@ from .client import (
     NotFoundError,
     StreamError,
 )
-from .core import GenerateTextResult, LiteLLMModelProvider, ModelProvider, ToolDefinition, tool
+from .core import (
+    GenerateTextResult,
+    LiteLLMModelProvider,
+    ModelProvider,
+    ModelTool,
+    ToolCall,
+    ToolDefinition,
+    ToolResult,
+    tool,
+)
 from .sdk import LocalClient, agntz
 from .stores import MemoryStore, SQLiteStore
 
@@ -22,11 +31,14 @@ __all__ = [
     "LiteLLMModelProvider",
     "LocalClient",
     "ModelProvider",
+    "ModelTool",
     "MemoryStore",
     "NotFoundError",
     "SQLiteStore",
     "StreamError",
+    "ToolCall",
     "ToolDefinition",
+    "ToolResult",
     "agntz",
     "tool",
 ]

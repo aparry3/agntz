@@ -15,7 +15,10 @@ from agntz.core import (
     GenerateTextResult,
     MissingModelProvider,
     ModelProvider,
+    ModelTool,
+    ToolCall,
     ToolDefinition,
+    ToolResult,
     invoke_http_tool,
     invoke_mcp_tool,
 )
@@ -257,12 +260,35 @@ class _LocalExecutionContext:
         prompt: str | None,
         state: AgentState,
     ) -> Any:
+        model_tools = self._model_tools_for_manifest(manifest)
+        tool_results: list[ToolResult] = []
         result = await self._client.model_provider.generate_text(
             manifest=manifest,
             instruction=instruction,
             prompt=prompt,
             state=state,
+            tools=model_tools,
+            tool_results=tool_results,
         )
+        for _round in range(4):
+            if not result.tool_calls:
+                break
+            tool_results = [
+                ToolResult(
+                    tool_call_id=call.id,
+                    name=call.name,
+                    output=await self._execute_model_tool_call(manifest, call, state),
+                )
+                for call in result.tool_calls
+            ]
+            result = await self._client.model_provider.generate_text(
+                manifest=manifest,
+                instruction=instruction,
+                prompt=prompt,
+                state=state,
+                tools=model_tools,
+                tool_results=tool_results,
+            )
         output = result.output if isinstance(result, GenerateTextResult) else result
         if manifest.output_schema and isinstance(output, str):
             try:
@@ -270,6 +296,104 @@ class _LocalExecutionContext:
             except json.JSONDecodeError:
                 return output
         return output
+
+    def _model_tools_for_manifest(self, manifest: LLMAgentManifest) -> list[ModelTool]:
+        tools: list[ModelTool] = []
+        for entry in manifest.tools or []:
+            kind = entry.get("kind")
+            if kind == "local":
+                for name in entry.get("tools", []):
+                    definition = self._client.tools.get(str(name))
+                    if definition is None:
+                        raise RuntimeError(f"Local tool '{name}' was not registered")
+                    tools.append(
+                        ModelTool(
+                            name=definition.name,
+                            description=definition.description,
+                            input_schema=_schema_for_tool_definition(definition),
+                        )
+                    )
+            elif kind == "http":
+                tools.append(
+                    ModelTool(
+                        name=str(entry["name"]),
+                        description=str(entry.get("description") or entry["name"]),
+                        input_schema=_schema_from_params(entry.get("params")),
+                    )
+                )
+            elif kind == "mcp":
+                for item in entry.get("tools", []) or []:
+                    name = item if isinstance(item, str) else item.get("tool")
+                    if name:
+                        tools.append(
+                            ModelTool(
+                                name=str(name),
+                                description=str(name),
+                                input_schema=_schema_from_params(
+                                    item.get("params") if isinstance(item, dict) else None
+                                ),
+                            )
+                        )
+            elif kind == "agent":
+                agent_id = str(entry["agent"])
+                agent = self._client.manifests.get(agent_id)
+                tools.append(
+                    ModelTool(
+                        name=agent_id,
+                        description=(agent.description if agent else None) or agent_id,
+                        input_schema=_json_schema_from_manifest_input(agent),
+                    )
+                )
+        return tools
+
+    async def _execute_model_tool_call(
+        self,
+        manifest: LLMAgentManifest,
+        call: ToolCall,
+        state: AgentState,
+    ) -> Any:
+        for entry in manifest.tools or []:
+            kind = entry.get("kind")
+            if kind == "local" and call.name in entry.get("tools", []):
+                definition = self._client.tools.get(call.name)
+                if definition is None:
+                    raise RuntimeError(f"Local tool '{call.name}' was not registered")
+                return await definition.run(call.input)
+            if kind == "http" and call.name == entry.get("name"):
+                config = ToolCallConfig(
+                    kind="http",
+                    name=call.name,
+                    params=call.input,
+                    url=entry.get("url"),
+                    method=entry.get("method"),
+                    description=entry.get("description"),
+                    headers=entry.get("headers"),
+                    body_type=entry.get("body_type"),
+                    body=entry.get("body"),
+                    auth=entry.get("auth"),
+                )
+                return await invoke_http_tool(
+                    config,
+                    {**state, **call.input},
+                    http_client=self._client.http_client,
+                )
+            if kind == "mcp" and _mcp_entry_has_tool(entry, call.name):
+                config = ToolCallConfig(
+                    kind="mcp",
+                    name=call.name,
+                    params=call.input,
+                    server=entry.get("server"),
+                )
+                return await invoke_mcp_tool(
+                    config,
+                    {**state, **call.input},
+                    http_client=self._client.http_client,
+                )
+            if kind == "agent" and call.name == entry.get("agent"):
+                child = await self.resolve_agent(call.name)
+                result = await execute(child, call.input, self)
+                return result.output
+        raise RuntimeError(f"Model requested unknown tool '{call.name}'")
 
     async def invoke_tool(self, config: ToolCallConfig, state: AgentState) -> Any:
         if config.kind == "http":
@@ -318,3 +442,42 @@ def _run_blocking(awaitable: Any) -> Any:
     except RuntimeError:
         return asyncio.run(awaitable)
     raise RuntimeError("Use await client.agents.arun(...) when already inside an event loop")
+
+
+def _schema_for_tool_definition(definition: ToolDefinition) -> dict[str, Any]:
+    schema = definition.input_schema
+    if isinstance(schema, dict):
+        return schema
+    if schema is not None and hasattr(schema, "model_json_schema"):
+        return schema.model_json_schema()
+    return {"type": "object", "properties": {}}
+
+
+def _schema_from_params(params: Any) -> dict[str, Any]:
+    if not isinstance(params, dict):
+        return {"type": "object", "properties": {}}
+    return {
+        "type": "object",
+        "properties": {key: {"type": "string"} for key in params},
+        "required": list(params),
+    }
+
+
+def _json_schema_from_manifest_input(manifest: AgentManifest | None) -> dict[str, Any]:
+    if manifest is None or not manifest.input_schema:
+        return {"type": "object", "properties": {}}
+    return {
+        "type": "object",
+        "properties": {
+            key: {"type": value} if isinstance(value, str) else value
+            for key, value in manifest.input_schema.items()
+        },
+        "required": list(manifest.input_schema),
+    }
+
+
+def _mcp_entry_has_tool(entry: dict[str, Any], name: str) -> bool:
+    return any(
+        item == name or (isinstance(item, dict) and item.get("tool") == name)
+        for item in entry.get("tools", []) or []
+    )

@@ -10,11 +10,33 @@ from agntz.manifest.types import AgentState
 
 
 @dataclass(frozen=True)
+class ModelTool:
+    name: str
+    description: str
+    input_schema: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    id: str
+    name: str
+    input: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ToolResult:
+    tool_call_id: str
+    name: str
+    output: Any
+
+
+@dataclass(frozen=True)
 class GenerateTextResult:
     output: Any
     text: str | None = None
     usage: dict[str, int] = field(default_factory=dict)
     model: str | None = None
+    tool_calls: list[ToolCall] = field(default_factory=list)
 
 
 class ModelProvider(Protocol):
@@ -25,6 +47,8 @@ class ModelProvider(Protocol):
         instruction: str,
         prompt: str | None,
         state: AgentState,
+        tools: list[ModelTool] | None = None,
+        tool_results: list[ToolResult] | None = None,
     ) -> GenerateTextResult: ...
 
 
@@ -36,6 +60,8 @@ class MissingModelProvider:
         instruction: str,
         prompt: str | None,
         state: AgentState,
+        tools: list[ModelTool] | None = None,
+        tool_results: list[ToolResult] | None = None,
     ) -> GenerateTextResult:
         raise RuntimeError(
             "No model_provider was configured. Pass a Python ModelProvider to agntz(...)."
