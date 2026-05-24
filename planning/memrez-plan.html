@@ -1,0 +1,889 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>memrez — Memory System Plan</title>
+  <style>
+    :root {
+      --ink: #171321;
+      --muted: #5f5a6d;
+      --soft: #827c91;
+      --paper: #f7f1e6;
+      --panel: #fffaf1;
+      --panel-2: #efe5d3;
+      --line: #d2c3aa;
+      --accent: #b24a24;
+      --accent-2: #315f78;
+      --accent-3: #5f7a3a;
+      --warn: #a46d1f;
+      --code: #201b2b;
+      --code-text: #f5ead6;
+      --radius: 8px;
+      --shadow: 0 16px 50px rgba(45, 35, 20, 0.12);
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --serif: Georgia, "Times New Roman", serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(135deg, rgba(178, 74, 36, 0.08), transparent 34%),
+        linear-gradient(220deg, rgba(49, 95, 120, 0.10), transparent 40%),
+        var(--paper);
+      font-family: var(--sans);
+      line-height: 1.58;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+      border-bottom: 1px solid rgba(178, 74, 36, 0.35);
+    }
+
+    a:hover {
+      border-bottom-color: var(--accent);
+    }
+
+    .shell {
+      width: min(1180px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 22px 0;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .brand {
+      color: var(--ink);
+      font-weight: 750;
+      letter-spacing: 0.05em;
+    }
+
+    .hero {
+      padding: clamp(52px, 9vw, 104px) 0 48px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 340px;
+      gap: clamp(32px, 6vw, 72px);
+      align-items: start;
+    }
+
+    .eyebrow {
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      margin-bottom: 18px;
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0;
+      letter-spacing: 0;
+      line-height: 1.05;
+    }
+
+    h1 {
+      max-width: 880px;
+      font-family: var(--serif);
+      font-size: clamp(46px, 7vw, 86px);
+      font-weight: 500;
+    }
+
+    h2 {
+      margin-bottom: 20px;
+      font-family: var(--serif);
+      font-size: clamp(34px, 5vw, 54px);
+      font-weight: 500;
+    }
+
+    h3 {
+      margin-bottom: 10px;
+      font-size: 18px;
+      font-weight: 750;
+    }
+
+    .lede {
+      max-width: 760px;
+      margin: 26px 0 0;
+      color: var(--muted);
+      font-size: clamp(18px, 2.2vw, 22px);
+    }
+
+    .summary-card,
+    .panel,
+    .phase,
+    .note {
+      background: rgba(255, 250, 241, 0.82);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .summary-card {
+      padding: 22px;
+      position: sticky;
+      top: 18px;
+    }
+
+    .summary-card h2 {
+      margin-bottom: 14px;
+      font-family: var(--sans);
+      font-size: 15px;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .summary-card dl {
+      display: grid;
+      gap: 14px;
+      margin: 0;
+    }
+
+    .summary-card dt {
+      color: var(--soft);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .summary-card dd {
+      margin: 4px 0 0;
+      color: var(--ink);
+      font-weight: 650;
+    }
+
+    .toc {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 0 0 40px;
+    }
+
+    .toc a,
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 11px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255, 250, 241, 0.75);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    section {
+      padding: 52px 0;
+      border-top: 1px solid rgba(210, 195, 170, 0.72);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .panel {
+      padding: 24px;
+      box-shadow: none;
+    }
+
+    .panel p,
+    .phase p,
+    .note p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .phase-list {
+      display: grid;
+      gap: 16px;
+    }
+
+    .phase {
+      display: grid;
+      grid-template-columns: 92px minmax(0, 1fr);
+      gap: 20px;
+      padding: 22px;
+      box-shadow: none;
+    }
+
+    .phase-number {
+      color: var(--accent);
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    ul,
+    ol {
+      margin: 12px 0 0;
+      padding-left: 20px;
+      color: var(--muted);
+    }
+
+    li {
+      margin: 6px 0;
+    }
+
+    strong {
+      color: var(--ink);
+    }
+
+    code {
+      padding: 2px 5px;
+      border: 1px solid rgba(210, 195, 170, 0.75);
+      border-radius: 5px;
+      background: rgba(239, 229, 211, 0.72);
+      color: var(--ink);
+      font-family: var(--mono);
+      font-size: 0.9em;
+    }
+
+    pre {
+      overflow: auto;
+      margin: 16px 0 0;
+      padding: 16px 18px;
+      border-radius: var(--radius);
+      background: var(--code);
+      color: var(--code-text);
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.65;
+      white-space: pre;
+    }
+
+    pre code {
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      font-size: inherit;
+    }
+
+    .table-wrap {
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255, 250, 241, 0.82);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 760px;
+      font-size: 14px;
+    }
+
+    th,
+    td {
+      padding: 13px 14px;
+      border-bottom: 1px solid rgba(210, 195, 170, 0.72);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: rgba(239, 229, 211, 0.8);
+      color: var(--ink);
+      font-size: 12px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .note {
+      padding: 20px;
+      border-left: 4px solid var(--accent-2);
+      box-shadow: none;
+    }
+
+    .callout {
+      border-left-color: var(--accent-3);
+    }
+
+    .warning {
+      border-left-color: var(--warn);
+    }
+
+    .key {
+      color: var(--ink);
+      font-weight: 700;
+    }
+
+    footer {
+      padding: 42px 0 58px;
+      border-top: 1px solid var(--line);
+      color: var(--soft);
+      font-size: 13px;
+    }
+
+    @media (max-width: 920px) {
+      .hero,
+      .grid,
+      .phase {
+        grid-template-columns: 1fr;
+      }
+
+      .summary-card {
+        position: static;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="topbar">
+      <div class="brand">agntz planning</div>
+      <div>memrez memory system · May 24, 2026</div>
+    </div>
+
+    <header class="hero">
+      <div>
+        <div class="eyebrow">Proposed design · memrez</div>
+        <h1>memrez: a memory layer for agntz</h1>
+        <p class="lede">
+          agntz can run agents, but it has no long-term memory — only verbatim
+          sessions and uncurated context buckets. memrez is the durable layer:
+          small tagged facts, partitioned by a hierarchical scope, curated over
+          time. It is standalone, yet borrows agntz's own brain — its tagger and
+          curator are agntz YAML manifests, run identically by the TypeScript and
+          Python SDKs.
+        </p>
+      </div>
+
+      <aside class="summary-card" aria-label="Plan summary">
+        <h2>Summary</h2>
+        <dl>
+          <div>
+            <dt>Positioning</dt>
+            <dd>Standalone; depends on the agntz SDK</dd>
+          </div>
+          <div>
+            <dt>Repo</dt>
+            <dd>Starts in the agntz monorepo</dd>
+          </div>
+          <div>
+            <dt>Unit of memory</dt>
+            <dd>One fact + topics + one scope</dd>
+          </div>
+          <div>
+            <dt>Retrieval</dt>
+            <dd>scan a topic TOC → read on demand</dd>
+          </div>
+          <div>
+            <dt>Search</dt>
+            <dd>Tags-first; embeddings later</dd>
+          </div>
+          <div>
+            <dt>Companion</dt>
+            <dd><code>docs/plans/memrez.md</code></dd>
+          </div>
+        </dl>
+      </aside>
+    </header>
+
+    <nav class="toc" aria-label="Page contents">
+      <a href="#tenets">Tenets</a>
+      <a href="#decisions">Decisions</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#model">Data model</a>
+      <a href="#api">API</a>
+      <a href="#agent">From an agent</a>
+      <a href="#brain">Reasoning</a>
+      <a href="#storage">Storage</a>
+      <a href="#parity">Parity</a>
+      <a href="#phases">Phases</a>
+      <a href="#open">Open questions</a>
+      <a href="#scope-out">Out of scope</a>
+    </nav>
+
+    <section id="tenets">
+      <h2>Problem &amp; tenets</h2>
+      <p class="lede" style="margin-top:0">
+        The closest existing primitives — <code>SessionStore</code> (verbatim
+        history) and <code>ContextStore</code> (named scratch buckets) — are
+        short-term and uncurated. memrez adds durable, deduped, queryable
+        knowledge that accumulates across sessions.
+      </p>
+      <div class="grid" style="margin-top:28px">
+        <article class="panel">
+          <h3>Small entries + tags</h3>
+          <p>
+            Memory is many small facts, each tagged with topics — not one
+            Markdown blob per topic. Tags are the index.
+          </p>
+        </article>
+        <article class="panel">
+          <h3>The agent navigates</h3>
+          <p>
+            A cheap <code>scan</code> returns a table of contents; the agent
+            <code>read</code>s only the topics it actually needs, instead of
+            loading everything.
+          </p>
+        </article>
+        <article class="panel">
+          <h3>Cheap writes, heavy curation</h3>
+          <p>
+            A fast model tags on write; a stronger model dedupes and reconciles
+            contradictions in the background. The thinking happens in
+            <code>curate</code>, off the hot path.
+          </p>
+        </article>
+        <article class="panel">
+          <h3>Tags-first</h3>
+          <p>
+            Deterministic <code>scan</code>→<code>read</code> over topics now.
+            Embeddings and semantic search come later, as an additive strategy.
+          </p>
+        </article>
+        <article class="panel">
+          <h3>One brain, two runtimes</h3>
+          <p>
+            The tagger and curator are agntz YAML manifests — identical behavior
+            in the TypeScript and Python SDKs, the same way agntz already keeps
+            parity.
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <section id="decisions">
+      <h2>Decisions snapshot</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Choice</th><th>Decision</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="key">Positioning</td>
+              <td>Standalone package; depends on the agntz SDK to run its memory agent. <code>memrez → agntz</code>, never the reverse.</td>
+            </tr>
+            <tr>
+              <td class="key">Repo</td>
+              <td>Starts in the agntz monorepo (workspace-linked SDK, reuse <code>contracts/</code>). Kept logically standalone for later extraction.</td>
+            </tr>
+            <tr>
+              <td class="key">Unit of memory</td>
+              <td>One <code>MemoryEntry</code> = one canonical fact + topics + a single owning scope.</td>
+            </tr>
+            <tr>
+              <td class="key">Scope</td>
+              <td>Hierarchical path (<code>org/acme/user/u_123</code>). Reads include ancestors, so org/global facts are shared without duplication.</td>
+            </tr>
+            <tr>
+              <td class="key">Topics</td>
+              <td>LLM proposes on write (nudged by existing in-scope topics); <code>curate</code> normalizes the canonical set.</td>
+            </tr>
+            <tr>
+              <td class="key"><code>scan</code></td>
+              <td>Deterministic. Returns the scope's topic TOC (name + live count + curate-maintained blurb). Bootstraps context.</td>
+            </tr>
+            <tr>
+              <td class="key"><code>read</code> / <code>write</code></td>
+              <td>agntz <code>kind: local</code> tools. Scope injected from <code>toolContext</code>; the LLM picks the topic (read) / supplies the fact (write).</td>
+            </tr>
+            <tr>
+              <td class="key"><code>write</code> path</td>
+              <td>Cheap-model tag now (assign topics, light dedup), append. Heavy reconciliation deferred to <code>curate</code>.</td>
+            </tr>
+            <tr>
+              <td class="key"><code>write</code> input</td>
+              <td>Caller passes a finished fact; memrez tags + light-normalizes. Transcript→facts extraction is out of scope for v1.</td>
+            </tr>
+            <tr>
+              <td class="key"><code>curate</code></td>
+              <td><strong>Append-only + supersede</strong> — never hard-deletes. Cron/background pass merges dupes, reconciles contradictions, refreshes blurbs.</td>
+            </tr>
+            <tr>
+              <td class="key">Reasoning seam</td>
+              <td><code>Tagger</code> / <code>Curator</code> are injectable; the default impl runs the <code>memrez-tagger</code> / <code>memrez-curator</code> manifests via the SDK.</td>
+            </tr>
+            <tr>
+              <td class="key">Search</td>
+              <td>Tags-only for v1. Embeddings (pgvector / sqlite-vec) are a later, additive strategy.</td>
+            </tr>
+            <tr>
+              <td class="key">Parity</td>
+              <td><code>contracts/memrez/</code> fixtures run by both runtimes, using a <strong>deterministic fake reasoner</strong> so LLM nondeterminism stays out of contract tests.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="architecture">
+      <h2>Architecture</h2>
+      <pre><code>   calling agent (agntz)
+        │
+        │  (1) scan(scope) ── deterministic ──► topic TOC injected into context
+        │  (2) reads a topic on demand        (3) writes a fact
+        ▼                                          ▼
+   memory_read tool                          memory_write tool      ◄── kind: local tools
+        │                                          │                     scope from toolContext
+        └──────────────┬───────────────────────────┘
+                       ▼
+                 memrez core   (scope resolution · scan/read/write/curate · dedup)
+                   │                          │
+        ┌──────────┘                          └────────────┐
+        ▼                                                    ▼
+   MemoryStore (in-memory | sqlite | …)             Tagger / Curator  (injectable)
+   entries · topic_meta · supersede                     │  default impl
+                                                         ▼
+                                              agntz SDK ► memrez-tagger.yaml   (cheap model)
+                                              agntz SDK ► memrez-curator.yaml  (stronger model)
+                                                         │
+                                                         ▼
+                                              ModelProvider  (AI SDK in TS · LiteLLM in Python)
+
+   curate(scope)  ◄── cron / deterministic call ── runs the curator over a scope subtree</code></pre>
+    </section>
+
+    <section id="model">
+      <h2>Concepts &amp; data model</h2>
+      <p>One memory is one entry, with two independent axes: a single owning
+        <strong>scope</strong> (the silo) and many-to-many <strong>topics</strong>
+        (the tags within it).</p>
+      <pre><code>type Scope = string; // "global" | "org/acme" | "org/acme/user/u_123" | ".../session/s_abc"
+
+interface MemoryEntry {
+  id: string;                 // mem_&lt;nanoid&gt;
+  scope: Scope;               // single owning scope
+  content: string;            // one canonical fact ("Prefers metric units.")
+  topics: string[];           // semantic tags within the scope
+  type: "fact" | "preference" | "event" | "summary";
+  source?: { agentId?: string; sessionId?: string; runId?: string };
+  status: "active" | "superseded";
+  supersededBy?: string;      // id of the entry that replaced this one
+  createdAt: string;
+  updatedAt: string;
+  // embedding?: number[];    // Phase 6
+}
+
+interface TopicSummary {
+  topic: string;
+  count: number;               // live count of active entries
+  blurb?: string;              // curate-maintained one-liner
+  lastUpdatedAt: string;
+  hasUncuratedWrites: boolean; // writes since the last curate
+}</code></pre>
+      <div class="note" style="margin-top:16px">
+        <p>
+          <strong>Scope resolution.</strong> <code>read</code> / <code>scan</code>
+          over <code>org/acme/user/u_123</code> see entries at that path
+          <em>and</em> every ancestor prefix (<code>org/acme</code>,
+          <code>global</code>), so org-wide and global facts surface for a user
+          without being copied. Each entry owns exactly one scope; moving a fact
+          up a level (session→user) is a <code>curate</code> operation, not
+          multi-membership.
+        </p>
+      </div>
+    </section>
+
+    <section id="api">
+      <h2>Public API</h2>
+      <p>The four operations are plain methods (also what the tools and the cron
+        job call):</p>
+      <pre><code>import { createMemrez } from "memrez";
+
+const memrez = createMemrez({
+  store: sqliteStore("./memory.db"),       // default: in-memory
+  reasoner: agntzReasoner({ client }),      // default impl wraps the agntz SDK + the two manifests
+});
+
+const toc     = await memrez.scan("org/acme/user/u_123");
+const entries = await memrez.read("org/acme/user/u_123", "billing", { limit: 20 });
+const result  = await memrez.write("org/acme/user/u_123", "Prefers email over phone.", {
+  source: { sessionId, agentId },
+});
+const report  = await memrez.curate("org/acme/user/u_123");</code></pre>
+      <pre><code>scan(scope, opts?: { includeAncestors?: boolean; topicLimit?: number })
+  : Promise&lt;{ scope: Scope; topics: TopicSummary[] }&gt;;
+
+read(scope, topic, opts?: { limit?: number; includeAncestors?: boolean })
+  : Promise&lt;MemoryEntry[]&gt;;
+
+write(scope, content, opts?: { type?: EntryType; topicsHint?: string[]; source?: Source })
+  : Promise&lt;{ entry: MemoryEntry; action: "appended" | "superseded" | "deduped" }&gt;;
+
+curate(scope, opts?: { topics?: string[]; includeDescendants?: boolean })
+  : Promise&lt;CurateReport&gt;;</code></pre>
+    </section>
+
+    <section id="agent">
+      <h2>Using it from an agntz agent</h2>
+      <div class="note callout">
+        <p>
+          <strong>Scope comes from <code>toolContext</code>, never the model.</strong>
+          An agent cannot reach another user's memory by hallucinating a scope —
+          it only picks the topic (read) or supplies the fact (write).
+        </p>
+      </div>
+      <pre><code>const { memoryRead, memoryWrite } = memrez.tools(); // kind: local handlers
+
+const client = agntz({
+  agents: "./agents",
+  tools: { memory_read: memoryRead, memory_write: memoryWrite },
+});
+
+await client.agents.run({
+  agentId: "support",
+  input: userMsg,
+  toolContext: { orgId: "acme", userId: "u_123", sessionId }, // → scope path
+});</code></pre>
+      <pre><code># agents/support.yaml
+tools:
+  - kind: local
+    tools: [memory_read, memory_write]</code></pre>
+      <p>
+        <code>scan</code> runs <em>before</em> the model call and its TOC is
+        prepended to the agent's context (a <code>memrez.contextBlock(scope)</code>
+        helper returns the string). The agent sees <em>what</em> it knows and
+        calls <code>memory_read</code> only for the topics it actually needs.
+      </p>
+    </section>
+
+    <section id="brain">
+      <h2>Reasoning layer (the shared brain)</h2>
+      <p>Two agntz manifests, loaded by both runtimes from one canonical location
+        (<code>packages/memrez/agents/</code>):</p>
+      <div class="grid">
+        <article class="panel">
+          <h3>memrez-tagger <span style="color:var(--soft);font-weight:600">· cheap model</span></h3>
+          <p>
+            In: <code>{ content, scope, existingTopics, topicsHint? }</code>.
+            Out: <code>{ topics, type, normalizedContent, duplicateOf? }</code>.
+            Drives <code>write</code>.
+          </p>
+        </article>
+        <article class="panel">
+          <h3>memrez-curator <span style="color:var(--soft);font-weight:600">· stronger model</span></h3>
+          <p>
+            In: a scope's entry slice + the topic set.
+            Out: <code>{ ops: CurateOp[] }</code> — merge, supersede, retag,
+            setBlurb, promoteScope. Drives <code>curate</code>.
+          </p>
+        </article>
+      </div>
+      <p>
+        memrez-core only knows the <code>Tagger</code> / <code>Curator</code>
+        interfaces. <code>agntzReasoner()</code> is the default implementation
+        that runs these manifests through <code>client.agents.run(...)</code>; the
+        per-language <code>ModelProvider</code> (AI SDK / LiteLLM) makes the actual
+        LLM call. Swap in a custom reasoner and memrez has no agntz dependency at
+        all.
+      </p>
+    </section>
+
+    <section id="storage">
+      <h2>Storage</h2>
+      <p><code>MemoryStore</code> is memrez's own small interface (mirrors how
+        agntz ships <code>MemoryStore</code> / <code>SQLiteStore</code>):</p>
+      <pre><code>putEntry · getEntry · supersede(ids, byId)
+listTopics(scopePaths) → TopicSummary[]            // aggregates topic + count + blurb
+getByTopic(scopePaths, topic, limit) → entries
+getTopicMeta / setTopicMeta(scope, topic, blurb, lastCuratedAt)
+listScopeSlice(scope, opts) → entries              // for curate</code></pre>
+      <p>
+        Tables: <code>entries</code>, <code>topic_meta</code> (scope, topic,
+        blurb, lastCuratedAt). v1 adapters: in-memory + sqlite. Postgres + a
+        <code>vector</code> column arrive with the embeddings phase.
+      </p>
+      <div class="note">
+        <p>
+          <strong>scan TOC tuning (recommendation).</strong> Return <em>all</em>
+          topic names + live counts (cheap even at hundreds of topics) plus
+          curate-maintained blurbs; if topics exceed a cap, send blurbs only for
+          the most-recently-touched K (names + counts for the rest).
+          <code>hasUncuratedWrites</code> flags drift since the last curate. v1 is
+          query-agnostic (the full map); query-aware ranking waits for embeddings.
+        </p>
+      </div>
+    </section>
+
+    <section id="parity">
+      <h2>Parity &amp; contracts</h2>
+      <p>
+        Add <code>contracts/memrez/</code> mirroring <code>contracts/python-port/</code>:
+        scenario fixtures (a sequence of writes → expected topic assignment,
+        supersede graph, scan TOC shape, scope-ancestor resolution). Both runtimes
+        test against them.
+      </p>
+      <div class="note warning">
+        <p>
+          <strong>Contract tests use a deterministic fake reasoner</strong> (a
+          fixed content→topics mapping). That pins what must match across
+          languages — storage, scope resolution, dedup, supersede, scan
+          aggregation — without asserting on nondeterministic LLM output. Real
+          tagger/curator quality is covered separately by agntz <strong>evals</strong>
+          on the two manifests.
+        </p>
+      </div>
+    </section>
+
+    <section id="phases">
+      <h2>Implementation phases</h2>
+      <div class="phase-list">
+        <article class="phase">
+          <div class="phase-number">Phase 1</div>
+          <div>
+            <h3>memrez-core (TS), no LLM</h3>
+            <p>
+              Types, <code>MemoryStore</code> + in-memory adapter, scope/ancestor
+              resolution, scan/read/write/curate orchestration against injectable
+              <code>Tagger</code> / <code>Curator</code>. Tests with a fake
+              reasoner. <em>Cheapest way to find out if the scope/topic model
+              feels right in real code.</em>
+            </p>
+          </div>
+        </article>
+        <article class="phase">
+          <div class="phase-number">Phase 2</div>
+          <div>
+            <h3>agntz reasoner + manifests</h3>
+            <p>
+              <code>memrez-tagger.yaml</code> / <code>memrez-curator.yaml</code>;
+              <code>agntzReasoner()</code> wiring <code>write</code>→tagger,
+              <code>curate</code>→curator via the SDK. Evals on both manifests.
+            </p>
+          </div>
+        </article>
+        <article class="phase">
+          <div class="phase-number">Phase 3</div>
+          <div>
+            <h3>agntz tool surface</h3>
+            <p>
+              <code>memory_read</code> / <code>memory_write</code> as
+              <code>kind: local</code> tools (scope from <code>toolContext</code>);
+              <code>scan</code> + <code>contextBlock</code> injection helper. One
+              end-to-end example agent.
+            </p>
+          </div>
+        </article>
+        <article class="phase">
+          <div class="phase-number">Phase 4</div>
+          <div>
+            <h3>sqlite adapter</h3>
+            <p>Persistence across restarts; <code>topic_meta</code> table.</p>
+          </div>
+        </article>
+        <article class="phase">
+          <div class="phase-number">Phase 5</div>
+          <div>
+            <h3>Python port</h3>
+            <p>
+              Mirror core + adapters; load the <em>same</em> manifests via the
+              Python agntz SDK; wire <code>contracts/memrez/</code> into both test
+              suites. Parity lock.
+            </p>
+          </div>
+        </article>
+        <article class="phase">
+          <div class="phase-number">Phase 6</div>
+          <div>
+            <h3>Embeddings <span style="color:var(--soft);font-weight:600">· later</span></h3>
+            <p>
+              <code>vector</code> column (sqlite-vec / pgvector), embed on write +
+              re-embed on curate, hybrid retrieval (topic filter + vector rank),
+              query-aware <code>scan</code>.
+            </p>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section id="open">
+      <h2>Open questions</h2>
+      <p>All have a recommended lean; none block Phase 1.</p>
+      <ol>
+        <li>
+          <strong>Auto-injection vs app-driven.</strong> v1 has the app call
+          <code>scan</code> and prepend the TOC. Should the agntz runner eventually
+          grow a memory hook that scans/writes automatically (RAG-style), or stay
+          explicit? <em>Lean: explicit — matches the agentic-tools decision.</em>
+        </li>
+        <li>
+          <strong>Scope mapping.</strong> How does <code>{ orgId, userId, sessionId }</code>
+          in <code>toolContext</code> become a scope path — fixed convention or
+          configurable resolver? <em>Lean: configurable resolver, default
+          convention.</em>
+        </li>
+        <li>
+          <strong>write dedup depth.</strong> How hard does the cheap tagger try to
+          detect "already known" / supersede vs. always append and let
+          <code>curate</code> clean up? <em>Lean: append + exact-dup skip only;
+          curate does the rest.</em>
+        </li>
+        <li>
+          <strong>Promotion trigger.</strong> session→user (or user→org) promotion
+          — curator judgment, explicit API, or both?
+        </li>
+        <li>
+          <strong>Blurb storage.</strong> <code>topic_meta</code> table vs a
+          <code>type:"summary"</code> entry per topic. <em>Lean: topic_meta.</em>
+        </li>
+        <li>
+          <strong>Package name.</strong> Bare <code>memrez</code> (honors
+          standalone) vs <code>@agntz/memrez</code> (monorepo consistency). Doc
+          assumes bare <code>memrez</code>.
+        </li>
+        <li>
+          <strong>Manifest location across languages.</strong> Canonical YAML in
+          <code>packages/memrez/agents/</code>; does Python read those files
+          directly or get a packaged copy at build?
+        </li>
+      </ol>
+    </section>
+
+    <section id="scope-out">
+      <h2>Out of scope (v1)</h2>
+      <ul>
+        <li>Embeddings / semantic search (Phase 6).</li>
+        <li>Extracting facts from raw transcripts (the caller's job for now).</li>
+        <li>Multi-scope-per-entry membership.</li>
+        <li>A hosted memrez service or UI.</li>
+        <li>Cross-tenant / global curate runs (<code>curate</code> operates on one scope subtree).</li>
+      </ul>
+    </section>
+
+    <footer>
+      memrez design · Aaron + Claude · 2026-05-24 · companion to
+      <code>docs/plans/memrez.md</code>
+    </footer>
+  </div>
+</body>
+</html>
