@@ -25,7 +25,8 @@ Design tenets:
 | Positioning | Standalone package; depends on the agntz SDK to run its memory agent. `memrez → agntz`, never the reverse. |
 | Repo | Starts in the agntz monorepo (workspace-linked SDK, reuse `contracts/`). Kept logically standalone for later extraction. |
 | Unit of memory | One `MemoryEntry` = one canonical fact + topics + a single owning scope. |
-| Scope | Hierarchical path (`org/acme/user/u_123`). Reads include ancestors, so org/global facts are shared without duplication. |
+| Scope | Hierarchical path **and access boundary** (`org/acme/user/u_123`). Reads inherit ancestors (shared knowledge flows down); siblings stay isolated. |
+| Scope authority | The **granted prefix** is minted at the trust boundary from verified identity and is immutable; the model may only refine *downward* within it. Path shape is app-defined via a scope resolver. |
 | Topics | LLM proposes on write (nudged by existing in-scope topics); `curate` normalizes the canonical set. |
 | `scan` | Deterministic. Returns the scope's topic TOC (name + live count + curate-maintained blurb). Bootstraps context. |
 | `read`/`write` | agntz `kind: local` tools. Scope injected from `toolContext`; LLM picks the topic (read) / supplies the fact (write). |
@@ -157,6 +158,86 @@ tools:
 
 `scan` runs *before* the model call and its TOC is prepended to the agent's context (a `memrez.contextBlock(scope)` helper returns the string). The agent sees *what* it knows and calls `memory_read` only for the topics it actually needs.
 
+## Scope as a capability
+
+A scope is not just where a memory is filed — it is the **access boundary**. The isolation model is one rule:
+
+> The **granted prefix** is minted at the trust boundary from *verified identity* and is immutable for the request. The model can only **refine downward** within it — never widen, never jump sideways.
+
+So scope has two halves: a **granted prefix** from auth (the API route, or a hosted workspace API key) that the model never controls, and an optional **relative refinement** supplied by the agent and joined under the prefix server-side — which can only narrow.
+
+```
+effective_scope = granted_prefix + (optional refinement, clamped inside the prefix)
+```
+
+This is the discipline agntz already uses for `ctx.user.id`: the route loads identity and injects it via `toolContext`; the LLM chooses *what* to do, not *whose* data. A scope path is `<tenancy…>/<subject>` — leading segments are the namespace (app / workspace / org), the trailing segment is the subject (user / account). The exact shape is **app-defined via a scope resolver**, since only the app knows its tenancy model.
+
+**Inheritance goes up; isolation is sideways.** A read at a scope includes its *ancestors* (broader, shared knowledge flows down) but never its *siblings*. That single rule delivers sharing and isolation together.
+
+### Example — gymtext (app → user)
+
+```
+gymtext                       ← trainer-wide memory (add later — costs nothing now)
+└─ user/
+   ├─ u_123   ← travel prefs, equipment access, goals, injuries
+   └─ u_456   ← isolated: u_123's agent can never read this (sibling, not an ancestor)
+```
+
+```ts
+// scope minted HERE, from the authenticated user — the trust boundary
+const scope = `gymtext/user/${userId}`;
+
+const result = await runner.invoke("chat", message, {
+  sessionId,
+  context: await memrez.contextBlock(scope),     // scan TOC injected
+  toolContext: { user, memrezScope: scope },      // read/write tools bind to this scope
+});
+```
+
+`memory_read` / `memory_write` read `ctx.memrezScope`; the model picks a topic but the scope is fixed, so `u_123` and `u_456` can never see each other. Add trainer-wide memory later by writing at `gymtext` — every user's read inherits it, with no per-user duplication and no schema change. That free shared layer is why scope is a path, not a flat id.
+
+### Example — sales platform (app → org → account)
+
+```
+sales
+└─ org/
+   ├─ acme                    ← org heuristics: "if property A is true, also find B"
+   │  └─ account/
+   │     ├─ a_789  ← "usually omits property A; assume X, then confirm"
+   │     └─ a_790
+   └─ globex                  ← different org: fully isolated from acme
+```
+
+The lead agent for `a_789` is granted `sales/org/acme/account/a_789`; its reads inherit `sales/org/acme` (the org's qualification rules) but globex is invisible. **Promotion** is the curator's job: running at `sales/org/acme` (granted the org subtree) it notices the same pattern across sibling accounts — "most omit property A" — and writes a generalized heuristic *up* at the org scope, where every account agent inherits it. Account quirks stay low; learned generalizations rise.
+
+## Running memrez: local vs hosted
+
+Two independent axes — how an agent gets memory, and where memrez itself runs.
+
+**Integration surface — how an agent gets memory:**
+
+| Surface | For |
+|---|---|
+| `memrez.tools()` → `memory_read`/`memory_write` as agntz `kind: local` tools | agntz agents — the easy path |
+| The same handlers wrapped as plain function-calling tools | non-agntz agents (raw Anthropic tool-use, LangChain, …) |
+| Direct `memrez.scan/read/write/curate` calls | the app injects memory itself, no tools exposed |
+
+The consumer-facing surface is **framework-neutral**; the only agntz coupling is the reasoner (tagger / curator), and that is swappable. A non-agntz caller can use the tools and inject its own tagger, or let memrez run a headless agntz internally as its brain.
+
+**Topology — where storage + reasoner live:**
+
+| | Embedded / local | Hosted memrez service |
+|---|---|---|
+| Runs | in-process in your app | separate multi-tenant service |
+| Store | sqlite / your DB | service-managed (Postgres, later pgvector) |
+| Who mints the prefix | your route, from your auth | the service, from the API key → workspace |
+| Enforcement | you trust your own process | server-side; the caller's key *is* its prefix capability |
+| Reasoner + curate cron | your SDK + your keys | service runs them per scope (BYO-key optional) |
+
+**The scope model is identical in both** — what changes is who is trusted to mint the prefix and where it is enforced. Path shape, inheritance, and isolation never change. gymtext (one app, its own DB) is naturally embedded; a multi-org sales SaaS is the case for hosted, because one process then holds many tenants' memories.
+
+> **The background curator is scope-bound too.** A hosted deployment runs the curator as a scheduled per-scope job; the curator for `org/acme` is granted only the acme subtree and can never read another tenant. Every memrez operation — foreground tool call or background curate — runs inside a scope grant. A curator that could read across scopes would be a cross-tenant leak.
+
 ## Reasoning layer (the shared brain)
 
 Two agntz manifests, loaded by both runtimes from one canonical location (`packages/memrez/agents/`):
@@ -205,12 +286,11 @@ Crucial: contract tests use a **deterministic fake reasoner** (fixed content→t
 ## Open questions
 
 1. **Auto-injection vs app-driven.** v1 has the app call `scan` and prepend the TOC. Should the agntz runner eventually grow a memory hook that scans/writes automatically (RAG-style), or stay explicit? (Leaning explicit — matches the agentic-tools decision.)
-2. **Scope mapping.** How does `{ orgId, userId, sessionId }` in `toolContext` become a scope path — fixed convention or configurable resolver? Lean: configurable resolver with a default convention.
-3. **write dedup depth.** How hard does the cheap tagger try to detect "already known" / supersede vs. always append and let `curate` clean up? Lean: append + exact-dup skip only; curate does the rest.
-4. **Promotion trigger.** session→user (or user→org) promotion — curator judgment, explicit API, or both?
-5. **Blurb storage.** `topic_meta` table vs a `type:"summary"` entry per topic. Lean: `topic_meta`.
-6. **Package name.** Bare `memrez` (honors standalone) vs `@agntz/memrez` (monorepo consistency). Doc assumes bare `memrez`.
-7. **Manifest location across languages.** Canonical YAML in `packages/memrez/agents/`; does Python read those files directly or get a packaged copy at build?
+2. **write dedup depth.** How hard does the cheap tagger try to detect "already known" / supersede vs. always append and let `curate` clean up? Lean: append + exact-dup skip only; curate does the rest.
+3. **Promotion trigger.** session→user, or cross-sibling→parent (the sales "most accounts omit A" case). Curator-driven is the primary path; do we also expose an explicit `promote()` API? Lean: curator-driven, explicit API as an escape hatch.
+4. **Blurb storage.** `topic_meta` table vs a `type:"summary"` entry per topic. Lean: `topic_meta`.
+5. **Package name.** Bare `memrez` (honors standalone) vs `@agntz/memrez` (monorepo consistency). Doc assumes bare `memrez`.
+6. **Manifest location across languages.** Canonical YAML in `packages/memrez/agents/`; does Python read those files directly or get a packaged copy at build?
 
 ## Out of scope (v1)
 

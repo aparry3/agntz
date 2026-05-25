@@ -409,6 +409,10 @@
             <dd>Tags-first; embeddings later</dd>
           </div>
           <div>
+            <dt>Isolation</dt>
+            <dd>Scope = access boundary</dd>
+          </div>
+          <div>
             <dt>Companion</dt>
             <dd><code>docs/plans/memrez.md</code></dd>
           </div>
@@ -423,6 +427,8 @@
       <a href="#model">Data model</a>
       <a href="#api">API</a>
       <a href="#agent">From an agent</a>
+      <a href="#scope">Scope</a>
+      <a href="#run">Running</a>
       <a href="#brain">Reasoning</a>
       <a href="#storage">Storage</a>
       <a href="#parity">Parity</a>
@@ -503,7 +509,11 @@
             </tr>
             <tr>
               <td class="key">Scope</td>
-              <td>Hierarchical path (<code>org/acme/user/u_123</code>). Reads include ancestors, so org/global facts are shared without duplication.</td>
+              <td>Hierarchical path <strong>and access boundary</strong> (<code>org/acme/user/u_123</code>). Reads inherit ancestors (shared knowledge flows down); siblings stay isolated.</td>
+            </tr>
+            <tr>
+              <td class="key">Scope authority</td>
+              <td>The <strong>granted prefix</strong> is minted at the trust boundary from verified identity and is immutable; the model may only refine <em>downward</em> within it. Path shape is app-defined via a scope resolver.</td>
             </tr>
             <tr>
               <td class="key">Topics</td>
@@ -677,6 +687,152 @@ tools:
       </p>
     </section>
 
+    <section id="scope">
+      <h2>Scope as a capability</h2>
+      <p>
+        A scope is not just where a memory is filed — it is the
+        <strong>access boundary</strong>. The isolation model is one rule:
+      </p>
+      <div class="note callout">
+        <p>
+          The <strong>granted prefix</strong> is minted at the trust boundary from
+          <em>verified identity</em> and is immutable for the request. The model
+          can only <strong>refine downward</strong> within it — never widen, never
+          jump sideways.
+        </p>
+      </div>
+      <p>
+        So scope has two halves: a <strong>granted prefix</strong> from auth (the
+        API route, or a hosted workspace API key) that the model never controls,
+        and an optional <strong>relative refinement</strong> supplied by the agent
+        and joined under the prefix server-side — which can only narrow.
+      </p>
+      <pre><code>effective_scope = granted_prefix + (optional refinement, clamped inside the prefix)</code></pre>
+      <p>
+        This is the discipline agntz already uses for <code>ctx.user.id</code>: the
+        route loads identity and injects it via <code>toolContext</code>; the LLM
+        chooses <em>what</em> to do, not <em>whose</em> data. A scope path is
+        <code>&lt;tenancy…&gt;/&lt;subject&gt;</code> — leading segments are the
+        namespace (app / workspace / org), the trailing segment is the subject
+        (user / account). The exact shape is <strong>app-defined via a scope
+        resolver</strong>, since only the app knows its tenancy model.
+      </p>
+      <div class="note">
+        <p>
+          <strong>Inheritance goes up; isolation is sideways.</strong> A read at a
+          scope includes its <em>ancestors</em> (broader, shared knowledge flows
+          down) but never its <em>siblings</em>. That single rule delivers sharing
+          and isolation together.
+        </p>
+      </div>
+
+      <h3>Example — gymtext (app → user)</h3>
+      <pre><code>gymtext                       ← trainer-wide memory (add later — costs nothing now)
+└─ user/
+   ├─ u_123   ← travel prefs, equipment access, goals, injuries
+   └─ u_456   ← isolated: u_123's agent can never read this (sibling, not an ancestor)</code></pre>
+      <pre><code>// scope minted HERE, from the authenticated user — the trust boundary
+const scope = `gymtext/user/${userId}`;
+
+const result = await runner.invoke("chat", message, {
+  sessionId,
+  context: await memrez.contextBlock(scope),     // scan TOC injected
+  toolContext: { user, memrezScope: scope },      // read/write tools bind to this scope
+});</code></pre>
+      <p>
+        <code>memory_read</code> / <code>memory_write</code> read
+        <code>ctx.memrezScope</code>; the model picks a topic but the scope is
+        fixed, so <code>u_123</code> and <code>u_456</code> can never see each
+        other. Add trainer-wide memory later by writing at <code>gymtext</code> —
+        every user's read inherits it, with no per-user duplication and no schema
+        change. That free shared layer is why scope is a path, not a flat id.
+      </p>
+
+      <h3>Example — sales platform (app → org → account)</h3>
+      <pre><code>sales
+└─ org/
+   ├─ acme                    ← org heuristics: "if property A is true, also find B"
+   │  └─ account/
+   │     ├─ a_789  ← "usually omits property A; assume X, then confirm"
+   │     └─ a_790
+   └─ globex                  ← different org: fully isolated from acme</code></pre>
+      <p>
+        The lead agent for <code>a_789</code> is granted
+        <code>sales/org/acme/account/a_789</code>; its reads inherit
+        <code>sales/org/acme</code> (the org's qualification rules) but globex is
+        invisible. <strong>Promotion</strong> is the curator's job: running at
+        <code>sales/org/acme</code> (granted the org subtree) it notices the same
+        pattern across sibling accounts — "most omit property A" — and writes a
+        generalized heuristic <em>up</em> at the org scope, where every account
+        agent inherits it. Account quirks stay low; learned generalizations rise.
+      </p>
+    </section>
+
+    <section id="run">
+      <h2>Running memrez: local vs hosted</h2>
+      <p>Two independent axes — how an agent gets memory, and where memrez itself runs.</p>
+      <h3>Integration surface</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Surface</th><th>For</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>memrez.tools()</code> → <code>memory_read</code> / <code>memory_write</code> as agntz <code>kind: local</code> tools</td>
+              <td>agntz agents — the easy path</td>
+            </tr>
+            <tr>
+              <td>The same handlers wrapped as plain function-calling tools</td>
+              <td>non-agntz agents (raw Anthropic tool-use, LangChain, …)</td>
+            </tr>
+            <tr>
+              <td>Direct <code>memrez.scan/read/write/curate</code> calls</td>
+              <td>the app injects memory itself, no tools exposed</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        The consumer-facing surface is <strong>framework-neutral</strong>; the only
+        agntz coupling is the reasoner (tagger / curator), and that is swappable. A
+        non-agntz caller can use the tools and inject its own tagger, or let memrez
+        run a headless agntz internally as its brain.
+      </p>
+      <h3>Topology</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th></th><th>Embedded / local</th><th>Hosted memrez service</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="key">Runs</td><td>in-process in your app</td><td>separate multi-tenant service</td></tr>
+            <tr><td class="key">Store</td><td>sqlite / your DB</td><td>service-managed (Postgres, later pgvector)</td></tr>
+            <tr><td class="key">Who mints the prefix</td><td>your route, from your auth</td><td>the service, from the API key → workspace</td></tr>
+            <tr><td class="key">Enforcement</td><td>you trust your own process</td><td>server-side; the caller's key <em>is</em> its prefix capability</td></tr>
+            <tr><td class="key">Reasoner + curate cron</td><td>your SDK + your keys</td><td>service runs them per scope (BYO-key optional)</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        <strong>The scope model is identical in both</strong> — what changes is who
+        is trusted to mint the prefix and where it is enforced. Path shape,
+        inheritance, and isolation never change. gymtext (one app, its own DB) is
+        naturally embedded; a multi-org sales SaaS is the case for hosted, because
+        one process then holds many tenants' memories.
+      </p>
+      <div class="note warning">
+        <p>
+          <strong>The background curator is scope-bound too.</strong> A hosted
+          deployment runs the curator as a scheduled per-scope job; the curator for
+          <code>org/acme</code> is granted only the acme subtree and can never read
+          another tenant. Every memrez operation — foreground tool call or
+          background curate — runs inside a scope grant. A curator that could read
+          across scopes would be a cross-tenant leak.
+        </p>
+      </div>
+    </section>
+
     <section id="brain">
       <h2>Reasoning layer (the shared brain)</h2>
       <p>Two agntz manifests, loaded by both runtimes from one canonical location
@@ -837,20 +993,16 @@ listScopeSlice(scope, opts) → entries              // for curate</code></pre>
           explicit? <em>Lean: explicit — matches the agentic-tools decision.</em>
         </li>
         <li>
-          <strong>Scope mapping.</strong> How does <code>{ orgId, userId, sessionId }</code>
-          in <code>toolContext</code> become a scope path — fixed convention or
-          configurable resolver? <em>Lean: configurable resolver, default
-          convention.</em>
-        </li>
-        <li>
           <strong>write dedup depth.</strong> How hard does the cheap tagger try to
           detect "already known" / supersede vs. always append and let
           <code>curate</code> clean up? <em>Lean: append + exact-dup skip only;
           curate does the rest.</em>
         </li>
         <li>
-          <strong>Promotion trigger.</strong> session→user (or user→org) promotion
-          — curator judgment, explicit API, or both?
+          <strong>Promotion trigger.</strong> session→user, or cross-sibling→parent
+          (the sales "most accounts omit A" case). Curator-driven is the primary
+          path; do we also expose an explicit <code>promote()</code> API?
+          <em>Lean: curator-driven, explicit API as an escape hatch.</em>
         </li>
         <li>
           <strong>Blurb storage.</strong> <code>topic_meta</code> table vs a
