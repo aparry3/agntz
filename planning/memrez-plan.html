@@ -413,8 +413,12 @@
             <dd>Scope = access boundary</dd>
           </div>
           <div>
-            <dt>Default</dt>
-            <dd>Embedded library; hosted is opt-in</dd>
+            <dt>Integration</dt>
+            <dd><code>memory:</code> manifest block → system tools</dd>
+          </div>
+          <div>
+            <dt>Packaging</dt>
+            <dd>Slot in agntz; impl in separate <code>memrez</code></dd>
           </div>
         </dl>
       </aside>
@@ -528,12 +532,20 @@
               <td>Deterministic. Returns the scope's topic TOC (name + live count + curate-maintained blurb). Bootstraps context.</td>
             </tr>
             <tr>
-              <td class="key"><code>read</code> / <code>write</code> exposure</td>
-              <td>Always a <code>kind: local</code> agntz tool handler from <code>mem.tools()</code> — the handler calls memrez. Embedded vs hosted changes only what <code>mem</code> <em>is</em>, never the agent. Scope from <code>toolContext</code>; the model picks the topic (read) / supplies the fact (write).</td>
+              <td class="key">agntz integration</td>
+              <td>A first-class <code>memory:</code> manifest block, sibling to <code>skills</code> / <code>reply</code>. The runner registers <code>memory_read</code> / <code>memory_write</code> as <strong>system tools</strong> and (when <code>autoScan</code>) injects the scan TOC — the user never hand-lists them. Scope from <code>toolContext</code>; the model picks the topic / supplies the fact.</td>
+            </tr>
+            <tr>
+              <td class="key">Packaging</td>
+              <td>agntz core ships only the <strong>slot</strong> — the <code>memory:</code> schema, the <code>MemoryProvider</code> interface, validation, and runner wiring. The implementation is the separate <code>memrez</code> package you inject. Mirrors <code>skills</code>→<code>SkillStore</code> and the in-memory→sqlite→postgres store graduation. <code>agntz</code> never depends on <code>memrez</code>.</td>
+            </tr>
+            <tr>
+              <td class="key">Validation</td>
+              <td>Two layers: parse-time checks the block shape and reserves the tool names; load-time <strong>fail-fast</strong> if an agent declares <code>memory:</code> but no <code>MemoryProvider</code> is wired (error names the agent). Stronger than the <code>skills</code> silent no-op.</td>
             </tr>
             <tr>
               <td class="key">Deployment</td>
-              <td>One <code>Memrez</code> interface, two constructors: <code>createMemrez(...)</code> (embedded, in-process — the default) and <code>createMemrezClient({ url, apiKey })</code> (HTTP client to a hosted memrez service). Mirrors agntz's <code>@agntz/sdk</code> → <code>@agntz/client</code>; graduate by swapping the constructor, not the agent.</td>
+              <td>The injected provider is either embedded (<code>createMemrez(...)</code>, in-process — the default) or a hosted client (<code>createMemrezClient({ url, apiKey })</code>). Mirrors agntz's <code>@agntz/sdk</code> → <code>@agntz/client</code>; graduate by swapping the constructor, not the agent.</td>
             </tr>
             <tr>
               <td class="key"><code>write</code> path</td>
@@ -566,14 +578,20 @@
 
     <section id="architecture">
       <h2>Architecture</h2>
-      <pre><code>   calling agent (agntz)
+      <pre><code>   agntz agent · manifest has a  memory:  block
+        │   runner registers memory_read / memory_write as system tools
+        │   + (autoScan) injects the scan TOC before the model call
         │
         │  (1) scan(scope) ── deterministic ──► topic TOC injected into context
         │  (2) reads a topic on demand        (3) writes a fact
         ▼                                          ▼
-   memory_read tool                          memory_write tool      ◄── kind: local tools
+   memory_read tool                          memory_write tool      ◄── system tools (runner-registered)
         │                                          │                     scope from toolContext
         └──────────────┬───────────────────────────┘
+                       ▼
+                MemoryProvider          ◄── agntz core defines this interface (the slot)
+                       │                    agntz never imports memrez
+   ════════════════════╪══════════════════════════════  agntz core  /  memrez package
                        ▼
                  memrez core   (scope resolution · scan/read/write/curate · dedup)
                    │                          │
@@ -652,8 +670,8 @@ const report  = await memrez.curate("org/acme/user/u_123");</code></pre>
       <p style="margin-top:16px">
         Hosting is a one-line swap. The same interface — <code>scan</code> /
         <code>read</code> / <code>write</code> / <code>curate</code> /
-        <code>tools()</code> — backed by a remote service instead of an in-process
-        store + reasoner:
+        <code>provider()</code> / <code>tools()</code> — backed by a remote service
+        instead of an in-process store + reasoner:
       </p>
       <pre><code>import { createMemrezClient } from "memrez/client";
 
@@ -674,39 +692,55 @@ curate(scope, opts?: { topics?: string[]; includeDescendants?: boolean })
 
     <section id="agent">
       <h2>Using it from an agntz agent</h2>
-      <div class="note callout">
-        <p>
-          <strong>Scope comes from <code>toolContext</code>, never the model.</strong>
-          An agent cannot reach another user's memory by hallucinating a scope —
-          it only picks the topic (read) or supplies the fact (write).
-        </p>
-      </div>
-      <pre><code>const mem = createMemrez(options);  // or createMemrezClient({ url }) — same tools()
-const memoryTools = mem.tools(); // ToolDefinition[] → registers memory_read, memory_write
+      <p>
+        Memory is a <strong>first-class manifest capability</strong>, not a
+        hand-wired tool — a <code>memory:</code> block sits beside agntz's existing
+        <code>skills</code> and <code>reply</code> blocks. Declaring it makes the
+        runner register <code>memory_read</code> / <code>memory_write</code> as
+        system tools and, when <code>autoScan</code> is on, inject the scan TOC
+        before the model call.
+      </p>
+      <pre><code># agents/support.yaml
+memory:
+  mode: read-write     # read-only | read-write (default); read-only registers only memory_read
+  autoScan: true       # inject the scan TOC before the model call (the non-tool half)
+  # no scope here — scope is per-run, from toolContext (never baked into the manifest)</code></pre>
+      <p>
+        You wire the implementation once, at app start, into the <code>memory</code>
+        slot. <code>mem</code> is any <code>MemoryProvider</code> — embedded or a
+        hosted client — and the YAML above never changes:
+      </p>
+      <pre><code>const mem = createMemrez(options);          // or createMemrezClient({ url })
 
 const client = await agntz({
   agents: "./agents",
-  tools: [...memoryTools, ...appTools], // spread into the tools array
-});</code></pre>
-      <pre><code># agents/support.yaml
-tools:
-  - kind: local
-    tools: [memory_read, memory_write]</code></pre>
+  memory: mem.provider(),                   // the MemoryProvider slot
+  tools: [...appTools],                     // memory_read / memory_write are NOT hand-listed
+});
+// load-time: an agent declaring `memory:` with no provider here → fail-fast, naming the agent</code></pre>
       <p>
-        <code>scan</code> runs <em>before</em> the model call and its TOC is
-        prepended to the agent's input (a <code>memrez.contextBlock(scope)</code>
-        helper returns the string). The agent sees <em>what</em> it knows and
-        calls <code>memory_read</code> only for the topics it actually needs.
+        <strong>Locally, that's the whole setup:</strong> <code>pnpm add memrez</code>,
+        construct a provider (in-memory store + a fake or real reasoner — no API key
+        needed offline), inject it. agntz core never bundles memrez; it only defines
+        the slot the provider fills.
       </p>
+      <div class="note callout">
+        <p>
+          <strong>Scope comes from <code>toolContext</code>, never the model.</strong>
+          An agent cannot reach another user's memory by hallucinating a scope — it
+          only picks the topic (read) or supplies the fact (write). The system tools
+          read <code>ctx.memrezScope</code>; <code>autoScan</code> calls
+          <code>contextBlock(scope)</code> with that same per-run scope.
+        </p>
+      </div>
       <div class="note warning">
         <p>
-          <strong>Embedded-SDK caveat.</strong> Per-run scope reaches the tools via
-          <code>toolContext</code>. The core
-          <code>createRunner().invoke(input, { toolContext })</code> accepts it today
-          (see the gymtext example), but <code>@agntz/sdk</code>'s
-          <code>agents.run(...)</code> does <strong>not</strong> thread
-          <code>toolContext</code> yet — so the SDK path either drops to the core
-          Runner or needs a small passthrough added. Tracked in open questions.
+          <strong>Per-run scope still needs <code>toolContext</code>.</strong> The
+          core <code>createRunner().invoke(input, { toolContext })</code> threads it
+          today (see the gymtext example), but <code>@agntz/sdk</code>'s
+          <code>agents.run(...)</code> does <strong>not</strong> yet — so the
+          <code>memory:</code> wiring needs that passthrough added to the SDK (or the
+          memory-bound agent runs on the core Runner). Tracked in open questions.
         </p>
       </div>
     </section>
@@ -805,24 +839,24 @@ const result = await runner.invoke("chat", `${toc}\n\n${message}`, {
       </p>
       <div class="note callout">
         <p>
-          <strong>The agent never changes; the constructor does.</strong>
-          <code>mem.tools()</code> always returns <code>kind: local</code> handlers.
-          Whether <code>mem</code> is an in-process <code>createMemrez(...)</code> or
-          a <code>createMemrezClient({ url })</code> talking to a hosted service, the
-          handlers, the agent YAML, and your route code are identical — the same
-          "graduate by changing one line" move agntz makes from
+          <strong>The agent never changes; the provider does.</strong> You inject
+          one <code>MemoryProvider</code> via the <code>memory:</code> slot. Whether
+          <code>mem</code> is an in-process <code>createMemrez(...)</code> or a
+          <code>createMemrezClient({ url })</code> talking to a hosted service, the
+          <code>memory:</code> block, the system tools, and your route code are
+          identical — the same "graduate by changing one line" move agntz makes from
           <code>@agntz/sdk</code> to <code>@agntz/client</code>.
         </p>
       </div>
       <p>
-        <strong>Why the handler is always local.</strong> A <code>kind: local</code>
-        handler runs your code before anything hits the wire: it binds scope from
-        <code>toolContext</code> (the capability guarantee), can prepend
-        <code>contextBlock</code>, and attaches auth. A raw <code>kind: http</code>
-        tool pointed straight at hosted memrez would hand request-shaping to the
-        model and force scope through templated headers — more surface, weaker
-        isolation. So the handler stays local; when memrez is hosted, that handler
-        is just a thin client call.
+        <strong>Why the system tools are local handlers.</strong> The
+        runner-registered <code>memory_read</code> / <code>memory_write</code> run
+        in-process before anything hits the wire: they bind scope from
+        <code>toolContext</code> (the capability guarantee) and call the injected
+        provider. A raw <code>kind: http</code> tool pointed straight at hosted memrez
+        would instead hand request-shaping to the model and force scope through
+        templated headers — more surface, weaker isolation. So the tools stay local;
+        when the provider is a hosted client, that call is just a thin HTTP hop.
       </p>
 
       <h3>Integration surface — how an agent gets memory</h3>
@@ -833,11 +867,11 @@ const result = await runner.invoke("chat", `${toc}\n\n${message}`, {
           </thead>
           <tbody>
             <tr>
-              <td><code>mem.tools()</code> → <code>ToolDefinition[]</code> (<code>kind: local</code> handlers), spread into the runner's <code>tools: [...]</code></td>
+              <td>A <code>memory:</code> manifest block + <code>memory: mem.provider()</code> — the runner registers the system tools</td>
               <td>agntz agents in your process — the easy path</td>
             </tr>
             <tr>
-              <td>The same handlers wrapped as plain function-calling tools</td>
+              <td><code>mem.tools()</code> wrapped as plain function-calling tools</td>
               <td>non-agntz agents (raw Anthropic tool-use, LangChain, …)</td>
             </tr>
             <tr>
@@ -1009,12 +1043,15 @@ listScopeSlice(scope, opts) → entries              // for curate</code></pre>
         <article class="phase">
           <div class="phase-number">Phase 3</div>
           <div>
-            <h3>agntz tool surface</h3>
+            <h3>agntz manifest integration <span style="color:var(--soft);font-weight:600">· agntz-core change</span></h3>
             <p>
-              <code>memory_read</code> / <code>memory_write</code> as
-              <code>kind: local</code> tools (scope from <code>toolContext</code>);
-              <code>scan</code> + <code>contextBlock</code> injection helper. One
-              end-to-end example agent.
+              The <code>memory:</code> manifest block + <code>MemoryProvider</code>
+              interface + validation (parse-time shape &amp; reserved names; load-time
+              fail-fast) in <code>@agntz/manifest</code> + <code>@agntz/core</code>.
+              Runner wiring registers the system tools, honors <code>mode</code>, and
+              injects the scan TOC on <code>autoScan</code>; <code>mem.provider()</code>
+              fills the slot. One end-to-end example agent. <em>Touches agntz core —
+              mirror in Python (Phase 5), add manifest parity fixtures.</em>
             </p>
           </div>
         </article>
@@ -1055,10 +1092,11 @@ listScopeSlice(scope, opts) → entries              // for curate</code></pre>
       <p>All have a recommended lean; none block Phase 1.</p>
       <ol>
         <li>
-          <strong>Auto-injection vs app-driven.</strong> v1 has the app call
-          <code>scan</code> and prepend the TOC. Should the agntz runner eventually
-          grow a memory hook that scans/writes automatically (RAG-style), or stay
-          explicit? <em>Lean: explicit — matches the agentic-tools decision.</em>
+          <strong>Auto-injection.</strong> Read-side is resolved — the
+          <code>memory.autoScan</code> flag makes TOC injection a declarative opt-in
+          (the runner scans and prepends). Open sliver: should the runner ever
+          auto-<em>write</em> (post-run fact extraction)? <em>Lean: no — the caller
+          passes finished facts (out of scope for v1).</em>
         </li>
         <li>
           <strong>write dedup depth.</strong> How hard does the cheap tagger try to
@@ -1077,9 +1115,17 @@ listScopeSlice(scope, opts) → entries              // for curate</code></pre>
           <code>type:"summary"</code> entry per topic. <em>Lean: topic_meta.</em>
         </li>
         <li>
-          <strong>Package name.</strong> Bare <code>memrez</code> (honors
-          standalone) vs <code>@agntz/memrez</code> (monorepo consistency). Doc
-          assumes bare <code>memrez</code>.
+          <strong>Package name.</strong> memrez is a separate package you inject as
+          the provider — bare <code>memrez</code> (honors standalone) vs
+          <code>@agntz/memrez</code> (monorepo consistency; signals the tight slot
+          coupling). Doc assumes bare <code>memrez</code>.
+        </li>
+        <li>
+          <strong>Where the slot lives.</strong> The <code>memory:</code> schema goes
+          in <code>@agntz/manifest</code>; does the <code>MemoryProvider</code>
+          interface live in <code>@agntz/core</code> (runner-adjacent, like
+          <code>SkillStore</code>) or a thin shared contract package? <em>Lean:
+          alongside <code>SkillStore</code> in core.</em>
         </li>
         <li>
           <strong>Manifest location across languages.</strong> Canonical YAML in
@@ -1087,12 +1133,12 @@ listScopeSlice(scope, opts) → entries              // for curate</code></pre>
           directly or get a packaged copy at build?
         </li>
         <li>
-          <strong>Embedded-SDK <code>toolContext</code> passthrough (agntz dependency).</strong>
-          The core Runner's <code>invoke(..., { toolContext })</code> binds scope
-          today, but <code>@agntz/sdk</code>'s <code>agents.run()</code> doesn't
-          expose <code>toolContext</code> yet. Resolution: use the core Runner for
-          memory-bound agents, or add <code>toolContext</code> to the SDK run
-          options (small agntz-side change).
+          <strong>SDK <code>toolContext</code> passthrough (agntz-side).</strong> The
+          <code>memory:</code> wiring binds per-run scope from <code>toolContext</code>,
+          which the core Runner's <code>invoke(..., { toolContext })</code> threads
+          today — but <code>@agntz/sdk</code>'s <code>agents.run()</code> doesn't yet.
+          Resolution: add <code>toolContext</code> to the SDK run options (small
+          agntz-side change), or run memory-bound agents on the core Runner.
         </li>
       </ol>
     </section>
