@@ -32,6 +32,10 @@ vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
 
 import { MCPClientManager } from "../../src/mcp/client-manager.js";
 
+const testMcpOptions = {
+  outboundUrlPolicy: { allowPrivateNetwork: true, skipDnsResolution: true },
+};
+
 describe("MCPClientManager", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -73,7 +77,7 @@ describe("MCPClientManager", () => {
           url: "http://localhost:3001/mcp",
           headers: { Authorization: "Bearer test" },
         },
-      });
+      }, testMcpOptions);
 
       await manager.initialize();
 
@@ -86,7 +90,7 @@ describe("MCPClientManager", () => {
 
       const manager = new MCPClientManager({
         broken: { url: "http://localhost:9999/mcp" },
-      });
+      }, testMcpOptions);
 
       await manager.initialize(); // Should not throw
 
@@ -101,7 +105,7 @@ describe("MCPClientManager", () => {
     it("is idempotent — second call is a no-op", async () => {
       const manager = new MCPClientManager({
         test: { url: "http://localhost:3001/mcp" },
-      });
+      }, testMcpOptions);
 
       await manager.initialize();
       await manager.initialize();
@@ -115,7 +119,7 @@ describe("MCPClientManager", () => {
     it("returns all tools from a specific server", async () => {
       const manager = new MCPClientManager({
         fs: { url: "http://localhost:3001/mcp" },
-      });
+      }, testMcpOptions);
       await manager.initialize();
 
       const tools = manager.getToolsFromServer("fs");
@@ -125,7 +129,7 @@ describe("MCPClientManager", () => {
     it("filters tools by name", async () => {
       const manager = new MCPClientManager({
         fs: { url: "http://localhost:3001/mcp" },
-      });
+      }, testMcpOptions);
       await manager.initialize();
 
       const tools = manager.getToolsFromServer("fs", ["read_file"]);
@@ -134,7 +138,7 @@ describe("MCPClientManager", () => {
     });
 
     it("returns empty for unknown server", async () => {
-      const manager = new MCPClientManager({});
+      const manager = new MCPClientManager({}, testMcpOptions);
       await manager.initialize();
 
       expect(manager.getToolsFromServer("nonexistent")).toHaveLength(0);
@@ -149,7 +153,7 @@ describe("MCPClientManager", () => {
 
       const manager = new MCPClientManager({
         fs: { url: "http://localhost:3001/mcp" },
-      });
+      }, testMcpOptions);
       await manager.initialize();
 
       const result = await manager.executeTool("fs", "read_file", {
@@ -168,7 +172,7 @@ describe("MCPClientManager", () => {
 
       const manager = new MCPClientManager({
         fs: { url: "http://localhost:3001/mcp" },
-      });
+      }, testMcpOptions);
       await manager.initialize();
 
       const result = await manager.executeTool("fs", "read_file", {
@@ -181,7 +185,7 @@ describe("MCPClientManager", () => {
       mockClient.connect.mockRejectedValueOnce(new Error("fail"));
       const manager = new MCPClientManager({
         broken: { url: "http://localhost:9999" },
-      });
+      }, testMcpOptions);
       await manager.initialize();
 
       await expect(
@@ -192,7 +196,7 @@ describe("MCPClientManager", () => {
     it("throws for unknown tool", async () => {
       const manager = new MCPClientManager({
         fs: { url: "http://localhost:3001/mcp" },
-      });
+      }, testMcpOptions);
       await manager.initialize();
 
       await expect(
@@ -205,7 +209,7 @@ describe("MCPClientManager", () => {
     it("returns status for all servers", async () => {
       const manager = new MCPClientManager({
         fs: { url: "http://localhost:3001/mcp" },
-      });
+      }, testMcpOptions);
       await manager.initialize();
 
       const status = manager.getStatus();
@@ -219,7 +223,7 @@ describe("MCPClientManager", () => {
     it("returns detailed status for a specific server", async () => {
       const manager = new MCPClientManager({
         fs: { url: "http://localhost:3001/mcp" },
-      });
+      }, testMcpOptions);
       await manager.initialize();
 
       const status = manager.getServerStatus("fs");
@@ -229,7 +233,7 @@ describe("MCPClientManager", () => {
     });
 
     it("returns null for unknown server", async () => {
-      const manager = new MCPClientManager({});
+      const manager = new MCPClientManager({}, testMcpOptions);
       await manager.initialize();
       expect(manager.getServerStatus("nonexistent")).toBeNull();
     });
@@ -239,7 +243,7 @@ describe("MCPClientManager", () => {
     it("closes all connections", async () => {
       const manager = new MCPClientManager({
         fs: { url: "http://localhost:3001/mcp" },
-      });
+      }, testMcpOptions);
       await manager.initialize();
 
       await manager.shutdown();

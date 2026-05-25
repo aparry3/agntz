@@ -6,6 +6,11 @@ import type {
   WebhookDeliveryStore,
 } from "../types.js";
 import type { SpanEmitter } from "../telemetry.js";
+import {
+  OutboundUrlPolicyError,
+  fetchWithOutboundPolicy,
+  type OutboundUrlPolicyOptions,
+} from "../utils/outbound-url.js";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Webhook dispatcher — signs and POSTs outbound webhook events for a run.
@@ -54,6 +59,8 @@ export interface WebhookDispatcherOptions {
   runId: string;
   /** Fetch override (tests). Defaults to global `fetch`. */
   fetch?: typeof fetch;
+  /** Override outbound URL policy. Custom test fetches skip DNS by default. */
+  outboundUrlPolicy?: OutboundUrlPolicyOptions;
   /** Per-attempt timeout (ms). Default 10_000. */
   timeoutMs?: number;
   /**
@@ -119,6 +126,9 @@ export function createWebhookDispatcher(
     );
   }
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const outboundUrlPolicy = opts.outboundUrlPolicy ?? (
+    opts.fetch ? { skipDnsResolution: true } : undefined
+  );
   const retryDelaysMs =
     opts.retryDelaysMs && opts.retryDelaysMs.length > 0
       ? opts.retryDelaysMs
@@ -164,6 +174,7 @@ export function createWebhookDispatcher(
           secretStore: opts.secretStore,
           deliveryStore: opts.deliveryStore,
           fetchImpl,
+          outboundUrlPolicy,
           timeoutMs,
           retryDelaysMs,
           sleep,
@@ -207,6 +218,7 @@ interface DeliveryLoopOpts {
   secretStore: SecretStore;
   deliveryStore: WebhookDeliveryStore;
   fetchImpl: typeof fetch;
+  outboundUrlPolicy?: OutboundUrlPolicyOptions;
   timeoutMs: number;
   retryDelaysMs: readonly number[];
   sleep: (ms: number) => Promise<void>;
@@ -241,6 +253,7 @@ async function runDeliveryLoop(o: DeliveryLoopOpts): Promise<void> {
       body,
       signature,
       fetchImpl: o.fetchImpl,
+      outboundUrlPolicy: o.outboundUrlPolicy,
       timeoutMs: o.timeoutMs,
     });
 
@@ -274,6 +287,7 @@ interface AttemptOpts {
   body: string;
   signature: string;
   fetchImpl: typeof fetch;
+  outboundUrlPolicy?: OutboundUrlPolicyOptions;
   timeoutMs: number;
 }
 
@@ -286,17 +300,24 @@ async function attemptDelivery(o: AttemptOpts): Promise<AttemptResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), o.timeoutMs);
   try {
-    const res = await o.fetchImpl(o.url, {
-      method: "POST",
-      body: o.body,
-      headers: {
-        "Content-Type": "application/json",
-        [WEBHOOK_SIGNATURE_HEADER]: o.signature,
-        [WEBHOOK_DELIVERY_ID_HEADER]: o.deliveryId,
-        [WEBHOOK_IDEMPOTENCY_HEADER]: o.deliveryId,
+    const res = await fetchWithOutboundPolicy(
+      o.url,
+      {
+        method: "POST",
+        body: o.body,
+        headers: {
+          "Content-Type": "application/json",
+          [WEBHOOK_SIGNATURE_HEADER]: o.signature,
+          [WEBHOOK_DELIVERY_ID_HEADER]: o.deliveryId,
+          [WEBHOOK_IDEMPOTENCY_HEADER]: o.deliveryId,
+        },
+        signal: controller.signal,
       },
-      signal: controller.signal,
-    });
+      {
+        fetchImpl: o.fetchImpl,
+        policy: o.outboundUrlPolicy,
+      },
+    );
     if (res.status >= 200 && res.status < 300) {
       return { outcome: "success" };
     }
@@ -312,6 +333,12 @@ async function attemptDelivery(o: AttemptOpts): Promise<AttemptResult> {
       errorMessage: `HTTP ${res.status}`,
     };
   } catch (err) {
+    if (err instanceof OutboundUrlPolicyError) {
+      return {
+        outcome: "permanent",
+        errorMessage: err.message,
+      };
+    }
     // Abort, network error, or DNS failure → retry-eligible.
     const message = err instanceof Error ? err.message : String(err);
     return {

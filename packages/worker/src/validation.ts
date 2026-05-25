@@ -3,6 +3,7 @@ import {
   listToolsOnServer,
   resolveMCPServer,
   type UnifiedStore,
+  type OutboundUrlPolicyOptions,
 } from "@agntz/core";
 import type { ValidationContext } from "@agntz/manifest";
 import { LOCAL_TOOL_NAMES } from "./tools/registry.js";
@@ -10,6 +11,8 @@ import { LOCAL_TOOL_NAMES } from "./tools/registry.js";
 export interface BuildValidationContextOptions {
   /** When true, MCP connection failures are reported as errors (save-time). */
   strict?: boolean;
+  /** Override outbound URL policy for validation network calls. */
+  outboundUrlPolicy?: OutboundUrlPolicyOptions;
   /** Timeout for each MCP connection + listTools call. */
   mcpTimeoutMs?: number;
 }
@@ -32,6 +35,7 @@ export function buildValidationContext(
 
   return {
     strict: options.strict,
+    outboundUrlPolicy: options.outboundUrlPolicy,
     localTools: [...LOCAL_TOOL_NAMES],
     resolveAgent: async (id: string) => {
       const agent = await runner.agents.getAgent(id);
@@ -54,7 +58,10 @@ export function buildValidationContext(
       if (cached) return cached;
       const promise = listToolsOnServer(
         { url: resolved.url, headers: resolved.headers },
-        { timeoutMs: options.mcpTimeoutMs ?? 10_000 },
+        {
+          timeoutMs: options.mcpTimeoutMs ?? 10_000,
+          outboundUrlPolicy: options.outboundUrlPolicy,
+        },
       );
       toolCache.set(resolved.url, promise);
       return promise;

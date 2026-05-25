@@ -1,8 +1,14 @@
 import type { MCPServerConfig } from "../types.js";
+import {
+  assertOutboundUrlAllowed,
+  type OutboundUrlPolicyOptions,
+} from "../utils/outbound-url.js";
 
 export interface ListToolsOptions {
   /** Abort the connection if listTools hasn't returned within this many ms. */
   timeoutMs?: number;
+  /** Override outbound URL policy. */
+  outboundUrlPolicy?: OutboundUrlPolicyOptions;
 }
 
 /**
@@ -17,6 +23,7 @@ export async function listToolsOnServer(
   if (!config.url) {
     throw new Error("MCP server config must include a url");
   }
+  const url = await assertOutboundUrlAllowed(config.url, options.outboundUrlPolicy);
 
   const { Client } = await import(
     "@modelcontextprotocol/sdk/client/index.js"
@@ -26,7 +33,7 @@ export async function listToolsOnServer(
   );
 
   const client = new Client({ name: "agntz-validator", version: "0.1.0" });
-  const transport = new StreamableHTTPClientTransport(new URL(config.url), {
+  const transport = new StreamableHTTPClientTransport(url, {
     requestInit: config.headers ? { headers: config.headers } : undefined,
   });
 

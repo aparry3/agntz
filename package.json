@@ -25,6 +25,11 @@
     "vitepress": "^1.6.4"
   },
   "pnpm": {
+    "overrides": {
+      "fast-uri": "3.1.2",
+      "hono": "4.12.23",
+      "path-to-regexp": "8.4.0"
+    },
     "onlyBuiltDependencies": [
       "better-sqlite3",
       "esbuild"

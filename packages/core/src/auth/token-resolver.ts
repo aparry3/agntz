@@ -17,6 +17,11 @@
 import { interpolate, interpolateDeep } from "./template.js";
 import { collectSensitiveValues, scrubString } from "./redact.js";
 import {
+  OutboundUrlPolicyError,
+  fetchWithOutboundPolicy,
+  type OutboundUrlPolicyOptions,
+} from "../utils/outbound-url.js";
+import {
   AuthError,
   type AppliedAuth,
   type HTTPAuth,
@@ -37,6 +42,8 @@ export interface TokenResolverDeps {
   cache: TokenCache;
   /** Override for tests. Defaults to global fetch. */
   fetchImpl?: typeof fetch;
+  /** Override outbound URL policy. Custom test fetches skip DNS by default. */
+  outboundUrlPolicy?: OutboundUrlPolicyOptions;
   /** Override for tests. Defaults to Date.now. */
   now?: () => number;
 }
@@ -44,6 +51,9 @@ export interface TokenResolverDeps {
 export function createTokenResolver(deps: TokenResolverDeps): TokenResolver {
   const cache = deps.cache;
   const fetchImpl = deps.fetchImpl ?? globalThis.fetch.bind(globalThis);
+  const outboundUrlPolicy = deps.outboundUrlPolicy ?? (
+    deps.fetchImpl ? { skipDnsResolution: true } : undefined
+  );
   const now = deps.now ?? Date.now;
   const inflight = new Map<string, Promise<TokenCacheEntry>>();
 
@@ -63,7 +73,13 @@ export function createTokenResolver(deps: TokenResolverDeps): TokenResolver {
 
       const fetchPromise = (async (): Promise<TokenCacheEntry> => {
         try {
-          const entry = await fetchToken(normalized, state, fetchImpl, now);
+          const entry = await fetchToken(
+            normalized,
+            state,
+            fetchImpl,
+            now,
+            outboundUrlPolicy,
+          );
           await cache.set(key, entry);
           return entry;
         } finally {
@@ -206,6 +222,7 @@ async function fetchToken(
   state: Record<string, unknown>,
   fetchImpl: typeof fetch,
   now: () => number,
+  outboundUrlPolicy: OutboundUrlPolicyOptions | undefined,
 ): Promise<TokenCacheEntry> {
   const url = interpolate(auth.request.url, state);
   const headers = interpolateHeaders(auth.request.headers, state);
@@ -234,13 +251,23 @@ async function fetchToken(
 
   let response: Response;
   try {
-    response = await fetchImpl(finalUrl, {
-      method: auth.request.method,
-      headers,
-      body,
-      signal: AbortSignal.timeout(30_000),
-    });
+    response = await fetchWithOutboundPolicy(
+      finalUrl,
+      {
+        method: auth.request.method,
+        headers,
+        body,
+        signal: AbortSignal.timeout(30_000),
+      },
+      {
+        fetchImpl,
+        policy: outboundUrlPolicy,
+      },
+    );
   } catch (err) {
+    if (err instanceof OutboundUrlPolicyError) {
+      throw new AuthError(`Token request blocked by outbound URL policy: ${err.message}`, err);
+    }
     throw new AuthError(
       `Token request failed: ${err instanceof Error ? err.message : String(err)}`,
       err,

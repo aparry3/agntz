@@ -19,6 +19,11 @@ import type { ToolDefinition } from "./types.js";
 import { interpolate, interpolateDeep } from "./auth/template.js";
 import { AuthError, type AppliedAuth, type HTTPAuth, type ResolveAuthCtx, type TokenCache, type TokenResolver } from "./auth/index.js";
 import { collectSensitiveValues, scrubString, scrubValue } from "./auth/redact.js";
+import {
+  OutboundUrlPolicyError,
+  fetchWithOutboundPolicy,
+  type OutboundUrlPolicyOptions,
+} from "./utils/outbound-url.js";
 
 /**
  * Structural mirror of `HTTPToolEntry` from `@agntz/manifest`. Kept in
@@ -186,6 +191,10 @@ function truncateValue(val: unknown, maxChars: number): unknown {
  *  - Other network error → `{ error: "Network error: <message>" }`
  */
 export interface HttpToolDeps {
+  /** Override for tests. Defaults to global fetch. */
+  fetch?: typeof fetch;
+  /** Override outbound URL policy. Custom test fetches skip DNS by default. */
+  outboundUrlPolicy?: OutboundUrlPolicyOptions;
   /**
    * Resolves dynamic `auth:` (oauth2_client_credentials | token_exchange)
    * to an AppliedAuth before each call. Required for entries that declare
@@ -327,13 +336,31 @@ async function runRequest(args: RunRequestArgs): Promise<unknown> {
 
   const finalHeaders = { ...args.headers, ...appliedHeaders };
   const finalUrl = appliedQuery ? appendQuery(args.url, appliedQuery) : args.url;
+  const outboundUrlPolicy = args.deps.outboundUrlPolicy ?? (
+    args.deps.fetch ? { skipDnsResolution: true } : undefined
+  );
 
-  const response = await fetch(finalUrl, {
-    method: args.method,
-    headers: finalHeaders,
-    body: args.body,
-    signal: AbortSignal.timeout(30_000),
-  });
+  let response: Response;
+  try {
+    response = await fetchWithOutboundPolicy(
+      finalUrl,
+      {
+        method: args.method,
+        headers: finalHeaders,
+        body: args.body,
+        signal: AbortSignal.timeout(30_000),
+      },
+      {
+        fetchImpl: args.deps.fetch,
+        policy: outboundUrlPolicy,
+      },
+    );
+  } catch (err) {
+    if (err instanceof OutboundUrlPolicyError) {
+      throw new Error(err.message, { cause: err });
+    }
+    throw err;
+  }
 
   // Refresh path: invalidate token, retry exactly once.
   if (args.auth && args.allowRefresh && args.refreshStatuses.has(response.status)) {

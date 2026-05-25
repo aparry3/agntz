@@ -1069,6 +1069,24 @@ tools:
     )).toBe(true);
   });
 
+  it("errors on HTTP tool URLs that target private infrastructure", () => {
+    const result = validateManifest(`
+id: agent
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Use the tool."
+tools:
+  - kind: http
+    name: metadata
+    url: "http://169.254.169.254/latest/meta-data"
+`);
+    expect(result.errors.some(e =>
+      e.level === "structural" && e.message.includes("not an allowed outbound URL"),
+    )).toBe(true);
+  });
+
   it("errors on missing name", () => {
     const result = validateManifest(`
 id: agent
@@ -1147,6 +1165,7 @@ tools:
       resolveAgent: vi.fn().mockResolvedValue(true),
       resolveTools: vi.fn().mockResolvedValue([]),
       localTools: [],
+      outboundUrlPolicy: { skipDnsResolution: true },
       ...overrides,
     };
   }

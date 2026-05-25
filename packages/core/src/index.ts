@@ -60,7 +60,7 @@ export { AISDKModelProvider } from "./model-provider.js";
 
 // MCP
 export { MCPClientManager } from "./mcp/client-manager.js";
-export type { MCPTool } from "./mcp/client-manager.js";
+export type { MCPClientManagerOptions, MCPTool } from "./mcp/client-manager.js";
 export { createMCPServer } from "./mcp/server.js";
 export type { MCPServerOptions } from "./mcp/server.js";
 export { listToolsOnServer } from "./mcp/list-tools.js";
@@ -91,6 +91,16 @@ export type { TraceSink } from "./types.js";
 export { withRetry } from "./utils/retry.js";
 export type { RetryConfig } from "./utils/retry.js";
 export { summarizeMessages, trimHistoryWithSummary } from "./utils/summarize.js";
+export {
+  OutboundUrlPolicyError,
+  assertOutboundUrlAllowed,
+  fetchWithOutboundPolicy,
+  validateOutboundUrl,
+} from "./utils/outbound-url.js";
+export type {
+  FetchWithOutboundPolicyOptions,
+  OutboundUrlPolicyOptions,
+} from "./utils/outbound-url.js";
 export {
   encryptSecret,
   decryptSecret,

@@ -34,6 +34,8 @@ function mockResponse(text: string): GenerateTextResult {
   };
 }
 
+const testOutboundUrlPolicy = { skipDnsResolution: true };
+
 describe("Runner", () => {
   it("creates a runner with defaults", () => {
     const runner = createRunner();
@@ -44,7 +46,10 @@ describe("Runner", () => {
   it("registers and invokes an agent", async () => {
     const provider = new MockModelProvider(mockResponse("Hello from the agent!"));
 
-    const runner = createRunner({ modelProvider: provider });
+    const runner = createRunner({
+      modelProvider: provider,
+      outboundUrlPolicy: testOutboundUrlPolicy,
+    });
 
     runner.registerAgent(
       defineAgent({
@@ -88,7 +93,10 @@ describe("Runner", () => {
       mockResponse("Second response"),
     ]);
 
-    const runner = createRunner({ modelProvider: provider });
+    const runner = createRunner({
+      modelProvider: provider,
+      outboundUrlPolicy: testOutboundUrlPolicy,
+    });
 
     runner.registerAgent(
       defineAgent({
@@ -286,7 +294,10 @@ describe("Runner", () => {
   it("injects context into messages", async () => {
     const provider = new MockModelProvider(mockResponse("Based on the research..."));
 
-    const runner = createRunner({ modelProvider: provider });
+    const runner = createRunner({
+      modelProvider: provider,
+      outboundUrlPolicy: testOutboundUrlPolicy,
+    });
 
     runner.registerAgent(
       defineAgent({
@@ -506,7 +517,10 @@ describe("Runner", () => {
 
     try {
       const provider = new MockModelProvider(mockResponse("That's a great pose!"));
-      const runner = createRunner({ modelProvider: provider });
+      const runner = createRunner({
+        modelProvider: provider,
+        outboundUrlPolicy: testOutboundUrlPolicy,
+      });
 
       runner.registerAgent(
         defineAgent({
@@ -637,7 +651,11 @@ describe("Runner — HTTP tools", () => {
       mockResponse("Got the user."),
     ]);
 
-    const runner = createRunner({ modelProvider: provider, store: userStore });
+    const runner = createRunner({
+      modelProvider: provider,
+      store: userStore,
+      outboundUrlPolicy: testOutboundUrlPolicy,
+    });
     runner.registerAgent(
       defineAgent({
         id: "http-agent",
@@ -687,7 +705,11 @@ describe("Runner — HTTP tools", () => {
       mockResponse("Done."),
     ]);
 
-    const runner = createRunner({ modelProvider: provider, store: userStore });
+    const runner = createRunner({
+      modelProvider: provider,
+      store: userStore,
+      outboundUrlPolicy: testOutboundUrlPolicy,
+    });
     runner.registerAgent(
       defineAgent({
         id: "http-agent",
@@ -714,7 +736,11 @@ describe("Runner — HTTP tools", () => {
 
     const provider = new MockModelProvider([mockResponse("never reached")]);
 
-    const runner = createRunner({ modelProvider: provider, store: userStore });
+    const runner = createRunner({
+      modelProvider: provider,
+      store: userStore,
+      outboundUrlPolicy: testOutboundUrlPolicy,
+    });
     runner.registerAgent(
       defineAgent({
         id: "http-agent",
@@ -751,6 +777,7 @@ describe("Runner — HTTP tools", () => {
     const runner = createRunner({
       modelProvider: provider,
       envProvider: (name) => (name === "MY_API_TOKEN" ? "Bearer env-tok" : undefined),
+      outboundUrlPolicy: testOutboundUrlPolicy,
     });
     runner.registerAgent(
       defineAgent({
@@ -783,7 +810,10 @@ describe("Runner — HTTP tools", () => {
 
   it("throws when {{env.NAME}} is referenced but no envProvider is wired", async () => {
     const provider = new MockModelProvider([mockResponse("never reached")]);
-    const runner = createRunner({ modelProvider: provider });
+    const runner = createRunner({
+      modelProvider: provider,
+      outboundUrlPolicy: testOutboundUrlPolicy,
+    });
     runner.registerAgent(
       defineAgent({
         id: "env-agent",
@@ -879,7 +909,10 @@ describe("Runner — HTTP tools", () => {
       mockResponse("Done."),
     ]);
 
-    const runner = createRunner({ modelProvider: provider });
+    const runner = createRunner({
+      modelProvider: provider,
+      outboundUrlPolicy: testOutboundUrlPolicy,
+    });
     runner.registerAgent(
       defineAgent({
         id: "http-agent",

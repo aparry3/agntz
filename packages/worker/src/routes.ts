@@ -8,9 +8,12 @@ import {
   generateSessionId,
   InMemoryRunRegistry,
   MemoryStore,
+  OutboundUrlPolicyError,
   SpanEmitter,
+  assertOutboundUrlAllowed,
   type InvokeResult,
   type MultiplexedEvent,
+  type OutboundUrlPolicyOptions,
   type Reply,
   type Run,
   type RunListFilters,
@@ -71,6 +74,8 @@ export interface WorkerAPIOptions {
     userId: string,
     agentId: string,
   ) => Promise<{ runner: Runner; manifest: AgentManifest }>;
+  /** Override outbound URL policy for tests or trusted local deployments. */
+  outboundUrlPolicy?: OutboundUrlPolicyOptions;
 }
 
 /**
@@ -88,7 +93,9 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
   // Test override for the runner+manifest resolver, falling back to the
   // production lookup against the user store + the system-agent registry.
   const resolveRunnerAndManifestImpl =
-    opts.resolveRunnerAndManifest ?? resolveRunnerAndManifest;
+    opts.resolveRunnerAndManifest ??
+    ((store: UnifiedStore, userId: string, agentId: string) =>
+      resolveRunnerAndManifest(store, userId, agentId, opts.outboundUrlPolicy));
 
   // Process-wide trace registry — one per worker instance, shared across requests.
   // Receives span events from per-request SpanEmitters and batches them to the store.
@@ -172,6 +179,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
             name: process.env.DEFAULT_MODEL_NAME ?? "gpt-5.4-mini",
           },
         },
+        outboundUrlPolicy: opts.outboundUrlPolicy,
       });
       const sessionId = generateSessionId();
       const localRegistry = new InMemoryRunRegistry();
@@ -236,7 +244,11 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
       }
 
       const scoped = store.forUser(userId);
-      const ctx = buildValidationContext(scoped, { strict, mcpTimeoutMs });
+      const ctx = buildValidationContext(scoped, {
+        strict,
+        mcpTimeoutMs,
+        outboundUrlPolicy: opts.outboundUrlPolicy,
+      });
       const result = await validateManifestFull(manifest, ctx);
       return c.json(result);
     } catch (error) {
@@ -567,6 +579,14 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
       // otherwise have to cancel.
       let resolvedSecretName: string | undefined;
       if (callbackUrl) {
+        try {
+          await assertOutboundUrlAllowed(callbackUrl, opts.outboundUrlPolicy);
+        } catch (err) {
+          const message = err instanceof OutboundUrlPolicyError
+            ? err.message
+            : "invalid callbackUrl";
+          return c.json({ error: `callbackUrl is not allowed: ${message}` }, 400);
+        }
         if (!webhookSecretName) {
           return c.json({ error: "webhookSecretName required with callbackUrl" }, 400);
         }
@@ -623,6 +643,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
           callbackUrl,
           runId: run.id,
           ownerId: userId,
+          outboundUrlPolicy: opts.outboundUrlPolicy,
         });
         webhookForwarder = forwardEventsToDispatcher({
           runRegistry,
@@ -983,6 +1004,7 @@ async function resolveRunnerAndManifest(
   store: UnifiedStore,
   userId: string,
   agentId: string,
+  outboundUrlPolicy?: OutboundUrlPolicyOptions,
 ): Promise<{ runner: Runner; manifest: AgentManifest }> {
   const tools = [...LOCAL_TOOLS];
   const defaults = {
@@ -1006,12 +1028,22 @@ async function resolveRunnerAndManifest(
     // System agents run with an ephemeral store — they don't need persistence
     // and shouldn't see or write the calling user's agents/sessions.
     const ephemeralStore = new MemoryStore();
-    const runner = createRunner({ store: ephemeralStore, tools, defaults });
+    const runner = createRunner({
+      store: ephemeralStore,
+      tools,
+      defaults,
+      outboundUrlPolicy,
+    });
     return { runner, manifest };
   }
 
   const scoped = wrapWithSkillRedaction(store.forUser(userId));
-  const runner = createRunner({ store: scoped, tools, defaults });
+  const runner = createRunner({
+    store: scoped,
+    tools,
+    defaults,
+    outboundUrlPolicy,
+  });
   const manifest = await resolveStoredManifest(agentId, runner);
   return { runner, manifest };
 }

@@ -1,5 +1,10 @@
 import { parse as parseYAML } from "yaml";
-import { parseAgentRef } from "@agntz/core";
+import {
+  fetchWithOutboundPolicy,
+  parseAgentRef,
+  validateOutboundUrl,
+  type OutboundUrlPolicyOptions,
+} from "@agntz/core";
 import { normalizeManifest } from "./parser.js";
 import { normalizeId } from "./state.js";
 import { parseUrlPlaceholders } from "./http-url.js";
@@ -19,6 +24,23 @@ import type {
 const HTTP_TOOL_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 const SECRET_REF_RE = /\{\{\s*secrets\.([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g;
 const ENV_REF_RE = /\{\{\s*env\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
+
+function validateOutboundUrlStructural(
+  rawUrl: string,
+  path: string,
+  label: string,
+  errors: ValidationError[],
+): void {
+  try {
+    validateOutboundUrl(rawUrl);
+  } catch (err) {
+    const error = err as Error & { code?: string };
+    const message = error.code === "invalid_url"
+      ? `${label} is not a valid URL: '${rawUrl}'`
+      : `${label} is not an allowed outbound URL: ${error.message}`;
+    errors.push({ level: "structural", path, message });
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════════════
 // Types
@@ -71,6 +93,8 @@ export interface ValidationContext {
    * where transient network issues shouldn't flood the editor with errors.
    */
   strict?: boolean;
+  /** Override outbound URL policy for external liveness probes. */
+  outboundUrlPolicy?: OutboundUrlPolicyOptions;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -268,15 +292,12 @@ function validateToolStructural(
       errors.push({ level: "structural", path: p(path, "tool.url"), message: "HTTP tool must have a url string" });
     } else {
       const stub = manifest.tool.url.replace(/\{[^}]+\}/g, "_");
-      try {
-        new URL(stub);
-      } catch {
-        errors.push({
-          level: "structural",
-          path: p(path, "tool.url"),
-          message: `HTTP tool url is not a valid URL: '${manifest.tool.url}'`,
-        });
-      }
+      validateOutboundUrlStructural(
+        stub,
+        p(path, "tool.url"),
+        "HTTP tool url",
+        errors,
+      );
     }
     const method = manifest.tool.method ?? "GET";
     if (method !== "GET") {
@@ -592,15 +613,7 @@ export function validateToolEntries(
         errors.push({ level: "structural", path: p(epath, "url"), message: "HTTP tool entry must have a url string" });
       } else {
         const stub = entry.url.replace(/\{[^}]+\}/g, "_");
-        try {
-          new URL(stub);
-        } catch {
-          errors.push({
-            level: "structural",
-            path: p(epath, "url"),
-            message: `HTTP tool url is not a valid URL: '${entry.url}'`,
-          });
-        }
+        validateOutboundUrlStructural(stub, p(epath, "url"), "HTTP tool url", errors);
       }
 
       // Method — GET/POST/PUT/PATCH/DELETE.
@@ -790,15 +803,12 @@ function validateOAuth2ClientCredentials(
     }
   }
   if (typeof a.token_url === "string") {
-    try {
-      new URL(a.token_url);
-    } catch {
-      errors.push({
-        level: "structural",
-        path: p(path, "token_url"),
-        message: `auth.token_url is not a valid URL: '${a.token_url}'`,
-      });
-    }
+    validateOutboundUrlStructural(
+      a.token_url,
+      p(path, "token_url"),
+      "auth.token_url",
+      errors,
+    );
   }
   for (const field of ["client_id", "client_secret", "scope"] as const) {
     if (typeof a[field] === "string") {
@@ -833,15 +843,12 @@ function validateTokenExchange(
         message: "auth.request.url is required",
       });
     } else {
-      try {
-        new URL(req.url);
-      } catch {
-        errors.push({
-          level: "structural",
-          path: p(path, "request.url"),
-          message: `auth.request.url is not a valid URL: '${req.url}'`,
-        });
-      }
+      validateOutboundUrlStructural(
+        req.url,
+        p(path, "request.url"),
+        "auth.request.url",
+        errors,
+      );
     }
     const reqMethod = (req.method ?? "POST") as string;
     if (!["GET", "POST", "PUT", "PATCH"].includes(reqMethod)) {
@@ -1481,16 +1488,24 @@ export async function validateToolEntriesExternal(
         const stubUrl = entry.url.replace(/\{[^}]+\}/g, "_");
         let probeError: Error | null = null;
         try {
-          let probe = await fetch(stubUrl, {
-            method: "HEAD",
-            signal: AbortSignal.timeout(5000),
-          });
+          let probe = await fetchWithOutboundPolicy(
+            stubUrl,
+            {
+              method: "HEAD",
+              signal: AbortSignal.timeout(5000),
+            },
+            { policy: ctx.outboundUrlPolicy },
+          );
           // Some servers refuse HEAD outright with 405 — try OPTIONS as a fallback.
           if (probe.status === 405) {
-            probe = await fetch(stubUrl, {
-              method: "OPTIONS",
-              signal: AbortSignal.timeout(5000),
-            });
+            probe = await fetchWithOutboundPolicy(
+              stubUrl,
+              {
+                method: "OPTIONS",
+                signal: AbortSignal.timeout(5000),
+              },
+              { policy: ctx.outboundUrlPolicy },
+            );
           }
           // Any HTTP response — including 401/403/404 — means "alive". No-op.
           void probe;

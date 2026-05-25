@@ -578,6 +578,13 @@ export interface RunnerConfig {
    * starts.
    */
   tokenCache?: import("./auth/index.js").TokenCache;
+
+  /**
+   * Server-side outbound URL policy for user-controlled HTTP, MCP, image,
+   * token exchange, and webhook fetches. Defaults block localhost/private
+   * networks and DNS answers that resolve to them.
+   */
+  outboundUrlPolicy?: import("./utils/outbound-url.js").OutboundUrlPolicyOptions;
 }
 
 export interface MCPServerConfig {

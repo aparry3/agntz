@@ -24,6 +24,11 @@ vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
 import { createRunner } from "../../src/runner.js";
 import { defineAgent } from "../../src/agent.js";
 
+const testOutboundUrlPolicy = {
+  allowPrivateNetwork: true,
+  skipDnsResolution: true,
+};
+
 describe("Runner MCP Integration", () => {
   let callCount: number;
 
@@ -95,6 +100,7 @@ describe("Runner MCP Integration", () => {
           github: { url: "http://localhost:3001/mcp" },
         },
       },
+      outboundUrlPolicy: testOutboundUrlPolicy,
     });
 
     runner.registerAgent(
@@ -150,6 +156,7 @@ describe("Runner MCP Integration", () => {
           github: { url: "http://localhost:3001/mcp" },
         },
       },
+      outboundUrlPolicy: testOutboundUrlPolicy,
     });
 
     runner.registerAgent(
@@ -181,6 +188,7 @@ describe("Runner MCP Integration", () => {
           github: { url: "http://localhost:3001/mcp" },
         },
       },
+      outboundUrlPolicy: testOutboundUrlPolicy,
     });
 
     runner.registerAgent(
@@ -209,6 +217,7 @@ describe("Runner MCP Integration", () => {
           github: { url: "http://localhost:3001/mcp" },
         },
       },
+      outboundUrlPolicy: testOutboundUrlPolicy,
     });
 
     // Force connect
@@ -247,6 +256,7 @@ describe("Runner MCP Integration", () => {
           github: { url: "http://localhost:3001/mcp" },
         },
       },
+      outboundUrlPolicy: testOutboundUrlPolicy,
     });
 
     runner.registerAgent(

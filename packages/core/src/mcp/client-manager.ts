@@ -1,4 +1,8 @@
 import type { MCPServerConfig, ToolInfo } from "../types.js";
+import {
+  assertOutboundUrlAllowed,
+  type OutboundUrlPolicyOptions,
+} from "../utils/outbound-url.js";
 
 /**
  * MCP Tool — an executable tool discovered from an MCP server.
@@ -32,6 +36,10 @@ interface MCPConnection {
   transport: any;
 }
 
+export interface MCPClientManagerOptions {
+  outboundUrlPolicy?: OutboundUrlPolicyOptions;
+}
+
 /**
  * MCPClientManager — manages connections to multiple MCP servers,
  * discovers their tools, and provides a unified interface for tool execution.
@@ -42,7 +50,10 @@ export class MCPClientManager {
   private connections = new Map<string, MCPConnection>();
   private _initialized = false;
 
-  constructor(private servers: Record<string, MCPServerConfig>) {}
+  constructor(
+    private servers: Record<string, MCPServerConfig>,
+    private options: MCPClientManagerOptions = {},
+  ) {}
 
   /**
    * Add (or replace) a server and connect it immediately. Safe to call after
@@ -121,11 +132,15 @@ export class MCPClientManager {
     let transport: any;
 
     if (config.url) {
+      const url = await assertOutboundUrlAllowed(
+        config.url,
+        this.options.outboundUrlPolicy,
+      );
       // HTTP/SSE transport
       const { StreamableHTTPClientTransport } = await import(
         "@modelcontextprotocol/sdk/client/streamableHttp.js"
       );
-      transport = new StreamableHTTPClientTransport(new URL(config.url), {
+      transport = new StreamableHTTPClientTransport(url, {
         requestInit: config.headers
           ? { headers: config.headers }
           : undefined,

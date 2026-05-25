@@ -10,6 +10,8 @@ const noopCtx: ToolContext = {
   invoke: async () => ({ output: "" }) as never,
 };
 
+const testOutboundUrlPolicy = { skipDnsResolution: true };
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -32,7 +34,9 @@ describe("buildHttpToolDefinition — body and method", () => {
       body: { name: "{{userName}}", role: "admin" },
     };
     const state = { userName: "Ada" };
-    const tool = buildHttpToolDefinition(entry, state);
+    const tool = buildHttpToolDefinition(entry, state, {
+      outboundUrlPolicy: testOutboundUrlPolicy,
+    });
 
     const result = await tool.execute({}, noopCtx);
 
@@ -59,7 +63,9 @@ describe("buildHttpToolDefinition — body and method", () => {
       body_type: "form",
       body: { grant_type: "client_credentials", scope: "{{scope}}" },
     };
-    const tool = buildHttpToolDefinition(entry, { scope: "read:all" });
+    const tool = buildHttpToolDefinition(entry, { scope: "read:all" }, {
+      outboundUrlPolicy: testOutboundUrlPolicy,
+    });
 
     await tool.execute({}, noopCtx);
 
@@ -82,7 +88,9 @@ describe("buildHttpToolDefinition — body and method", () => {
       body_type: "query",
       body: { token: "{{token}}", limit: "10" },
     };
-    const tool = buildHttpToolDefinition(entry, { token: "abc" });
+    const tool = buildHttpToolDefinition(entry, { token: "abc" }, {
+      outboundUrlPolicy: testOutboundUrlPolicy,
+    });
 
     await tool.execute({}, noopCtx);
 
@@ -106,7 +114,9 @@ describe("buildHttpToolDefinition — body and method", () => {
       method: "GET",
       body: { ignored: "yes" },
     };
-    const tool = buildHttpToolDefinition(entry, {});
+    const tool = buildHttpToolDefinition(entry, {}, {
+      outboundUrlPolicy: testOutboundUrlPolicy,
+    });
 
     await tool.execute({}, noopCtx);
 
@@ -131,7 +141,10 @@ describe("buildHttpToolDefinition — body and method", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => responses.shift()!);
 
     const cache = new MapTokenCache();
-    const tokenResolver = createTokenResolver({ cache });
+    const tokenResolver = createTokenResolver({
+      cache,
+      outboundUrlPolicy: testOutboundUrlPolicy,
+    });
     const auth: HTTPAuth = {
       type: "oauth2_client_credentials",
       token_url: "https://login.example.com/oauth/token",
@@ -149,7 +162,7 @@ describe("buildHttpToolDefinition — body and method", () => {
     const tool = buildHttpToolDefinition(
       entry,
       { secrets: { cid: "id", csec: "sec" } },
-      { tokenResolver },
+      { tokenResolver, outboundUrlPolicy: testOutboundUrlPolicy },
     );
 
     const result = await tool.execute({}, noopCtx);
@@ -179,7 +192,10 @@ describe("buildHttpToolDefinition — body and method", () => {
     ];
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => responses.shift()!);
 
-    const tokenResolver = createTokenResolver({ cache: new MapTokenCache() });
+    const tokenResolver = createTokenResolver({
+      cache: new MapTokenCache(),
+      outboundUrlPolicy: testOutboundUrlPolicy,
+    });
     const auth: HTTPAuth = {
       type: "oauth2_client_credentials",
       token_url: "https://login.example.com/oauth/token",
@@ -189,7 +205,7 @@ describe("buildHttpToolDefinition — body and method", () => {
     const tool = buildHttpToolDefinition(
       { kind: "http", name: "x", url: "https://api.example.com/x", method: "GET", auth },
       {},
-      { tokenResolver },
+      { tokenResolver, outboundUrlPolicy: testOutboundUrlPolicy },
     );
 
     const result = await tool.execute({}, noopCtx);
@@ -215,7 +231,10 @@ describe("buildHttpToolDefinition — body and method", () => {
     ];
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => responses.shift()!);
 
-    const tokenResolver = createTokenResolver({ cache: new MapTokenCache() });
+    const tokenResolver = createTokenResolver({
+      cache: new MapTokenCache(),
+      outboundUrlPolicy: testOutboundUrlPolicy,
+    });
     const tool = buildHttpToolDefinition(
       {
         kind: "http",
@@ -230,7 +249,7 @@ describe("buildHttpToolDefinition — body and method", () => {
         },
       },
       {},
-      { tokenResolver },
+      { tokenResolver, outboundUrlPolicy: testOutboundUrlPolicy },
     );
 
     const result = (await tool.execute({}, noopCtx)) as { error: string };
@@ -257,7 +276,7 @@ describe("buildHttpToolDefinition — body and method", () => {
     const tool = buildHttpToolDefinition(
       entry,
       { secrets: { my_api_key: "static-secret-abc" } },
-      { tokenCache: cache },
+      { tokenCache: cache, outboundUrlPolicy: testOutboundUrlPolicy },
     );
     const result = await tool.execute({}, noopCtx) as { message: string };
     expect(result.message).toBe("invalid: ***REDACTED*** also ***REDACTED***");
@@ -270,7 +289,7 @@ describe("buildHttpToolDefinition — body and method", () => {
     const tool = buildHttpToolDefinition(
       { kind: "http", name: "x", url: "https://api.example.com/x", method: "GET" },
       { secrets: { tok: "leaked-secret-xyz-12345" } },
-      {},
+      { outboundUrlPolicy: testOutboundUrlPolicy },
     );
     const result = await tool.execute({}, noopCtx) as { error: string; body: string };
     expect(result.body).toContain("***REDACTED***");
@@ -292,7 +311,7 @@ describe("buildHttpToolDefinition — body and method", () => {
         },
       },
       {},
-      {},
+      { outboundUrlPolicy: testOutboundUrlPolicy },
     );
 
     const result = (await tool.execute({}, noopCtx)) as { error: string };
@@ -313,7 +332,9 @@ describe("buildHttpToolDefinition — body and method", () => {
       body_type: "json",
       body: { a: 1 },
     };
-    const tool = buildHttpToolDefinition(entry, {});
+    const tool = buildHttpToolDefinition(entry, {}, {
+      outboundUrlPolicy: testOutboundUrlPolicy,
+    });
 
     await tool.execute({}, noopCtx);
 

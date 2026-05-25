@@ -9,7 +9,11 @@
 // users with a runner can hit this.
 
 import { NextRequest, NextResponse } from "next/server";
-import { listToolsOnServer } from "@agntz/core";
+import {
+  OutboundUrlPolicyError,
+  listToolsOnServer,
+  validateOutboundUrl,
+} from "@agntz/core";
 import { AuthRequiredError, requireUserContext } from "@/lib/user";
 
 interface RequestBody {
@@ -32,14 +36,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing 'url' string" }, { status: 400 });
     }
 
-    let parsed: URL;
     try {
-      parsed = new URL(body.url);
-    } catch {
-      return NextResponse.json({ error: `Invalid URL: ${body.url}` }, { status: 400 });
-    }
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return NextResponse.json({ error: "URL must be http or https" }, { status: 400 });
+      validateOutboundUrl(body.url);
+    } catch (err) {
+      const message = err instanceof OutboundUrlPolicyError
+        ? err.message
+        : `Invalid URL: ${body.url}`;
+      return NextResponse.json({ error: message }, { status: 400 });
     }
 
     const headers = normalizeHeaders(body.headers);

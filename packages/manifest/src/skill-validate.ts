@@ -9,6 +9,7 @@ import {
   type ValidationWarning,
 } from "./validate.js";
 import type { ManifestToolEntry } from "./types.js";
+import type { OutboundUrlPolicyOptions } from "@agntz/core";
 
 const SKILL_NAME_RE = /^[a-z][a-z0-9-]*$/;
 
@@ -22,6 +23,8 @@ export interface SkillValidationContext {
   localTools: string[];
   /** Match `ValidationContext.strict` — MCP unreachability hard-fails when true. */
   strict?: boolean;
+  /** Override outbound URL policy for external liveness probes. */
+  outboundUrlPolicy?: OutboundUrlPolicyOptions;
 }
 
 // Validate a skill YAML string (structural only).
@@ -89,6 +92,7 @@ export async function validateSkillFull(
     resolveTools: ctx.resolveTools,
     localTools: ctx.localTools,
     strict: ctx.strict,
+    outboundUrlPolicy: ctx.outboundUrlPolicy,
   };
   await validateToolEntriesExternal(toolsRaw, "tools", result.errors, result.warnings, fullCtx);
   result.valid = result.errors.length === 0;

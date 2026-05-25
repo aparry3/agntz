@@ -1,4 +1,9 @@
-import { listToolsOnServer, type ConnectionKind } from "@agntz/core";
+import {
+  OutboundUrlPolicyError,
+  listToolsOnServer,
+  validateOutboundUrl,
+  type ConnectionKind,
+} from "@agntz/core";
 
 export const KNOWN_CONNECTION_KINDS: ConnectionKind[] = ["mcp"];
 export const CONNECTION_ID_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/;
@@ -33,11 +38,13 @@ export function validateConnectionInput(params: {
       return "MCP config requires a 'url' string";
     }
     try {
-      const u = new URL(cfg.url);
-      if (!/^https?:$/.test(u.protocol)) {
-        return "MCP config 'url' must be http(s)";
+      validateOutboundUrl(cfg.url);
+    } catch (err) {
+      if (err instanceof OutboundUrlPolicyError) {
+        return err.code === "invalid_url"
+          ? "MCP config 'url' is not a valid URL"
+          : `MCP config 'url' is not allowed: ${err.message}`;
       }
-    } catch {
       return "MCP config 'url' is not a valid URL";
     }
     if (cfg.headers !== undefined) {

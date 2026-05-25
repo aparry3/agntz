@@ -1,4 +1,9 @@
 import type { ContentBlock, ImageMediaType } from "./types.js";
+import {
+  OutboundUrlPolicyError,
+  fetchWithOutboundPolicy,
+  type OutboundUrlPolicyOptions,
+} from "./utils/outbound-url.js";
 
 /**
  * Image media types the runner is willing to forward to the model. The
@@ -42,6 +47,8 @@ export class ImageFetchError extends Error {
 export interface NormalizeImageBlocksOptions {
   /** Inject a custom fetch (defaults to globalThis.fetch). */
   fetch?: typeof fetch;
+  /** Override outbound URL policy. Custom test fetches skip DNS by default. */
+  outboundUrlPolicy?: OutboundUrlPolicyOptions;
   /** Max body size in bytes. Defaults to 5 MB. */
   maxBytes?: number;
   /** Total per-URL timeout in ms. Defaults to 30 s. */
@@ -63,6 +70,9 @@ export async function normalizeImageBlocks(
   opts?: NormalizeImageBlocksOptions,
 ): Promise<ContentBlock[]> {
   const fetchImpl = opts?.fetch ?? globalThis.fetch;
+  const outboundUrlPolicy = opts?.outboundUrlPolicy ?? (
+    opts?.fetch ? { skipDnsResolution: true } : undefined
+  );
   const maxBytes = opts?.maxBytes ?? DEFAULT_MAX_BYTES;
   const timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
@@ -105,7 +115,6 @@ export async function normalizeImageBlocks(
 
     // image-with-url — fetch (or reuse from cache)
     const url = block.url;
-    validateUrlForFetch(url);
 
     let pending = cache.get(url);
     if (!pending) {
@@ -115,6 +124,7 @@ export async function normalizeImageBlocks(
         declaredMediaType: block.mediaType,
         maxBytes,
         timeoutMs,
+        outboundUrlPolicy,
       });
       cache.set(url, pending);
     }
@@ -123,113 +133,6 @@ export async function normalizeImageBlocks(
   }
 
   return result;
-}
-
-/**
- * Validate that `urlStr` is safe to fetch — not file://, not loopback, not a
- * private/link-local IP, not an IPv6 ULA/loopback. Throws ImageFetchError on
- * rejection.
- */
-function validateUrlForFetch(urlStr: string): void {
-  let parsed: URL;
-  try {
-    parsed = new URL(urlStr);
-  } catch (err) {
-    throw new ImageFetchError(`Invalid image URL: ${urlStr}`, {
-      url: urlStr,
-      code: "invalid_url",
-      cause: err,
-    });
-  }
-
-  const scheme = parsed.protocol.toLowerCase();
-  if (scheme !== "http:" && scheme !== "https:") {
-    throw new ImageFetchError(
-      `Disallowed URL scheme: ${parsed.protocol}`,
-      { url: urlStr, code: "disallowed_scheme" },
-    );
-  }
-
-  // Node's URL keeps the brackets on IPv6 hostnames (e.g. "[fc00::1]"). Strip
-  // them before classifying so the IPv6 ranges match cleanly.
-  let host = parsed.hostname.toLowerCase();
-  if (host.startsWith("[") && host.endsWith("]")) {
-    host = host.slice(1, -1);
-  }
-
-  // Direct loopback hostnames
-  if (host === "localhost" || host === "ip6-localhost" || host === "ip6-loopback") {
-    throw new ImageFetchError(`Disallowed hostname: ${host}`, {
-      url: urlStr,
-      code: "disallowed_host",
-    });
-  }
-
-  // IPv6 literal
-  if (host.includes(":")) {
-    if (isDisallowedIPv6(host)) {
-      throw new ImageFetchError(
-        `Disallowed IPv6 address: ${host}`,
-        { url: urlStr, code: "disallowed_host" },
-      );
-    }
-    return;
-  }
-
-  // IPv4 literal — dotted-quad regex
-  const ipv4Match = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (ipv4Match) {
-    const octets = ipv4Match.slice(1, 5).map((n) => Number.parseInt(n, 10));
-    if (octets.some((o) => o < 0 || o > 255 || !Number.isFinite(o))) {
-      throw new ImageFetchError(`Invalid IPv4 address: ${host}`, {
-        url: urlStr,
-        code: "invalid_ipv4",
-      });
-    }
-    if (isDisallowedIPv4(octets as [number, number, number, number])) {
-      throw new ImageFetchError(
-        `Disallowed IPv4 address: ${host}`,
-        { url: urlStr, code: "disallowed_host" },
-      );
-    }
-  }
-}
-
-function isDisallowedIPv4(o: [number, number, number, number]): boolean {
-  const [a, b, _c, _d] = o;
-  // 0.0.0.0/8 — unspecified / current network
-  if (a === 0) return true;
-  // 10.0.0.0/8 — RFC1918
-  if (a === 10) return true;
-  // 127.0.0.0/8 — loopback
-  if (a === 127) return true;
-  // 169.254.0.0/16 — link-local / cloud metadata
-  if (a === 169 && b === 254) return true;
-  // 172.16.0.0/12 — RFC1918
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  // 192.168.0.0/16 — RFC1918
-  if (a === 192 && b === 168) return true;
-  return false;
-}
-
-function isDisallowedIPv6(host: string): boolean {
-  // Loopback ::1
-  if (host === "::1") return true;
-  // Unspecified ::
-  if (host === "::" || host === "::0") return true;
-  // IPv4-mapped — normalize to v4 and re-check
-  const mapped = host.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i);
-  if (mapped) {
-    const parts = mapped[1].split(".").map((n) => Number.parseInt(n, 10));
-    if (parts.length === 4 && parts.every((n) => Number.isFinite(n))) {
-      return isDisallowedIPv4(parts as [number, number, number, number]);
-    }
-  }
-  // fc00::/7 — unique local addresses
-  if (/^f[cd][0-9a-f]{2}:/i.test(host)) return true;
-  // fe80::/10 — link-local
-  if (/^fe[89ab][0-9a-f]:/i.test(host)) return true;
-  return false;
 }
 
 /**
@@ -245,19 +148,31 @@ async function fetchImageAsBase64(
     declaredMediaType?: ImageMediaType;
     maxBytes: number;
     timeoutMs: number;
+    outboundUrlPolicy?: OutboundUrlPolicyOptions;
   },
 ): Promise<{ base64: string; mediaType: ImageMediaType }> {
-  const { fetch: fetchImpl, headers, declaredMediaType, maxBytes, timeoutMs } = opts;
+  const { fetch: fetchImpl, headers, declaredMediaType, maxBytes, timeoutMs, outboundUrlPolicy } = opts;
 
   const signal = makeTimeoutSignal(timeoutMs);
   let response: Response;
   try {
-    response = await fetchImpl(url, {
-      method: "GET",
-      headers: headers ?? undefined,
-      signal,
-    });
+    response = await fetchWithOutboundPolicy(
+      url,
+      {
+        method: "GET",
+        headers: headers ?? undefined,
+        signal,
+      },
+      { fetchImpl, policy: outboundUrlPolicy },
+    );
   } catch (err) {
+    if (err instanceof OutboundUrlPolicyError) {
+      throw new ImageFetchError(err.message, {
+        url,
+        code: err.code,
+        cause: err,
+      });
+    }
     const isAbort =
       err instanceof Error &&
       (err.name === "AbortError" || /aborted|timeout/i.test(err.message));

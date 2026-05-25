@@ -263,7 +263,10 @@ export class Runner {
       : undefined;
     this._envProvider = config.envProvider;
     this._tokenCache = config.tokenCache ?? new MapTokenCache();
-    this._tokenResolver = createTokenResolver({ cache: this._tokenCache });
+    this._tokenResolver = createTokenResolver({
+      cache: this._tokenCache,
+      outboundUrlPolicy: config.outboundUrlPolicy,
+    });
     this.modelProvider = config.modelProvider ?? new AISDKModelProvider({
       providerStore: this._providerStore,
     });
@@ -280,7 +283,9 @@ export class Runner {
 
     // Initialize MCP client manager (lazy — connects on first use)
     if (config.mcp?.servers && Object.keys(config.mcp.servers).length > 0) {
-      this.mcpManager = new MCPClientManager(config.mcp.servers);
+      this.mcpManager = new MCPClientManager(config.mcp.servers, {
+        outboundUrlPolicy: config.outboundUrlPolicy,
+      });
     }
 
     // Initialize telemetry (no-op if not configured)
@@ -839,7 +844,9 @@ export class Runner {
         // normalized blocks (or original string) are also what we persist to
         // the session and to InvocationLog.input.
         const normalizedInput: string | ContentBlock[] = isContentBlockArray(input)
-          ? await normalizeImageBlocks(input)
+          ? await normalizeImageBlocks(input, {
+              outboundUrlPolicy: self.config.outboundUrlPolicy,
+            })
           : input;
 
         const messages = buildMessages({
@@ -1564,7 +1571,9 @@ export class Runner {
       // blocks (or original string) are also what we persist to the session
       // and to InvocationLog.input.
       const normalizedInput: string | ContentBlock[] = isContentBlockArray(input)
-        ? await normalizeImageBlocks(input)
+        ? await normalizeImageBlocks(input, {
+            outboundUrlPolicy: this.config.outboundUrlPolicy,
+          })
         : input;
 
       // Build messages
@@ -2287,6 +2296,7 @@ export class Runner {
           tokenResolver: this._tokenResolver,
           authCtx: { ownerId: opts.ownerId },
           tokenCache: this._tokenCache,
+          outboundUrlPolicy: this.config.outboundUrlPolicy,
         });
         opts.ephemeralTools.set(httpTool.name, httpTool);
         resolved.push({
@@ -2384,7 +2394,9 @@ export class Runner {
     entryHeaders?: Record<string, string>,
   ): Promise<void> {
     if (!this.mcpManager) {
-      this.mcpManager = new MCPClientManager({});
+      this.mcpManager = new MCPClientManager({}, {
+        outboundUrlPolicy: this.config.outboundUrlPolicy,
+      });
     }
     if (this.mcpManager.hasServer(ref)) return;
 

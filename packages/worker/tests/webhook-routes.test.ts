@@ -18,7 +18,12 @@ function makeApp(opts: { grace?: number } = {}) {
       }
     },
   });
-  const app = createWorkerAPI({ store, internalSecret: SECRET, runRegistry });
+  const app = createWorkerAPI({
+    store,
+    internalSecret: SECRET,
+    runRegistry,
+    outboundUrlPolicy: { skipDnsResolution: true },
+  });
   return { app, store, runRegistry };
 }
 
