@@ -413,8 +413,8 @@
             <dd>Scope = access boundary</dd>
           </div>
           <div>
-            <dt>Companion</dt>
-            <dd><code>docs/plans/memrez.md</code></dd>
+            <dt>Default</dt>
+            <dd>Embedded library; hosted is opt-in</dd>
           </div>
         </dl>
       </aside>
@@ -528,8 +528,12 @@
               <td>Deterministic. Returns the scope's topic TOC (name + live count + curate-maintained blurb). Bootstraps context.</td>
             </tr>
             <tr>
-              <td class="key"><code>read</code> / <code>write</code></td>
-              <td>agntz <code>kind: local</code> tools. Scope injected from <code>toolContext</code>; the LLM picks the topic (read) / supplies the fact (write).</td>
+              <td class="key"><code>read</code> / <code>write</code> exposure</td>
+              <td>Always a <code>kind: local</code> agntz tool handler from <code>mem.tools()</code> — the handler calls memrez. Embedded vs hosted changes only what <code>mem</code> <em>is</em>, never the agent. Scope from <code>toolContext</code>; the model picks the topic (read) / supplies the fact (write).</td>
+            </tr>
+            <tr>
+              <td class="key">Deployment</td>
+              <td>One <code>Memrez</code> interface, two constructors: <code>createMemrez(...)</code> (embedded, in-process — the default) and <code>createMemrezClient({ url, apiKey })</code> (HTTP client to a hosted memrez service). Mirrors agntz's <code>@agntz/sdk</code> → <code>@agntz/client</code>; graduate by swapping the constructor, not the agent.</td>
             </tr>
             <tr>
               <td class="key"><code>write</code> path</td>
@@ -645,6 +649,16 @@ const result  = await memrez.write("org/acme/user/u_123", "Prefers email over ph
   source: { sessionId, agentId },
 });
 const report  = await memrez.curate("org/acme/user/u_123");</code></pre>
+      <p style="margin-top:16px">
+        Hosting is a one-line swap. The same interface — <code>scan</code> /
+        <code>read</code> / <code>write</code> / <code>curate</code> /
+        <code>tools()</code> — backed by a remote service instead of an in-process
+        store + reasoner:
+      </p>
+      <pre><code>import { createMemrezClient } from "memrez/client";
+
+const memrez = createMemrezClient({ url: process.env.MEMREZ_URL, apiKey: process.env.MEMREZ_KEY });
+// identical surface, now over HTTP — mem.tools() still returns kind: local handlers</code></pre>
       <pre><code>scan(scope, opts?: { includeAncestors?: boolean; topicLimit?: number })
   : Promise&lt;{ scope: Scope; topics: TopicSummary[] }&gt;;
 
@@ -667,7 +681,7 @@ curate(scope, opts?: { topics?: string[]; includeDescendants?: boolean })
           it only picks the topic (read) or supplies the fact (write).
         </p>
       </div>
-      <pre><code>const mem = createMemrez(options);
+      <pre><code>const mem = createMemrez(options);  // or createMemrezClient({ url }) — same tools()
 const memoryTools = mem.tools(); // ToolDefinition[] → registers memory_read, memory_write
 
 const client = await agntz({
@@ -780,8 +794,38 @@ const result = await runner.invoke("chat", `${toc}\n\n${message}`, {
 
     <section id="run">
       <h2>Running memrez: local vs hosted</h2>
-      <p>Two independent axes — how an agent gets memory, and where memrez itself runs.</p>
-      <h3>Integration surface</h3>
+      <p>
+        "local" means two different things — separating them dissolves most of the
+        confusion. <strong>Tool kind</strong> (<code>kind: local</code>) is how an
+        agntz tool's handler is wired: an in-process function, versus
+        <code>kind: http</code> (remote endpoint) or <code>kind: mcp</code> (MCP
+        server). <strong>Topology</strong> is where memrez's store and reasoner
+        physically live: embedded in your process, or a hosted service. They are
+        independent — and the design pins the first and varies only the second.
+      </p>
+      <div class="note callout">
+        <p>
+          <strong>The agent never changes; the constructor does.</strong>
+          <code>mem.tools()</code> always returns <code>kind: local</code> handlers.
+          Whether <code>mem</code> is an in-process <code>createMemrez(...)</code> or
+          a <code>createMemrezClient({ url })</code> talking to a hosted service, the
+          handlers, the agent YAML, and your route code are identical — the same
+          "graduate by changing one line" move agntz makes from
+          <code>@agntz/sdk</code> to <code>@agntz/client</code>.
+        </p>
+      </div>
+      <p>
+        <strong>Why the handler is always local.</strong> A <code>kind: local</code>
+        handler runs your code before anything hits the wire: it binds scope from
+        <code>toolContext</code> (the capability guarantee), can prepend
+        <code>contextBlock</code>, and attaches auth. A raw <code>kind: http</code>
+        tool pointed straight at hosted memrez would hand request-shaping to the
+        model and force scope through templated headers — more surface, weaker
+        isolation. So the handler stays local; when memrez is hosted, that handler
+        is just a thin client call.
+      </p>
+
+      <h3>Integration surface — how an agent gets memory</h3>
       <div class="table-wrap">
         <table>
           <thead>
@@ -789,38 +833,42 @@ const result = await runner.invoke("chat", `${toc}\n\n${message}`, {
           </thead>
           <tbody>
             <tr>
-              <td><code>memrez.tools()</code> → <code>ToolDefinition[]</code>, spread into the runner's <code>tools: [...]</code> (registers <code>memory_read</code>, <code>memory_write</code>)</td>
-              <td>agntz agents — the easy path</td>
+              <td><code>mem.tools()</code> → <code>ToolDefinition[]</code> (<code>kind: local</code> handlers), spread into the runner's <code>tools: [...]</code></td>
+              <td>agntz agents in your process — the easy path</td>
             </tr>
             <tr>
               <td>The same handlers wrapped as plain function-calling tools</td>
               <td>non-agntz agents (raw Anthropic tool-use, LangChain, …)</td>
             </tr>
             <tr>
-              <td>Direct <code>memrez.scan/read/write/curate</code> calls</td>
+              <td>Direct <code>mem.scan/read/write/curate</code> calls</td>
               <td>the app injects memory itself, no tools exposed</td>
+            </tr>
+            <tr>
+              <td><code>kind: mcp</code> or a built-in memrez tool pack on the server</td>
+              <td>agents on a <em>hosted agntz server</em> (no in-process handler to register)</td>
             </tr>
           </tbody>
         </table>
       </div>
       <p>
         The consumer-facing surface is <strong>framework-neutral</strong>; the only
-        agntz coupling is the reasoner (tagger / curator), and that is swappable. A
-        non-agntz caller can use the tools and inject its own tagger, or let memrez
-        run a headless agntz internally as its brain.
+        agntz coupling is the reasoner, and that is swappable. The MCP row is also
+        the bridge for any non-agntz, MCP-speaking runtime.
       </p>
-      <h3>Topology</h3>
+
+      <h3>Topology — where memrez itself runs</h3>
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th></th><th>Embedded / local</th><th>Hosted memrez service</th></tr>
+            <tr><th></th><th>Embedded (<code>createMemrez</code>)</th><th>Hosted (<code>createMemrezClient</code>)</th></tr>
           </thead>
           <tbody>
             <tr><td class="key">Runs</td><td>in-process in your app</td><td>separate multi-tenant service</td></tr>
             <tr><td class="key">Store</td><td>sqlite / your DB</td><td>service-managed (Postgres, later pgvector)</td></tr>
+            <tr><td class="key">Reasoner + curate cron</td><td>your process, your keys</td><td>inside the service (embeds the agntz SDK; BYO-key optional)</td></tr>
             <tr><td class="key">Who mints the prefix</td><td>your route, from your auth</td><td>the service, from the API key → workspace</td></tr>
             <tr><td class="key">Enforcement</td><td>you trust your own process</td><td>server-side; the caller's key <em>is</em> its prefix capability</td></tr>
-            <tr><td class="key">Reasoner + curate cron</td><td>your SDK + your keys</td><td>service runs them per scope (BYO-key optional)</td></tr>
           </tbody>
         </table>
       </div>
@@ -831,6 +879,16 @@ const result = await runner.invoke("chat", `${toc}\n\n${message}`, {
         naturally embedded; a multi-org sales SaaS is the case for hosted, because
         one process then holds many tenants' memories.
       </p>
+      <div class="note">
+        <p>
+          <strong>There is no separate "memrez agent server."</strong> The reasoner
+          (tagger / curator) lives <em>inside</em> whatever <code>mem</code> you
+          construct. Embedded, it runs in your process. Hosted, it runs inside the
+          memrez service, which embeds the agntz SDK to execute the two manifests
+          and owns the curate schedule. One service owns storage + reasoner + cron;
+          you call it over HTTP.
+        </p>
+      </div>
       <div class="note warning">
         <p>
           <strong>The background curator is scope-bound too.</strong> A hosted
@@ -1051,8 +1109,7 @@ listScopeSlice(scope, opts) → entries              // for curate</code></pre>
     </section>
 
     <footer>
-      memrez design · Aaron + Claude · 2026-05-24 · companion to
-      <code>docs/plans/memrez.md</code>
+      memrez design · Aaron + Claude · 2026-05-24
     </footer>
   </div>
 </body>
