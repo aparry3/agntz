@@ -516,6 +516,10 @@
               <td>The <strong>granted prefix</strong> is minted at the trust boundary from verified identity and is immutable; the model may only refine <em>downward</em> within it. Path shape is app-defined via a scope resolver.</td>
             </tr>
             <tr>
+              <td class="key">Scope binding</td>
+              <td>Per run, via context — <code>toolContext.memrezScope</code> for tools, a <code>scope</code> arg for the direct API. memrez instances are app-lifetime and unscoped; scope is never baked in (no per-request instances).</td>
+            </tr>
+            <tr>
               <td class="key">Topics</td>
               <td>LLM proposes on write (nudged by existing in-scope topics); <code>curate</code> normalizes the canonical set.</td>
             </tr>

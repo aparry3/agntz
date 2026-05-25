@@ -27,6 +27,7 @@ Design tenets:
 | Unit of memory | One `MemoryEntry` = one canonical fact + topics + a single owning scope. |
 | Scope | Hierarchical path **and access boundary** (`org/acme/user/u_123`). Reads inherit ancestors (shared knowledge flows down); siblings stay isolated. |
 | Scope authority | The **granted prefix** is minted at the trust boundary from verified identity and is immutable; the model may only refine *downward* within it. Path shape is app-defined via a scope resolver. |
+| Scope binding | Per run, via context — `toolContext.memrezScope` for tools, a `scope` arg for the direct API. memrez instances are app-lifetime and unscoped; scope is never baked in (no per-request instances). |
 | Topics | LLM proposes on write (nudged by existing in-scope topics); `curate` normalizes the canonical set. |
 | `scan` | Deterministic. Returns the scope's topic TOC (name + live count + curate-maintained blurb). Bootstraps context. |
 | `read`/`write` | agntz `kind: local` tools. Scope injected from `toolContext`; LLM picks the topic (read) / supplies the fact (write). |
