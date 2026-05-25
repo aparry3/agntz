@@ -663,17 +663,12 @@ curate(scope, opts?: { topics?: string[]; includeDescendants?: boolean })
           it only picks the topic (read) or supplies the fact (write).
         </p>
       </div>
-      <pre><code>const { memoryRead, memoryWrite } = memrez.tools(); // kind: local handlers
+      <pre><code>const mem = createMemrez(options);
+const memoryTools = mem.tools(); // ToolDefinition[] → registers memory_read, memory_write
 
-const client = agntz({
+const client = await agntz({
   agents: "./agents",
-  tools: { memory_read: memoryRead, memory_write: memoryWrite },
-});
-
-await client.agents.run({
-  agentId: "support",
-  input: userMsg,
-  toolContext: { orgId: "acme", userId: "u_123", sessionId }, // → scope path
+  tools: [...memoryTools, ...appTools], // spread into the tools array
 });</code></pre>
       <pre><code># agents/support.yaml
 tools:
@@ -681,10 +676,21 @@ tools:
     tools: [memory_read, memory_write]</code></pre>
       <p>
         <code>scan</code> runs <em>before</em> the model call and its TOC is
-        prepended to the agent's context (a <code>memrez.contextBlock(scope)</code>
+        prepended to the agent's input (a <code>memrez.contextBlock(scope)</code>
         helper returns the string). The agent sees <em>what</em> it knows and
         calls <code>memory_read</code> only for the topics it actually needs.
       </p>
+      <div class="note warning">
+        <p>
+          <strong>Embedded-SDK caveat.</strong> Per-run scope reaches the tools via
+          <code>toolContext</code>. The core
+          <code>createRunner().invoke(input, { toolContext })</code> accepts it today
+          (see the gymtext example), but <code>@agntz/sdk</code>'s
+          <code>agents.run(...)</code> does <strong>not</strong> thread
+          <code>toolContext</code> yet — so the SDK path either drops to the core
+          Runner or needs a small passthrough added. Tracked in open questions.
+        </p>
+      </div>
     </section>
 
     <section id="scope">
@@ -733,11 +739,11 @@ tools:
    └─ u_456   ← isolated: u_123's agent can never read this (sibling, not an ancestor)</code></pre>
       <pre><code>// scope minted HERE, from the authenticated user — the trust boundary
 const scope = `gymtext/user/${userId}`;
+const toc = await memrez.contextBlock(scope);    // scan TOC as a string
 
-const result = await runner.invoke("chat", message, {
+const result = await runner.invoke("chat", `${toc}\n\n${message}`, {
   sessionId,
-  context: await memrez.contextBlock(scope),     // scan TOC injected
-  toolContext: { user, memrezScope: scope },      // read/write tools bind to this scope
+  toolContext: { user, memrezScope: scope },      // memory_read/write bind to this scope
 });</code></pre>
       <p>
         <code>memory_read</code> / <code>memory_write</code> read
@@ -779,7 +785,7 @@ const result = await runner.invoke("chat", message, {
           </thead>
           <tbody>
             <tr>
-              <td><code>memrez.tools()</code> → <code>memory_read</code> / <code>memory_write</code> as agntz <code>kind: local</code> tools</td>
+              <td><code>memrez.tools()</code> → <code>ToolDefinition[]</code>, spread into the runner's <code>tools: [...]</code> (registers <code>memory_read</code>, <code>memory_write</code>)</td>
               <td>agntz agents — the easy path</td>
             </tr>
             <tr>
@@ -1017,6 +1023,14 @@ listScopeSlice(scope, opts) → entries              // for curate</code></pre>
           <strong>Manifest location across languages.</strong> Canonical YAML in
           <code>packages/memrez/agents/</code>; does Python read those files
           directly or get a packaged copy at build?
+        </li>
+        <li>
+          <strong>Embedded-SDK <code>toolContext</code> passthrough (agntz dependency).</strong>
+          The core Runner's <code>invoke(..., { toolContext })</code> binds scope
+          today, but <code>@agntz/sdk</code>'s <code>agents.run()</code> doesn't
+          expose <code>toolContext</code> yet. Resolution: use the core Runner for
+          memory-bound agents, or add <code>toolContext</code> to the SDK run
+          options (small agntz-side change).
         </li>
       </ol>
     </section>

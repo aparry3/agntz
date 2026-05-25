@@ -132,20 +132,15 @@ curate(scope, opts?: { topics?: string[]; includeDescendants?: boolean })
 
 ## Using it from an agntz agent
 
-`read`/`write` are exposed as local tools, and **scope is read from `toolContext`, never chosen by the model** — an agent can't reach another user's memory by hallucinating a scope. The LLM only picks the topic (read) or supplies the fact (write).
+`read`/`write` are exposed as local tools. `memrez.tools()` returns an array of self-describing `ToolDefinition`s (each carries its own `name`), which you spread into the runner's `tools` array. **Scope is read from `toolContext`, never chosen by the model** — an agent can't reach another user's memory by hallucinating a scope. The LLM only picks the topic (read) or supplies the fact (write).
 
 ```ts
-const { memoryRead, memoryWrite } = memrez.tools(); // kind: local handlers
+const mem = createMemrez(options);
+const memoryTools = mem.tools(); // ToolDefinition[] → registers memory_read, memory_write
 
-const client = agntz({
+const client = await agntz({
   agents: "./agents",
-  tools: { memory_read: memoryRead, memory_write: memoryWrite },
-});
-
-await client.agents.run({
-  agentId: "support",
-  input: userMsg,
-  toolContext: { orgId: "acme", userId: "u_123", sessionId }, // → scope path
+  tools: [...memoryTools, ...appTools], // spread into the tools array
 });
 ```
 
@@ -156,7 +151,9 @@ tools:
     tools: [memory_read, memory_write]
 ```
 
-`scan` runs *before* the model call and its TOC is prepended to the agent's context (a `memrez.contextBlock(scope)` helper returns the string). The agent sees *what* it knows and calls `memory_read` only for the topics it actually needs.
+`scan` runs *before* the model call and its TOC is prepended to the agent's input (a `memrez.contextBlock(scope)` helper returns the string). The agent sees *what* it knows and calls `memory_read` only for the topics it actually needs.
+
+> **Embedded-SDK caveat.** Per-run scope reaches the tools via `toolContext`. The core `createRunner().invoke(input, { toolContext })` accepts it today (see the gymtext example), but `@agntz/sdk`'s `agents.run(...)` does **not** thread `toolContext` yet — so the SDK path either drops to the core Runner or needs a small `toolContext` passthrough added. Tracked in open questions.
 
 ## Scope as a capability
 
@@ -186,11 +183,11 @@ gymtext                       ← trainer-wide memory (add later — costs nothi
 ```ts
 // scope minted HERE, from the authenticated user — the trust boundary
 const scope = `gymtext/user/${userId}`;
+const toc = await memrez.contextBlock(scope);    // scan TOC as a string
 
-const result = await runner.invoke("chat", message, {
+const result = await runner.invoke("chat", `${toc}\n\n${message}`, {
   sessionId,
-  context: await memrez.contextBlock(scope),     // scan TOC injected
-  toolContext: { user, memrezScope: scope },      // read/write tools bind to this scope
+  toolContext: { user, memrezScope: scope },      // memory_read/write bind to this scope
 });
 ```
 
@@ -218,7 +215,7 @@ Two independent axes — how an agent gets memory, and where memrez itself runs.
 
 | Surface | For |
 |---|---|
-| `memrez.tools()` → `memory_read`/`memory_write` as agntz `kind: local` tools | agntz agents — the easy path |
+| `memrez.tools()` → `ToolDefinition[]`, spread into the runner's `tools: [...]` (registers `memory_read`, `memory_write`) | agntz agents — the easy path |
 | The same handlers wrapped as plain function-calling tools | non-agntz agents (raw Anthropic tool-use, LangChain, …) |
 | Direct `memrez.scan/read/write/curate` calls | the app injects memory itself, no tools exposed |
 
@@ -291,6 +288,7 @@ Crucial: contract tests use a **deterministic fake reasoner** (fixed content→t
 4. **Blurb storage.** `topic_meta` table vs a `type:"summary"` entry per topic. Lean: `topic_meta`.
 5. **Package name.** Bare `memrez` (honors standalone) vs `@agntz/memrez` (monorepo consistency). Doc assumes bare `memrez`.
 6. **Manifest location across languages.** Canonical YAML in `packages/memrez/agents/`; does Python read those files directly or get a packaged copy at build?
+7. **Embedded-SDK `toolContext` passthrough (agntz dependency).** The core Runner's `invoke(..., { toolContext })` binds scope today, but `@agntz/sdk`'s `agents.run()` doesn't expose `toolContext` yet — memrez tools need per-run scope. Resolution: use the core Runner for memory-bound agents, or add `toolContext` to the SDK run options (small agntz-side change).
 
 ## Out of scope (v1)
 
