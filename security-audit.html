@@ -1,0 +1,982 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agntz Security Audit - Source of Truth</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --text: #162033;
+      --muted: #5f6b7a;
+      --line: #d8dee8;
+      --critical: #8f1212;
+      --critical-bg: #fff0f0;
+      --high: #a04500;
+      --high-bg: #fff5e8;
+      --medium: #7a5b00;
+      --medium-bg: #fff9d9;
+      --low: #255c7a;
+      --low-bg: #edf8ff;
+      --ok: #176746;
+      --ok-bg: #ecf8f1;
+      --code-bg: #f0f3f7;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 15px;
+      line-height: 1.55;
+    }
+
+    header {
+      background: #111827;
+      color: #ffffff;
+      padding: 48px 28px;
+      border-bottom: 1px solid #0b1020;
+    }
+
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 28px;
+    }
+
+    h1, h2, h3 {
+      margin: 0;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      font-size: 34px;
+      margin-bottom: 10px;
+    }
+
+    h2 {
+      font-size: 23px;
+      margin-bottom: 14px;
+    }
+
+    h3 {
+      font-size: 17px;
+      margin-bottom: 8px;
+    }
+
+    p {
+      margin: 0 0 12px;
+    }
+
+    a {
+      color: #1d4ed8;
+    }
+
+    code {
+      padding: 2px 5px;
+      border-radius: 5px;
+      background: var(--code-bg);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+    }
+
+    .lede {
+      max-width: 880px;
+      color: #d5dbea;
+      font-size: 17px;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 18px;
+      color: #e8edf7;
+      font-size: 14px;
+    }
+
+    .meta span {
+      border: 1px solid rgba(255,255,255,0.22);
+      border-radius: 999px;
+      padding: 6px 10px;
+      background: rgba(255,255,255,0.07);
+    }
+
+    .section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 22px;
+      margin-bottom: 20px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: #fbfcfe;
+    }
+
+    .metric strong {
+      display: block;
+      font-size: 24px;
+      line-height: 1.1;
+      margin-bottom: 4px;
+    }
+
+    .metric span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .callout {
+      border-left: 4px solid var(--critical);
+      background: var(--critical-bg);
+      padding: 14px 16px;
+      margin: 16px 0 0;
+      border-radius: 6px;
+    }
+
+    .status-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 4px 9px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #ffffff;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .severity {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-weight: 700;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      white-space: nowrap;
+    }
+
+    .sev-critical {
+      background: var(--critical-bg);
+      color: var(--critical);
+      border: 1px solid #f1b9b9;
+    }
+
+    .sev-high {
+      background: var(--high-bg);
+      color: var(--high);
+      border: 1px solid #ffd1a1;
+    }
+
+    .sev-medium {
+      background: var(--medium-bg);
+      color: var(--medium);
+      border: 1px solid #edda79;
+    }
+
+    .sev-low {
+      background: var(--low-bg);
+      color: var(--low);
+      border: 1px solid #b8dff0;
+    }
+
+    .sev-positive {
+      background: var(--ok-bg);
+      color: var(--ok);
+      border: 1px solid #b8e2cc;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 12px;
+    }
+
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    th {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      background: #f9fafc;
+    }
+
+    td:first-child {
+      width: 92px;
+      font-weight: 700;
+      color: #374151;
+      white-space: nowrap;
+    }
+
+    td:nth-child(2) {
+      width: 116px;
+    }
+
+    ul, ol {
+      margin: 8px 0 0 19px;
+      padding: 0;
+    }
+
+    li {
+      margin: 5px 0;
+    }
+
+    .finding {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      margin-top: 14px;
+      background: #ffffff;
+    }
+
+    .finding-head {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+
+    .finding-title {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .finding-title strong {
+      font-size: 16px;
+    }
+
+    .finding-body {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    .finding-block {
+      border-top: 1px solid var(--line);
+      padding-top: 12px;
+    }
+
+    .finding-block h4 {
+      margin: 0 0 6px;
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .checklist {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .item {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: #fbfcfe;
+    }
+
+    .item strong {
+      display: block;
+      margin-bottom: 5px;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .small {
+      font-size: 13px;
+    }
+
+    @media (max-width: 900px) {
+      header {
+        padding: 36px 20px;
+      }
+
+      main {
+        padding: 20px;
+      }
+
+      .grid,
+      .finding-body,
+      .checklist {
+        grid-template-columns: 1fr;
+      }
+
+      table {
+        display: block;
+        overflow-x: auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Agntz Security Audit</h1>
+    <p class="lede">Source-of-truth audit for external company readiness across SDKs, storage, interfaces, auth, worker trust boundaries, dependency exposure, and operational controls.</p>
+    <div class="meta">
+      <span>Audit date: May 25, 2026</span>
+      <span>Repository: <code>/Users/aaron/Developer/Agntz/agntz</code></span>
+      <span>Status: Not ready for third-party company use until P0 items are closed</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="section">
+      <h2>Executive Summary</h2>
+      <p>The current system has a solid foundation in several places, especially user-scoped stores, hashed API keys, encrypted first-class secrets, and tests around run/trace ownership. However, it is not secure enough for other companies to use yet. The blocking issues are current critical dependency vulnerabilities, broad server-side request forgery exposure, plaintext storage of several credential classes, a high-blast-radius internal worker secret, and missing enterprise tenancy/RBAC controls.</p>
+      <p>The highest-risk pattern is that user-controlled URLs can cause backend services to connect outward from trusted infrastructure across HTTP tools, MCP discovery, MCP connections, manifest validation, token exchange, and webhooks. This needs a central outbound URL policy plus network egress controls, not one-off checks.</p>
+      <div class="grid">
+        <div class="metric"><strong>2</strong><span>Critical findings</span></div>
+        <div class="metric"><strong>5</strong><span>High findings</span></div>
+        <div class="metric"><strong>5</strong><span>Medium findings</span></div>
+        <div class="metric"><strong>3</strong><span>Low / operational findings</span></div>
+      </div>
+      <div class="callout">
+        <strong>Readiness decision:</strong> Do not onboard external companies until the dependency bypass issues, SSRF/egress controls, credential storage gaps, and worker trust boundary are fixed and regression-tested.
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Scope And Method</h2>
+      <p>Reviewed the Next app, worker, core runtime, TypeScript client/SDK, local SDK package, Python package metadata, Postgres/SQLite/JSON/memory stores, authentication middleware, internal worker auth, API key flows, secrets, provider storage, MCP interfaces, HTTP tools, webhook dispatch, deployment docs, tests, and dependency advisories.</p>
+      <div class="status-row">
+        <span class="pill">Auth: Clerk, API keys, internal worker secret</span>
+        <span class="pill">Storage: Postgres, SQLite, JSON, memory</span>
+        <span class="pill">Interfaces: App API, worker API, HTTP tools, MCP, webhooks</span>
+        <span class="pill">SDKs: TypeScript and Python package metadata</span>
+        <span class="pill">Ops: deployment docs and local env hygiene</span>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Finding Index</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Severity</th>
+            <th>Area</th>
+            <th>Title</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>SEC-001</td><td><span class="severity sev-critical">Critical</span></td><td>Dependencies</td><td>Known Clerk and Next auth/middleware bypass vulnerabilities are installed</td><td>Open</td></tr>
+          <tr><td>SEC-002</td><td><span class="severity sev-critical">Critical</span></td><td>Interfaces</td><td>Server-side request forgery across HTTP tools, MCP, validation, token exchange, and webhooks</td><td>Open</td></tr>
+          <tr><td>SEC-003</td><td><span class="severity sev-high">High</span></td><td>Storage</td><td>Provider API keys and MCP auth headers are stored in plaintext</td><td>Open</td></tr>
+          <tr><td>SEC-004</td><td><span class="severity sev-high">High</span></td><td>Auth</td><td>Static internal worker secret can impersonate any user if leaked</td><td>Open</td></tr>
+          <tr><td>SEC-005</td><td><span class="severity sev-high">High</span></td><td>Tenancy</td><td>No organization tenancy, RBAC, or scoped API keys for company use</td><td>Open</td></tr>
+          <tr><td>SEC-006</td><td><span class="severity sev-high">High</span></td><td>Operations</td><td>Secret encryption key is required by code but omitted from deployment docs</td><td>Open</td></tr>
+          <tr><td>SEC-007</td><td><span class="severity sev-high">High</span></td><td>Webhooks</td><td>Webhook signatures lack timestamp/replay protection and callback URL policy</td><td>Open</td></tr>
+          <tr><td>SEC-008</td><td><span class="severity sev-medium">Medium</span></td><td>Worker API</td><td>Worker CORS is unrestricted</td><td>Open</td></tr>
+          <tr><td>SEC-009</td><td><span class="severity sev-medium">Medium</span></td><td>Availability</td><td>Request body and resource limits are incomplete</td><td>Open</td></tr>
+          <tr><td>SEC-010</td><td><span class="severity sev-medium">Medium</span></td><td>Privacy</td><td>Logs can include user prompts, tool params, and sensitive snippets</td><td>Open</td></tr>
+          <tr><td>SEC-011</td><td><span class="severity sev-medium">Medium</span></td><td>Interfaces</td><td>Image fetcher SSRF guard misses DNS/private-resolution checks</td><td>Open</td></tr>
+          <tr><td>SEC-012</td><td><span class="severity sev-medium">Medium</span></td><td>Local Tools</td><td>Bundled read-file tool uses a weak path prefix boundary check</td><td>Open</td></tr>
+          <tr><td>SEC-013</td><td><span class="severity sev-low">Low</span></td><td>Operations</td><td>Local env file contains credential hygiene issues</td><td>Open</td></tr>
+          <tr><td>SEC-014</td><td><span class="severity sev-low">Low</span></td><td>SDKs</td><td>SDK docs should explicitly warn against browser API-key use</td><td>Open</td></tr>
+          <tr><td>SEC-015</td><td><span class="severity sev-low">Low</span></td><td>Supply Chain</td><td>Python package lacks a lock/audit workflow in this checkout</td><td>Open</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="section">
+      <h2>Detailed Findings</h2>
+
+      <article class="finding" id="sec-001">
+        <div class="finding-head">
+          <div class="finding-title"><span class="severity sev-critical">Critical</span><strong>SEC-001: Known Clerk and Next auth/middleware bypass vulnerabilities are installed</strong></div>
+          <span class="pill">Area: Dependencies</span>
+        </div>
+        <div class="finding-body">
+          <div class="finding-block">
+            <h4>Evidence</h4>
+            <p><code>corepack pnpm audit --prod --audit-level=low</code> reports 41 production advisories, including critical Clerk middleware route-protection bypasses and high Next middleware/proxy bypass issues. Installed packages include <code>@clerk/nextjs@7.1.0</code>, <code>@clerk/shared@4.7.0</code>, and <code>next@15.5.15</code>.</p>
+          </div>
+          <div class="finding-block">
+            <h4>Impact</h4>
+            <p>Authentication middleware is part of the main application security boundary. Known bypasses in this layer can expose protected application routes even if route code is correctly written.</p>
+          </div>
+          <div class="finding-block">
+            <h4>Remediation</h4>
+            <ul>
+              <li>Upgrade Clerk packages to patched versions at or above the advisory fixes.</li>
+              <li>Upgrade Next to a patched version covering middleware/proxy bypasses and SSRF advisories.</li>
+              <li>Upgrade Hono, <code>@hono/node-server</code>, <code>path-to-regexp</code>, <code>fast-uri</code>, <code>js-cookie</code>, <code>postcss</code>, <code>qs</code>, <code>uuid</code>, and <code>ip-address</code> per audit output.</li>
+              <li>Run full auth route regression tests after upgrading.</li>
+            </ul>
+          </div>
+          <div class="finding-block">
+            <h4>Acceptance Criteria</h4>
+            <ul>
+              <li><code>corepack pnpm audit --prod --audit-level=high</code> returns no high or critical advisories.</li>
+              <li>Protected route tests prove unauthenticated requests cannot reach app APIs.</li>
+            </ul>
+          </div>
+        </div>
+      </article>
+
+      <article class="finding" id="sec-002">
+        <div class="finding-head">
+          <div class="finding-title"><span class="severity sev-critical">Critical</span><strong>SEC-002: SSRF across HTTP tools, MCP, validation, token exchange, and webhooks</strong></div>
+          <span class="pill">Area: Interfaces</span>
+        </div>
+        <div class="finding-body">
+          <div class="finding-block">
+            <h4>Evidence</h4>
+            <p>User-controlled URLs are fetched by backend code in <code>packages/core/src/http-tool.ts</code>, <code>packages/manifest/src/validate.ts</code>, <code>packages/core/src/auth/token-resolver.ts</code>, <code>packages/app/src/app/api/mcp-tools/route.ts</code>, <code>packages/app/src/lib/connections.ts</code>, <code>packages/core/src/mcp/list-tools.ts</code>, <code>packages/core/src/mcp/client-manager.ts</code>, and <code>packages/core/src/webhooks/dispatcher.ts</code>. Most paths only validate that a string parses as a URL, with no private IP, localhost, DNS rebinding, redirect, or allowlist policy.</p>
+          </div>
+          <div class="finding-block">
+            <h4>Impact</h4>
+            <p>An authenticated user, compromised API key, or malicious manifest could use trusted infrastructure to reach internal metadata services, private network endpoints, localhost services, cloud control planes, or internal admin surfaces.</p>
+          </div>
+          <div class="finding-block">
+            <h4>Remediation</h4>
+            <ul>
+              <li>Implement one shared outbound URL policy used by HTTP tools, MCP, manifest validation, token exchange, webhooks, and image fetches.</li>
+              <li>Default to <code>https:</code> for user-configured outbound integrations unless an explicit admin allowlist permits <code>http:</code>.</li>
+              <li>Resolve DNS before connecting and block loopback, link-local, private, carrier-grade NAT, multicast, unspecified, and reserved ranges for IPv4 and IPv6.</li>
+              <li>Disable redirects or re-run policy checks after every redirect.</li>
+              <li>Add network egress firewalling so application code cannot reach cloud metadata or private network ranges even if a code check is missed.</li>
+            </ul>
+          </div>
+          <div class="finding-block">
+            <h4>Acceptance Criteria</h4>
+            <ul>
+              <li>Regression tests cover <code>localhost</code>, <code>127.0.0.1</code>, <code>::1</code>, private IPv4 ranges, private IPv6 ranges, DNS names resolving to private IPs, and redirect-to-private cases for each outbound interface.</li>
+              <li>Allowed public URLs still work for expected integrations.</li>
+            </ul>
+          </div>
+        </div>
+      </article>
+
+      <article class="finding" id="sec-003">
+        <div class="finding-head">
+          <div class="finding-title"><span class="severity sev-high">High</span><strong>SEC-003: Provider API keys and MCP auth headers are stored in plaintext</strong></div>
+          <span class="pill">Area: Storage</span>
+        </div>
+        <div class="finding-body">
+          <div class="finding-block">
+            <h4>Evidence</h4>
+            <p><code>ProviderStore</code> writes <code>ar_providers.api_key</code> as plaintext in Postgres and stores full provider config in JSON/memory stores. MCP connection config is stored as JSON and can include authorization headers. The UI states that MCP header values are stored encrypted at rest, but the connection store writes config directly.</p>
+          </div>
+          <div class="finding-block">
+            <h4>Impact</h4>
+            <p>Database read access, backups, logs, local JSON files, or support dumps can expose model provider keys and third-party MCP credentials. This undermines the stronger encrypted <code>SecretStore</code> design.</p>
+          </div>
+          <div class="finding-block">
+            <h4>Remediation</h4>
+            <ul>
+              <li>Move provider API keys and MCP sensitive headers into <code>SecretStore</code> or encrypted columns using the same or stronger envelope encryption pattern.</li>
+              <li>Store only references and metadata in provider/connection records.</li>
+              <li>Add migrations to encrypt existing values and scrub plaintext from JSON stores and backups where possible.</li>
+              <li>Correct UI copy only after storage actually encrypts the values.</li>
+            </ul>
+          </div>
+          <div class="finding-block">
+            <h4>Acceptance Criteria</h4>
+            <ul>
+              <li>Direct database rows and JSON files do not contain raw provider keys or auth headers.</li>
+              <li>Tests fail if provider or connection credentials are persisted in plaintext.</li>
+            </ul>
+          </div>
+        </div>
+      </article>
+
+      <article class="finding" id="sec-004">
+        <div class="finding-head">
+          <div class="finding-title"><span class="severity sev-high">High</span><strong>SEC-004: Static internal worker secret can impersonate any user if leaked</strong></div>
+          <span class="pill">Area: Auth</span>
+        </div>
+        <div class="finding-body">
+          <div class="finding-block">
+            <h4>Evidence</h4>
+            <p><code>packages/worker/src/middleware/auth.ts</code> accepts <code>X-Internal-Secret</code> plus a caller-supplied <code>userId</code> in the JSON body or <code>X-User-Id</code> header. App helper code derives this from Clerk, but the worker itself trusts the internal secret. Deployment docs expose the worker as a normal service URL protected mainly by this shared secret and API keys.</p>
+          </div>
+          <div class="finding-block">
+            <h4>Impact</h4>
+            <p>If <code>WORKER_INTERNAL_SECRET</code> leaks, an attacker can act as any user against internal worker paths that accept the header. The blast radius is all tenants/users the worker can access.</p>
+          </div>
+          <div class="finding-block">
+            <h4>Remediation</h4>
+            <ul>
+              <li>Place app-to-worker traffic on private networking or mTLS.</li>
+              <li>Replace static shared-secret impersonation with short-lived signed service JWTs containing issuer, audience, expiration, subject, and authorized action.</li>
+              <li>Reject user identity supplied from untrusted request bodies unless bound to a verified app-issued token.</li>
+              <li>Use separate secrets or keys for public API, internal app calls, and admin/system routes.</li>
+            </ul>
+          </div>
+          <div class="finding-block">
+            <h4>Acceptance Criteria</h4>
+            <ul>
+              <li>A leaked external API key cannot call internal routes.</li>
+              <li>A leaked old service token expires quickly and cannot be replayed outside its audience/action.</li>
+              <li>Worker ingress is not publicly reachable for internal-only routes.</li>
+            </ul>
+          </div>
+        </div>
+      </article>
+
+      <article class="finding" id="sec-005">
+        <div class="finding-head">
+          <div class="finding-title"><span class="severity sev-high">High</span><strong>SEC-005: No organization tenancy, RBAC, or scoped API keys for company use</strong></div>
+          <span class="pill">Area: Tenancy</span>
+        </div>
+        <div class="finding-body">
+          <div class="finding-block">
+            <h4>Evidence</h4>
+            <p>Application context is scoped by Clerk <code>userId</code> through <code>requireUserContext()</code> and <code>adminStore.forUser(userId)</code>. API keys resolve to a user owner. Docs note that organizations and API-key scopes are future work.</p>
+          </div>
+          <div class="finding-block">
+            <h4>Impact</h4>
+            <p>Companies need organization tenancy, member roles, least-privilege keys, and auditability. User-only ownership is not enough for multi-person company accounts or enterprise security reviews.</p>
+          </div>
+          <div class="finding-block">
+            <h4>Remediation</h4>
+            <ul>
+              <li>Add an explicit tenant model such as <code>orgId</code> plus <code>userId</code>, with all stores and indexes scoped by tenant.</li>
+              <li>Add roles and permissions for owner, admin, developer, viewer, and service account use cases.</li>
+              <li>Add API key scopes, expiration, last-used metadata, rotation, and per-key revocation.</li>
+              <li>Add tenant-level audit logs for secrets, keys, providers, connections, runs, and admin changes.</li>
+            </ul>
+          </div>
+          <div class="finding-block">
+            <h4>Acceptance Criteria</h4>
+            <ul>
+              <li>Tests prove one organization cannot read or mutate another organization's agents, runs, traces, secrets, providers, keys, or connections.</li>
+              <li>Least-privilege API keys cannot perform actions outside their scope.</li>
+            </ul>
+          </div>
+        </div>
+      </article>
+
+      <article class="finding" id="sec-006">
+        <div class="finding-head">
+          <div class="finding-title"><span class="severity sev-high">High</span><strong>SEC-006: Secret encryption key is required by code but omitted from deployment docs</strong></div>
+          <span class="pill">Area: Operations</span>
+        </div>
+        <div class="finding-body">
+          <div class="finding-block">
+            <h4>Evidence</h4>
+            <p><code>packages/core/src/utils/crypto.ts</code> requires a 32-byte <code>AGNTZ_SECRET_KEY</code> for AES-256-GCM secret encryption/decryption. Deployment docs describe <code>WORKER_INTERNAL_SECRET</code> and many app variables, but omit <code>AGNTZ_SECRET_KEY</code>. The inspected local env did not define it.</p>
+          </div>
+          <div class="finding-block">
+            <h4>Impact</h4>
+            <p>Deployments can silently ship without a required encryption key until secret operations fail, or teams may improvise unsafe key handling. There is also no documented rotation/key-version workflow.</p>
+          </div>
+          <div class="finding-block">
+            <h4>Remediation</h4>
+            <ul>
+              <li>Add <code>AGNTZ_SECRET_KEY</code> generation, storage, backup, and rotation instructions to deployment docs and examples.</li>
+              <li>Prefer KMS/envelope encryption for production rather than a raw app env key.</li>
+              <li>Add key versioning so old secrets can be decrypted during rotation and re-encrypted safely.</li>
+              <li>Fail startup if secret-backed features are enabled without a valid key.</li>
+            </ul>
+          </div>
+          <div class="finding-block">
+            <h4>Acceptance Criteria</h4>
+            <ul>
+              <li>Fresh deployment docs produce a working encrypted secret store.</li>
+              <li>A key rotation test decrypts old values and re-encrypts them under the new key.</li>
+            </ul>
+          </div>
+        </div>
+      </article>
+
+      <article class="finding" id="sec-007">
+        <div class="finding-head">
+          <div class="finding-title"><span class="severity sev-high">High</span><strong>SEC-007: Webhook signatures lack timestamp/replay protection and callback URL policy</strong></div>
+          <span class="pill">Area: Webhooks</span>
+        </div>
+        <div class="finding-body">
+          <div class="finding-block">
+            <h4>Evidence</h4>
+            <p><code>packages/core/src/webhooks/dispatcher.ts</code> signs only the JSON body using HMAC and sends a caller-provided <code>callbackUrl</code>. The run route checks that callback URL and secret name are both present, but does not enforce an outbound URL policy. The signature does not include timestamp, delivery ID, or replay window.</p>
+          </div>
+          <div class="finding-block">
+            <h4>Impact</h4>
+            <p>Captured webhook bodies and signatures may be replayable. Callback URLs can also be used as another SSRF path from the worker.</p>
+          </div>
+          <div class="finding-block">
+            <h4>Remediation</h4>
+            <ul>
+              <li>Apply the shared outbound URL policy to webhook callback URLs.</li>
+              <li>Add a timestamp header and sign <code>timestamp.deliveryId.body</code>.</li>
+              <li>Document receiver verification with a short tolerance window and replay cache.</li>
+              <li>Expose secret rotation and dual-signing or grace-period verification for webhook secrets.</li>
+            </ul>
+          </div>
+          <div class="finding-block">
+            <h4>Acceptance Criteria</h4>
+            <ul>
+              <li>Old webhook signatures are rejected outside the tolerance window.</li>
+              <li>Callback URLs to private/localhost destinations are blocked.</li>
+            </ul>
+          </div>
+        </div>
+      </article>
+
+      <article class="finding" id="sec-008">
+        <div class="finding-head">
+          <div class="finding-title"><span class="severity sev-medium">Medium</span><strong>SEC-008: Worker CORS is unrestricted</strong></div>
+          <span class="pill">Area: Worker API</span>
+        </div>
+        <div class="finding-body">
+          <div class="finding-block">
+            <h4>Evidence</h4>
+            <p><code>packages/worker/src/routes.ts</code> applies <code>app.use("*", cors())</code> globally. The worker uses bearer API keys and internal headers rather than cookies, so this is not classic CSRF, but it broadens browser-origin exposure.</p>
+          </div>
+          <div class="finding-block">
+            <h4>Impact</h4>
+            <p>If users paste API keys into browsers or a future UI stores credentials in browser context, arbitrary origins can make worker calls. It also makes it harder to reason about intended clients.</p>
+          </div>
+          <div class="finding-block">
+            <h4>Remediation</h4>
+            <ul>
+              <li>Restrict CORS to configured app origins and documented SDK browser origins, or disable CORS for non-browser APIs.</li>
+              <li>Do not allow internal routes from browser origins.</li>
+            </ul>
+          </div>
+          <div class="finding-block">
+            <h4>Acceptance Criteria</h4>
+            <ul>
+              <li>Unexpected origins fail preflight and cannot call worker endpoints from a browser.</li>
+            </ul>
+          </div>
+        </div>
+      </article>
+
+      <article class="finding" id="sec-009">
+        <div class="finding-head">
+          <div class="finding-title"><span class="severity sev-medium">Medium</span><strong>SEC-009: Request body and resource limits are incomplete</strong></div>
+          <span class="pill">Area: Availability</span>
+        </div>
+        <div class="finding-body">
+          <div class="finding-block">
+            <h4>Evidence</h4>
+            <p>Worker routes parse JSON bodies for runs, validation, and configuration without a central request-size limit. <code>/build-agent</code> caps some fields and the image fetcher caps fetched image size, but the API surface lacks a consistent body, stream, timeout, and concurrency policy. The audit also flagged Hono body-limit related advisories in the installed version.</p>
+          </div>
+          <div class="finding-block">
+            <h4>Impact</h4>
+            <p>Large bodies, oversized manifests, long tool sessions, or repeated expensive calls can consume memory, worker slots, and model spend.</p>
+          </div>
+          <div class="finding-block">
+            <h4>Remediation</h4>
+            <ul>
+              <li>Add edge and framework-level body limits for app and worker routes.</li>
+              <li>Add per-user and per-key rate limits for run creation, validation, MCP discovery, build-agent, and webhook delivery.</li>
+              <li>Set maximum manifest size, step count, input size, output size, and run duration.</li>
+            </ul>
+          </div>
+          <div class="finding-block">
+            <h4>Acceptance Criteria</h4>
+            <ul>
+              <li>Oversized requests fail before full body parsing.</li>
+              <li>Rate-limit tests cover authenticated, API-key, and unauthenticated expensive endpoints.</li>
+            </ul>
+          </div>
+        </div>
+      </article>
+
+      <article class="finding" id="sec-010">
+        <div class="finding-head">
+          <div class="finding-title"><span class="severity sev-medium">Medium</span><strong>SEC-010: Logs can include user prompts, tool params, and sensitive snippets</strong></div>
+          <span class="pill">Area: Privacy</span>
+        </div>
+        <div class="finding-body">
+          <div class="finding-block">
+            <h4>Evidence</h4>
+            <p><code>packages/core/src/model-provider.ts</code> logs model error context with message previews and content snippets. <code>packages/worker/src/bridge.ts</code> logs serialized tool params truncated to 200 characters. Hosted tracing defaults <code>recordIO</code> to false, which is good, but SDK/local tracing can record IO when enabled.</p>
+          </div>
+          <div class="finding-block">
+            <h4>Impact</h4>
+            <p>User prompts, tool arguments, provider responses, or pasted credentials can appear in operational logs. Company customers often treat prompt and run data as confidential.</p>
+          </div>
+          <div class="finding-block">
+            <h4>Remediation</h4>
+            <ul>
+              <li>Disable prompt and tool-argument previews in production logs by default.</li>
+              <li>Use structured redaction for known secret patterns, API keys, authorization headers, and configured secret values.</li>
+              <li>Document trace retention, export, deletion, and IO-recording controls.</li>
+            </ul>
+          </div>
+          <div class="finding-block">
+            <h4>Acceptance Criteria</h4>
+            <ul>
+              <li>Tests prove common secret patterns and configured secret values do not appear in logs or traces.</li>
+            </ul>
+          </div>
+        </div>
+      </article>
+
+      <article class="finding" id="sec-011">
+        <div class="finding-head">
+          <div class="finding-title"><span class="severity sev-medium">Medium</span><strong>SEC-011: Image fetcher SSRF guard misses DNS/private-resolution checks</strong></div>
+          <span class="pill">Area: Interfaces</span>
+        </div>
+        <div class="finding-body">
+          <div class="finding-block">
+            <h4>Evidence</h4>
+            <p><code>packages/core/src/image-fetcher.ts</code> blocks literal localhost/private IPv4/IPv6 inputs and enforces content type, timeout, and max bytes. It does not resolve hostnames before connecting, so a DNS name that resolves to a private address is not blocked.</p>
+          </div>
+          <div class="finding-block">
+            <h4>Impact</h4>
+            <p>A malicious image URL can bypass literal IP checks through DNS and reach private addresses if network egress permits it.</p>
+          </div>
+          <div class="finding-block">
+            <h4>Remediation</h4>
+            <ul>
+              <li>Move image fetching onto the same shared outbound URL policy described in SEC-002.</li>
+              <li>Resolve and validate all IPs before connect, and re-check redirects.</li>
+            </ul>
+          </div>
+          <div class="finding-block">
+            <h4>Acceptance Criteria</h4>
+            <ul>
+              <li>Hostnames resolving to private or loopback IPs are rejected in tests.</li>
+            </ul>
+          </div>
+        </div>
+      </article>
+
+      <article class="finding" id="sec-012">
+        <div class="finding-head">
+          <div class="finding-title"><span class="severity sev-medium">Medium</span><strong>SEC-012: Bundled read-file tool uses a weak path prefix boundary check</strong></div>
+          <span class="pill">Area: Local Tools</span>
+        </div>
+        <div class="finding-body">
+          <div class="finding-block">
+            <h4>Evidence</h4>
+            <p><code>packages/worker/src/tools/read-file.ts</code> resolves paths under bundled agent-builder references and checks <code>target.startsWith(REFS_DIR)</code>. Prefix checks are weaker than path-relative boundary checks when sibling paths share a prefix.</p>
+          </div>
+          <div class="finding-block">
+            <h4>Impact</h4>
+            <p>Current blast radius appears limited to a bundled system-agent helper, but this pattern can become dangerous if reused for user-controlled local file access.</p>
+          </div>
+          <div class="finding-block">
+            <h4>Remediation</h4>
+            <ul>
+              <li>Replace the prefix check with <code>path.relative(REFS_DIR, target)</code> and reject paths starting with <code>..</code> or absolute paths.</li>
+              <li>Add traversal tests for sibling-prefix cases.</li>
+            </ul>
+          </div>
+          <div class="finding-block">
+            <h4>Acceptance Criteria</h4>
+            <ul>
+              <li>Traversal and sibling-prefix test cases fail closed.</li>
+            </ul>
+          </div>
+        </div>
+      </article>
+
+      <article class="finding" id="sec-013">
+        <div class="finding-head">
+          <div class="finding-title"><span class="severity sev-low">Low</span><strong>SEC-013: Local env file contains credential hygiene issues</strong></div>
+          <span class="pill">Area: Operations</span>
+        </div>
+        <div class="finding-body">
+          <div class="finding-block">
+            <h4>Evidence</h4>
+            <p>The parent local env file contained a commented database connection string and did not define <code>AGNTZ_SECRET_KEY</code>. The value is not repeated here.</p>
+          </div>
+          <div class="finding-block">
+            <h4>Impact</h4>
+            <p>Commented secrets are still secrets. They can be copied, indexed, committed, or exposed in screenshots and support bundles. Missing local encryption config also masks deployment-readiness problems.</p>
+          </div>
+          <div class="finding-block">
+            <h4>Remediation</h4>
+            <ul>
+              <li>Rotate any credential that appeared in local env comments.</li>
+              <li>Remove commented secret values from env files.</li>
+              <li>Add secret scanning to pre-commit and CI.</li>
+            </ul>
+          </div>
+          <div class="finding-block">
+            <h4>Acceptance Criteria</h4>
+            <ul>
+              <li>Secret scan passes on the repository and local env templates contain placeholders only.</li>
+            </ul>
+          </div>
+        </div>
+      </article>
+
+      <article class="finding" id="sec-014">
+        <div class="finding-head">
+          <div class="finding-title"><span class="severity sev-low">Low</span><strong>SEC-014: SDK docs should explicitly warn against browser API-key use</strong></div>
+          <span class="pill">Area: SDKs</span>
+        </div>
+        <div class="finding-body">
+          <div class="finding-block">
+            <h4>Evidence</h4>
+            <p>The TypeScript client accepts bearer API keys for worker API access. The worker CORS policy is broad. There should be clear docs and types guiding company customers to use API keys from server-side environments only unless a future scoped browser token model is created.</p>
+          </div>
+          <div class="finding-block">
+            <h4>Impact</h4>
+            <p>Customers can accidentally embed long-lived API keys in browser apps, exposing account-level access.</p>
+          </div>
+          <div class="finding-block">
+            <h4>Remediation</h4>
+            <ul>
+              <li>Document server-only usage for API keys in TS and Python SDK docs.</li>
+              <li>Consider naming or runtime warnings similar to <code>dangerouslyAllowBrowser</code> if browser use is ever supported.</li>
+              <li>Prefer short-lived scoped browser tokens for future browser workflows.</li>
+            </ul>
+          </div>
+          <div class="finding-block">
+            <h4>Acceptance Criteria</h4>
+            <ul>
+              <li>SDK docs and examples do not encourage exposing long-lived API keys to browsers.</li>
+            </ul>
+          </div>
+        </div>
+      </article>
+
+      <article class="finding" id="sec-015">
+        <div class="finding-head">
+          <div class="finding-title"><span class="severity sev-low">Low</span><strong>SEC-015: Python package lacks a lock/audit workflow in this checkout</strong></div>
+          <span class="pill">Area: Supply Chain</span>
+        </div>
+        <div class="finding-body">
+          <div class="finding-block">
+            <h4>Evidence</h4>
+            <p><code>python/pyproject.toml</code> uses lower-bound dependency ranges such as <code>httpx&gt;=0.28.0</code>, <code>pydantic&gt;=2.8.0</code>, <code>PyYAML&gt;=6.0.0</code>, and optional <code>litellm&gt;=1.75.0</code>. No Python lockfile or local audit tool was available in this checkout. Local Python was 3.9 while the package requires 3.11 or newer.</p>
+          </div>
+          <div class="finding-block">
+            <h4>Impact</h4>
+            <p>SDK releases can resolve to different dependency versions across environments, and Python dependency advisories are not currently part of the observed audit loop.</p>
+          </div>
+          <div class="finding-block">
+            <h4>Remediation</h4>
+            <ul>
+              <li>Add a Python dependency lock and release/audit workflow using Python 3.11 or newer.</li>
+              <li>Run <code>pip-audit</code> or an equivalent in CI for the Python package.</li>
+            </ul>
+          </div>
+          <div class="finding-block">
+            <h4>Acceptance Criteria</h4>
+            <ul>
+              <li>Python package CI runs install, tests, and dependency audit on supported Python versions.</li>
+            </ul>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section class="section">
+      <h2>What Looks Solid</h2>
+      <div class="checklist">
+        <div class="item"><span class="severity sev-positive">Positive</span><strong>Per-user store scoping</strong><p class="muted">App context derives user identity from Clerk and wraps stores through <code>forUser(userId)</code>. Tests cover run, trace, and store isolation across memory, SQLite, and Postgres paths.</p></div>
+        <div class="item"><span class="severity sev-positive">Positive</span><strong>First-class SecretStore encryption</strong><p class="muted">Secrets use AES-256-GCM with a required 32-byte key. App APIs return metadata rather than raw decrypted values.</p></div>
+        <div class="item"><span class="severity sev-positive">Positive</span><strong>API key entropy and hashing</strong><p class="muted">API keys are generated with high entropy, stored as SHA-256 hashes, shown once, and support revocation.</p></div>
+        <div class="item"><span class="severity sev-positive">Positive</span><strong>Hosted tracing defaults</strong><p class="muted">Worker-created span emitters set <code>recordIO: false</code> by default, reducing accidental prompt/output capture in hosted traces.</p></div>
+        <div class="item"><span class="severity sev-positive">Positive</span><strong>Token cache owner isolation</strong><p class="muted">HTTP auth token resolver cache keys include owner context, reducing cross-user token reuse risk.</p></div>
+        <div class="item"><span class="severity sev-positive">Positive</span><strong>Webhook signing foundation</strong><p class="muted">Webhooks already use HMAC signatures and delivery IDs; this foundation needs timestamp/replay hardening rather than a full redesign.</p></div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Prioritized Remediation Plan</h2>
+      <h3>P0: Block External Company Use Until Complete</h3>
+      <ol>
+        <li>Patch critical/high dependency advisories for Clerk, Next, Hono, and transitive runtime packages.</li>
+        <li>Build and enforce a shared outbound URL policy across HTTP tools, MCP, validation, token exchange, image fetches, and webhooks, backed by network egress controls.</li>
+        <li>Encrypt provider API keys and MCP auth headers at rest; migrate existing plaintext values.</li>
+        <li>Replace public static internal worker-secret impersonation with private networking and short-lived service authentication.</li>
+        <li>Add <code>AGNTZ_SECRET_KEY</code> deployment guidance, startup validation, and a rotation path. Rotate the local credential that appeared in an env comment.</li>
+      </ol>
+
+      <h3>P1: Company Readiness</h3>
+      <ol>
+        <li>Add organization tenancy, RBAC, scoped API keys, key expiration, and tenant-level audit logs.</li>
+        <li>Add request body limits, run limits, rate limits, and cost controls for expensive routes.</li>
+        <li>Harden webhook signatures with timestamp, delivery ID binding, receiver docs, and replay protection.</li>
+        <li>Restrict worker CORS and document SDK server-only API-key handling.</li>
+        <li>Remove sensitive prompt/tool previews from production logs and add redaction tests.</li>
+      </ol>
+
+      <h3>P2: Assurance And Compliance</h3>
+      <ol>
+        <li>Add CI dependency audit gates for TypeScript and Python packages.</li>
+        <li>Add SOC 2 readiness controls: access review, retention/deletion, audit export, incident response, backup restore tests, and change-management evidence.</li>
+        <li>Add security regression tests for all fixed findings and keep this report updated as items close.</li>
+      </ol>
+    </section>
+
+    <section class="section">
+      <h2>Verification Notes</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Check</th>
+            <th>Result</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>corepack pnpm audit --prod --audit-level=low</code></td>
+            <td>Failed with advisories</td>
+            <td>41 production vulnerabilities: 2 critical, 15 high, 21 moderate, 3 low.</td>
+          </tr>
+          <tr>
+            <td><code>corepack pnpm -r exec -- tsc --version</code></td>
+            <td>Could not run</td>
+            <td><code>node_modules</code> was not installed, so package-local <code>tsc</code> was unavailable.</td>
+          </tr>
+          <tr>
+            <td>Python dependency audit</td>
+            <td>Could not run locally</td>
+            <td>Local Python was 3.9.6, project requires Python 3.11+, and <code>pip-audit</code>/<code>uv</code> were not available.</td>
+          </tr>
+          <tr>
+            <td>Existing tests reviewed</td>
+            <td>Good coverage in selected areas</td>
+            <td>Strong ownership isolation and secret-store tests exist. Missing tests for SSRF blocking, provider/MCP credential encryption, and enterprise tenancy.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>
