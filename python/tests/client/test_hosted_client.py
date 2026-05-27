@@ -61,6 +61,34 @@ def test_agents_run_sends_hosted_wire_request() -> None:
     assert result.replies[0].run_id == "run_abc"
 
 
+def test_agents_run_sends_runtime_context() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/run"
+        assert json.loads(request.content) == {
+            "agentId": "support",
+            "input": "hello",
+            "sessionId": "sess_abc",
+            "context": ["app/user/u_123"],
+        }
+        return httpx.Response(200, json=_run_payload())
+
+    client = AgntzClient(
+        api_key="test-key",
+        base_url="https://worker.test",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    result = client.agents.run(
+        agent_id="support",
+        input="hello",
+        session_id="sess_abc",
+        context=["app/user/u_123"],
+    )
+
+    assert result.output == {"answer": "done"}
+
+
 @pytest.mark.asyncio
 async def test_async_agents_run_sends_hosted_wire_request() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:

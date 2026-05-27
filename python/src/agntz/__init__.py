@@ -19,6 +19,8 @@ from .core import (
     ToolResult,
     tool,
 )
+from .context import NamespaceGrantError, normalize_namespace_grant, normalize_namespace_grants
+from .memrez import Memrez, MemrezScopeError, create_memrez
 from .sdk import LocalClient, agntz
 from .stores import (
     LocalMessageRecord,
@@ -44,6 +46,9 @@ __all__ = [
     "ModelProvider",
     "ModelTool",
     "MemoryStore",
+    "Memrez",
+    "MemrezScopeError",
+    "NamespaceGrantError",
     "NotFoundError",
     "SQLiteStore",
     "StreamError",
@@ -51,6 +56,9 @@ __all__ = [
     "ToolDefinition",
     "ToolResult",
     "agntz",
+    "create_memrez",
+    "normalize_namespace_grant",
+    "normalize_namespace_grants",
     "tool",
 ]
 

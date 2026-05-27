@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "grantSemantics": {
+    "grant": "app/user/u_123",
+    "readableScopes": ["app", "app/user", "app/user/u_123"],
+    "defaultWritableScopes": ["app/user/u_123", "app/user/u_123/*"],
+    "notReadableScopes": ["app/user/u_456"],
+    "notWritableScopes": ["app/user", "app/user/u_456"]
+  },
+  "resourceConfig": {
+    "manifest": {
+      "resources": {
+        "memory": {
+          "kind": "memory",
+          "mode": "read-write",
+          "autoScan": true,
+          "writePolicy": {
+            "descendants": true,
+            "ancestorPromotion": "none"
+          }
+        }
+      }
+    },
+    "reservedToolNames": ["memory_read", "memory_write"]
+  },
+  "writeFlow": [
+    "agent calls memory_write with content",
+    "memrez reasoner selects a namespace from the run grants and write policy",
+    "memrez validates the selected namespace before persisting",
+    "memrez stores normalized content, topics, type, source, and timestamps"
+  ]
+}

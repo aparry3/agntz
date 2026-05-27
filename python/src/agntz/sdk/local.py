@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 
 from agntz.client.models import Event, RunResult
+from agntz.context import normalize_namespace_grants
 from agntz.core import (
     GenerateTextResult,
     MissingModelProvider,
@@ -72,9 +73,11 @@ class LocalClient:
         agent_id: str,
         input: Any = None,
         session_id: str | None = None,
+        context: list[str] | None = None,
     ) -> RunResult:
         manifest = self.manifests[agent_id]
         resolved_session_id = session_id or new_session_id()
+        normalized_context = normalize_namespace_grants(context)
         local_run_id = new_run_id()
         local_trace_id = new_trace_id()
         started_at = time.time()
@@ -84,6 +87,7 @@ class LocalClient:
             session_id=resolved_session_id,
             run_id=local_run_id,
             trace_id=local_trace_id,
+            context=normalized_context,
         )
         self.store.append_messages(
             resolved_session_id,
@@ -188,9 +192,21 @@ class LocalAgentsResource:
     def __init__(self, client: LocalClient) -> None:
         self._client = client
 
-    def run(self, *, agent_id: str, input: Any = None, session_id: str | None = None) -> RunResult:
+    def run(
+        self,
+        *,
+        agent_id: str,
+        input: Any = None,
+        session_id: str | None = None,
+        context: list[str] | None = None,
+    ) -> RunResult:
         return _run_blocking(
-            self._client._execute(agent_id=agent_id, input=input, session_id=session_id)
+            self._client._execute(
+                agent_id=agent_id,
+                input=input,
+                session_id=session_id,
+                context=context,
+            )
         )
 
     async def arun(
@@ -199,8 +215,14 @@ class LocalAgentsResource:
         agent_id: str,
         input: Any = None,
         session_id: str | None = None,
+        context: list[str] | None = None,
     ) -> RunResult:
-        return await self._client._execute(agent_id=agent_id, input=input, session_id=session_id)
+        return await self._client._execute(
+            agent_id=agent_id,
+            input=input,
+            session_id=session_id,
+            context=context,
+        )
 
     def stream(
         self,
@@ -208,6 +230,7 @@ class LocalAgentsResource:
         agent_id: str,
         input: Any = None,
         session_id: str | None = None,
+        context: list[str] | None = None,
     ) -> Iterator[Event]:
         resolved_session_id = session_id or new_session_id()
         manifest = self._client.manifests[agent_id]
@@ -217,7 +240,12 @@ class LocalAgentsResource:
             kind=manifest.kind,
             sessionId=resolved_session_id,
         )
-        result = self.run(agent_id=agent_id, input=input, session_id=resolved_session_id)
+        result = self.run(
+            agent_id=agent_id,
+            input=input,
+            session_id=resolved_session_id,
+            context=context,
+        )
         yield Event(
             type="complete",
             output=result.output,
@@ -343,12 +371,14 @@ class _LocalExecutionContext:
         session_id: str,
         run_id: str,
         trace_id: str,
+        context: list[str],
     ) -> None:
         self._client = client
         self.agent_id = agent_id
         self.session_id = session_id
         self.run_id = run_id
         self.trace_id = trace_id
+        self.context = context
 
     async def invoke_llm(
         self,

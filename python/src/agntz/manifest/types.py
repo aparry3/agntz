@@ -54,6 +54,13 @@ class ToolCallConfig(ManifestModel):
     auth: dict[str, Any] | None = None
 
 
+class ResourceManifestEntry(ManifestModel):
+    kind: str | None = None
+    mode: Literal["read", "read-write"] | None = None
+    namespace: str | list[str] | None = None
+    config: dict[str, Any] | None = None
+
+
 class LLMAgentManifest(AgentManifestBase):
     kind: Literal["llm"] = "llm"
     model: ModelConfig
@@ -65,6 +72,7 @@ class LLMAgentManifest(AgentManifestBase):
     spawnable: list[Any] | None = None
     skills: list[str] | None = None
     reply: bool | dict[str, Any] | None = None
+    resources: dict[str, ResourceManifestEntry] | None = None
 
 
 class ToolAgentManifest(AgentManifestBase):

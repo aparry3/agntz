@@ -162,11 +162,18 @@ class AgentsResource:
     def __init__(self, client: AgntzClient) -> None:
         self._client = client
 
-    def run(self, *, agent_id: str, input: Any = None, session_id: str | None = None) -> RunResult:
+    def run(
+        self,
+        *,
+        agent_id: str,
+        input: Any = None,
+        session_id: str | None = None,
+        context: list[str] | None = None,
+    ) -> RunResult:
         response = self._client._request(
             "POST",
             "/run",
-            json_body=_run_body(agent_id, input, session_id),
+            json_body=_run_body(agent_id, input, session_id, context),
         )
         return RunResult.model_validate(response.json())
 
@@ -176,13 +183,14 @@ class AgentsResource:
         agent_id: str,
         input: Any = None,
         session_id: str | None = None,
+        context: list[str] | None = None,
     ) -> Iterator[Event]:
         response = self._client._stream(
             "POST",
             "/run/stream",
-            json_body=_run_body(agent_id, input, session_id),
+            json_body=_run_body(agent_id, input, session_id, context),
         )
-        context = response.extensions["_agntz_stream_context"]
+        stream_context = response.extensions["_agntz_stream_context"]
         saw_terminal = False
         try:
             for frame in parse_sse(response.iter_text()):
@@ -197,7 +205,7 @@ class AgentsResource:
             if not saw_terminal:
                 raise StreamError("Stream closed before completion", code="STREAM_TRUNCATED")
         finally:
-            context.__exit__(None, None, None)
+            stream_context.__exit__(None, None, None)
 
 
 class AsyncAgentsResource:
@@ -210,11 +218,12 @@ class AsyncAgentsResource:
         agent_id: str,
         input: Any = None,
         session_id: str | None = None,
+        context: list[str] | None = None,
     ) -> RunResult:
         response = await self._client._request(
             "POST",
             "/run",
-            json_body=_run_body(agent_id, input, session_id),
+            json_body=_run_body(agent_id, input, session_id, context),
         )
         return RunResult.model_validate(response.json())
 
@@ -224,12 +233,13 @@ class AsyncAgentsResource:
         agent_id: str,
         input: Any = None,
         session_id: str | None = None,
+        context: list[str] | None = None,
     ) -> AsyncIterator[Event]:
         async with self._client._client.stream(
             "POST",
             _join_url(self._client._base_url, "/run/stream"),
             headers=_headers(self._client._api_key, "text/event-stream"),
-            json=_run_body(agent_id, input, session_id),
+            json=_run_body(agent_id, input, session_id, context),
         ) as response:
             _raise_for_status(response)
             saw_terminal = False
@@ -256,10 +266,11 @@ class RunsResource:
         agent_id: str,
         input: Any = None,
         session_id: str | None = None,
+        context: list[str] | None = None,
         callback_url: str | None = None,
         webhook_secret_name: str | None = None,
     ) -> Run:
-        body = _run_body(agent_id, input, session_id)
+        body = _run_body(agent_id, input, session_id, context)
         _add_if_defined(body, "callbackUrl", callback_url)
         _add_if_defined(body, "webhookSecretName", webhook_secret_name)
         response = self._client._request("POST", "/runs", json_body=body)
@@ -329,10 +340,11 @@ class AsyncRunsResource:
         agent_id: str,
         input: Any = None,
         session_id: str | None = None,
+        context: list[str] | None = None,
         callback_url: str | None = None,
         webhook_secret_name: str | None = None,
     ) -> Run:
-        body = _run_body(agent_id, input, session_id)
+        body = _run_body(agent_id, input, session_id, context)
         _add_if_defined(body, "callbackUrl", callback_url)
         _add_if_defined(body, "webhookSecretName", webhook_secret_name)
         response = await self._client._request("POST", "/runs", json_body=body)
@@ -494,10 +506,16 @@ class AsyncTracesResource:
                     return
 
 
-def _run_body(agent_id: str, input: Any, session_id: str | None) -> dict[str, Any]:
+def _run_body(
+    agent_id: str,
+    input: Any,
+    session_id: str | None,
+    context: list[str] | None,
+) -> dict[str, Any]:
     body: dict[str, Any] = {"agentId": agent_id}
     _add_if_defined(body, "input", input)
     _add_if_defined(body, "sessionId", session_id)
+    _add_if_defined(body, "context", context)
     return body
 
 

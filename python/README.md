@@ -89,6 +89,16 @@ async with AsyncAgntzClient(api_key="...", base_url="https://api.agntz.co") as c
     result = await client.agents.run(agent_id="support", input="Hello")
 ```
 
+Pass runtime namespace grants with `context` when the run needs resource access:
+
+```python
+result = client.agents.run(
+    agent_id="support",
+    input="Hello",
+    context=["app/user/u_123"],
+)
+```
+
 ## Local tools
 
 ```python
@@ -184,6 +194,19 @@ client = agntz(
 SQLite persists local runs, trace spans, sessions, and messages across process
 restarts.
 
+## Memrez
+
+The Python package includes the same namespace-grant and memrez core primitives
+as the TypeScript package.
+
+```python
+from agntz.memrez import create_memrez
+
+memrez = create_memrez()
+memrez.write(["app/user/u_123"], "Prefers metric units.", topics_hint=["prefs"])
+entries = memrez.read(["app/user/u_123"], "prefs")
+```
+
 ## CLI
 
 ```bash
@@ -198,6 +221,7 @@ Implemented in this package:
 - Hosted sync and async clients for run, run stream, runs, and traces.
 - Local YAML execution for `llm`, `tool`, `sequential`, and `parallel` agents.
 - Local Python tools, HTTP tools, MCP JSON-RPC tools, and agent-as-tool calls.
+- Runtime namespace grants and the in-memory memrez core.
 - LiteLLM-backed model execution with tool-call loop support.
 - Memory and SQLite stores for runs, trace spans, sessions, and messages.
 - Contract fixtures shared with the TypeScript manifest package.
