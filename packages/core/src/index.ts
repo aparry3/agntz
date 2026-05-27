@@ -117,6 +117,7 @@ export {
   narrowNamespaceGrants,
 } from "./namespace.js";
 export type { NamespaceGrant } from "./namespace.js";
+export { makeResourceToolName, resourceToolPrefix } from "./resource.js";
 
 // Eval
 export { runEval } from "./eval.js";
@@ -185,6 +186,10 @@ export type {
   ModelConfig,
   ResourceDefinition,
   ResourceMode,
+  ResourceProvider,
+  ResourceProviderToolDefinition,
+  ResourceRegistrationContext,
+  ResourceToolContext,
 
   // Tools
   ToolDefinition,

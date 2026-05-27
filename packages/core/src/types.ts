@@ -122,6 +122,47 @@ export interface ResourceDefinition {
   [key: string]: unknown;
 }
 
+export interface ResourceRegistrationContext {
+  resourceName: string;
+  kind: string;
+  mode: ResourceMode;
+  config: ResourceDefinition;
+}
+
+export interface ResourceToolContext {
+  resourceName: string;
+  kind: string;
+  mode: ResourceMode;
+  config: ResourceDefinition;
+  grants: string[];
+  run: {
+    runId?: string;
+    sessionId?: string;
+    agentId?: string;
+    invocationId?: string;
+  };
+}
+
+export interface ResourceProviderToolDefinition<TInput = unknown> {
+  /** Provider-local name. The runner exposes it as <resourceName>_<name>. */
+  name: string;
+  description: string;
+  input: ZodSchema<TInput>;
+  /** Defaults to "read"; read-write tools are omitted in read mode. */
+  mode?: ResourceMode;
+  execute(input: TInput, ctx: ResourceToolContext): Promise<unknown>;
+}
+
+export interface ResourceProvider {
+  /**
+   * Default mode when an agent omits resource.mode. Resource-specific
+   * providers may choose read-write (memory) or read (RAG/files).
+   */
+  defaultMode?: ResourceMode;
+  tools?(ctx: ResourceRegistrationContext): ResourceProviderToolDefinition[];
+  getContext?(ctx: ResourceToolContext): Promise<string | undefined>;
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Tool System
 // ═══════════════════════════════════════════════════════════════════════
@@ -243,6 +284,8 @@ export interface InvokeOptions {
   timeoutMs?: number;
   /** @internal Recursion depth tracker for agent-as-tool chains */
   _recursionDepth?: number;
+  /** @internal Effective parent resource modes by resource kind. */
+  _resourceModes?: Record<string, ResourceMode>;
   /**
    * Run registry for non-blocking child agent spawning. When set, the runner
    * registers `spawn_agent` and `check_agents` tools (if the agent declares
@@ -568,6 +611,9 @@ export interface RunnerConfig {
     maxTokens?: number;
     strategy?: "latest" | "summary" | "all";
   };
+
+  /** Resource providers keyed by resource kind. */
+  resources?: Record<string, ResourceProvider>;
 
   /** Custom model provider (bypasses ai package) */
   modelProvider?: ModelProvider;
