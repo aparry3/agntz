@@ -626,7 +626,7 @@
         foundation is intentionally generic so RAG, files, and future resources can
         use the same slot; memrez simply defines the first resource-specific
         interpretation of those grants. This agntz-core foundation must be built
-        first (Phase 1).
+        first (Phase 1A-1E).
       </p>
       <div class="grid" style="margin-top:28px">
         <article class="panel">
@@ -704,12 +704,13 @@ await client.agents.run("support", message, { context: [granted], sessionId });
       <div class="note warning">
         <p>
           <strong>Context comes before memory.</strong> The first-class
-          <code>context</code> option + narrow-only threading through
+          <code>context</code> option, narrow-only threading through
           <code>invoke</code> / agent-as-tool / <code>spawn_agent</code>, the
-          <code>resources:</code> block + validation, and the provider slot are the
-          agntz-core foundation memrez builds on. This also subsumes the old
-          <code>ContextStore</code> / <code>contextIds</code> path (no real consumers
-          today), freeing the word "context" for the grant.
+          <code>resources:</code> block, and the provider slot are the agntz-core
+          foundation memrez builds on. They land as Phase 1A-1E before memrez-core.
+          This also subsumes the old <code>ContextStore</code> /
+          <code>contextIds</code> path (no real consumers today), freeing the word
+          "context" for the grant.
         </p>
       </div>
     </section>
@@ -1174,23 +1175,75 @@ listScopeSlice(scope, opts) → entries              // for curate</code></pre>
       <h2>Implementation phases</h2>
       <div class="phase-list">
         <article class="phase">
-          <div class="phase-number">Phase 1</div>
+          <div class="phase-number">Phase 1A</div>
           <div>
-            <h3>agntz context &amp; resources foundation <span style="color:var(--soft);font-weight:600">· agntz-core change · prerequisite</span></h3>
+            <h3>namespace grant primitive <span style="color:var(--soft);font-weight:600">· agntz-core change · prerequisite</span></h3>
             <p>
-              The general capability memrez plugs into, built first and independent
-              of memrez: the first-class <code>context: [namespaces]</code> invoke
-              option as a generic namespace capability set, normalized and threaded
-              <strong>narrow-only</strong> through <code>invoke</code> /
-              agent-as-tool / <code>spawn_agent</code> (and added to
-              <code>@agntz/sdk</code>'s <code>agents.run()</code>); the
-              <code>resources:</code> manifest block + generic provider slot +
-              validation (parse-time shape &amp; reserved names; load-time
-              fail-fast; effective mode clamping) in <code>@agntz/manifest</code>
-              + <code>@agntz/core</code>; retire the unused
-              <code>ContextStore</code> / <code>contextIds</code> path.
-              <em>Touches agntz core — mirror in Python (Phase 6), add parity
-              fixtures.</em>
+              Add the generic <code>context: [namespaces]</code> invoke option and
+              normalize it into a run-level grant set. Define the shared namespace
+              rules once: no leading/trailing slash, no empty segments, no
+              traversal, no wildcards, deterministic ancestor/descendant helpers,
+              and stable error messages. This phase does not add resources yet; it
+              only creates the capability primitive memrez and future resources
+              will consume.
+            </p>
+          </div>
+        </article>
+        <article class="phase">
+          <div class="phase-number">Phase 1B</div>
+          <div>
+            <h3>grant propagation &amp; clamping <span style="color:var(--soft);font-weight:600">· runner + SDK</span></h3>
+            <p>
+              Thread normalized grants through <code>invoke</code>, agent-as-tool,
+              <code>spawn_agent</code>, and <code>@agntz/sdk</code>'s
+              <code>agents.run()</code>. Sub-agents may receive the parent's grant
+              set or a narrowed subset only; attempts to widen or jump sideways
+              fail before the child runs. Add focused tests for parent→child
+              propagation and rejection of invalid narrowing.
+            </p>
+          </div>
+        </article>
+        <article class="phase">
+          <div class="phase-number">Phase 1C</div>
+          <div>
+            <h3><code>resources:</code> manifest schema <span style="color:var(--soft);font-weight:600">· manifest change</span></h3>
+            <p>
+              Add the generalized <code>resources:</code> block in
+              <code>@agntz/manifest</code>: resource kind, per-agent
+              <code>mode</code> (read | read-write), optional static
+              <code>namespace</code> input, and provider-specific config passthrough.
+              Parse-time validation checks shape, mode values, duplicate resource
+              names, and reserved system tool names. No memory behavior belongs in
+              this layer.
+            </p>
+          </div>
+        </article>
+        <article class="phase">
+          <div class="phase-number">Phase 1D</div>
+          <div>
+            <h3>generic resource provider runtime <span style="color:var(--soft);font-weight:600">· core wiring</span></h3>
+            <p>
+              Add the generic provider slot in <code>@agntz/core</code>. At load
+              time, fail fast if an agent declares a resource kind with no provider
+              wired, naming the agent and kind. At run time, pass providers a
+              <code>ResourceToolContext</code> containing resource name, effective
+              mode, config, normalized grants, and run metadata. Effective mode
+              clamps across parent→child calls so a child cannot regain write
+              access. Prove the slot with a fake provider, not memrez.
+            </p>
+          </div>
+        </article>
+        <article class="phase">
+          <div class="phase-number">Phase 1E</div>
+          <div>
+            <h3>cleanup, contracts, and docs <span style="color:var(--soft);font-weight:600">· harden before memrez</span></h3>
+            <p>
+              Retire or deprecate the unused <code>ContextStore</code> /
+              <code>contextIds</code> path, add contract fixtures for namespace
+              normalization, grant narrowing, resource-mode clamping, and provider
+              load failures, and document the generic provider boundary. The Python
+              runtime mirrors the same contracts in Phase 6, but the fixture shape
+              is established here.
             </p>
           </div>
         </article>
@@ -1223,11 +1276,11 @@ listScopeSlice(scope, opts) → entries              // for curate</code></pre>
           <div>
             <h3>wire memrez as the <code>memory</code> resource</h3>
             <p>
-              Fill the Phase 1 slot: register memory's system tools and honor
-              <code>autoScan</code> through the resources framework;
+              Fill the Phase 1D provider slot: register memory's system tools and
+              honor <code>autoScan</code> through the resources framework;
               <code>mem.provider()</code> fills the slot, and the batteries-included
-              entry point auto-wires it as the default <code>memory</code> provider.
-              One end-to-end example agent.
+              entry point auto-wires it as the default <code>memory</code>
+              provider. One end-to-end example agent.
             </p>
           </div>
         </article>
@@ -1320,11 +1373,12 @@ listScopeSlice(scope, opts) → entries              // for curate</code></pre>
         </li>
         <li>
           <strong>SDK <code>context</code> passthrough (agntz-side) — resolved.</strong>
-          Superseded by the Phase 1 context foundation: the per-run grant is a
-          first-class <code>context: [namespaces]</code> invoke option that the core
-          Runner threads narrow-only, and the same option is added to
+          Superseded by Phase 1A and 1B: the per-run grant is a first-class
+          <code>context: [namespaces]</code> invoke option that the core Runner
+          threads narrow-only, and the same option is added to
           <code>@agntz/sdk</code>'s <code>agents.run()</code> — built before the
-          memory resource, so no memory-specific <code>toolContext</code> passthrough is needed.
+          memory resource, so no memory-specific <code>toolContext</code>
+          passthrough is needed.
         </li>
       </ol>
     </section>
@@ -1332,7 +1386,7 @@ listScopeSlice(scope, opts) → entries              // for curate</code></pre>
     <section id="scope-out">
       <h2>Out of scope (v1)</h2>
       <ul>
-        <li>Embeddings / semantic search (Phase 6).</li>
+        <li>Embeddings / semantic search (Phase 7).</li>
         <li>Extracting facts from raw transcripts (the caller's job for now).</li>
         <li>Multi-scope-per-entry membership.</li>
         <li>A hosted memrez service or UI.</li>
