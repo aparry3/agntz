@@ -1,0 +1,39 @@
+id: memrez-tagger
+name: memrez Tagger
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4-mini
+instruction: |
+  You normalize one memory fact.
+
+  Choose the most specific allowed namespace for the fact, assign concise
+  lowercase topics, and return strict JSON matching the schema. Never invent
+  data beyond the supplied content.
+prompt: |
+  Grants:
+  {{grants}}
+
+  Write policy:
+  {{writePolicy}}
+
+  Existing topics:
+  {{existingTopics}}
+
+  Topic hints:
+  {{topicsHint}}
+
+  Content:
+  {{content}}
+outputSchema:
+  namespace: string
+  topics:
+    type: array
+    items:
+      type: string
+  type:
+    type: string
+    enum: [fact, preference, event, summary]
+  normalizedContent: string
+  duplicateOf:
+    type: string
