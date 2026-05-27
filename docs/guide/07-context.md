@@ -1,6 +1,30 @@
 # Context
 
-Context is shared state across agents. A `contextId` is a named scratchpad that agents can read from and optionally write to, enabling multi-agent collaboration without tight coupling.
+agntz now has two context-related surfaces:
+
+- `context` is a first-class runtime namespace grant array. It is for resources such as memory, RAG, and files. Grants are normalized, propagated to child invocations, and can only be narrowed.
+- `contextIds` is the legacy shared scratchpad API backed by `ContextStore`. It injects stored text entries into the prompt and can still be used directly.
+
+Use `context` for capability boundaries. Use `contextIds` only when you explicitly want the old scratchpad behavior.
+
+## Namespace grants
+
+```typescript
+await runner.invoke("support", "Help me with billing", {
+  context: [`gymtext/user/${userId}`],
+});
+```
+
+Grant rules:
+
+- No leading/trailing slash, empty segments, traversal segments, wildcards, or whitespace.
+- Child invocations inherit the parent's grants unless trusted code requests a narrowed descendant grant.
+- A child cannot widen to a parent or jump sideways to a sibling namespace.
+- Resource providers receive normalized grants through their `ResourceToolContext`; the model never sees a namespace argument.
+
+## Legacy scratchpad context
+
+`contextIds` are shared state across agents. A `contextId` is a named scratchpad that agents can read from and optionally write to, enabling multi-agent collaboration without tight coupling.
 
 ## Session vs Context vs Run
 
@@ -86,7 +110,7 @@ const runner = createRunner({
 
 ## Dynamic Context with toolContext
 
-Tools can invoke agents with dynamically constructed context paths:
+Tools can invoke agents with dynamically constructed scratchpad IDs:
 
 ```typescript
 const getWorkout = defineTool({

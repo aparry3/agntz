@@ -152,6 +152,15 @@ spawnable:                           # children spawnable concurrently (optional
 
 reply: true                          # enable streaming reply tool (optional)
 
+resources:                           # runtime resource slots (optional)
+  memory:
+    mode: read-write                  # read | read-write
+    autoScan: true                    # provider-specific config passthrough
+  product-docs:
+    kind: rag                         # kind defaults to the resource name
+    mode: read
+    namespace: gymtext/kb/product-docs
+
 outputSchema:
   sentiment:
     type: string
@@ -233,6 +242,29 @@ reply:
 ```
 
 Omit (or set `false`) to disable.
+
+### `resources`
+
+Declare runtime resources the agent may use. The manifest layer validates only the generic shape; providers define behavior.
+
+```yaml
+resources:
+  memory:
+    mode: read-write
+    autoScan: true
+  product-docs:
+    kind: rag
+    mode: read
+    namespace: gymtext/kb/product-docs
+```
+
+Rules:
+
+- Resource names must match `^[a-zA-Z][a-zA-Z0-9_-]*$`.
+- `kind` defaults to the resource name.
+- `mode` is `read` or `read-write`; runtime providers may define defaults when omitted.
+- `namespace` is static provider input, not an automatic runtime grant.
+- Provider tools are exposed as `<resource>_<tool>`, with non-identifier characters in the resource name converted to `_`.
 
 ---
 

@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "namespaceGrants": {
+    "valid": ["app", "app/user/u_123", "sales/org/acme/account/a_789"],
+    "invalid": ["", "/app", "app/", "app//user", "app/./user", "app/../user", "app/user/*", "app/user one"],
+    "narrowing": [
+      { "parent": ["app/user/u_123"], "requested": ["app/user/u_123/session/s_1"], "allowed": true },
+      { "parent": ["app/user/u_123"], "requested": ["app/user"], "allowed": false },
+      { "parent": ["app/user/u_123"], "requested": ["app/user/u_456"], "allowed": false }
+    ]
+  },
+  "resources": {
+    "toolNaming": [
+      { "resource": "memory", "providerTool": "read", "modelTool": "memory_read" },
+      { "resource": "product-docs", "providerTool": "search", "modelTool": "product_docs_search" }
+    ],
+    "modeClamp": [
+      { "parent": "read", "childDeclared": "read-write", "childEffective": "read" },
+      { "parent": "read-write", "childDeclared": "read", "childEffective": "read" },
+      { "parent": "read-write", "childDeclared": "read-write", "childEffective": "read-write" }
+    ],
+    "missingProviderError": "Agent '<agentId>' declares resource '<resourceName>' of kind '<kind>' but no ResourceProvider is wired for that kind."
+  }
+}
