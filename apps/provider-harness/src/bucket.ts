@@ -42,6 +42,13 @@ export function classify(input: {
   if (looksLikeProviderError(msg)) {
     return 'PROVIDER_ERROR';
   }
+  // A (usually 200) response the provider's AI-SDK adapter couldn't parse or
+  // schema-validate — e.g. @ai-sdk/cohere rejecting a valid Cohere response
+  // whose citations omit the `document` field its Zod schema requires. The model
+  // worked; it's an upstream adapter fault, not an agntz SDK bug.
+  if (looksLikeAdapterParseError(outcome.error)) {
+    return 'PROVIDER_ERROR';
+  }
   return 'SDK_ERROR';
 }
 
@@ -72,11 +79,22 @@ function looksLikeRateLimit(msg: string): boolean {
 }
 
 function looksLikeUnsupported(msg: string): boolean {
-  return /unsupported|not\s+support|does\s+not\s+support|not\s+available|no endpoints found that support|invalid_request_error.*unsupported|capability.*not/i.test(msg);
+  // "content must be a string": text-only models (e.g. Groq Llama 3.3) reject
+  // multimodal message parts — an expected capability gap, not an SDK fault.
+  return /unsupported|not\s+support|does\s+not\s+support|not\s+available|no endpoints found that support|invalid_request_error.*unsupported|capability.*not|content must be a string/i.test(msg);
 }
 
 function looksLikeProviderError(msg: string): boolean {
   // Match specific 5xx status codes, not any 3-digit number starting with 5
   // (token counts like "512" were false-matching the old \b5\d{2}\b).
   return /\b(500|502|503|504)\b|service\s+unavailable|internal\s+server\s+error|server\s+error|bad\s+gateway|gateway\s+timeout/i.test(msg);
+}
+
+function looksLikeAdapterParseError(err: Error): boolean {
+  // The provider returned a response its AI-SDK adapter couldn't parse or
+  // schema-validate (e.g. @ai-sdk/cohere rejecting citations that omit the
+  // `document` field its Zod schema requires). Upstream adapter fault, not ours.
+  const name = err.name ?? '';
+  const msg = err.message ?? '';
+  return /TypeValidation|JSONParse/i.test(name) || /invalid json response|type validation failed/i.test(msg);
 }

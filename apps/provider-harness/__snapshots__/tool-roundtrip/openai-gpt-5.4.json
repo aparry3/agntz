@@ -1,0 +1,54 @@
+{
+  "normalizedToolCall": [
+    {
+      "id": "<id>",
+      "name": "get_weather",
+      "args": {
+        "city": "<string>"
+      },
+      "providerMetadata": {
+        "openai": {
+          "itemId": "<string>"
+        }
+      }
+    }
+  ],
+  "followupMessages": [
+    {
+      "role": "user",
+      "content": "<string>"
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool-call",
+          "toolCallId": "<id>",
+          "toolName": "get_weather",
+          "input": {
+            "city": "<string>"
+          },
+          "providerOptions": {
+            "openai": {
+              "itemId": "<string>"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": [
+        {
+          "type": "tool-result",
+          "toolCallId": "<id>",
+          "toolName": "get_weather",
+          "output": {
+            "type": "text",
+            "value": "<string>"
+          }
+        }
+      ]
+    }
+  ]
+}
