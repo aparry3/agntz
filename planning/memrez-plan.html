@@ -432,7 +432,7 @@
       <a href="#model">Data model</a>
       <a href="#api">API</a>
       <a href="#agent">From an agent</a>
-      <a href="#scope">Scope</a>
+      <a href="#scope">Grants</a>
       <a href="#run">Running</a>
       <a href="#brain">Reasoning</a>
       <a href="#storage">Storage</a>
@@ -514,19 +514,23 @@
             </tr>
             <tr>
               <td class="key">Scope</td>
-              <td>Hierarchical path <strong>and access boundary</strong> (<code>org/acme/user/u_123</code>). Reads inherit ancestors (shared knowledge flows down); siblings stay isolated.</td>
+              <td>Hierarchical path used both as a memory entry's owning scope and as a namespace capability path (<code>org/acme/user/u_123</code>). Reads inherit ancestors (shared knowledge flows down); siblings stay isolated.</td>
             </tr>
             <tr>
-              <td class="key">Scope authority</td>
-              <td>The <strong>granted prefix</strong> is minted at the trust boundary from verified identity and is immutable; the <strong>model never names a namespace</strong> (no scope tool-arg). Narrowing to a sub-namespace is an app / spawning-parent decision, applied narrow-only. Path shape is app-defined via a scope resolver.</td>
+              <td class="key">Grant authority</td>
+              <td>The <strong>namespace grant</strong> is minted at the trust boundary from verified identity and is immutable; the <strong>model never names a namespace</strong> (no scope tool-arg). Narrowing to a sub-namespace is an app / spawning-parent decision, applied narrow-only. Path shape is app-defined via a scope resolver.</td>
             </tr>
             <tr>
-              <td class="key">Scope binding</td>
-              <td>Per run, via the first-class <code>context: [namespaces]</code> invoke option (the grant set), threaded <strong>narrow-only</strong> to sub-agents — <em>not</em> the free-form <code>toolContext</code> bag. The direct API still takes a <code>scope</code> arg. memrez instances are app-lifetime and unscoped; scope is never baked in.</td>
+              <td class="key">Grant binding</td>
+              <td>Per run, via the first-class <code>context: [namespaces]</code> invoke option (the grant set), threaded <strong>narrow-only</strong> to sub-agents — <em>not</em> the free-form <code>toolContext</code> bag. agntz core transports grants generically; memrez interprets them with memory-specific validation. memrez instances are app-lifetime and unscoped; scope is never baked in.</td>
             </tr>
             <tr>
               <td class="key">Resources &amp; mode</td>
-              <td>Memory is the first <strong>resource kind</strong>; RAG / files follow the same slot. <code>mode</code> (read | read-write) lives on the resource <em>per agent</em>, so the same corpus is read-only to one agent and read-write to another. The model never names a namespace — <code>read(topic)</code>, not <code>read(topic, namespace)</code>.</td>
+              <td>Memory is the first <strong>resource kind</strong>; RAG / files follow the same slot. <code>mode</code> (read | read-write) lives on the resource <em>per agent</em>, so the same corpus is read-only to one agent and read-write to another. Memory defaults to read-write; read-only agents register no write tool. The model never names a namespace — <code>read(topic)</code>, not <code>read(topic, namespace)</code>.</td>
+            </tr>
+            <tr>
+              <td class="key">Memory write policy</td>
+              <td>Runtime namespace grants are writable capability boundaries, but memrez decides the actual write scope. For grant <code>a/b/c</code>, memory reads <code>a</code>, <code>a/b</code>, and <code>a/b/c</code>; writes default to <code>a/b/c</code> and <code>a/b/c/*</code>. Optional promotion can allow exact ancestor writes only, never ancestor subtrees.</td>
             </tr>
             <tr>
               <td class="key">Topics</td>
@@ -534,19 +538,19 @@
             </tr>
             <tr>
               <td class="key"><code>scan</code></td>
-              <td>Deterministic. Returns the scope's topic TOC (name + live count + curate-maintained blurb). Bootstraps context.</td>
+              <td>Deterministic. Returns the grant set's visible topic TOC (name + live count + curate-maintained blurb). Bootstraps context.</td>
             </tr>
             <tr>
               <td class="key">agntz integration</td>
-              <td>Memory is a <code>kind</code> in a generalized <code>resources:</code> manifest block (sibling to <code>skills</code> / <code>reply</code>). The runner registers each resource kind's <strong>system tools</strong> (<code>memory_read</code> / <code>memory_write</code>) and (when <code>autoScan</code>) injects the scan TOC — never hand-listed. The grant comes from the run's <code>context</code>; the model picks the topic / supplies the fact, never a namespace.</td>
+              <td>Memory is a <code>kind</code> in a generalized <code>resources:</code> manifest block (sibling to <code>skills</code> / <code>reply</code>). The runner registers each resource kind's <strong>system tools</strong> (<code>memory_read</code> / <code>memory_write</code>) and (when <code>autoScan</code>) injects the scan TOC — never hand-listed. The grant set comes from the run's <code>context</code>; the model picks the topic / supplies the fact, never a namespace.</td>
             </tr>
             <tr>
               <td class="key">Packaging</td>
-              <td>agntz core ships only the <strong>slot</strong> — the <code>resources:</code> schema (memory kind), the <code>MemoryProvider</code> interface, validation, and runner wiring. The implementation is the separate <code>memrez</code> package you inject. Mirrors <code>skills</code>→<code>SkillStore</code> and the in-memory→sqlite→postgres store graduation. <code>agntz</code> never depends on <code>memrez</code>.</td>
+              <td>agntz core ships only the <strong>slot</strong> — the <code>resources:</code> schema, generic provider wiring, validation, and reserved system-tool names. The memory provider interface is one resource-specific contract filled by the separate <code>memrez</code> package you inject. Mirrors <code>skills</code>→<code>SkillStore</code> and the in-memory→sqlite→postgres store graduation. <code>agntz</code> never depends on <code>memrez</code>.</td>
             </tr>
             <tr>
               <td class="key">Validation</td>
-              <td>Two layers: parse-time checks the block shape and reserves the tool names; load-time <strong>fail-fast</strong> if an agent declares a <code>memory</code> resource but no <code>MemoryProvider</code> is wired (error names the agent). Stronger than the <code>skills</code> silent no-op.</td>
+              <td>Two layers: parse-time checks the block shape and reserves the tool names; load-time <strong>fail-fast</strong> if an agent declares a resource but no provider is wired for that kind (error names the agent). Stronger than the <code>skills</code> silent no-op.</td>
             </tr>
             <tr>
               <td class="key">Deployment</td>
@@ -587,18 +591,18 @@
         │   runner registers each kind's system tools (memory_read / memory_write)
         │   + (autoScan) injects the scan TOC before the model call
         │
-        │  (1) scan(scope) ── deterministic ──► topic TOC injected into context
+        │  (1) scan(grants) ─ deterministic ──► topic TOC injected into context
         │  (2) reads a topic on demand        (3) writes a fact
         ▼                                          ▼
    memory_read tool                          memory_write tool      ◄── system tools (runner-registered)
-        │                                          │                     scope from the run's context grant
+        │                                          │                     grant set from the run's context
         └──────────────┬───────────────────────────┘
                        ▼
-                MemoryProvider          ◄── agntz core defines this interface (the slot)
+                ResourceProvider        ◄── agntz core defines this generic slot
                        │                    agntz never imports memrez
    ════════════════════╪══════════════════════════════  agntz core  /  memrez package
                        ▼
-                 memrez core   (scope resolution · scan/read/write/curate · dedup)
+                 memrez core   (grant validation · scope resolution · scan/read/write/curate · dedup)
                    │                          │
         ┌──────────┘                          └────────────┐
         ▼                                                    ▼
@@ -611,17 +615,18 @@
                                                          ▼
                                               ModelProvider  (AI SDK in TS · LiteLLM in Python)
 
-   curate(scope)  ◄── cron / deterministic call ── runs the curator over a scope subtree</code></pre>
+   curate(grants) ◄── cron / deterministic call ── runs the curator inside a validated grant set</code></pre>
     </section>
 
     <section id="context">
       <h2>Context &amp; resources</h2>
       <p class="lede" style="margin-top:0">
         Memory is not a one-off — it is the first <strong>resource</strong> an
-        agent reaches through a shared, namespaced <strong>context</strong>. Two
-        orthogonal pieces, two names, deliberately kept apart. This is an
-        agntz-core foundation that memrez plugs into; it must be built first
-        (Phase 1).
+        agent reaches through a shared, namespaced <strong>context</strong>. The
+        foundation is intentionally generic so RAG, files, and future resources can
+        use the same slot; memrez simply defines the first resource-specific
+        interpretation of those grants. This agntz-core foundation must be built
+        first (Phase 1).
       </p>
       <div class="grid" style="margin-top:28px">
         <article class="panel">
@@ -629,58 +634,71 @@
           <p>
             A manifest block, sibling to <code>skills</code> / <code>reply</code>,
             listing the resource <em>kinds</em> an agent may touch and how:
-            per-agent <code>mode</code> (read | read-write), an optional pinned
-            <code>namespace</code>, and per-kind options like <code>autoScan</code>.
-            Memory is just <code>kind: memory</code> — not a special block.
+            per-agent <code>mode</code> (read | read-write), optional static
+            <code>namespace</code> input, and per-kind options like
+            <code>autoScan</code> or memory's <code>writePolicy</code>. Memory is
+            just <code>kind: memory</code> — not a special block.
           </p>
         </article>
         <article class="panel">
           <h3><code>context:</code> — <span style="color:var(--soft);font-weight:600">where (run-time)</span></h3>
           <p>
             An array of granted namespaces passed to
-            <code>invoke(id, input, { context })</code> — the run's access
-            boundary. A <strong>first-class invoke option</strong>, not a key in
-            the free-form <code>toolContext</code> bag, so the runner threads it
-            through every sub-agent <strong>narrow-only</strong>.
+            <code>invoke(id, input, { context })</code> — the run's generic
+            namespace capability set. A <strong>first-class invoke option</strong>,
+            not a key in the free-form <code>toolContext</code> bag, so the runner
+            threads it through every sub-agent <strong>narrow-only</strong>.
           </p>
         </article>
+      </div>
+      <div class="note callout" style="margin-top:18px">
+        <p>
+          <strong>Grant definition.</strong> A grant is a normalized namespace
+          string minted by trusted application code and passed at runtime through
+          <code>context</code>. It is not a model argument and not a stored memory;
+          it is a capability boundary that tells each resource provider the maximum
+          namespace space this run may operate inside. agntz carries and narrows
+          grants generically; each provider decides what operations those grants
+          permit.
+        </p>
       </div>
       <pre><code># agents/support.yaml — declare resources (memory is a kind)
 resources:
   memory:                                  # kind inferred from the name; memrez-backed
-    mode: read-write
+    mode: read-write                       # memory default; read-only registers no write tool
     autoScan: true                         # inject the scan TOC before the model call
+    writePolicy:
+      descendants: true                    # allow writes at the grant and below
+      ancestorPromotion: none              # none | parent | ancestors; exact ancestors only
   product-docs:
     kind: rag
     mode: read                             # read-only FOR THIS AGENT
-    namespace: gymtext/kb/product-docs     # static, shared across users</code></pre>
+    namespace: gymtext/kb/product-docs     # static provider input, not memory semantics</code></pre>
       <pre><code>// route — mint the grant from the authenticated user (the trust boundary)
 const granted = `gymtext/user/${authedUserId}`;
 await client.agents.run("support", message, { context: [granted], sessionId });
-// effective grant = manifest static namespaces  ∪  per-run context
-// memory r/w at the user namespace; product-docs read-only from the shared corpus</code></pre>
+// effective resource input = manifest static namespaces ∪ per-run context
+// each provider interprets that input under its own policy</code></pre>
       <div class="note callout">
         <p>
           <strong>The model never names a namespace.</strong> Tools are
           <code>read(topic)</code> / <code>write(fact)</code>, never
-          <code>read(topic, namespace)</code> — a read spans the granted set and
-          its ancestors. The namespace stays off the model's tongue, so a
-          prompt-injection has nothing to target. Narrowing to a sub-namespace is
-          an app / sub-agent decision, never a model tool-arg.
+          <code>read(topic, namespace)</code>. The namespace stays off the model's
+          tongue, so a prompt-injection has nothing to target. Narrowing to a
+          sub-namespace is an app / sub-agent decision, never a model tool-arg.
         </p>
       </div>
       <div class="note">
         <p>
           <strong>You write <em>through a resource</em>, not <em>to a
-          namespace</em>.</strong> A granted node is your read/write home plus its
-          subtree; ancestors above it are <strong>read-only inheritance</strong>
-          (shared knowledge flows down); siblings are invisible. To write at two
-          levels, grant both (<code>context: ["gymtext", "gymtext/user/u_123"]</code>).
-          A foreground write lands at the most-specific granted namespace; writing
-          <em>up</em> (promotion) is a <code>curate</code> op on an elevated grant,
-          never a silent foreground write. <code>mode</code> lives on the resource
-          per agent, so the same corpus is read-only to one agent, read-write to
-          another.
+          namespace</em>.</strong> For memory, a grant such as <code>a/b/c</code>
+          reads <code>a</code>, <code>a/b</code>, and <code>a/b/c</code>; writes
+          default to <code>a/b/c</code> and <code>a/b/c/*</code>. Optional
+          promotion can allow exact ancestor writes such as <code>a/b</code>, but
+          never <code>a/b/*</code>. memrez chooses the actual write scope and then
+          validates it deterministically against the grants before storage.
+          <code>mode</code> lives on the resource per agent, so the same corpus is
+          read-only to one agent, read-write to another.
         </p>
       </div>
       <div class="note warning">
@@ -748,12 +766,14 @@ const memrez = createMemrez({
   reasoner: agntzReasoner({ client }),      // default impl wraps the agntz SDK + the two manifests
 });
 
-const toc     = await memrez.scan("org/acme/user/u_123");
-const entries = await memrez.read("org/acme/user/u_123", "billing", { limit: 20 });
-const result  = await memrez.write("org/acme/user/u_123", "Prefers email over phone.", {
+const grants = ["org/acme/user/u_123"];
+
+const toc     = await memrez.scan(grants);
+const entries = await memrez.read(grants, "billing", { limit: 20 });
+const result  = await memrez.write(grants, "Prefers email over phone.", {
   source: { sessionId, agentId },
 });
-const report  = await memrez.curate("org/acme/user/u_123");</code></pre>
+const report  = await memrez.curate(grants);</code></pre>
       <p style="margin-top:16px">
         Hosting is a one-line swap. The same interface — <code>scan</code> /
         <code>read</code> / <code>write</code> / <code>curate</code> /
@@ -764,17 +784,39 @@ const report  = await memrez.curate("org/acme/user/u_123");</code></pre>
 
 const memrez = createMemrezClient({ url: process.env.MEMREZ_URL, apiKey: process.env.MEMREZ_KEY });
 // identical surface, now over HTTP — mem.tools() still returns kind: local handlers</code></pre>
-      <pre><code>scan(scope, opts?: { includeAncestors?: boolean; topicLimit?: number })
-  : Promise&lt;{ scope: Scope; topics: TopicSummary[] }&gt;;
+      <pre><code>type NamespaceGrant = string;
 
-read(scope, topic, opts?: { limit?: number; includeAncestors?: boolean })
+type WritePolicy = {
+  descendants?: boolean;                       // default true
+  ancestorPromotion?: "none" | "parent" | "ancestors";
+};
+
+scan(grants: NamespaceGrant[], opts?: { includeAncestors?: boolean; topicLimit?: number })
+  : Promise&lt;{ grants: NamespaceGrant[]; topics: TopicSummary[] }&gt;;
+
+read(grants: NamespaceGrant[], topic, opts?: { limit?: number; includeAncestors?: boolean })
   : Promise&lt;MemoryEntry[]&gt;;
 
-write(scope, content, opts?: { type?: EntryType; topicsHint?: string[]; source?: Source })
+write(grants: NamespaceGrant[], content, opts?: {
+  type?: EntryType;
+  topicsHint?: string[];
+  source?: Source;
+  writePolicy?: WritePolicy;
+})
   : Promise&lt;{ entry: MemoryEntry; action: "appended" | "superseded" | "deduped" }&gt;;
 
-curate(scope, opts?: { topics?: string[]; includeDescendants?: boolean })
+curate(grants: NamespaceGrant[], opts?: { topics?: string[]; includeDescendants?: boolean })
   : Promise&lt;CurateReport&gt;;</code></pre>
+      <div class="note callout">
+        <p>
+          <strong>Write-target validation is deterministic.</strong> If the
+          memrez write agent proposes a namespace outside the configured write
+          policy — for example <code>a/b</code> or <code>a/b/d</code> from grant
+          <code>a/b/c</code> with default policy — memrez rejects it before
+          storage. The provider can retry the internal write agent with the
+          validation error or return a structured write-scope error.
+        </p>
+      </div>
     </section>
 
     <section id="agent">
@@ -792,11 +834,14 @@ resources:
   memory:                # kind inferred from the name; read-write + autoScan by default
     mode: read-write     # read-only | read-write; read-only registers only memory_read
     autoScan: true       # inject the scan TOC before the model call (the non-tool half)
+    writePolicy:
+      descendants: true
+      ancestorPromotion: none
   # no namespace here — the grant is per-run, from the context option (never baked in)</code></pre>
       <p>
         You wire the implementation once, at app start, into the
-        <code>resources</code> slot for <code>memory</code>. <code>mem</code> is any
-        <code>MemoryProvider</code> — embedded or a hosted client — and the YAML
+        <code>resources</code> slot for <code>memory</code>. <code>mem</code> is a
+        memory provider — embedded or a hosted client — and the YAML
         above never changes:
       </p>
       <pre><code>const mem = createMemrez(options);          // or createMemrezClient({ url })
@@ -819,11 +864,18 @@ const client = await agntz({
           <strong>The grant comes from <code>context</code>, never the model.</strong>
           An agent cannot reach another user's memory by naming a scope — the tools
           are <code>read(topic)</code> / <code>write(fact)</code>, with no namespace
-          argument. The runner binds them to the run's <code>context</code> grant,
-          and <code>autoScan</code> scans that same grant. The model only picks the
-          topic or supplies the fact.
+          argument. The runner passes the run's <code>context</code> grant set to
+          the memory provider, and <code>autoScan</code> scans that same grant set.
+          The model only picks the topic or supplies the fact.
         </p>
       </div>
+      <pre><code>type ResourceToolContext = {
+  resourceName: string;
+  mode: "read" | "read-write";
+  config: unknown;                 // provider-specific options, e.g. memory.writePolicy
+  grants: string[];                // normalized namespace capabilities
+  run: { runId?: string; sessionId?: string; agentId?: string };
+};</code></pre>
       <div class="note callout">
         <p>
           <strong>The grant threads to sub-agents automatically.</strong> Because
@@ -831,22 +883,25 @@ const client = await agntz({
           <code>toolContext</code> value), the runner carries it through
           <code>invoke</code>, agent-as-tool, and <code>spawn_agent</code>
           <strong>narrow-only</strong> — a child sees its parent's grant or a
-          narrowed subset, never a wider one. The same option is added to
-          <code>@agntz/sdk</code>'s <code>agents.run()</code>, retiring the old
+          narrowed subset, never a wider one. Resource mode clamps too: a child
+          cannot regain write access if the parent invocation is effectively
+          read-only. The same option is added to <code>@agntz/sdk</code>'s
+          <code>agents.run()</code>, retiring the old
           <code>toolContext</code>-passthrough gap.
         </p>
       </div>
     </section>
 
     <section id="scope">
-      <h2>Scope as a capability</h2>
+      <h2>Namespace grants as capabilities</h2>
       <p>
-        A scope is not just where a memory is filed — it is the
-        <strong>access boundary</strong>. The isolation model is one rule:
+        A scope is where a memory is filed; a namespace grant is the capability
+        boundary that decides which scopes a resource may touch. The isolation
+        model is one rule:
       </p>
       <div class="note callout">
         <p>
-          The <strong>granted prefix</strong> is minted at the trust boundary from
+          The <strong>namespace grant</strong> is minted at the trust boundary from
           <em>verified identity</em> and is immutable for the request. The model
           <strong>never names or widens it</strong>; any narrowing to a sub-namespace
           is an app / spawning-parent decision, applied narrow-only — never a jump
@@ -854,12 +909,13 @@ const client = await agntz({
         </p>
       </div>
       <p>
-        So scope is a <strong>granted prefix</strong> from auth (the API route, or
-        a hosted workspace API key) that the model never controls and never names.
-        Any narrowing to a sub-namespace is decided by the app or by a spawning
-        parent — applied narrow-only, server-side — not emitted by the model.
+        So the grant set comes from auth (the API route, or a hosted workspace API
+        key) and the model never controls or names it. Any narrowing to a
+        sub-namespace is decided by the app or by a spawning parent — applied
+        narrow-only, server-side — not emitted by the model.
       </p>
-      <pre><code>effective_grant = manifest static namespaces  ∪  per-run context   (narrowing clamped inside each grant)</code></pre>
+      <pre><code>effective_grants = normalized(manifest static namespaces ∪ per-run context)
+provider rules decide what read/write operations those grants permit</code></pre>
       <p>
         This is the discipline agntz already uses for <code>ctx.user.id</code>: the
         route loads identity and injects it via <code>toolContext</code>; the LLM
@@ -871,10 +927,12 @@ const client = await agntz({
       </p>
       <div class="note">
         <p>
-          <strong>Inheritance goes up; isolation is sideways.</strong> A read at a
-          scope includes its <em>ancestors</em> (broader, shared knowledge flows
-          down) but never its <em>siblings</em>. That single rule delivers sharing
-          and isolation together.
+          <strong>Memory reads up; writes stay down by default.</strong> For grant
+          <code>a/b/c</code>, memrez may read <code>a</code>, <code>a/b</code>,
+          and <code>a/b/c</code>, but never sibling branches. Writes default to
+          <code>a/b/c</code> and <code>a/b/c/*</code>. If promotion is enabled, it
+          can target exact ancestors such as <code>a/b</code>, but never
+          <code>a/b/*</code>.
         </p>
       </div>
 
@@ -889,16 +947,18 @@ const scope = `gymtext/user/${userId}`;
 const result = await runner.invoke("chat", message, {
   sessionId,
   context: [scope],            // the namespace grant; threads narrow-only to sub-agents
-  toolContext: { user },       // identity only; memory tools bind to the context grant
+  toolContext: { user },       // identity only; resources receive the context grants
 });
 // autoScan injects the scan TOC for `scope` before the model call — no manual prepend</code></pre>
       <p>
-        <code>memory_read</code> / <code>memory_write</code> bind to the run's
-        <code>context</code> grant; the model picks a topic but the scope is
-        fixed, so <code>u_123</code> and <code>u_456</code> can never see each
-        other. Add trainer-wide memory later by writing at <code>gymtext</code> —
-        every user's read inherits it, with no per-user duplication and no schema
-        change. That free shared layer is why scope is a path, not a flat id.
+        <code>memory_read</code> / <code>memory_write</code> receive the run's
+        <code>context</code> grant set; the model picks a topic but never a scope,
+        so <code>u_123</code> and <code>u_456</code> can never see each other.
+        Add trainer-wide memory later by trusted promotion to the exact
+        <code>gymtext</code> scope — every user's read inherits it, with no
+        per-user duplication and no schema change. Do not grant
+        <code>gymtext</code> to a normal user-facing run, because default write
+        semantics would include its descendants.
       </p>
 
       <h3>Example — sales platform (app → org → account)</h3>
@@ -913,11 +973,12 @@ const result = await runner.invoke("chat", message, {
         The lead agent for <code>a_789</code> is granted
         <code>sales/org/acme/account/a_789</code>; its reads inherit
         <code>sales/org/acme</code> (the org's qualification rules) but globex is
-        invisible. <strong>Promotion</strong> is the curator's job: running at
-        <code>sales/org/acme</code> (granted the org subtree) it notices the same
-        pattern across sibling accounts — "most omit property A" — and writes a
-        generalized heuristic <em>up</em> at the org scope, where every account
-        agent inherits it. Account quirks stay low; learned generalizations rise.
+        invisible. <strong>Promotion</strong> is the curator's job: a trusted
+        background curator deliberately granted <code>sales/org/acme</code> can
+        inspect that org subtree, notice the same pattern across sibling accounts
+        — "most omit property A" — and write a generalized heuristic at the exact
+        org scope, where every account agent inherits it. Account quirks stay low;
+        learned generalizations rise.
       </p>
     </section>
 
@@ -935,7 +996,7 @@ const result = await runner.invoke("chat", message, {
       <div class="note callout">
         <p>
           <strong>The agent never changes; the provider does.</strong> You inject
-          one <code>MemoryProvider</code> via the <code>memory</code> resource slot. Whether
+          one memory provider via the <code>memory</code> resource slot. Whether
           <code>mem</code> is an in-process <code>createMemrez(...)</code> or a
           <code>createMemrezClient({ url })</code> talking to a hosted service, the
           <code>resources:</code> block, the system tools, and your route code are
@@ -946,12 +1007,12 @@ const result = await runner.invoke("chat", message, {
       <p>
         <strong>Why the system tools are local handlers.</strong> The
         runner-registered <code>memory_read</code> / <code>memory_write</code> run
-        in-process before anything hits the wire: they bind scope from the run's
-        <code>context</code> grant (the capability guarantee) and call the injected
-        provider. A raw <code>kind: http</code> tool pointed straight at hosted memrez
-        would instead hand request-shaping to the model and force scope through
-        templated headers — more surface, weaker isolation. So the tools stay local;
-        when the provider is a hosted client, that call is just a thin HTTP hop.
+        in-process before anything hits the wire: they pass the normalized
+        <code>context</code> grant set to the injected provider. A raw
+        <code>kind: http</code> tool pointed straight at hosted memrez would instead
+        hand request-shaping to the model and force scope through templated headers
+        — more surface, weaker isolation. So the tools stay local; when the
+        provider is a hosted client, that call is just a thin HTTP hop.
       </p>
 
       <h3>Integration surface — how an agent gets memory</h3>
@@ -996,17 +1057,17 @@ const result = await runner.invoke("chat", message, {
             <tr><td class="key">Runs</td><td>in-process in your app</td><td>separate multi-tenant service</td></tr>
             <tr><td class="key">Store</td><td>sqlite / your DB</td><td>service-managed (Postgres, later pgvector)</td></tr>
             <tr><td class="key">Reasoner + curate cron</td><td>your process, your keys</td><td>inside the service (embeds the agntz SDK; BYO-key optional)</td></tr>
-            <tr><td class="key">Who mints the prefix</td><td>your route, from your auth</td><td>the service, from the API key → workspace</td></tr>
-            <tr><td class="key">Enforcement</td><td>you trust your own process</td><td>server-side; the caller's key <em>is</em> its prefix capability</td></tr>
+            <tr><td class="key">Who mints grants</td><td>your route, from your auth</td><td>the service, from the API key → workspace</td></tr>
+            <tr><td class="key">Enforcement</td><td>you trust your own process</td><td>server-side; the caller's key <em>is</em> its namespace capability</td></tr>
           </tbody>
         </table>
       </div>
       <p>
-        <strong>The scope model is identical in both</strong> — what changes is who
-        is trusted to mint the prefix and where it is enforced. Path shape,
-        inheritance, and isolation never change. gymtext (one app, its own DB) is
-        naturally embedded; a multi-org sales SaaS is the case for hosted, because
-        one process then holds many tenants' memories.
+        <strong>The grant model is identical in both</strong> — what changes is who
+        is trusted to mint the namespace grants and where they are enforced. Path
+        shape, inheritance, and isolation never change. gymtext (one app, its own
+        DB) is naturally embedded; a multi-org sales SaaS is the case for hosted,
+        because one process then holds many tenants' memories.
       </p>
       <div class="note">
         <p>
@@ -1020,12 +1081,12 @@ const result = await runner.invoke("chat", message, {
       </div>
       <div class="note warning">
         <p>
-          <strong>The background curator is scope-bound too.</strong> A hosted
+          <strong>The background curator is grant-bound too.</strong> A hosted
           deployment runs the curator as a scheduled per-scope job; the curator for
-          <code>org/acme</code> is granted only the acme subtree and can never read
-          another tenant. Every memrez operation — foreground tool call or
-          background curate — runs inside a scope grant. A curator that could read
-          across scopes would be a cross-tenant leak.
+          <code>org/acme</code> is deliberately granted the acme subtree and can
+          never read another tenant. Every memrez operation — foreground tool call
+          or background curate — runs inside a validated grant set. A curator that
+          could read across grants would be a cross-tenant leak.
         </p>
       </div>
     </section>
@@ -1038,15 +1099,16 @@ const result = await runner.invoke("chat", message, {
         <article class="panel">
           <h3>memrez-tagger <span style="color:var(--soft);font-weight:600">· cheap model</span></h3>
           <p>
-            In: <code>{ content, scope, existingTopics, topicsHint? }</code>.
-            Out: <code>{ topics, type, normalizedContent, duplicateOf? }</code>.
-            Drives <code>write</code>.
+            In: <code>{ content, grants, existingTopics, writePolicy, topicsHint? }</code>.
+            Out: <code>{ namespace, topics, type, normalizedContent, duplicateOf? }</code>.
+            Drives <code>write</code>; memrez validates the proposed namespace
+            before storage.
           </p>
         </article>
         <article class="panel">
           <h3>memrez-curator <span style="color:var(--soft);font-weight:600">· stronger model</span></h3>
           <p>
-            In: a scope's entry slice + the topic set.
+            In: a validated grant set, a scope slice, and the topic set.
             Out: <code>{ ops: CurateOp[] }</code> — merge, supersede, retag,
             setBlurb, promoteScope. Drives <code>curate</code>.
           </p>
@@ -1093,17 +1155,17 @@ listScopeSlice(scope, opts) → entries              // for curate</code></pre>
       <p>
         Add <code>contracts/memrez/</code> mirroring <code>contracts/python-port/</code>:
         scenario fixtures (a sequence of writes → expected topic assignment,
-        supersede graph, scan TOC shape, scope-ancestor resolution). Both runtimes
-        test against them.
+        write-target validation, supersede graph, scan TOC shape,
+        scope-ancestor resolution). Both runtimes test against them.
       </p>
       <div class="note warning">
         <p>
           <strong>Contract tests use a deterministic fake reasoner</strong> (a
           fixed content→topics mapping). That pins what must match across
-          languages — storage, scope resolution, dedup, supersede, scan
-          aggregation — without asserting on nondeterministic LLM output. Real
-          tagger/curator quality is covered separately by agntz <strong>evals</strong>
-          on the two manifests.
+          languages — storage, grant validation, scope resolution, dedup,
+          supersede, scan aggregation — without asserting on nondeterministic LLM
+          output. Real tagger/curator quality is covered separately by agntz
+          <strong>evals</strong> on the two manifests.
         </p>
       </div>
     </section>
@@ -1118,15 +1180,17 @@ listScopeSlice(scope, opts) → entries              // for curate</code></pre>
             <p>
               The general capability memrez plugs into, built first and independent
               of memrez: the first-class <code>context: [namespaces]</code> invoke
-              option threaded <strong>narrow-only</strong> through <code>invoke</code>
-              / agent-as-tool / <code>spawn_agent</code> (and added to
+              option as a generic namespace capability set, normalized and threaded
+              <strong>narrow-only</strong> through <code>invoke</code> /
+              agent-as-tool / <code>spawn_agent</code> (and added to
               <code>@agntz/sdk</code>'s <code>agents.run()</code>); the
-              <code>resources:</code> manifest block + the <code>MemoryProvider</code>
-              slot interface + validation (parse-time shape &amp; reserved names;
-              load-time fail-fast) in <code>@agntz/manifest</code> +
-              <code>@agntz/core</code>; retire the unused <code>ContextStore</code> /
-              <code>contextIds</code> path. <em>Touches agntz core — mirror in Python
-              (Phase 6), add parity fixtures.</em>
+              <code>resources:</code> manifest block + generic provider slot +
+              validation (parse-time shape &amp; reserved names; load-time
+              fail-fast; effective mode clamping) in <code>@agntz/manifest</code>
+              + <code>@agntz/core</code>; retire the unused
+              <code>ContextStore</code> / <code>contextIds</code> path.
+              <em>Touches agntz core — mirror in Python (Phase 6), add parity
+              fixtures.</em>
             </p>
           </div>
         </article>
@@ -1135,11 +1199,11 @@ listScopeSlice(scope, opts) → entries              // for curate</code></pre>
           <div>
             <h3>memrez-core (TS), no LLM</h3>
             <p>
-              Types, <code>MemoryStore</code> + in-memory adapter, scope/ancestor
-              resolution, scan/read/write/curate orchestration against injectable
-              <code>Tagger</code> / <code>Curator</code>. Tests with a fake
-              reasoner. <em>Cheapest way to find out if the scope/topic model
-              feels right in real code.</em>
+              Types, <code>MemoryStore</code> + in-memory adapter, grant validation,
+              scope/ancestor resolution, scan/read/write/curate orchestration
+              against injectable <code>Tagger</code> / <code>Curator</code>. Tests
+              with a fake reasoner. <em>Cheapest way to find out if the scope/topic
+              model feels right in real code.</em>
             </p>
           </div>
         </article>
@@ -1219,8 +1283,17 @@ listScopeSlice(scope, opts) → entries              // for curate</code></pre>
         <li>
           <strong>Promotion trigger.</strong> session→user, or cross-sibling→parent
           (the sales "most accounts omit A" case). Curator-driven is the primary
-          path; do we also expose an explicit <code>promote()</code> API?
+          path; do we also expose an explicit <code>promote()</code> API? Promotion
+          validates exact ancestor targets only, never ancestor subtrees.
           <em>Lean: curator-driven, explicit API as an escape hatch.</em>
+        </li>
+        <li>
+          <strong>Memory write policy shape.</strong> Default is
+          <code>descendants: true</code> and
+          <code>ancestorPromotion: none</code>. Trusted resource agents may opt into
+          <code>parent</code> or <code>ancestors</code> promotion, but normal
+          foreground agents should not. <em>Lean: ship the policy object now, keep
+          non-default promotion behind explicit config.</em>
         </li>
         <li>
           <strong>Blurb storage.</strong> <code>topic_meta</code> table vs a
@@ -1234,10 +1307,11 @@ listScopeSlice(scope, opts) → entries              // for curate</code></pre>
         </li>
         <li>
           <strong>Where the slot lives.</strong> The <code>resources:</code> schema goes
-          in <code>@agntz/manifest</code>; does the <code>MemoryProvider</code>
-          interface live in <code>@agntz/core</code> (runner-adjacent, like
-          <code>SkillStore</code>) or a thin shared contract package? <em>Lean:
-          alongside <code>SkillStore</code> in core.</em>
+          in <code>@agntz/manifest</code>; does the generic
+          <code>ResourceProvider</code> interface live in <code>@agntz/core</code>
+          (runner-adjacent, like <code>SkillStore</code>) or a thin shared contract
+          package? <em>Lean: alongside <code>SkillStore</code> in core; memory's
+          provider contract can live in memrez.</em>
         </li>
         <li>
           <strong>Manifest location across languages.</strong> Canonical YAML in
@@ -1262,7 +1336,7 @@ listScopeSlice(scope, opts) → entries              // for curate</code></pre>
         <li>Extracting facts from raw transcripts (the caller's job for now).</li>
         <li>Multi-scope-per-entry membership.</li>
         <li>A hosted memrez service or UI.</li>
-        <li>Cross-tenant / global curate runs (<code>curate</code> operates on one scope subtree).</li>
+        <li>Cross-tenant / global curate runs (<code>curate</code> operates inside one validated grant set).</li>
       </ul>
     </section>
 
