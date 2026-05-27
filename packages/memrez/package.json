@@ -25,10 +25,12 @@
   "license": "MIT",
   "dependencies": {
     "@agntz/core": "workspace:*",
+    "better-sqlite3": "^11.8.1",
     "zod": "^3.25.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",
+    "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.0.0",
     "tsup": "^8.5.0",
     "typescript": "^5.9.0",
