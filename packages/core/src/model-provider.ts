@@ -34,12 +34,8 @@ export class AISDKModelProvider implements ModelProvider {
       }
     }
 
-    const experimental_output = options.outputSchema
-      ? Output.object({
-          name: options.outputSchema.name,
-          schema: jsonSchema(options.outputSchema.schema as Parameters<typeof jsonSchema>[0]),
-        })
-      : undefined;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { experimental_output, providerOptions } = buildStructuredOutput(options, Output, jsonSchema) as any;
 
     let result: Awaited<ReturnType<typeof generateText>>;
     try {
@@ -49,6 +45,7 @@ export class AISDKModelProvider implements ModelProvider {
         messages: messages as any,
         tools: Object.keys(tools).length > 0 ? tools : undefined,
         experimental_output,
+        providerOptions,
         maxOutputTokens: options.maxTokens,
         abortSignal: options.signal,
       });
@@ -62,7 +59,7 @@ export class AISDKModelProvider implements ModelProvider {
     const cost = extractProviderCost(result.providerMetadata);
 
     return {
-      text: result.text ?? "",
+      text: finalizeText(result.text ?? "", options),
       toolCalls: result.toolCalls?.map(tc => ({
         id: tc.toolCallId,
         name: tc.toolName,
@@ -103,12 +100,8 @@ export class AISDKModelProvider implements ModelProvider {
       }
     }
 
-    const experimental_output = options.outputSchema
-      ? Output.object({
-          name: options.outputSchema.name,
-          schema: jsonSchema(options.outputSchema.schema as Parameters<typeof jsonSchema>[0]),
-        })
-      : undefined;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { experimental_output, providerOptions } = buildStructuredOutput(options, Output, jsonSchema) as any;
 
     let result: ReturnType<typeof streamText>;
     try {
@@ -118,6 +111,7 @@ export class AISDKModelProvider implements ModelProvider {
         messages: messages as any,
         tools: Object.keys(tools).length > 0 ? tools : undefined,
         experimental_output,
+        providerOptions,
         maxOutputTokens: options.maxTokens,
         abortSignal: options.signal,
       });
@@ -286,6 +280,75 @@ export class AISDKModelProvider implements ModelProvider {
  * Convert a JSON Schema object to a basic Zod schema.
  * This is a simplified conversion for passing tool parameters to the AI SDK.
  */
+// Structured-output config. The AI SDK's generic experimental_output (and
+// generateObject) break on Gemini — truncated text / "could not parse" — whether
+// reached directly or via OpenRouter. Each transport's *native* structured-output
+// mechanism is reliable, so route google and openrouter through providerOptions;
+// every other provider keeps experimental_output, which works for them.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function buildStructuredOutput(options: GenerateTextOptions, Output: any, jsonSchema: any): { experimental_output: unknown; providerOptions: unknown } {
+  if (!options.outputSchema) return { experimental_output: undefined, providerOptions: undefined };
+  if (options.model.provider === "google") {
+    return {
+      experimental_output: undefined,
+      providerOptions: {
+        google: {
+          responseMimeType: "application/json",
+          responseSchema: options.outputSchema.schema,
+        },
+      },
+    };
+  }
+  if (options.model.provider === "openrouter") {
+    return {
+      experimental_output: undefined,
+      providerOptions: {
+        openrouter: {
+          responseFormat: {
+            type: "json_schema",
+            json_schema: { name: options.outputSchema.name, strict: true, schema: options.outputSchema.schema },
+          },
+        },
+      },
+    };
+  }
+  return {
+    experimental_output: Output.object({
+      name: options.outputSchema.name,
+      schema: jsonSchema(options.outputSchema.schema),
+    }),
+    providerOptions: undefined,
+  };
+}
+
+// The native structured-output paths (google, openrouter) sometimes wrap the JSON
+// in a markdown fence or a short prose preamble. Extract the JSON so callers get
+// clean parseable text. Providers on the experimental_output path already return
+// clean JSON, so this only runs for the native paths.
+function finalizeText(text: string, options: GenerateTextOptions): string {
+  if (options.outputSchema && (options.model.provider === "google" || options.model.provider === "openrouter")) {
+    return extractJsonText(text);
+  }
+  return text;
+}
+
+function extractJsonText(text: string): string {
+  const t = text.trim();
+  try { JSON.parse(t); return t; } catch { /* not already-clean JSON */ }
+  const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) {
+    const inner = fence[1].trim();
+    try { JSON.parse(inner); return inner; } catch { /* keep looking */ }
+  }
+  const start = t.indexOf("{");
+  const end = t.lastIndexOf("}");
+  if (start !== -1 && end > start) {
+    const cand = t.slice(start, end + 1);
+    try { JSON.parse(cand); return cand; } catch { /* give up */ }
+  }
+  return text;
+}
+
 function jsonSchemaToZod(schema: Record<string, unknown>, z: typeof import("zod").z): import("zod").ZodSchema {
   if (!schema || schema.type !== "object") {
     return z.object({});

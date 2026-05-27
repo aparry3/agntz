@@ -92,9 +92,9 @@ const PRIOR_GENERATION: readonly ProviderModelEntry[] = [
   },
   {
     provider: 'google',
-    model: 'gemini-3-flash',
+    model: 'gemini-3-flash-preview',
     capabilities: caps('text', 'multiTurn', 'systemPrompt', 'streaming', 'tools', 'parallelTools', 'streamingTools', 'toolChoice', 'multimodalImage', 'structuredOutput', 'reasoning', 'cancellation'),
-    notes: 'Prior gen of gemini-3.5-flash.',
+    notes: 'Prior gen of gemini-3.5-flash. Live ID is gemini-3-flash-preview; plain gemini-3-flash 404s (confirmed via ListModels 2026-05-24).',
   },
   {
     provider: 'mistral',
@@ -105,8 +105,8 @@ const PRIOR_GENERATION: readonly ProviderModelEntry[] = [
   {
     provider: 'groq',
     model: 'llama-3.3-70b-versatile',
-    capabilities: caps('text', 'multiTurn', 'systemPrompt', 'streaming', 'tools', 'parallelTools', 'streamingTools', 'toolChoice', 'structuredOutput', 'cancellation'),
-    notes: 'Prior gen on Groq (Llama 3.3 70B). Text-only — no image input, unlike Llama 4.',
+    capabilities: caps('text', 'multiTurn', 'systemPrompt', 'streaming', 'tools', 'parallelTools', 'streamingTools', 'toolChoice', 'cancellation'),
+    notes: 'Prior gen on Groq (Llama 3.3 70B). Text-only (no image) and no json_schema structured-output — both confirmed by harness run 2026-05-24.',
   },
   {
     provider: 'cohere',
