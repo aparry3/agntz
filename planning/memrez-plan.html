@@ -679,6 +679,16 @@ const granted = `gymtext/user/${authedUserId}`;
 await client.agents.run("support", message, { context: [granted], sessionId });
 // effective resource input = manifest static namespaces ∪ per-run context
 // each provider interprets that input under its own policy</code></pre>
+      <div class="note warning">
+        <p>
+          <strong>Static namespaces are not automatic grants.</strong> A manifest
+          <code>namespace</code> is provider input, not a universal read/write
+          capability. RAG may treat it as a read corpus, files may treat it as a
+          path prefix, and memory usually should avoid static namespaces in normal
+          user-facing agents. agntz core passes the value through; the provider
+          decides whether it is readable, writable, both, or just configuration.
+        </p>
+      </div>
       <div class="note callout">
         <p>
           <strong>The model never names a namespace.</strong> Tools are
@@ -1185,7 +1195,8 @@ listScopeSlice(scope, opts) → entries              // for curate</code></pre>
               traversal, no wildcards, deterministic ancestor/descendant helpers,
               and stable error messages. This phase does not add resources yet; it
               only creates the capability primitive memrez and future resources
-              will consume.
+              will consume. Start with table-driven tests for valid paths, invalid
+              paths, ancestor checks, descendant checks, and sibling rejection.
             </p>
           </div>
         </article>
@@ -1213,8 +1224,11 @@ listScopeSlice(scope, opts) → entries              // for curate</code></pre>
               <code>mode</code> (read | read-write), optional static
               <code>namespace</code> input, and provider-specific config passthrough.
               Parse-time validation checks shape, mode values, duplicate resource
-              names, and reserved system tool names. No memory behavior belongs in
-              this layer.
+              names, and reserved system tool names. Provider tool names are
+              generated deterministically from the resource name plus provider tool
+              name (for example <code>memory_read</code> or
+              <code>product_docs_search</code>) so app tools cannot collide with
+              system tools. No memory behavior belongs in this layer.
             </p>
           </div>
         </article>
@@ -1229,7 +1243,8 @@ listScopeSlice(scope, opts) → entries              // for curate</code></pre>
               <code>ResourceToolContext</code> containing resource name, effective
               mode, config, normalized grants, and run metadata. Effective mode
               clamps across parent→child calls so a child cannot regain write
-              access. Prove the slot with a fake provider, not memrez.
+              access. Keep the provider contract minimal and prove the slot with a
+              fake provider, not memrez, before adding memory-specific behavior.
             </p>
           </div>
         </article>
@@ -1238,12 +1253,13 @@ listScopeSlice(scope, opts) → entries              // for curate</code></pre>
           <div>
             <h3>cleanup, contracts, and docs <span style="color:var(--soft);font-weight:600">· harden before memrez</span></h3>
             <p>
-              Retire or deprecate the unused <code>ContextStore</code> /
-              <code>contextIds</code> path, add contract fixtures for namespace
-              normalization, grant narrowing, resource-mode clamping, and provider
-              load failures, and document the generic provider boundary. The Python
-              runtime mirrors the same contracts in Phase 6, but the fixture shape
-              is established here.
+              Audit references to the unused <code>ContextStore</code> /
+              <code>contextIds</code> path, then deprecate or remove it based on
+              actual usage. Add contract fixtures for namespace normalization,
+              grant narrowing, resource-mode clamping, provider load failures, and
+              deterministic system tool naming, and document the generic provider
+              boundary. The Python runtime mirrors the same contracts in Phase 6,
+              but the fixture shape is established here.
             </p>
           </div>
         </article>
