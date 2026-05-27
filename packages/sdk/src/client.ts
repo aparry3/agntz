@@ -187,6 +187,7 @@ class AgentsResourceImpl implements LocalAgentsResource {
       const ctx = createExecutionContext(this.runner, this.manifests, this.localToolNames, {
         spanEmitter,
         sessionId,
+        context: input.context,
         signal: input.signal,
         localTools: this.localTools,
         replyCollector: replies,
@@ -295,6 +296,7 @@ class AgentsResourceImpl implements LocalAgentsResource {
             : "";
       const iter = this.runner.stream(tempId, userInput, {
         sessionId: input.sessionId,
+        context: input.context,
         signal: input.signal,
         spanEmitter,
       });

@@ -73,4 +73,151 @@ describe("runtime namespace context grants", () => {
     ).rejects.toThrow(NamespaceGrantError);
     expect(provider.calls).toHaveLength(0);
   });
+
+  it("inherits context grants through tool-driven child invocations", async () => {
+    const provider = new MockModelProvider([
+      {
+        text: "",
+        toolCalls: [{ id: "parent_tc", name: "call_child", args: {} }],
+        usage,
+        finishReason: "tool-calls",
+      },
+      {
+        text: "",
+        toolCalls: [{ id: "child_tc", name: "inspect_context", args: {} }],
+        usage,
+        finishReason: "tool-calls",
+      },
+      { text: "child done", usage, finishReason: "stop" },
+      { text: "parent done", usage, finishReason: "stop" },
+    ]);
+
+    const inspect = defineTool({
+      name: "inspect_context",
+      description: "Inspect context grants",
+      input: z.object({}),
+      async execute(_input, ctx) {
+        return { context: ctx.context };
+      },
+    });
+
+    const callChild = defineTool({
+      name: "call_child",
+      description: "Invoke a child agent",
+      input: z.object({}),
+      async execute(_input, ctx) {
+        const result = await ctx.invoke("child", "inspect");
+        return result.toolCalls[0].output;
+      },
+    });
+
+    const runner = createRunner({ modelProvider: provider, tools: [inspect, callChild] });
+    runner.registerAgent(defineAgent({
+      id: "parent",
+      name: "Parent",
+      systemPrompt: "Call child.",
+      model: { provider: "openai", name: "test" },
+      tools: [{ type: "inline", name: "call_child" }],
+    }));
+    runner.registerAgent(defineAgent({
+      id: "child",
+      name: "Child",
+      systemPrompt: "Inspect.",
+      model: { provider: "openai", name: "test" },
+      tools: [{ type: "inline", name: "inspect_context" }],
+    }));
+
+    const result = await runner.invoke("parent", "go", {
+      context: ["app/user/u_123"],
+    });
+
+    expect(result.toolCalls[0].output).toEqual({
+      context: ["app/user/u_123"],
+    });
+  });
+
+  it("allows child invocations to narrow grants and rejects widening", async () => {
+    const provider = new MockModelProvider([
+      {
+        text: "",
+        toolCalls: [
+          { id: "narrow_tc", name: "call_child_narrow", args: {} },
+          { id: "wide_tc", name: "call_child_wide", args: {} },
+        ],
+        usage,
+        finishReason: "tool-calls",
+      },
+      {
+        text: "",
+        toolCalls: [{ id: "child_tc", name: "inspect_context", args: {} }],
+        usage,
+        finishReason: "tool-calls",
+      },
+      { text: "child done", usage, finishReason: "stop" },
+      { text: "parent done", usage, finishReason: "stop" },
+    ]);
+
+    const inspect = defineTool({
+      name: "inspect_context",
+      description: "Inspect context grants",
+      input: z.object({}),
+      async execute(_input, ctx) {
+        return { context: ctx.context };
+      },
+    });
+
+    const callChildNarrow = defineTool({
+      name: "call_child_narrow",
+      description: "Invoke a child agent with narrowed grants",
+      input: z.object({}),
+      async execute(_input, ctx) {
+        const result = await ctx.invoke("child", "inspect", {
+          context: ["app/user/u_123/session/s_1"],
+        });
+        return result.toolCalls[0].output;
+      },
+    });
+
+    const callChildWide = defineTool({
+      name: "call_child_wide",
+      description: "Invoke a child agent with widened grants",
+      input: z.object({}),
+      async execute(_input, ctx) {
+        return ctx.invoke("child", "inspect", {
+          context: ["app/user/u_456"],
+        });
+      },
+    });
+
+    const runner = createRunner({
+      modelProvider: provider,
+      tools: [inspect, callChildNarrow, callChildWide],
+    });
+    runner.registerAgent(defineAgent({
+      id: "parent",
+      name: "Parent",
+      systemPrompt: "Call child.",
+      model: { provider: "openai", name: "test" },
+      tools: [
+        { type: "inline", name: "call_child_narrow" },
+        { type: "inline", name: "call_child_wide" },
+      ],
+    }));
+    runner.registerAgent(defineAgent({
+      id: "child",
+      name: "Child",
+      systemPrompt: "Inspect.",
+      model: { provider: "openai", name: "test" },
+      tools: [{ type: "inline", name: "inspect_context" }],
+    }));
+
+    const result = await runner.invoke("parent", "go", {
+      context: ["app/user/u_123"],
+    });
+
+    expect(result.toolCalls[0].output).toEqual({
+      context: ["app/user/u_123/session/s_1"],
+    });
+    expect(result.toolCalls[1].error).toMatch(/not within parent context/);
+  });
 });

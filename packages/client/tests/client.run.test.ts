@@ -23,6 +23,7 @@ describe("AgntzClient.agents.run", () => {
       agentId: "a1",
       input: { x: 1 },
       sessionId: "s1",
+      context: ["app/user/u_123"],
     });
     expect(result).toEqual({ output: "hi", state: { done: true }, sessionId: "s1" });
     expect(mock.calls).toHaveLength(1);
@@ -36,6 +37,7 @@ describe("AgntzClient.agents.run", () => {
       agentId: "a1",
       input: { x: 1 },
       sessionId: "s1",
+      context: ["app/user/u_123"],
     });
   });
 

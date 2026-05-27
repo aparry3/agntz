@@ -12,6 +12,7 @@ import { manifestToAgentDefinition } from "./manifest-to-agent.js";
 export interface CreateExecutionContextOptions {
   spanEmitter?: SpanEmitter;
   sessionId?: string;
+  context?: string[];
   signal?: AbortSignal;
   /**
    * Local-tool implementations registered with `agntz({ tools: ... })`.
@@ -42,6 +43,7 @@ export function createExecutionContext(
   localToolNames: Set<string>,
   opts: CreateExecutionContextOptions = {},
 ): ExecutionContext {
+  const context = normalizeLocalNamespaceGrants(opts.context);
   return {
     spanEmitter: opts.spanEmitter,
     resolveAgent: async (id: string) => {
@@ -71,6 +73,7 @@ export function createExecutionContext(
           ?? (state.userQuery != null ? String(state.userQuery) : JSON.stringify(state));
         const result = await runner.invoke(tempId, userInput, {
           ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
+          context,
           ...(opts.signal ? { signal: opts.signal } : {}),
           ...(opts.spanEmitter ? { spanEmitter: opts.spanEmitter } : {}),
         });
@@ -101,7 +104,7 @@ export function createExecutionContext(
               `Pipeline tool step references local tool '${config.name}' but no handler was registered.`,
             );
           }
-          const ctx = makeDirectToolContext(runner, config.name);
+          const ctx = makeDirectToolContext(runner, config.name, context);
           return tool.execute(config.params ?? {}, ctx);
         }
         case "http": {
@@ -126,7 +129,7 @@ export function createExecutionContext(
           );
           return (tool.execute as (a: unknown, c: ToolContext) => Promise<unknown>)(
             {},
-            makeDirectToolContext(runner, `http__${config.name}`),
+            makeDirectToolContext(runner, `http__${config.name}`, context),
           );
         }
         case "mcp": {
@@ -142,10 +145,53 @@ export function createExecutionContext(
   };
 }
 
-function makeDirectToolContext(runner: Runner, agentId: string): ToolContext {
+function makeDirectToolContext(runner: Runner, agentId: string, context: string[]): ToolContext {
   return {
     agentId,
+    context,
     invocationId: `inv_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-    invoke: (id, input, options) => runner.invoke(id, input, options),
+    invoke: (id, input, options) =>
+      runner.invoke(id, input, {
+        ...options,
+        context: narrowLocalNamespaceGrants(context, options?.context),
+      }),
   };
+}
+
+function normalizeLocalNamespaceGrants(input: readonly string[] | undefined): string[] {
+  if (input === undefined) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of input) {
+    if (typeof raw !== "string" || raw.length === 0) {
+      throw new Error("Invalid namespace grant: grant must be a non-empty string");
+    }
+    if (raw.trim() !== raw || raw.startsWith("/") || raw.endsWith("/") || raw.includes("//")) {
+      throw new Error(`Invalid namespace grant "${raw}"`);
+    }
+    for (const segment of raw.split("/")) {
+      if (segment === "." || segment === ".." || segment.includes("*") || /\s/.test(segment)) {
+        throw new Error(`Invalid namespace grant "${raw}"`);
+      }
+    }
+    if (!seen.has(raw)) {
+      seen.add(raw);
+      out.push(raw);
+    }
+  }
+  return out;
+}
+
+function narrowLocalNamespaceGrants(
+  parent: readonly string[],
+  requested: readonly string[] | undefined,
+): string[] {
+  if (requested === undefined) return [...parent];
+  const normalized = normalizeLocalNamespaceGrants(requested);
+  for (const grant of normalized) {
+    if (!parent.some((p) => grant === p || grant.startsWith(`${p}/`))) {
+      throw new Error(`Invalid namespace grant "${grant}": grant is not within parent context [${parent.join(", ")}]`);
+    }
+  }
+  return normalized;
 }
