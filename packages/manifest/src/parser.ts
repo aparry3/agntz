@@ -11,6 +11,7 @@ import type {
   ManifestToolEntry,
   MCPToolRef,
   HTTPToolEntry,
+  ResourceManifestEntry,
 } from "./types.js";
 
 /**
@@ -63,7 +64,32 @@ function normalizeLLM(base: Record<string, unknown>, raw: Record<string, unknown
     spawnable: raw.spawnable ? normalizeSpawnable(raw.spawnable as unknown[]) : undefined,
     skills: raw.skills ? normalizeSkills(raw.skills as unknown[]) : undefined,
     reply: raw.reply !== undefined ? normalizeReply(raw.reply) : undefined,
+    resources: raw.resources !== undefined ? normalizeResources(raw.resources) : undefined,
   } as LLMAgentManifest;
+}
+
+function normalizeResources(raw: unknown): Record<string, ResourceManifestEntry> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("'resources' must be an object keyed by resource name");
+  }
+
+  const resources: Record<string, ResourceManifestEntry> = {};
+  for (const [name, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error(`resources.${name} must be an object`);
+    }
+    const entry = value as Record<string, unknown>;
+    if (entry.kind !== undefined && typeof entry.kind !== "string") {
+      throw new Error(`resources.${name}.kind must be a string`);
+    }
+    resources[name] = {
+      ...entry,
+      kind: (entry.kind as string | undefined) ?? name,
+      mode: entry.mode as ResourceManifestEntry["mode"],
+      namespace: entry.namespace as ResourceManifestEntry["namespace"],
+    };
+  }
+  return resources;
 }
 
 // Accept `reply: true` for defaults or `reply: { maxPerRun: N }` for a custom

@@ -183,6 +183,8 @@ export type {
   AgentDefinition,
   AgentRef,
   ModelConfig,
+  ResourceDefinition,
+  ResourceMode,
 
   // Tools
   ToolDefinition,

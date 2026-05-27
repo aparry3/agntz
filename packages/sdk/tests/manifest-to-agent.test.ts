@@ -117,4 +117,23 @@ describe("manifestToAgentDefinition — tool kind conversion", () => {
     expect(def.spawnable?.[0]).toEqual({ kind: "ref", agentId: "reviewer" });
     expect(def.spawnable?.[1].kind).toBe("inline");
   });
+
+  it("passes resources through to the core agent definition", () => {
+    const manifest = baseLlm({
+      resources: {
+        memory: {
+          kind: "memory",
+          mode: "read-write",
+          autoScan: true,
+        },
+        "product-docs": {
+          kind: "rag",
+          mode: "read",
+          namespace: "gymtext/kb/product-docs",
+        },
+      },
+    });
+    const def = manifestToAgentDefinition(manifest, new Set());
+    expect(def.resources).toEqual(manifest.resources);
+  });
 });

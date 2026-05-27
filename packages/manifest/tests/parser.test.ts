@@ -96,6 +96,42 @@ tools:
     }
   });
 
+  it("parses resources with inferred kind and provider config passthrough", () => {
+    const yaml = `
+id: support
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Use memory when useful."
+resources:
+  memory:
+    mode: read-write
+    autoScan: true
+    writePolicy:
+      descendants: true
+      ancestorPromotion: none
+  product-docs:
+    kind: rag
+    mode: read
+    namespace: gymtext/kb/product-docs
+`;
+    const manifest = parseManifest(yaml);
+    if (manifest.kind === "llm") {
+      expect(manifest.resources?.memory).toMatchObject({
+        kind: "memory",
+        mode: "read-write",
+        autoScan: true,
+        writePolicy: { descendants: true, ancestorPromotion: "none" },
+      });
+      expect(manifest.resources?.["product-docs"]).toMatchObject({
+        kind: "rag",
+        mode: "read",
+        namespace: "gymtext/kb/product-docs",
+      });
+    }
+  });
+
   it("parses a tool agent", () => {
     const yaml = `
 id: send-email

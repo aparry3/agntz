@@ -42,6 +42,13 @@ export interface AgentDefinition {
   skills?: string[];
 
   /**
+   * Resource declarations this agent may use. The core runner wires these
+   * through registered ResourceProviders; resource-specific behavior lives in
+   * the provider, not on the agent.
+   */
+  resources?: Record<string, ResourceDefinition>;
+
+  /**
    * When set, the runner registers a per-invocation `reply` tool the model
    * can call to deliver intermediate messages to the user. Each call is
    * persisted to the session immediately, surfaced on `InvokeResult.replies`,
@@ -98,6 +105,21 @@ export interface ModelConfig {
   maxTokens?: number;
   topP?: number;
   options?: Record<string, unknown>;
+}
+
+export type ResourceMode = "read" | "read-write";
+
+export interface ResourceDefinition {
+  /** Provider kind. Defaults to the manifest resource name when omitted. */
+  kind: string;
+  /** Per-agent access mode. Providers may define kind-specific defaults. */
+  mode?: ResourceMode;
+  /** Optional static provider input. It is not an automatic grant. */
+  namespace?: string | string[];
+  /** Provider-specific config passthrough. */
+  config?: unknown;
+  /** Additional provider-specific fields from manifest YAML. */
+  [key: string]: unknown;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
