@@ -107,6 +107,16 @@ export {
   getLastFour,
   _resetCryptoKeyCache,
 } from "./utils/crypto.js";
+export {
+  normalizeNamespaceGrant,
+  normalizeNamespaceGrants,
+  namespaceAncestors,
+  isSameOrAncestorNamespace,
+  isSameOrDescendantNamespace,
+  isGrantNarrowedBy,
+  narrowNamespaceGrants,
+} from "./namespace.js";
+export type { NamespaceGrant } from "./namespace.js";
 
 // Eval
 export { runEval } from "./eval.js";
@@ -134,6 +144,7 @@ export {
   AgentNotFoundError,
   AgentVersionNotFoundError,
   InvalidAgentRefError,
+  NamespaceGrantError,
   ToolNotFoundError,
   ToolExecutionError,
   ModelError,

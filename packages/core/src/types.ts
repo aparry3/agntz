@@ -132,6 +132,12 @@ export interface ToolContext {
   agentId: string;
   /** Session ID (if conversational) */
   sessionId?: string;
+  /**
+   * Normalized namespace capability grants for this invocation. These are
+   * minted by trusted application code via InvokeOptions.context and are
+   * propagated to child invocations narrow-only.
+   */
+  context?: string[];
   /** Active context bucket IDs */
   contextIds?: string[];
   /** Unique ID for the current invocation */
@@ -177,6 +183,12 @@ export interface ToolInfo {
 export interface InvokeOptions {
   /** Enables conversational continuity */
   sessionId?: string;
+  /**
+   * Runtime namespace capability grants. These are generic resource grants,
+   * not message context buckets. Child invocations inherit this grant set
+   * unless they explicitly request a narrowed subset.
+   */
+  context?: string[];
   /** Named context buckets to inject */
   contextIds?: string[];
   /** Ad-hoc context string injected into messages */
