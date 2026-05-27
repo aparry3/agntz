@@ -1,0 +1,15 @@
+id: memrez-support
+name: memrez Support Example
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4-mini
+instruction: |
+  You are a support assistant. Use memory when it helps personalize answers.
+resources:
+  memory:
+    mode: read-write
+    autoScan: true
+    writePolicy:
+      descendants: true
+      ancestorPromotion: none

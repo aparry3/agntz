@@ -1,5 +1,6 @@
 export { createMemrez, Memrez } from "./memrez.js";
 export { agntzReasoner } from "./reasoner.js";
+export { createMemoryResourceProvider } from "./provider.js";
 export { InMemoryMemoryStore } from "./store.js";
 export {
   DEFAULT_WRITE_POLICY,
@@ -31,3 +32,4 @@ export type {
   WritePolicy,
 } from "./types.js";
 export type { AgntzClientLike, AgntzReasonerOptions, AgntzRunResult } from "./reasoner.js";
+export type { MemoryResourceConfig } from "./provider.js";

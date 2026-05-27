@@ -6,6 +6,7 @@ import {
   visibleScopes,
 } from "./grants.js";
 import { InMemoryMemoryStore } from "./store.js";
+import { createMemoryResourceProvider } from "./provider.js";
 import type {
   CurateOptions,
   CurateReport,
@@ -22,6 +23,7 @@ import type {
   TopicSummary,
   WriteOptions,
 } from "./types.js";
+import type { ResourceProvider } from "@agntz/core";
 
 export class Memrez {
   readonly store: MemoryStore;
@@ -30,6 +32,10 @@ export class Memrez {
   constructor(options: MemrezOptions = {}) {
     this.store = options.store ?? new InMemoryMemoryStore();
     this.reasoner = options.reasoner ?? new DeterministicReasoner();
+  }
+
+  provider(): ResourceProvider {
+    return createMemoryResourceProvider(this);
   }
 
   async scan(
