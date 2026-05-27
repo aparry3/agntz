@@ -414,7 +414,7 @@
           </div>
           <div>
             <dt>Integration</dt>
-            <dd><code>memory:</code> manifest block → system tools</dd>
+            <dd><code>resources:</code> block + per-run <code>context</code> grant</dd>
           </div>
           <div>
             <dt>Packaging</dt>
@@ -428,6 +428,7 @@
       <a href="#tenets">Tenets</a>
       <a href="#decisions">Decisions</a>
       <a href="#architecture">Architecture</a>
+      <a href="#context">Context &amp; resources</a>
       <a href="#model">Data model</a>
       <a href="#api">API</a>
       <a href="#agent">From an agent</a>
@@ -517,11 +518,15 @@
             </tr>
             <tr>
               <td class="key">Scope authority</td>
-              <td>The <strong>granted prefix</strong> is minted at the trust boundary from verified identity and is immutable; the model may only refine <em>downward</em> within it. Path shape is app-defined via a scope resolver.</td>
+              <td>The <strong>granted prefix</strong> is minted at the trust boundary from verified identity and is immutable; the <strong>model never names a namespace</strong> (no scope tool-arg). Narrowing to a sub-namespace is an app / spawning-parent decision, applied narrow-only. Path shape is app-defined via a scope resolver.</td>
             </tr>
             <tr>
               <td class="key">Scope binding</td>
-              <td>Per run, via context — <code>toolContext.memrezScope</code> for tools, a <code>scope</code> arg for the direct API. memrez instances are app-lifetime and unscoped; scope is never baked in (no per-request instances).</td>
+              <td>Per run, via the first-class <code>context: [namespaces]</code> invoke option (the grant set), threaded <strong>narrow-only</strong> to sub-agents — <em>not</em> the free-form <code>toolContext</code> bag. The direct API still takes a <code>scope</code> arg. memrez instances are app-lifetime and unscoped; scope is never baked in.</td>
+            </tr>
+            <tr>
+              <td class="key">Resources &amp; mode</td>
+              <td>Memory is the first <strong>resource kind</strong>; RAG / files follow the same slot. <code>mode</code> (read | read-write) lives on the resource <em>per agent</em>, so the same corpus is read-only to one agent and read-write to another. The model never names a namespace — <code>read(topic)</code>, not <code>read(topic, namespace)</code>.</td>
             </tr>
             <tr>
               <td class="key">Topics</td>
@@ -533,15 +538,15 @@
             </tr>
             <tr>
               <td class="key">agntz integration</td>
-              <td>A first-class <code>memory:</code> manifest block, sibling to <code>skills</code> / <code>reply</code>. The runner registers <code>memory_read</code> / <code>memory_write</code> as <strong>system tools</strong> and (when <code>autoScan</code>) injects the scan TOC — the user never hand-lists them. Scope from <code>toolContext</code>; the model picks the topic / supplies the fact.</td>
+              <td>Memory is a <code>kind</code> in a generalized <code>resources:</code> manifest block (sibling to <code>skills</code> / <code>reply</code>). The runner registers each resource kind's <strong>system tools</strong> (<code>memory_read</code> / <code>memory_write</code>) and (when <code>autoScan</code>) injects the scan TOC — never hand-listed. The grant comes from the run's <code>context</code>; the model picks the topic / supplies the fact, never a namespace.</td>
             </tr>
             <tr>
               <td class="key">Packaging</td>
-              <td>agntz core ships only the <strong>slot</strong> — the <code>memory:</code> schema, the <code>MemoryProvider</code> interface, validation, and runner wiring. The implementation is the separate <code>memrez</code> package you inject. Mirrors <code>skills</code>→<code>SkillStore</code> and the in-memory→sqlite→postgres store graduation. <code>agntz</code> never depends on <code>memrez</code>.</td>
+              <td>agntz core ships only the <strong>slot</strong> — the <code>resources:</code> schema (memory kind), the <code>MemoryProvider</code> interface, validation, and runner wiring. The implementation is the separate <code>memrez</code> package you inject. Mirrors <code>skills</code>→<code>SkillStore</code> and the in-memory→sqlite→postgres store graduation. <code>agntz</code> never depends on <code>memrez</code>.</td>
             </tr>
             <tr>
               <td class="key">Validation</td>
-              <td>Two layers: parse-time checks the block shape and reserves the tool names; load-time <strong>fail-fast</strong> if an agent declares <code>memory:</code> but no <code>MemoryProvider</code> is wired (error names the agent). Stronger than the <code>skills</code> silent no-op.</td>
+              <td>Two layers: parse-time checks the block shape and reserves the tool names; load-time <strong>fail-fast</strong> if an agent declares a <code>memory</code> resource but no <code>MemoryProvider</code> is wired (error names the agent). Stronger than the <code>skills</code> silent no-op.</td>
             </tr>
             <tr>
               <td class="key">Deployment</td>
@@ -578,15 +583,15 @@
 
     <section id="architecture">
       <h2>Architecture</h2>
-      <pre><code>   agntz agent · manifest has a  memory:  block
-        │   runner registers memory_read / memory_write as system tools
+      <pre><code>   agntz agent · manifest has a  resources:  block (memory is a kind)
+        │   runner registers each kind's system tools (memory_read / memory_write)
         │   + (autoScan) injects the scan TOC before the model call
         │
         │  (1) scan(scope) ── deterministic ──► topic TOC injected into context
         │  (2) reads a topic on demand        (3) writes a fact
         ▼                                          ▼
    memory_read tool                          memory_write tool      ◄── system tools (runner-registered)
-        │                                          │                     scope from toolContext
+        │                                          │                     scope from the run's context grant
         └──────────────┬───────────────────────────┘
                        ▼
                 MemoryProvider          ◄── agntz core defines this interface (the slot)
@@ -607,6 +612,88 @@
                                               ModelProvider  (AI SDK in TS · LiteLLM in Python)
 
    curate(scope)  ◄── cron / deterministic call ── runs the curator over a scope subtree</code></pre>
+    </section>
+
+    <section id="context">
+      <h2>Context &amp; resources</h2>
+      <p class="lede" style="margin-top:0">
+        Memory is not a one-off — it is the first <strong>resource</strong> an
+        agent reaches through a shared, namespaced <strong>context</strong>. Two
+        orthogonal pieces, two names, deliberately kept apart. This is an
+        agntz-core foundation that memrez plugs into; it must be built first
+        (Phase 1).
+      </p>
+      <div class="grid" style="margin-top:28px">
+        <article class="panel">
+          <h3><code>resources:</code> — <span style="color:var(--soft);font-weight:600">what (design-time)</span></h3>
+          <p>
+            A manifest block, sibling to <code>skills</code> / <code>reply</code>,
+            listing the resource <em>kinds</em> an agent may touch and how:
+            per-agent <code>mode</code> (read | read-write), an optional pinned
+            <code>namespace</code>, and per-kind options like <code>autoScan</code>.
+            Memory is just <code>kind: memory</code> — not a special block.
+          </p>
+        </article>
+        <article class="panel">
+          <h3><code>context:</code> — <span style="color:var(--soft);font-weight:600">where (run-time)</span></h3>
+          <p>
+            An array of granted namespaces passed to
+            <code>invoke(id, input, { context })</code> — the run's access
+            boundary. A <strong>first-class invoke option</strong>, not a key in
+            the free-form <code>toolContext</code> bag, so the runner threads it
+            through every sub-agent <strong>narrow-only</strong>.
+          </p>
+        </article>
+      </div>
+      <pre><code># agents/support.yaml — declare resources (memory is a kind)
+resources:
+  memory:                                  # kind inferred from the name; memrez-backed
+    mode: read-write
+    autoScan: true                         # inject the scan TOC before the model call
+  product-docs:
+    kind: rag
+    mode: read                             # read-only FOR THIS AGENT
+    namespace: gymtext/kb/product-docs     # static, shared across users</code></pre>
+      <pre><code>// route — mint the grant from the authenticated user (the trust boundary)
+const granted = `gymtext/user/${authedUserId}`;
+await client.agents.run("support", message, { context: [granted], sessionId });
+// effective grant = manifest static namespaces  ∪  per-run context
+// memory r/w at the user namespace; product-docs read-only from the shared corpus</code></pre>
+      <div class="note callout">
+        <p>
+          <strong>The model never names a namespace.</strong> Tools are
+          <code>read(topic)</code> / <code>write(fact)</code>, never
+          <code>read(topic, namespace)</code> — a read spans the granted set and
+          its ancestors. The namespace stays off the model's tongue, so a
+          prompt-injection has nothing to target. Narrowing to a sub-namespace is
+          an app / sub-agent decision, never a model tool-arg.
+        </p>
+      </div>
+      <div class="note">
+        <p>
+          <strong>You write <em>through a resource</em>, not <em>to a
+          namespace</em>.</strong> A granted node is your read/write home plus its
+          subtree; ancestors above it are <strong>read-only inheritance</strong>
+          (shared knowledge flows down); siblings are invisible. To write at two
+          levels, grant both (<code>context: ["gymtext", "gymtext/user/u_123"]</code>).
+          A foreground write lands at the most-specific granted namespace; writing
+          <em>up</em> (promotion) is a <code>curate</code> op on an elevated grant,
+          never a silent foreground write. <code>mode</code> lives on the resource
+          per agent, so the same corpus is read-only to one agent, read-write to
+          another.
+        </p>
+      </div>
+      <div class="note warning">
+        <p>
+          <strong>Context comes before memory.</strong> The first-class
+          <code>context</code> option + narrow-only threading through
+          <code>invoke</code> / agent-as-tool / <code>spawn_agent</code>, the
+          <code>resources:</code> block + validation, and the provider slot are the
+          agntz-core foundation memrez builds on. This also subsumes the old
+          <code>ContextStore</code> / <code>contextIds</code> path (no real consumers
+          today), freeing the word "context" for the grant.
+        </p>
+      </div>
     </section>
 
     <section id="model">
@@ -693,54 +780,60 @@ curate(scope, opts?: { topics?: string[]; includeDescendants?: boolean })
     <section id="agent">
       <h2>Using it from an agntz agent</h2>
       <p>
-        Memory is a <strong>first-class manifest capability</strong>, not a
-        hand-wired tool — a <code>memory:</code> block sits beside agntz's existing
-        <code>skills</code> and <code>reply</code> blocks. Declaring it makes the
-        runner register <code>memory_read</code> / <code>memory_write</code> as
-        system tools and, when <code>autoScan</code> is on, inject the scan TOC
-        before the model call.
+        Memory is reached through the generalized <code>resources:</code> block —
+        a sibling to agntz's existing <code>skills</code> and <code>reply</code>
+        blocks. Memory is one resource <em>kind</em>; declaring it makes the runner
+        register that kind's system tools (<code>memory_read</code> /
+        <code>memory_write</code>) and, when <code>autoScan</code> is on, inject the
+        scan TOC before the model call.
       </p>
       <pre><code># agents/support.yaml
-memory:
-  mode: read-write     # read-only | read-write (default); read-only registers only memory_read
-  autoScan: true       # inject the scan TOC before the model call (the non-tool half)
-  # no scope here — scope is per-run, from toolContext (never baked into the manifest)</code></pre>
+resources:
+  memory:                # kind inferred from the name; read-write + autoScan by default
+    mode: read-write     # read-only | read-write; read-only registers only memory_read
+    autoScan: true       # inject the scan TOC before the model call (the non-tool half)
+  # no namespace here — the grant is per-run, from the context option (never baked in)</code></pre>
       <p>
-        You wire the implementation once, at app start, into the <code>memory</code>
-        slot. <code>mem</code> is any <code>MemoryProvider</code> — embedded or a
-        hosted client — and the YAML above never changes:
+        You wire the implementation once, at app start, into the
+        <code>resources</code> slot for <code>memory</code>. <code>mem</code> is any
+        <code>MemoryProvider</code> — embedded or a hosted client — and the YAML
+        above never changes:
       </p>
       <pre><code>const mem = createMemrez(options);          // or createMemrezClient({ url })
 
 const client = await agntz({
   agents: "./agents",
-  memory: mem.provider(),                   // the MemoryProvider slot
+  resources: { memory: mem.provider() },    // fills the memory slot
   tools: [...appTools],                     // memory_read / memory_write are NOT hand-listed
 });
-// load-time: an agent declaring `memory:` with no provider here → fail-fast, naming the agent</code></pre>
+// load-time: an agent with a `memory` resource but no provider here → fail-fast, naming the agent</code></pre>
       <p>
-        <strong>Locally, that's the whole setup:</strong> <code>pnpm add memrez</code>,
-        construct a provider (in-memory store + a fake or real reasoner — no API key
-        needed offline), inject it. agntz core never bundles memrez; it only defines
+        <strong>Locally, that's the whole setup:</strong> the batteries-included
+        entry point (<code>@agntz/runner</code>) auto-wires memrez for
+        <code>kind: memory</code> — an in-memory store + a fake or real reasoner,
+        no API key needed offline. agntz core never bundles memrez; it only defines
         the slot the provider fills.
       </p>
       <div class="note callout">
         <p>
-          <strong>Scope comes from <code>toolContext</code>, never the model.</strong>
-          An agent cannot reach another user's memory by hallucinating a scope — it
-          only picks the topic (read) or supplies the fact (write). The system tools
-          read <code>ctx.memrezScope</code>; <code>autoScan</code> calls
-          <code>contextBlock(scope)</code> with that same per-run scope.
+          <strong>The grant comes from <code>context</code>, never the model.</strong>
+          An agent cannot reach another user's memory by naming a scope — the tools
+          are <code>read(topic)</code> / <code>write(fact)</code>, with no namespace
+          argument. The runner binds them to the run's <code>context</code> grant,
+          and <code>autoScan</code> scans that same grant. The model only picks the
+          topic or supplies the fact.
         </p>
       </div>
-      <div class="note warning">
+      <div class="note callout">
         <p>
-          <strong>Per-run scope still needs <code>toolContext</code>.</strong> The
-          core <code>createRunner().invoke(input, { toolContext })</code> threads it
-          today (see the gymtext example), but <code>@agntz/sdk</code>'s
-          <code>agents.run(...)</code> does <strong>not</strong> yet — so the
-          <code>memory:</code> wiring needs that passthrough added to the SDK (or the
-          memory-bound agent runs on the core Runner). Tracked in open questions.
+          <strong>The grant threads to sub-agents automatically.</strong> Because
+          <code>context</code> is a first-class invoke option (not a free-form
+          <code>toolContext</code> value), the runner carries it through
+          <code>invoke</code>, agent-as-tool, and <code>spawn_agent</code>
+          <strong>narrow-only</strong> — a child sees its parent's grant or a
+          narrowed subset, never a wider one. The same option is added to
+          <code>@agntz/sdk</code>'s <code>agents.run()</code>, retiring the old
+          <code>toolContext</code>-passthrough gap.
         </p>
       </div>
     </section>
@@ -755,17 +848,18 @@ const client = await agntz({
         <p>
           The <strong>granted prefix</strong> is minted at the trust boundary from
           <em>verified identity</em> and is immutable for the request. The model
-          can only <strong>refine downward</strong> within it — never widen, never
-          jump sideways.
+          <strong>never names or widens it</strong>; any narrowing to a sub-namespace
+          is an app / spawning-parent decision, applied narrow-only — never a jump
+          sideways.
         </p>
       </div>
       <p>
-        So scope has two halves: a <strong>granted prefix</strong> from auth (the
-        API route, or a hosted workspace API key) that the model never controls,
-        and an optional <strong>relative refinement</strong> supplied by the agent
-        and joined under the prefix server-side — which can only narrow.
+        So scope is a <strong>granted prefix</strong> from auth (the API route, or
+        a hosted workspace API key) that the model never controls and never names.
+        Any narrowing to a sub-namespace is decided by the app or by a spawning
+        parent — applied narrow-only, server-side — not emitted by the model.
       </p>
-      <pre><code>effective_scope = granted_prefix + (optional refinement, clamped inside the prefix)</code></pre>
+      <pre><code>effective_grant = manifest static namespaces  ∪  per-run context   (narrowing clamped inside each grant)</code></pre>
       <p>
         This is the discipline agntz already uses for <code>ctx.user.id</code>: the
         route loads identity and injects it via <code>toolContext</code>; the LLM
@@ -789,17 +883,18 @@ const client = await agntz({
 └─ user/
    ├─ u_123   ← travel prefs, equipment access, goals, injuries
    └─ u_456   ← isolated: u_123's agent can never read this (sibling, not an ancestor)</code></pre>
-      <pre><code>// scope minted HERE, from the authenticated user — the trust boundary
+      <pre><code>// grant minted HERE, from the authenticated user — the trust boundary
 const scope = `gymtext/user/${userId}`;
-const toc = await memrez.contextBlock(scope);    // scan TOC as a string
 
-const result = await runner.invoke("chat", `${toc}\n\n${message}`, {
+const result = await runner.invoke("chat", message, {
   sessionId,
-  toolContext: { user, memrezScope: scope },      // memory_read/write bind to this scope
-});</code></pre>
+  context: [scope],            // the namespace grant; threads narrow-only to sub-agents
+  toolContext: { user },       // identity only; memory tools bind to the context grant
+});
+// autoScan injects the scan TOC for `scope` before the model call — no manual prepend</code></pre>
       <p>
-        <code>memory_read</code> / <code>memory_write</code> read
-        <code>ctx.memrezScope</code>; the model picks a topic but the scope is
+        <code>memory_read</code> / <code>memory_write</code> bind to the run's
+        <code>context</code> grant; the model picks a topic but the scope is
         fixed, so <code>u_123</code> and <code>u_456</code> can never see each
         other. Add trainer-wide memory later by writing at <code>gymtext</code> —
         every user's read inherits it, with no per-user duplication and no schema
@@ -840,10 +935,10 @@ const result = await runner.invoke("chat", `${toc}\n\n${message}`, {
       <div class="note callout">
         <p>
           <strong>The agent never changes; the provider does.</strong> You inject
-          one <code>MemoryProvider</code> via the <code>memory:</code> slot. Whether
+          one <code>MemoryProvider</code> via the <code>memory</code> resource slot. Whether
           <code>mem</code> is an in-process <code>createMemrez(...)</code> or a
           <code>createMemrezClient({ url })</code> talking to a hosted service, the
-          <code>memory:</code> block, the system tools, and your route code are
+          <code>resources:</code> block, the system tools, and your route code are
           identical — the same "graduate by changing one line" move agntz makes from
           <code>@agntz/sdk</code> to <code>@agntz/client</code>.
         </p>
@@ -851,8 +946,8 @@ const result = await runner.invoke("chat", `${toc}\n\n${message}`, {
       <p>
         <strong>Why the system tools are local handlers.</strong> The
         runner-registered <code>memory_read</code> / <code>memory_write</code> run
-        in-process before anything hits the wire: they bind scope from
-        <code>toolContext</code> (the capability guarantee) and call the injected
+        in-process before anything hits the wire: they bind scope from the run's
+        <code>context</code> grant (the capability guarantee) and call the injected
         provider. A raw <code>kind: http</code> tool pointed straight at hosted memrez
         would instead hand request-shaping to the model and force scope through
         templated headers — more surface, weaker isolation. So the tools stay local;
@@ -867,7 +962,7 @@ const result = await runner.invoke("chat", `${toc}\n\n${message}`, {
           </thead>
           <tbody>
             <tr>
-              <td>A <code>memory:</code> manifest block + <code>memory: mem.provider()</code> — the runner registers the system tools</td>
+              <td>A <code>memory</code> resource in the <code>resources:</code> block + <code>resources: { memory: mem.provider() }</code> — the runner registers the system tools</td>
               <td>agntz agents in your process — the easy path</td>
             </tr>
             <tr>
@@ -1019,6 +1114,25 @@ listScopeSlice(scope, opts) → entries              // for curate</code></pre>
         <article class="phase">
           <div class="phase-number">Phase 1</div>
           <div>
+            <h3>agntz context &amp; resources foundation <span style="color:var(--soft);font-weight:600">· agntz-core change · prerequisite</span></h3>
+            <p>
+              The general capability memrez plugs into, built first and independent
+              of memrez: the first-class <code>context: [namespaces]</code> invoke
+              option threaded <strong>narrow-only</strong> through <code>invoke</code>
+              / agent-as-tool / <code>spawn_agent</code> (and added to
+              <code>@agntz/sdk</code>'s <code>agents.run()</code>); the
+              <code>resources:</code> manifest block + the <code>MemoryProvider</code>
+              slot interface + validation (parse-time shape &amp; reserved names;
+              load-time fail-fast) in <code>@agntz/manifest</code> +
+              <code>@agntz/core</code>; retire the unused <code>ContextStore</code> /
+              <code>contextIds</code> path. <em>Touches agntz core — mirror in Python
+              (Phase 6), add parity fixtures.</em>
+            </p>
+          </div>
+        </article>
+        <article class="phase">
+          <div class="phase-number">Phase 2</div>
+          <div>
             <h3>memrez-core (TS), no LLM</h3>
             <p>
               Types, <code>MemoryStore</code> + in-memory adapter, scope/ancestor
@@ -1030,7 +1144,7 @@ listScopeSlice(scope, opts) → entries              // for curate</code></pre>
           </div>
         </article>
         <article class="phase">
-          <div class="phase-number">Phase 2</div>
+          <div class="phase-number">Phase 3</div>
           <div>
             <h3>agntz reasoner + manifests</h3>
             <p>
@@ -1041,29 +1155,27 @@ listScopeSlice(scope, opts) → entries              // for curate</code></pre>
           </div>
         </article>
         <article class="phase">
-          <div class="phase-number">Phase 3</div>
+          <div class="phase-number">Phase 4</div>
           <div>
-            <h3>agntz manifest integration <span style="color:var(--soft);font-weight:600">· agntz-core change</span></h3>
+            <h3>wire memrez as the <code>memory</code> resource</h3>
             <p>
-              The <code>memory:</code> manifest block + <code>MemoryProvider</code>
-              interface + validation (parse-time shape &amp; reserved names; load-time
-              fail-fast) in <code>@agntz/manifest</code> + <code>@agntz/core</code>.
-              Runner wiring registers the system tools, honors <code>mode</code>, and
-              injects the scan TOC on <code>autoScan</code>; <code>mem.provider()</code>
-              fills the slot. One end-to-end example agent. <em>Touches agntz core —
-              mirror in Python (Phase 5), add manifest parity fixtures.</em>
+              Fill the Phase 1 slot: register memory's system tools and honor
+              <code>autoScan</code> through the resources framework;
+              <code>mem.provider()</code> fills the slot, and the batteries-included
+              entry point auto-wires it as the default <code>memory</code> provider.
+              One end-to-end example agent.
             </p>
           </div>
         </article>
         <article class="phase">
-          <div class="phase-number">Phase 4</div>
+          <div class="phase-number">Phase 5</div>
           <div>
             <h3>sqlite adapter</h3>
             <p>Persistence across restarts; <code>topic_meta</code> table.</p>
           </div>
         </article>
         <article class="phase">
-          <div class="phase-number">Phase 5</div>
+          <div class="phase-number">Phase 6</div>
           <div>
             <h3>Python port</h3>
             <p>
@@ -1074,7 +1186,7 @@ listScopeSlice(scope, opts) → entries              // for curate</code></pre>
           </div>
         </article>
         <article class="phase">
-          <div class="phase-number">Phase 6</div>
+          <div class="phase-number">Phase 7</div>
           <div>
             <h3>Embeddings <span style="color:var(--soft);font-weight:600">· later</span></h3>
             <p>
@@ -1089,7 +1201,7 @@ listScopeSlice(scope, opts) → entries              // for curate</code></pre>
 
     <section id="open">
       <h2>Open questions</h2>
-      <p>All have a recommended lean; none block Phase 1.</p>
+      <p>All have a recommended lean; none block the early phases.</p>
       <ol>
         <li>
           <strong>Auto-injection.</strong> Read-side is resolved — the
@@ -1121,7 +1233,7 @@ listScopeSlice(scope, opts) → entries              // for curate</code></pre>
           coupling). Doc assumes bare <code>memrez</code>.
         </li>
         <li>
-          <strong>Where the slot lives.</strong> The <code>memory:</code> schema goes
+          <strong>Where the slot lives.</strong> The <code>resources:</code> schema goes
           in <code>@agntz/manifest</code>; does the <code>MemoryProvider</code>
           interface live in <code>@agntz/core</code> (runner-adjacent, like
           <code>SkillStore</code>) or a thin shared contract package? <em>Lean:
@@ -1133,12 +1245,12 @@ listScopeSlice(scope, opts) → entries              // for curate</code></pre>
           directly or get a packaged copy at build?
         </li>
         <li>
-          <strong>SDK <code>toolContext</code> passthrough (agntz-side).</strong> The
-          <code>memory:</code> wiring binds per-run scope from <code>toolContext</code>,
-          which the core Runner's <code>invoke(..., { toolContext })</code> threads
-          today — but <code>@agntz/sdk</code>'s <code>agents.run()</code> doesn't yet.
-          Resolution: add <code>toolContext</code> to the SDK run options (small
-          agntz-side change), or run memory-bound agents on the core Runner.
+          <strong>SDK <code>context</code> passthrough (agntz-side) — resolved.</strong>
+          Superseded by the Phase 1 context foundation: the per-run grant is a
+          first-class <code>context: [namespaces]</code> invoke option that the core
+          Runner threads narrow-only, and the same option is added to
+          <code>@agntz/sdk</code>'s <code>agents.run()</code> — built before the
+          memory resource, so no memory-specific <code>toolContext</code> passthrough is needed.
         </li>
       </ol>
     </section>
