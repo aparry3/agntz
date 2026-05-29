@@ -17,6 +17,9 @@ pnpm build
 
 # Run tests
 pnpm test
+
+# Install git hooks
+pnpm prepare
 ```
 
 ## Project Structure
@@ -43,12 +46,17 @@ pnpm --filter @agntz/app dev       # terminal 2
 
 # Run specific tests
 cd packages/core && pnpm vitest run tests/runner.test.ts
+
+# Check or apply TypeScript formatting/lint rules
+pnpm lint
+pnpm format
 ```
 
 ## Guidelines
 
 - **Write tests** for new features and bug fixes
-- **Use Biome** for formatting (`pnpm lint`)
+- **Use Biome** for TypeScript formatting and linting (`pnpm lint`, `pnpm format`)
+- **Keep hooks installed** — lefthook runs Biome on staged TypeScript workspace files before commit
 - **Keep the core small** — UI deps stay in the `app` package
 - **Agent definitions are data** — avoid patterns that require code in definitions
 - **Document public APIs** with TSDoc comments

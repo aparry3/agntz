@@ -8,6 +8,8 @@
     "build:site": "pnpm --filter @agntz/site build",
     "test": "turbo test",
     "lint": "turbo lint",
+    "format": "biome check --write packages/*/src packages/*/tests apps/provider-harness/src --no-errors-on-unmatched",
+    "prepare": "lefthook install",
     "dev": "turbo dev",
     "dev:app": "pnpm --filter @agntz/app dev",
     "dev:site": "pnpm --filter @agntz/site dev",
@@ -19,8 +21,10 @@
     "release": "pnpm build && changeset publish"
   },
   "devDependencies": {
+    "@biomejs/biome": "^1.9.0",
     "@changesets/changelog-github": "^0.6.0",
     "@changesets/cli": "^2.30.0",
+    "lefthook": "^2.1.9",
     "turbo": "^2.9.0",
     "vitepress": "^1.6.4"
   },

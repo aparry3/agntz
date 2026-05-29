@@ -1,10 +1,10 @@
 "use client";
 
-import { ACCENTS, type AccentName, TOKENS } from "./tokens";
-import { Card, H2, Lede, Pill, Row, Section } from "./primitives";
-import { ArrowIcon } from "./icons";
-import { CodeBlock } from "./code-block";
 import { LanguageToggle, usePreferredLanguage } from "../language";
+import { CodeBlock } from "./code-block";
+import { ArrowIcon } from "./icons";
+import { Card, H2, Lede, Pill, Row, Section } from "./primitives";
+import { ACCENTS, type AccentName, TOKENS } from "./tokens";
 
 const LIB_CODE_TS = `// With a library — you wire the agent yourself.
 import Anthropic from '@anthropic-ai/sdk';

@@ -168,7 +168,7 @@ async function main(): Promise<void> {
 	const originalStderrWrite = process.stderr.write.bind(process.stderr);
 	process.stderr.write = (() => true) as typeof process.stderr.write;
 	const startedAt = new Date();
-	let results;
+	let results: TestResult[];
 	try {
 		results = await runMatrix({
 			matrix: MATRIX,

@@ -392,12 +392,12 @@
     <main>
       <section class="hero" id="top">
         <div class="eyebrow">Tooling plan</div>
-        <h1>One formatter, one linter, one gate: finish adopting biome.</h1>
+        <h1>One formatter, one linter, one gate: finish biome coverage for TypeScript modules.</h1>
         <p class="lede">
-          biome is already a dependency in six of eight TypeScript packages, but it has no config and nothing
-          enforces it. This plan commits a root config matched to the existing style, brings every package and
-          the two Next.js apps under it, and wires it into CI and pre-commit so it can never drift again &mdash;
-          landed as a single PR.
+          biome already runs cleanly in the five modules that have lint scripts. The gap is coverage:
+          several TypeScript workspaces are skipped, the repo has no root policy, and CI never runs lint.
+          This plan pins the current style, brings the TS modules and provider harness under the same gate,
+          and leaves the larger Next.js UI lint debt for a separate pass.
         </p>
       </section>
 
@@ -405,11 +405,11 @@
         <a href="#current">Current State</a>
         <a href="#decision">Decision</a>
         <a href="#config">Root Config</a>
-        <a href="#next">Next.js Apps</a>
+        <a href="#next">App Boundary</a>
         <a href="#scope">Scope</a>
         <a href="#enforce">Enforcement</a>
-        <a href="#reflow">The Reflow</a>
-        <a href="#realfixes">Real Fixes</a>
+        <a href="#reflow">Format Pass</a>
+        <a href="#realfixes">Real Fix</a>
         <a href="#phases">Execution</a>
         <a href="#risks">Risks</a>
         <a href="#done">Done When</a>
@@ -419,9 +419,9 @@
         <h2>Current State</h2>
         <div class="callout">
           <p>
-            The &ldquo;269 lint violations&rdquo; are mostly an illusion: biome runs on its default config (tab
-            indentation) while the codebase is 2-space. Point a config at the real style and the bulk disappears,
-            leaving import-sorting plus a handful of genuine rule fixes.
+            <code>pnpm lint</code> is green today, but it only checks five workspaces. The current TypeScript
+            style already matches biome defaults: tabs, double quotes, semicolons, and 80-column wrapping.
+            Standardization is therefore a coverage and enforcement problem, not a repo-wide reformat problem.
           </p>
         </div>
 
@@ -435,35 +435,35 @@
           <tbody>
             <tr>
               <td>biome dependency</td>
-              <td>Present in <code>core</code>, <code>sdk</code>, <code>manifest</code>, <code>client</code>, <code>worker</code>, <code>memrez</code> (6/8). Missing in <code>store-sqlite</code>, <code>store-postgres</code>.</td>
+              <td>Present in <code>core</code>, <code>sdk</code>, <code>manifest</code>, <code>client</code>, <code>worker</code>, <code>memrez</code>. Missing in <code>store-sqlite</code>, <code>store-postgres</code>, <code>app</code>, <code>site</code>, and <code>provider-harness</code>.</td>
             </tr>
             <tr>
               <td><code>lint</code> script</td>
-              <td>Wired (<code>biome check src/</code>) in 5 packages; <code>memrez</code> has the dep but no script; stores have neither.</td>
+              <td>Root <code>pnpm lint</code> already runs <code>turbo lint</code>, but only <code>client</code>, <code>core</code>, <code>manifest</code>, <code>sdk</code>, and <code>worker</code> define a lint script. The other workspaces are skipped.</td>
             </tr>
             <tr>
               <td>biome config</td>
-              <td><span class="bad">None anywhere.</span> Runs on pure upstream defaults the code was never written to.</td>
+              <td><span class="bad">None anywhere.</span> The checked modules happen to match upstream defaults today; a root config should pin that intentionally so an upstream default cannot move the repo.</td>
             </tr>
             <tr>
               <td>Other formatters</td>
-              <td>No Prettier, no <code>.editorconfig</code>. biome is the only tool installed.</td>
+              <td>No Prettier, no <code>.editorconfig</code>. biome is the only installed formatter/linter in TS packages.</td>
             </tr>
             <tr>
               <td>Existing style</td>
-              <td>2-space indent, double quotes, semicolons. (biome default: tab, double, semicolons, 80-col.)</td>
+              <td>Tabs in TypeScript, double quotes, semicolons, 80-column biome wrapping. JSON files use 2-space indentation.</td>
             </tr>
             <tr>
               <td>Next.js apps</td>
-              <td><code>app</code>, <code>site</code> use <code>next lint</code> (ESLint) with <span class="bad">no config</span> &mdash; the lint script hangs on an interactive setup prompt and fails.</td>
+              <td><code>app</code> and <code>site</code> have no lint scripts. biome formatting mostly fits, but enabling the biome linter on them exposes ~173 existing UI diagnostics across hooks, a11y, non-null assertions, and array keys.</td>
             </tr>
             <tr>
               <td>CI enforcement</td>
-              <td><span class="bad">None.</span> The job named &ldquo;Lint &amp; Type Check&rdquo; runs <code>build</code> + <code>turbo typecheck</code> only &mdash; it never runs <code>pnpm lint</code>.</td>
+              <td><span class="bad">None.</span> The job named &ldquo;Lint &amp; Type Check&rdquo; runs <code>build</code> + <code>turbo typecheck --filter="./packages/*"</code> only. It never runs <code>pnpm lint</code>, and it excludes <code>apps/provider-harness</code>.</td>
             </tr>
             <tr>
               <td>Violation profile</td>
-              <td>~269 across 5 packages: dominated by indentation (tab vs 2-space) + import-sorting. Real rule violations in source: <strong>4</strong> (see Real Fixes).</td>
+              <td>The existing checked module source is clean. The unlinted stores and <code>memrez</code> source are clean. <code>provider-harness</code> has one real source violation: <code>noImplicitAnyLet</code>. Tests need targeted overrides if included.</td>
             </tr>
           </tbody>
         </table>
@@ -473,23 +473,23 @@
         <h2>Decision</h2>
         <div class="callout good">
           <p>
-            <strong>Standardize on biome</strong> as the single formatter <em>and</em> linter for all TypeScript.
-            The choice is effectively already made &mdash; it is installed and partway adopted. Do not introduce
-            a Prettier + ESLint pair alongside it.
+            <strong>Standardize on biome</strong> as the single formatter <em>and</em> linter for TypeScript
+            modules. The choice is effectively already made &mdash; it is installed and passing where wired.
+            Do not introduce a Prettier + ESLint pair alongside it.
           </p>
         </div>
         <div class="grid three" style="margin-top: 18px;">
           <div class="panel">
             <h3>One tool</h3>
-            <p>biome is formatter and linter in a single fast binary. Replaces the Prettier + ESLint + eslint-config-prettier dance with one root config.</p>
+            <p>biome is formatter and linter in a single fast binary. One root config is enough for the package modules and the provider harness.</p>
           </div>
           <div class="panel">
             <h3>Already chosen</h3>
-            <p>Six packages already depend on it. The work is not picking a tool &mdash; it is giving the one we have a config and a gate.</p>
+            <p>Six workspaces already depend on it and five already pass. The work is not picking a tool &mdash; it is finishing coverage and making CI run it.</p>
           </div>
           <div class="panel">
             <h3>Low churn</h3>
-            <p>Matched to existing style, the reflow is small: indentation already matches once configured; quotes and semicolons already conform.</p>
+            <p>Pinning biome defaults keeps churn low. The checked modules need no formatting reflow; only newly covered files and staged changes should be touched.</p>
           </div>
         </div>
       </section>
@@ -497,8 +497,9 @@
       <section id="config">
         <h2>Root Config</h2>
         <p style="color: var(--muted); margin-top: 0;">
-          A single <code>biome.json</code> at the repo root. biome walks up from each package to find it, so
-          per-package <code>lint</code> scripts keep working and resolve against this one file.
+          A single <code>biome.json</code> at the repo root. biome walks up from each workspace to find it, so
+          per-workspace <code>lint</code> scripts keep working and resolve against this one file. The config
+          deliberately pins the style that already passes.
         </p>
         <pre><code>// biome.json (repo root)
 {
@@ -506,9 +507,8 @@
   "organizeImports": { "enabled": true },
   "formatter": {
     "enabled": true,
-    "indentStyle": "space",
-    "indentWidth": 2,
-    "lineWidth": 100
+    "indentStyle": "tab",
+    "lineWidth": 80
   },
   "javascript": {
     "formatter": {
@@ -516,13 +516,16 @@
       "semicolons": "always"
     }
   },
+  "json": {
+    "formatter": {
+      "indentStyle": "space",
+      "indentWidth": 2
+    }
+  },
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
-      "style": {
-        "noNonNullAssertion": "off"
-      }
+      "recommended": true
     }
   },
   "files": {
@@ -531,7 +534,19 @@
   "overrides": [
     {
       "include": ["**/tests/**", "**/__tests__/**", "**/*.test.ts"],
-      "linter": { "rules": { "suspicious": { "noExplicitAny": "off" } } }
+      "linter": {
+        "rules": {
+          "style": { "noNonNullAssertion": "off" },
+          "suspicious": {
+            "noExplicitAny": "off",
+            "noAssignInExpressions": "off"
+          }
+        }
+      }
+    },
+    {
+      "include": ["packages/app/**", "packages/site/**"],
+      "linter": { "enabled": false }
     }
   ]
 }</code></pre>
@@ -547,8 +562,8 @@
           <tbody>
             <tr>
               <td>indentStyle / width</td>
-              <td><code>space</code> / <code>2</code></td>
-              <td>Matches existing code. This single setting erases the bulk of the 269.</td>
+              <td><code>tab</code> / biome default</td>
+              <td>Matches existing TypeScript. Switching to spaces would create a noisy, unnecessary reflow.</td>
             </tr>
             <tr>
               <td>quoteStyle</td>
@@ -562,58 +577,85 @@
             </tr>
             <tr>
               <td>lineWidth</td>
-              <td><code>100</code></td>
-              <td>Modern default; less wrap churn than biome&rsquo;s 80. Tune after seeing the diff.</td>
+              <td><code>80</code></td>
+              <td>Matches current formatting. Raising this to 100 or 120 collapses many intentionally wrapped declarations.</td>
             </tr>
             <tr>
               <td>organizeImports</td>
               <td><code>on</code></td>
-              <td>Sorts imports deterministically &mdash; the second-largest violation category.</td>
+              <td>Already clean in the checked modules; keep it enabled so imports stay deterministic.</td>
             </tr>
             <tr>
-              <td>noNonNullAssertion</td>
-              <td><code>off</code></td>
-              <td>Noisy, mostly fires in tests, and its autofix (<code>!</code>&rarr;<code>?.</code>) is behavior-changing &mdash; it silently no-ops instead of throwing, hiding test failures.</td>
+              <td>JSON formatter</td>
+              <td><code>space</code> / <code>2</code></td>
+              <td>TS uses tabs, but package/config JSON files already use 2-space indentation.</td>
             </tr>
             <tr>
-              <td>noExplicitAny (tests)</td>
-              <td><code>off</code> in tests</td>
-              <td><code>any</code> is acceptable in test scaffolding; keep it enforced in <code>src</code>.</td>
+              <td>test overrides</td>
+              <td><code>any</code>, non-null assertions, assignment loops relaxed</td>
+              <td>These are common in test scaffolding and currently account for most test-only diagnostics. Keep the source rules strict.</td>
+            </tr>
+            <tr>
+              <td>Next app override</td>
+              <td>formatter yes, linter no</td>
+              <td>Lets staged app files be formatted without forcing the ~173 existing UI lint fixes into the module standardization PR.</td>
             </tr>
           </tbody>
         </table>
         <div class="callout" style="margin-top: 18px;">
           <p>
-            Keep the rules with real signal enabled: <code>noExplicitAny</code> (in src), <code>noAssignInExpressions</code>,
-            <code>useLiteralKeys</code>. The point of the gate is to catch those, not to relitigate brace style.
+            Keep the rules with real signal enabled in source: <code>noImplicitAnyLet</code>, <code>noExplicitAny</code>,
+            <code>noAssignInExpressions</code>, and <code>useLiteralKeys</code>. The point of the gate is to catch
+            real source drift while keeping historical test patterns from blocking adoption.
           </p>
         </div>
       </section>
 
       <section id="next">
-        <h2>Next.js Apps</h2>
+        <h2>App Boundary</h2>
         <div class="grid">
           <div class="panel">
-            <h3>biome formats, ESLint guards</h3>
+            <h3>Do not hide app debt</h3>
             <p>
-              biome formats and lints <code>app</code> and <code>site</code> like everything else. A thin ESLint
-              config keeps only Next&rsquo;s framework rules (image/script/web-vitals) that biome does not replicate.
+              <code>app</code> and <code>site</code> should use the same formatter, but their linter adoption is
+              not the same task as module standardization. Turning on biome&rsquo;s recommended linter for both apps
+              currently reports ~173 diagnostics.
             </p>
           </div>
           <div class="panel">
-            <h3>Minimal eslintrc</h3>
+            <h3>Stage app lint separately</h3>
             <p>
-              Each app gets <code>{ "extends": "next/core-web-vitals" }</code> &mdash; which they need anyway to
-              stop the interactive setup prompt. No formatting rules in ESLint; formatting is biome&rsquo;s job.
+              Handle hooks, accessibility, array keys, SVG titles, and app non-null assertions in a follow-up UI
+              lint PR. Until then, disable biome linter diagnostics for app paths while still allowing formatting
+              and import organization.
             </p>
           </div>
         </div>
-        <pre><code>// packages/app/.eslintrc.json  (and packages/site/.eslintrc.json)
-{ "extends": "next/core-web-vitals" }</code></pre>
+        <table>
+          <thead>
+            <tr>
+              <th>Path</th>
+              <th>Initial gate</th>
+              <th>Follow-up</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>packages/app</code></td>
+              <td>Format and organize imports only.</td>
+              <td>Fix existing React hook, a11y, SVG-title, key, and non-null diagnostics, then enable lint.</td>
+            </tr>
+            <tr>
+              <td><code>packages/site</code></td>
+              <td>Format and organize imports only. One current import-sort fix is expected.</td>
+              <td>Fix landing/docs UI diagnostics, then enable lint.</td>
+            </tr>
+          </tbody>
+        </table>
         <div class="callout" style="margin-top: 18px;">
           <p>
-            Rejected alternative: dropping <code>next lint</code> entirely for an all-biome setup. Simpler, but it
-            loses Next&rsquo;s accessibility and performance rules. The one extra config file is worth keeping them.
+            If the team still wants framework-specific Next rules, add that as a separate ESLint decision.
+            Do not mix it into the TS module standardization PR; that would turn a small tooling fix into a UI lint migration.
           </p>
         </div>
       </section>
@@ -622,16 +664,16 @@
         <h2>Scope</h2>
         <div class="stack">
           <div class="rule">
-            <strong>All 8 TS packages</strong>
-            <p>Add the biome devDependency and a <code>lint</code> script to <code>store-sqlite</code>, <code>store-postgres</code>, and <code>memrez</code> (currently unlinted). Consistency is the entire point.</p>
+            <strong>All TS modules</strong>
+            <p>Keep the five passing lint scripts and add coverage for <code>memrez</code>, <code>store-sqlite</code>, <code>store-postgres</code>, and <code>provider-harness</code>. These are the module workspaces currently skipped by <code>pnpm lint</code>.</p>
           </div>
           <div class="rule">
-            <strong>Lint tests too</strong>
-            <p>Point lint scripts at the package root (<code>biome check .</code>), not just <code>src/</code>, so test files are covered &mdash; with the test-file rule relaxations from the overrides block.</p>
+            <strong>Include tests</strong>
+            <p>Prefer linting <code>src</code> plus <code>tests</code> for modules that have tests. Use targeted test overrides for <code>any</code>, non-null assertions, and assignment-in-loop patterns instead of weakening source rules.</p>
           </div>
           <div class="rule">
-            <strong>Two Next apps</strong>
-            <p>biome for format + general lint; ESLint <code>next/core-web-vitals</code> for framework rules.</p>
+            <strong>Next apps later</strong>
+            <p>Do not enable app lint in the first PR. Allow formatting/import sorting, document the current diagnostics, and land app lint once the UI debt is fixed.</p>
           </div>
           <div class="rule">
             <strong>One root config</strong>
@@ -651,51 +693,48 @@
         <div class="grid three" style="margin-top: 18px;">
           <div class="panel">
             <h3>CI gate</h3>
-            <p>Add a real <code>lint</code> step to the &ldquo;Lint &amp; Type Check&rdquo; job: <code>pnpm turbo lint</code> (or <code>biome ci .</code> at the root). It must actually fail the build on violations.</p>
+            <p>Add a real <code>lint</code> step to the &ldquo;Lint &amp; Type Check&rdquo; job: <code>pnpm lint</code>. It must run before or alongside typecheck and fail the build on violations.</p>
           </div>
           <div class="panel">
             <h3>Pre-commit hook</h3>
-            <p><strong>lefthook</strong> (lighter than husky) running <code>biome check --staged --no-errors-on-unmatched</code> on staged files only &mdash; fast, local, catches drift before it lands.</p>
+            <p><strong>lefthook</strong> filters staged TypeScript module files, then runs <code>biome check --write --no-errors-on-unmatched {staged_files}</code> &mdash; fast, local, and scoped to the files being committed.</p>
           </div>
           <div class="panel">
-            <h3>Blame hygiene</h3>
-            <p>Add <code>.git-blame-ignore-revs</code> with the reflow commit SHA and set <code>git config blame.ignoreRevsFile</code>. GitHub honors it automatically.</p>
+            <h3>Root commands</h3>
+            <p>Keep <code>pnpm lint</code> as the canonical check. Add <code>pnpm format</code> as a targeted <code>biome check --write</code> pass over <code>packages/*/src</code>, <code>packages/*/tests</code>, and <code>apps/provider-harness/src</code>.</p>
           </div>
         </div>
       </section>
 
       <section id="reflow">
-        <h2>The Reflow</h2>
+        <h2>Format Pass</h2>
         <div class="stack">
           <div class="rule">
-            <strong>One commit</strong>
-            <p>Run <code>biome check --write</code> (<em>safe</em> fixes only &mdash; not <code>--unsafe</code>). Land it as a single isolated commit: <code>style: apply biome formatting across monorepo</code>. No logic changes in this commit.</p>
+            <strong>No mass reflow</strong>
+            <p>The existing checked modules already pass biome formatting with defaults. Do not run a repo-wide style churn commit unless the final config produces an actual diff worth isolating.</p>
           </div>
           <div class="rule">
-            <strong>Lands with the gate</strong>
-            <p>The reflow and CI enforcement must land together. Turn the gate on before reflowing and CI goes red; reflow without the gate and it drifts. One PR, sequenced commits.</p>
+            <strong>Targeted writes</strong>
+            <p>Run <code>biome check --write</code> only on newly covered paths and staged files. Use safe fixes only; avoid <code>--unsafe</code> for the adoption pass.</p>
           </div>
           <div class="rule">
-            <strong>Timing</strong>
-            <p>Do it now: <code>main</code> is clean and in sync, and the window right after a merge &mdash; before new branches fan out &mdash; is the lowest-conflict moment for a repo-wide reflow.</p>
+            <strong>Blame stays clean</strong>
+            <p>If the final diff is just config, package scripts, one provider-harness type fix, and possibly one app import sort, skip <code>.git-blame-ignore-revs</code>. Add it only if a broad format commit becomes unavoidable.</p>
           </div>
         </div>
-        <div class="callout danger" style="margin-top: 18px;">
+        <div class="callout warning" style="margin-top: 18px;">
           <p>
-            <strong>In-flight branch caveat.</strong> A repo-wide format touches nearly every file and will conflict
-            with anything outstanding. The <code>provider-harness</code> line is noted as carrying an unmerged core
-            fix &mdash; confirm it and any other active branches are merged or paused first, or land the config + gate
-            now and hold the reflow until the tree is quiet.
+            Raising <code>lineWidth</code> to 100 or 120 looks tempting, but it causes biome to collapse many
+            existing multiline declarations. Keep 80 unless the team explicitly wants a separate formatting change.
           </p>
         </div>
       </section>
 
       <section id="realfixes">
-        <h2>Real Fixes</h2>
+        <h2>Real Fix</h2>
         <p style="color: var(--muted); margin-top: 0;">
-          Stripped of formatting noise, only four rule violations live in source &mdash; the only ones that might
-          mask a real bug rather than a style preference. Read and fix these <strong>by hand</strong>, not by autofix,
-          before the reflow.
+          The unlinted module source is almost clean. The only source issue found while checking the newly
+          covered module paths is in <code>provider-harness</code>.
         </p>
         <table>
           <thead>
@@ -707,31 +746,17 @@
           </thead>
           <tbody>
             <tr>
-              <td><code>core/src/pipeline/sequential.ts:71</code></td>
-              <td>noNonNullAssertion</td>
-              <td>Confirm the value is truly guaranteed non-null; replace <code>!</code> with a guard or keep with an intentional comment.</td>
-            </tr>
-            <tr>
-              <td><code>core/src/webhooks/dispatcher.ts:140</code></td>
-              <td>noNonNullAssertion</td>
-              <td>Same &mdash; a <code>!</code> in webhook dispatch could hide a missing-field case.</td>
-            </tr>
-            <tr>
-              <td><code>manifest/src/http-url.ts:38</code></td>
-              <td>noAssignInExpressions</td>
-              <td>Likely an intentional <code>exec()</code> loop; confirm and make the assignment explicit if so.</td>
-            </tr>
-            <tr>
-              <td><code>manifest/src/http-url.ts:110</code></td>
-              <td>noAssignInExpressions</td>
-              <td>Same pattern; verify it is not an accidental <code>=</code> for <code>===</code>.</td>
+              <td><code>apps/provider-harness/src/index.ts:171</code></td>
+              <td><code>noImplicitAnyLet</code></td>
+              <td>Give <code>results</code> an explicit type or initialize it from the returned <code>runMatrix</code> shape. This should be a normal source fix, not a suppression.</td>
             </tr>
           </tbody>
         </table>
         <div class="callout" style="margin-top: 18px;">
           <p>
-            The other ~11 non-null assertions, the lone <code>any</code>, and the computed-key nits all live in
-            test files and are handled by the config (rule off / test override) &mdash; no manual work.
+            When module tests are included, expect historical test scaffolding diagnostics: explicit <code>any</code>,
+            non-null assertions, and one assignment-in-loop SSE parser. The proposed test override handles those
+            without reducing source strictness.
           </p>
         </div>
       </section>
@@ -743,49 +768,49 @@
             <div class="num">0</div>
             <div class="body">
               <h3>Branch</h3>
-              <p>Cut <code>chore/biome-standardization</code> from a clean, in-sync <code>main</code>. Confirm no conflicting branches are mid-flight (see reflow caveat).</p>
+              <p>Cut <code>chore/biome-standardization</code> from the current clean, in-sync <code>main</code>. This should be a small tooling PR, not a mass-format branch.</p>
             </div>
           </div>
           <div class="phase">
             <div class="num">1</div>
             <div class="body">
               <h3>Config &amp; coverage</h3>
-              <p>Add root <code>biome.json</code>. Add biome dep + <code>lint</code> script to <code>store-sqlite</code>, <code>store-postgres</code>, <code>memrez</code>; point all lint scripts at the package root. Add <code>next/core-web-vitals</code> eslintrc to <code>app</code> and <code>site</code>.</p>
+              <p>Add root <code>biome.json</code> pinned to tabs/80-col. Add biome dep + <code>lint</code> script to <code>memrez</code>, <code>store-sqlite</code>, <code>store-postgres</code>, and <code>provider-harness</code>. Keep app linter disabled by override for now.</p>
             </div>
           </div>
           <div class="phase">
             <div class="num">2</div>
             <div class="body">
-              <h3>Real fixes</h3>
-              <p>Hand-fix the four source violations. Commit: <code>fix: resolve genuine lint violations</code>. Keeps real changes out of the formatting noise.</p>
+              <h3>Source fix</h3>
+              <p>Fix the provider-harness <code>noImplicitAnyLet</code> violation by typing or initializing <code>results</code>. Commit with the tooling work; no separate reflow commit should be necessary.</p>
             </div>
           </div>
           <div class="phase">
             <div class="num">3</div>
             <div class="body">
-              <h3>Reflow</h3>
-              <p>Run <code>biome check --write</code> across the repo. Commit: <code>style: apply biome formatting across monorepo</code>. Pure formatting + import-sorting, no logic.</p>
+              <h3>Targeted format</h3>
+              <p>Run <code>biome check --write</code> on newly covered module paths. If app formatting is included, expect at least one import-sort change in <code>packages/site</code>. Do not run <code>--unsafe</code>.</p>
             </div>
           </div>
           <div class="phase">
             <div class="num">4</div>
             <div class="body">
-              <h3>Blame hygiene</h3>
-              <p>Add <code>.git-blame-ignore-revs</code> with the reflow SHA; document <code>git config blame.ignoreRevsFile .git-blame-ignore-revs</code> in CONTRIBUTING.</p>
+              <h3>Hook</h3>
+              <p>Add lefthook with a staged-file biome command. Confirm app-path linter overrides prevent pre-commit from forcing the follow-up UI lint migration.</p>
             </div>
           </div>
           <div class="phase">
             <div class="num">5</div>
             <div class="body">
               <h3>Gate</h3>
-              <p>Add the <code>lint</code> step to the CI job. Add lefthook pre-commit running biome on staged files. Add a root <code>lint</code> script if helpful.</p>
+              <p>Add <code>pnpm lint</code> to the CI &ldquo;Lint &amp; Type Check&rdquo; job. Keep the existing root <code>lint</code> script; optionally add <code>format</code> for local writes.</p>
             </div>
           </div>
           <div class="phase">
             <div class="num">6</div>
             <div class="body">
               <h3>Verify &amp; PR</h3>
-              <p>Confirm <code>pnpm lint</code>, <code>pnpm build</code>, <code>pnpm turbo typecheck</code>, and <code>pnpm test</code> are all green. Open the PR; CI lint job must pass.</p>
+              <p>Confirm <code>pnpm lint</code>, <code>pnpm build</code>, <code>pnpm turbo typecheck</code>, and <code>pnpm test</code> are green. Open the PR with a note that Next app lint is intentionally deferred.</p>
             </div>
           </div>
         </div>
@@ -802,24 +827,24 @@
           </thead>
           <tbody>
             <tr>
-              <td>Reflow conflicts with in-flight branches</td>
-              <td>Time it between branches on a quiet tree; or land config + gate first and hold the reflow. Rebase outstanding branches right after it merges.</td>
+              <td>Accidentally creating a repo-wide reflow</td>
+              <td>Pin tabs and 80-col. Run writes only on targeted paths. Review the diff before committing.</td>
             </tr>
             <tr>
               <td>Unsafe autofixes change behavior</td>
-              <td>Use safe <code>--write</code> only. Hand-review the four real violations. Never run <code>--unsafe</code> in the reflow.</td>
+              <td>Use safe <code>--write</code> only. Hand-fix the provider-harness type issue. Never run <code>--unsafe</code> in the adoption pass.</td>
             </tr>
             <tr>
-              <td>Blame noise from mass reformat</td>
-              <td><code>.git-blame-ignore-revs</code> pointed at the single reflow commit; honored by GitHub and local git.</td>
+              <td>Next app diagnostics block module adoption</td>
+              <td>Disable linter diagnostics for <code>packages/app</code> and <code>packages/site</code> in the initial config; track app lint as a follow-up PR.</td>
             </tr>
             <tr>
               <td>Pre-commit friction slows commits</td>
-              <td>lefthook runs biome on <em>staged files only</em> &mdash; near-instant. Auto-fixes on commit where safe.</td>
+              <td>lefthook runs biome on <em>staged files only</em> and writes safe fixes. Keep the command scoped and fast.</td>
             </tr>
             <tr>
-              <td>lineWidth 100 still over-wraps</td>
-              <td>It is one config line. Review the reflow diff; adjust before merging if a different width is calmer.</td>
+              <td>Test overrides hide source problems</td>
+              <td>Apply the relaxed rules only under <code>tests</code>, <code>__tests__</code>, and <code>*.test.ts</code>. Source keeps recommended biome rules.</td>
             </tr>
           </tbody>
         </table>
@@ -831,7 +856,7 @@
           <div class="panel">
             <h3>Green</h3>
             <ul>
-              <li><code>pnpm lint</code> exits 0 across all 8 packages and both Next apps.</li>
+              <li><code>pnpm lint</code> exits 0 across all TypeScript module workspaces, including <code>memrez</code>, both stores, and <code>provider-harness</code>.</li>
               <li><code>pnpm build</code>, <code>turbo typecheck</code>, and <code>pnpm test</code> still pass.</li>
               <li>CI &ldquo;Lint &amp; Type Check&rdquo; job actually runs lint and passes.</li>
             </ul>
@@ -839,10 +864,10 @@
           <div class="panel">
             <h3>Durable</h3>
             <ul>
-              <li>One root <code>biome.json</code> matched to house style; no per-package configs.</li>
+              <li>One root <code>biome.json</code> pins the current TS style; no per-package configs.</li>
               <li>lefthook pre-commit installed and documented.</li>
-              <li><code>.git-blame-ignore-revs</code> in place so blame survives the reflow.</li>
-              <li>The four real violations resolved by hand, not suppressed wholesale.</li>
+              <li>The provider-harness source violation is fixed by hand, not suppressed.</li>
+              <li>Next app lint debt is explicitly documented as a follow-up rather than silently ignored.</li>
             </ul>
           </div>
         </div>

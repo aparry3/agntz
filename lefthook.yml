@@ -1,0 +1,19 @@
+pre-commit:
+  commands:
+    biome:
+      files: >
+        git diff --name-only --cached --diff-filter=ACMR --
+        'packages/*/src/*.ts' 'packages/*/src/**/*.ts'
+        'packages/*/src/*.tsx' 'packages/*/src/**/*.tsx'
+        'packages/*/src/*.mts' 'packages/*/src/**/*.mts'
+        'packages/*/src/*.cts' 'packages/*/src/**/*.cts'
+        'packages/*/tests/*.ts' 'packages/*/tests/**/*.ts'
+        'packages/*/tests/*.tsx' 'packages/*/tests/**/*.tsx'
+        'packages/*/tests/*.mts' 'packages/*/tests/**/*.mts'
+        'packages/*/tests/*.cts' 'packages/*/tests/**/*.cts'
+        'apps/provider-harness/src/*.ts' 'apps/provider-harness/src/**/*.ts'
+        'apps/provider-harness/src/*.tsx' 'apps/provider-harness/src/**/*.tsx'
+        'apps/provider-harness/src/*.mts' 'apps/provider-harness/src/**/*.mts'
+        'apps/provider-harness/src/*.cts' 'apps/provider-harness/src/**/*.cts'
+      run: pnpm exec biome check --write --no-errors-on-unmatched {files}
+      stage_fixed: true
