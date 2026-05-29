@@ -207,6 +207,28 @@ importers:
         specifier: ^3.2.0
         version: 3.2.4(@types/debug@4.1.13)(@types/node@22.19.15)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.22.3)(yaml@2.8.3)
 
+  packages/memrez:
+    dependencies:
+      '@agntz/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@biomejs/biome':
+        specifier: ^1.9.0
+        version: 1.9.4
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(jiti@2.6.1)(postcss@8.5.8)(tsx@4.22.3)(typescript@5.9.3)(yaml@2.8.3)
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.4(@types/debug@4.1.13)(@types/node@22.19.15)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.22.3)(yaml@2.8.3)
+
   packages/sdk:
     dependencies:
       '@agntz/client':
