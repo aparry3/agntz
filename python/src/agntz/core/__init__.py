@@ -13,6 +13,17 @@ from .model_provider import (
     ToolCall,
     ToolResult,
 )
+from .resources import (
+    ResolvedResource,
+    ResourceMode,
+    ResourceProvider,
+    ResourceProviderToolDefinition,
+    ResourceRegistrationContext,
+    ResourceToolContext,
+    clamp_resource_mode,
+    make_resource_tool_name,
+    resource_tool_prefix,
+)
 from .tools import ToolDefinition, tool
 
 __all__ = [
@@ -22,13 +33,22 @@ __all__ = [
     "ModelMessage",
     "ModelProvider",
     "ModelTool",
+    "ResourceMode",
+    "ResourceProvider",
+    "ResourceProviderToolDefinition",
+    "ResourceRegistrationContext",
+    "ResourceToolContext",
+    "ResolvedResource",
     "ToolDefinition",
     "ToolCall",
     "ToolResult",
+    "clamp_resource_mode",
     "format_litellm_model",
     "invoke_http_tool",
     "invoke_mcp_tool",
+    "make_resource_tool_name",
     "nanoid",
+    "resource_tool_prefix",
     "run_id",
     "session_id",
     "trace_id",

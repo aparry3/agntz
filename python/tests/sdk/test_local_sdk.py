@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import pytest
 from pydantic import BaseModel
 
 from agntz import (
@@ -13,6 +14,7 @@ from agntz import (
     LiteLLMModelProvider,
     ModelMessage,
     ModelTool,
+    NamespaceGrantError,
     SQLiteStore,
     ToolCall,
     ToolResult,
@@ -277,6 +279,24 @@ def test_local_sdk_arun_inside_event_loop(tmp_path: Path) -> None:
     import asyncio
 
     assert asyncio.run(run()).startswith("sess_")
+
+
+def test_local_sdk_accepts_and_validates_runtime_context(tmp_path: Path) -> None:
+    client = agntz(agents=str(_copy_agents(tmp_path)), model_provider=FakeProvider())
+
+    result = client.agents.run(
+        agent_id="support",
+        input={"userQuery": "Refund request"},
+        context=["app/user/u_123"],
+    )
+
+    assert result.output == {"answer": "Use the refund workflow.", "confidence": 0.82}
+    with pytest.raises(NamespaceGrantError):
+        client.agents.run(
+            agent_id="support",
+            input={"userQuery": "Refund request"},
+            context=[" app/user/u_123"],
+        )
 
 
 def test_local_sdk_invokes_http_tool(tmp_path: Path) -> None:

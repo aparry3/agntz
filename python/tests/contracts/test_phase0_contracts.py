@@ -47,6 +47,9 @@ def test_manifest_kind_contract_fixtures_match_yaml() -> None:
         if "outputSchema" in expected:
             assert manifest["outputSchema"] == expected["outputSchema"]
 
+        if "resources" in expected:
+            assert manifest["resources"] == expected["resources"]
+
         if "stepKeys" in expected:
             assert [step["stateKey"] for step in manifest["steps"]] == expected["stepKeys"]
 
@@ -63,6 +66,12 @@ def test_client_wire_contract_pins_hosted_request_and_stream_shape() -> None:
         "agentId": "support",
         "input": "hello",
         "sessionId": "sess_abc",
+    }
+    assert contract["contextRunRequest"]["body"] == {
+        "agentId": "support",
+        "input": "hello",
+        "sessionId": "sess_abc",
+        "context": ["app/user/u_123"],
     }
     assert contract["streamRequest"]["path"] == "/run/stream"
     assert contract["streamRequest"]["accept"] == "text/event-stream"

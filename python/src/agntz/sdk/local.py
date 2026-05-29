@@ -3,26 +3,38 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import time
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import httpx
+from pydantic import BaseModel
 
 from agntz.client.models import Event, RunResult
+from agntz.context import normalize_namespace_grants
 from agntz.core import (
     GenerateTextResult,
     MissingModelProvider,
     ModelMessage,
     ModelProvider,
     ModelTool,
+    ResolvedResource,
+    ResourceMode,
+    ResourceProvider,
+    ResourceProviderToolDefinition,
+    ResourceRegistrationContext,
+    ResourceToolContext,
     ToolCall,
     ToolDefinition,
     ToolResult,
+    clamp_resource_mode,
     invoke_http_tool,
     invoke_mcp_tool,
+    make_resource_tool_name,
 )
 from agntz.core.ids import nanoid
 from agntz.core.ids import run_id as new_run_id
@@ -53,11 +65,13 @@ class LocalClient:
         manifests: dict[str, AgentManifest],
         tools: dict[str, ToolDefinition],
         model_provider: ModelProvider | None,
+        resources: Mapping[str, ResourceProvider] | None = None,
         store: RunStore | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self.manifests = manifests
         self.tools = tools
+        self.resource_providers = dict(resources or {})
         self.model_provider = model_provider or MissingModelProvider()
         self.store = store or MemoryStore()
         self.http_client = http_client
@@ -72,9 +86,11 @@ class LocalClient:
         agent_id: str,
         input: Any = None,
         session_id: str | None = None,
+        context: list[str] | None = None,
     ) -> RunResult:
         manifest = self.manifests[agent_id]
         resolved_session_id = session_id or new_session_id()
+        normalized_context = normalize_namespace_grants(context)
         local_run_id = new_run_id()
         local_trace_id = new_trace_id()
         started_at = time.time()
@@ -84,6 +100,7 @@ class LocalClient:
             session_id=resolved_session_id,
             run_id=local_run_id,
             trace_id=local_trace_id,
+            context=normalized_context,
         )
         self.store.append_messages(
             resolved_session_id,
@@ -188,9 +205,21 @@ class LocalAgentsResource:
     def __init__(self, client: LocalClient) -> None:
         self._client = client
 
-    def run(self, *, agent_id: str, input: Any = None, session_id: str | None = None) -> RunResult:
+    def run(
+        self,
+        *,
+        agent_id: str,
+        input: Any = None,
+        session_id: str | None = None,
+        context: list[str] | None = None,
+    ) -> RunResult:
         return _run_blocking(
-            self._client._execute(agent_id=agent_id, input=input, session_id=session_id)
+            self._client._execute(
+                agent_id=agent_id,
+                input=input,
+                session_id=session_id,
+                context=context,
+            )
         )
 
     async def arun(
@@ -199,8 +228,14 @@ class LocalAgentsResource:
         agent_id: str,
         input: Any = None,
         session_id: str | None = None,
+        context: list[str] | None = None,
     ) -> RunResult:
-        return await self._client._execute(agent_id=agent_id, input=input, session_id=session_id)
+        return await self._client._execute(
+            agent_id=agent_id,
+            input=input,
+            session_id=session_id,
+            context=context,
+        )
 
     def stream(
         self,
@@ -208,6 +243,7 @@ class LocalAgentsResource:
         agent_id: str,
         input: Any = None,
         session_id: str | None = None,
+        context: list[str] | None = None,
     ) -> Iterator[Event]:
         resolved_session_id = session_id or new_session_id()
         manifest = self._client.manifests[agent_id]
@@ -217,7 +253,12 @@ class LocalAgentsResource:
             kind=manifest.kind,
             sessionId=resolved_session_id,
         )
-        result = self.run(agent_id=agent_id, input=input, session_id=resolved_session_id)
+        result = self.run(
+            agent_id=agent_id,
+            input=input,
+            session_id=resolved_session_id,
+            context=context,
+        )
         yield Event(
             type="complete",
             output=result.output,
@@ -343,12 +384,16 @@ class _LocalExecutionContext:
         session_id: str,
         run_id: str,
         trace_id: str,
+        context: list[str],
     ) -> None:
         self._client = client
         self.agent_id = agent_id
         self.session_id = session_id
         self.run_id = run_id
         self.trace_id = trace_id
+        self.context = context
+        self.invocation_id = f"inv_{nanoid()}"
+        self._parent_resource_modes_stack: list[dict[str, ResourceMode]] = []
 
     async def invoke_llm(
         self,
@@ -357,7 +402,11 @@ class _LocalExecutionContext:
         prompt: str | None,
         state: AgentState,
     ) -> Any:
-        model_tools = self._model_tools_for_manifest(manifest)
+        resources = self._resolved_resources_for_manifest(manifest)
+        resource_context = await self._collect_resource_context(manifest, resources)
+        if resource_context:
+            instruction = f"{instruction}\n\n{resource_context}"
+        model_tools = self._model_tools_for_manifest(manifest, resources)
         messages = [
             ModelMessage(
                 role=message.role,
@@ -460,8 +509,13 @@ class _LocalExecutionContext:
         )
         return result
 
-    def _model_tools_for_manifest(self, manifest: LLMAgentManifest) -> list[ModelTool]:
+    def _model_tools_for_manifest(
+        self,
+        manifest: LLMAgentManifest,
+        resources: list[ResolvedResource] | None = None,
+    ) -> list[ModelTool]:
         tools: list[ModelTool] = []
+        seen_tool_names: set[str] = set()
         for entry in manifest.tools or []:
             kind = entry.get("kind")
             if kind == "local":
@@ -469,6 +523,9 @@ class _LocalExecutionContext:
                     definition = self._client.tools.get(str(name))
                     if definition is None:
                         raise RuntimeError(f"Local tool '{name}' was not registered")
+                    if definition.name in seen_tool_names:
+                        raise RuntimeError(f"Tool '{definition.name}' is registered more than once")
+                    seen_tool_names.add(definition.name)
                     tools.append(
                         ModelTool(
                             name=definition.name,
@@ -477,9 +534,13 @@ class _LocalExecutionContext:
                         )
                     )
             elif kind == "http":
+                tool_name = str(entry["name"])
+                if tool_name in seen_tool_names:
+                    raise RuntimeError(f"Tool '{tool_name}' is registered more than once")
+                seen_tool_names.add(tool_name)
                 tools.append(
                     ModelTool(
-                        name=str(entry["name"]),
+                        name=tool_name,
                         description=str(entry.get("description") or entry["name"]),
                         input_schema=_schema_from_params(entry.get("params")),
                     )
@@ -488,10 +549,14 @@ class _LocalExecutionContext:
                 for item in entry.get("tools", []) or []:
                     name = item if isinstance(item, str) else item.get("tool")
                     if name:
+                        tool_name = str(name)
+                        if tool_name in seen_tool_names:
+                            raise RuntimeError(f"Tool '{tool_name}' is registered more than once")
+                        seen_tool_names.add(tool_name)
                         tools.append(
                             ModelTool(
-                                name=str(name),
-                                description=str(name),
+                                name=tool_name,
+                                description=tool_name,
                                 input_schema=_schema_from_params(
                                     item.get("params") if isinstance(item, dict) else None
                                 ),
@@ -500,6 +565,9 @@ class _LocalExecutionContext:
             elif kind == "agent":
                 agent_id = str(entry["agent"])
                 agent = self._client.manifests.get(agent_id)
+                if agent_id in seen_tool_names:
+                    raise RuntimeError(f"Tool '{agent_id}' is registered more than once")
+                seen_tool_names.add(agent_id)
                 tools.append(
                     ModelTool(
                         name=agent_id,
@@ -507,6 +575,23 @@ class _LocalExecutionContext:
                         input_schema=_json_schema_from_manifest_input(agent),
                     )
                 )
+        for _resource, provider_tool, tool_name in self._resource_provider_tools(
+            manifest,
+            resources,
+        ):
+            if tool_name in seen_tool_names or tool_name in self._client.tools:
+                raise RuntimeError(
+                    f"Resource tool '{tool_name}' conflicts with an existing tool. "
+                    "Rename the resource or tool."
+                )
+            seen_tool_names.add(tool_name)
+            tools.append(
+                ModelTool(
+                    name=tool_name,
+                    description=provider_tool.description,
+                    input_schema=_schema_for_input_schema(provider_tool.input_schema),
+                )
+            )
         return tools
 
     async def _execute_model_tool_call(
@@ -584,8 +669,19 @@ class _LocalExecutionContext:
                 )
             if kind == "agent" and call.name == entry.get("agent"):
                 child = await self.resolve_agent(call.name)
-                result = await execute(child, call.input, self)
+                parent_modes = self._resource_modes_by_kind(
+                    self._resolved_resources_for_manifest(manifest)
+                )
+                with self._resource_parent_modes(parent_modes):
+                    result = await execute(child, call.input, self)
                 return result.output
+        resource_call = self._resolve_resource_tool_call(manifest, call.name)
+        if resource_call is not None:
+            resource, provider_tool = resource_call
+            return await provider_tool.run(
+                call.input,
+                self._make_resource_tool_context(resource, manifest),
+            )
         raise RuntimeError(f"Model requested unknown tool '{call.name}'")
 
     async def invoke_tool(self, config: ToolCallConfig, state: AgentState) -> Any:
@@ -662,11 +758,147 @@ class _LocalExecutionContext:
         except KeyError as exc:
             raise RuntimeError(f"Unknown agent '{agent_id}'") from exc
 
+    def _resolved_resources_for_manifest(
+        self,
+        manifest: LLMAgentManifest,
+    ) -> list[ResolvedResource]:
+        if not manifest.resources:
+            return []
+        parent_modes = (
+            self._parent_resource_modes_stack[-1]
+            if self._parent_resource_modes_stack
+            else None
+        )
+        resolved: list[ResolvedResource] = []
+        for name, definition in manifest.resources.items():
+            kind = definition.kind or name
+            provider = self._client.resource_providers.get(kind)
+            if provider is None:
+                raise RuntimeError(
+                    f"Agent '{manifest.id}' declares resource '{name}' of kind '{kind}' "
+                    "but no ResourceProvider is wired for that kind."
+                )
+            default_mode = getattr(provider, "default_mode", "read")
+            declared_mode = cast(ResourceMode, definition.mode or default_mode or "read")
+            parent_mode = parent_modes.get(kind) if parent_modes else None
+            mode = clamp_resource_mode(declared_mode, parent_mode)
+            resolved.append(
+                ResolvedResource(
+                    name=name,
+                    definition=definition,
+                    provider=provider,
+                    mode=mode,
+                )
+            )
+        return resolved
+
+    async def _collect_resource_context(
+        self,
+        manifest: LLMAgentManifest,
+        resources: list[ResolvedResource],
+    ) -> str | None:
+        parts: list[str] = []
+        for resource in resources:
+            get_context = getattr(resource.provider, "get_context", None)
+            if not callable(get_context):
+                continue
+            result = get_context(self._make_resource_tool_context(resource, manifest))
+            if inspect.isawaitable(result):
+                result = await result
+            if isinstance(result, str) and result.strip():
+                parts.append(f"## Resource: {resource.name}\n{result}")
+        return "\n\n".join(parts) if parts else None
+
+    def _resource_provider_tools(
+        self,
+        manifest: LLMAgentManifest,
+        resources: list[ResolvedResource] | None = None,
+    ) -> list[tuple[ResolvedResource, ResourceProviderToolDefinition, str]]:
+        resolved = (
+            resources if resources is not None else self._resolved_resources_for_manifest(manifest)
+        )
+        output: list[tuple[ResolvedResource, ResourceProviderToolDefinition, str]] = []
+        for resource in resolved:
+            tools = getattr(resource.provider, "tools", None)
+            if not callable(tools):
+                continue
+            registration = ResourceRegistrationContext(
+                resource_name=resource.name,
+                kind=resource.definition.kind or resource.name,
+                mode=resource.mode,
+                config=resource.definition,
+            )
+            provider_tools = cast(Iterable[ResourceProviderToolDefinition], tools(registration))
+            for provider_tool in provider_tools:
+                if resource.mode == "read" and provider_tool.mode == "read-write":
+                    continue
+                output.append(
+                    (
+                        resource,
+                        provider_tool,
+                        make_resource_tool_name(resource.name, provider_tool.name),
+                    )
+                )
+        return output
+
+    def _resolve_resource_tool_call(
+        self,
+        manifest: LLMAgentManifest,
+        tool_name: str,
+    ) -> tuple[ResolvedResource, ResourceProviderToolDefinition] | None:
+        for resource, provider_tool, candidate in self._resource_provider_tools(manifest):
+            if candidate == tool_name:
+                return resource, provider_tool
+        return None
+
+    def _make_resource_tool_context(
+        self,
+        resource: ResolvedResource,
+        manifest: LLMAgentManifest,
+    ) -> ResourceToolContext:
+        return ResourceToolContext(
+            resource_name=resource.name,
+            kind=resource.definition.kind or resource.name,
+            mode=resource.mode,
+            config=resource.definition,
+            grants=list(self.context),
+            run={
+                "agentId": manifest.id,
+                "sessionId": self.session_id,
+                "runId": self.run_id,
+                "invocationId": self.invocation_id,
+            },
+        )
+
+    def _resource_modes_by_kind(
+        self,
+        resources: list[ResolvedResource],
+    ) -> dict[str, ResourceMode]:
+        modes: dict[str, ResourceMode] = {}
+        for resource in resources:
+            kind = resource.definition.kind or resource.name
+            existing = modes.get(kind)
+            modes[kind] = (
+                clamp_resource_mode(existing, resource.mode)
+                if existing
+                else resource.mode
+            )
+        return modes
+
+    @contextmanager
+    def _resource_parent_modes(self, modes: dict[str, ResourceMode]) -> Iterator[None]:
+        self._parent_resource_modes_stack.append(modes)
+        try:
+            yield
+        finally:
+            self._parent_resource_modes_stack.pop()
+
 
 def agntz(
     *,
     agents: str,
     tools: Iterable[ToolDefinition] | None = None,
+    resources: Mapping[str, ResourceProvider] | None = None,
     model_provider: ModelProvider | None = None,
     store: RunStore | None = None,
     http_client: httpx.AsyncClient | None = None,
@@ -676,6 +908,7 @@ def agntz(
     return LocalClient(
         manifests=manifests,
         tools=tool_map,
+        resources=resources,
         model_provider=model_provider,
         store=store,
         http_client=http_client,
@@ -730,7 +963,12 @@ def _content_blocks(value: Any) -> list[dict[str, Any]] | None:
 
 
 def _schema_for_tool_definition(definition: ToolDefinition) -> dict[str, Any]:
-    schema = definition.input_schema
+    return _schema_for_input_schema(definition.input_schema)
+
+
+def _schema_for_input_schema(
+    schema: type[BaseModel] | dict[str, Any] | None,
+) -> dict[str, Any]:
     if isinstance(schema, dict):
         return schema
     if schema is not None and hasattr(schema, "model_json_schema"):

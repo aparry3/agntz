@@ -29,5 +29,25 @@
     "kind": "parallel",
     "stateKey": "reviewPack",
     "branchKeys": ["support", "tone"]
+  },
+  "resource-llm.yaml": {
+    "id": "memory-support",
+    "kind": "llm",
+    "stateKey": "memorySupport",
+    "model": {
+      "provider": "openai",
+      "name": "gpt-5.4"
+    },
+    "resources": {
+      "memory": {
+        "kind": "memory",
+        "mode": "read-write",
+        "autoScan": true,
+        "writePolicy": {
+          "descendants": true,
+          "ancestorPromotion": "none"
+        }
+      }
+    }
   }
 }

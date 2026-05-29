@@ -24,7 +24,7 @@ def test_cli_validate_success(tmp_path: Path, capsys) -> None:  # type: ignore[n
 
     captured = capsys.readouterr()
     assert status == 0
-    assert "Validated 4 agent manifest(s)." in captured.out
+    assert "Validated 5 agent manifest(s)." in captured.out
 
 
 def test_cli_validate_reports_missing_ref(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]

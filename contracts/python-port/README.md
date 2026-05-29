@@ -10,6 +10,7 @@ definition should run identically in TypeScript and Python.
 
 Fixture groups:
 
-- `manifests/` contains representative YAML for each agent kind.
+- `manifests/` contains representative YAML for each agent kind, including
+  resource declarations.
 - `expectations/` contains normalized fields, state snapshots, and stream/event
   shapes that both runtimes should preserve.
