@@ -2,6 +2,29 @@ import { NamespaceGrantError } from "./errors.js";
 
 export type NamespaceGrant = string;
 
+export interface ProtectedNamespaceRule {
+  /**
+   * Namespace branch whose broad grants are sensitive. By default, grants at
+   * this namespace or any ancestor of it are rejected, while grants below it
+   * must include at least one descendant segment.
+   */
+  namespace: string;
+  /**
+   * Minimum number of path segments required below `namespace`.
+   * Defaults to 1, e.g. protecting `app/private/users` allows
+   * `app/private/users/u_123` but rejects `app/private/users`.
+   */
+  minDescendantSegments?: number;
+  /** Allows a grant exactly equal to `namespace`. Defaults false. */
+  allowBoundaryGrant?: boolean;
+  /** Allows grants above `namespace`, such as `app`. Defaults false. */
+  allowAncestorGrants?: boolean;
+}
+
+export interface NamespaceGrantPolicy {
+  protectedNamespaces?: readonly ProtectedNamespaceRule[];
+}
+
 /**
  * Namespace paths are intentionally plain strings. They are capabilities
  * minted by trusted application code, so keep parsing strict and predictable.
@@ -38,7 +61,10 @@ export function normalizeNamespaceGrant(input: unknown): NamespaceGrant {
   return input;
 }
 
-export function normalizeNamespaceGrants(input: readonly unknown[] | undefined): NamespaceGrant[] {
+export function normalizeNamespaceGrants(
+  input: readonly unknown[] | undefined,
+  policy?: NamespaceGrantPolicy,
+): NamespaceGrant[] {
   if (input === undefined) return [];
   if (!Array.isArray(input)) {
     throw new NamespaceGrantError(input, "context must be an array of namespace grants");
@@ -53,6 +79,7 @@ export function normalizeNamespaceGrants(input: readonly unknown[] | undefined):
       out.push(grant);
     }
   }
+  validateNamespaceGrantPolicy(out, policy);
   return out;
 }
 
@@ -85,11 +112,12 @@ export function isGrantNarrowedBy(parent: NamespaceGrant, child: NamespaceGrant)
 export function narrowNamespaceGrants(
   parentGrants: readonly NamespaceGrant[],
   requestedGrants: readonly unknown[] | undefined,
+  policy?: NamespaceGrantPolicy,
 ): NamespaceGrant[] {
-  const normalizedParents = normalizeNamespaceGrants(parentGrants);
+  const normalizedParents = normalizeNamespaceGrants(parentGrants, policy);
   if (requestedGrants === undefined) return normalizedParents;
 
-  const requested = normalizeNamespaceGrants(requestedGrants);
+  const requested = normalizeNamespaceGrants(requestedGrants, policy);
   for (const grant of requested) {
     if (!normalizedParents.some((parent) => isGrantNarrowedBy(parent, grant))) {
       throw new NamespaceGrantError(
@@ -99,4 +127,54 @@ export function narrowNamespaceGrants(
     }
   }
   return requested;
+}
+
+export function validateNamespaceGrantPolicy(
+  grants: readonly NamespaceGrant[],
+  policy: NamespaceGrantPolicy | undefined,
+): void {
+  if (!policy?.protectedNamespaces?.length) return;
+  for (const grant of grants) {
+    const normalizedGrant = normalizeNamespaceGrant(grant);
+    for (const rule of policy.protectedNamespaces) {
+      assertProtectedNamespaceRule(normalizedGrant, rule);
+    }
+  }
+}
+
+function assertProtectedNamespaceRule(grant: NamespaceGrant, rule: ProtectedNamespaceRule): void {
+  const boundary = normalizeNamespaceGrant(rule.namespace);
+  const minDescendantSegments = rule.minDescendantSegments ?? 1;
+  if (!Number.isInteger(minDescendantSegments) || minDescendantSegments < 0) {
+    throw new NamespaceGrantError(
+      boundary,
+      "protected namespace minDescendantSegments must be a non-negative integer",
+    );
+  }
+
+  if (grant === boundary) {
+    if (rule.allowBoundaryGrant) return;
+    throw new NamespaceGrantError(
+      grant,
+      `grant is exactly protected namespace '${boundary}'; grant a narrower descendant or explicitly allow boundary grants`,
+    );
+  }
+
+  if (isSameOrAncestorNamespace(grant, boundary)) {
+    if (rule.allowAncestorGrants) return;
+    throw new NamespaceGrantError(
+      grant,
+      `grant is above protected namespace '${boundary}'; grant a narrower descendant instead`,
+    );
+  }
+
+  if (isSameOrDescendantNamespace(grant, boundary)) {
+    const extraSegments = grant.split("/").length - boundary.split("/").length;
+    if (extraSegments < minDescendantSegments) {
+      throw new NamespaceGrantError(
+        grant,
+        `grant must include at least ${minDescendantSegments} descendant segment(s) below protected namespace '${boundary}'`,
+      );
+    }
+  }
 }

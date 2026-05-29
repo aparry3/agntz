@@ -8,6 +8,7 @@ import {
   narrowNamespaceGrants,
   normalizeNamespaceGrant,
   normalizeNamespaceGrants,
+  validateNamespaceGrantPolicy,
 } from "../src/namespace.js";
 
 describe("namespace grants", () => {
@@ -73,5 +74,39 @@ describe("namespace grants", () => {
     expect(narrowNamespaceGrants(["a/b"], ["a/b/c"])).toEqual(["a/b/c"]);
     expect(() => narrowNamespaceGrants(["a/b/c"], ["a/b"])).toThrow(NamespaceGrantError);
     expect(() => narrowNamespaceGrants(["a/b/c"], ["a/b/d"])).toThrow(NamespaceGrantError);
+  });
+
+  it("rejects grants that broadly cover protected namespace boundaries", () => {
+    const policy = {
+      protectedNamespaces: [{ namespace: "gymtext/private/users" }],
+    };
+
+    expect(() => validateNamespaceGrantPolicy(["gymtext"], policy)).toThrow(NamespaceGrantError);
+    expect(() => normalizeNamespaceGrants(["gymtext/private"], policy)).toThrow(NamespaceGrantError);
+    expect(() => normalizeNamespaceGrants(["gymtext/private/users"], policy)).toThrow(NamespaceGrantError);
+    expect(normalizeNamespaceGrants(["gymtext/private/users/u_123"], policy)).toEqual([
+      "gymtext/private/users/u_123",
+    ]);
+    expect(normalizeNamespaceGrants(["gymtext/public/general"], policy)).toEqual([
+      "gymtext/public/general",
+    ]);
+  });
+
+  it("supports explicit privileged exceptions for protected boundaries", () => {
+    expect(
+      normalizeNamespaceGrants(["gymtext/private/users"], {
+        protectedNamespaces: [
+          { namespace: "gymtext/private/users", allowBoundaryGrant: true },
+        ],
+      }),
+    ).toEqual(["gymtext/private/users"]);
+
+    expect(
+      normalizeNamespaceGrants(["gymtext"], {
+        protectedNamespaces: [
+          { namespace: "gymtext/private/users", allowAncestorGrants: true },
+        ],
+      }),
+    ).toEqual(["gymtext"]);
   });
 });

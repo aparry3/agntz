@@ -23,15 +23,17 @@ import type {
   TopicSummary,
   WriteOptions,
 } from "./types.js";
-import type { ResourceProvider } from "@agntz/core";
+import type { NamespaceGrantPolicy, ResourceProvider } from "@agntz/core";
 
 export class Memrez {
   readonly store: MemoryStore;
   readonly reasoner: MemrezReasoner;
+  readonly namespacePolicy: NamespaceGrantPolicy | undefined;
 
   constructor(options: MemrezOptions = {}) {
     this.store = options.store ?? new InMemoryMemoryStore();
     this.reasoner = options.reasoner ?? new DeterministicReasoner();
+    this.namespacePolicy = options.namespacePolicy;
   }
 
   provider(): ResourceProvider {
@@ -42,7 +44,7 @@ export class Memrez {
     grants: NamespaceGrant[],
     opts: ScanOptions = {},
   ): Promise<{ grants: NamespaceGrant[]; topics: TopicSummary[] }> {
-    const normalized = normalizeGrants(grants);
+    const normalized = normalizeGrants(grants, this.namespacePolicy);
     const scopes = visibleScopes(normalized, opts.includeAncestors ?? true);
     const topics = await this.store.listTopics(scopes);
     return {
@@ -56,7 +58,7 @@ export class Memrez {
     topic: string,
     opts: ReadOptions = {},
   ): Promise<MemoryEntry[]> {
-    const normalized = normalizeGrants(grants);
+    const normalized = normalizeGrants(grants, this.namespacePolicy);
     const scopes = visibleScopes(normalized, opts.includeAncestors ?? true);
     return this.store.getByTopic(scopes, topic, opts.limit);
   }
@@ -66,7 +68,7 @@ export class Memrez {
     content: string,
     opts: WriteOptions = {},
   ): Promise<{ entry: MemoryEntry; action: "appended" | "superseded" | "deduped" }> {
-    const normalized = normalizeGrants(grants);
+    const normalized = normalizeGrants(grants, this.namespacePolicy);
     const writePolicy = normalizeWritePolicy(opts.writePolicy);
     const existingTopics = (await this.scan(normalized)).topics.map((topic) => topic.topic);
     const tag = await this.reasoner.tag({
@@ -106,7 +108,7 @@ export class Memrez {
   }
 
   async curate(grants: NamespaceGrant[], opts: CurateOptions = {}): Promise<CurateReport> {
-    const normalized = normalizeGrants(grants);
+    const normalized = normalizeGrants(grants, this.namespacePolicy);
     const scopePaths = opts.includeDescendants ? normalized : visibleScopes(normalized, true);
     const entries = await this.store.listScopeSlice(scopePaths, { topics: opts.topics });
     const ops = this.reasoner.curate

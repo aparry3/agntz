@@ -7,6 +7,20 @@
     "notReadableScopes": ["app/user/u_456"],
     "notWritableScopes": ["app/user", "app/user/u_456"]
   },
+  "namespaceSecurity": {
+    "protectedNamespaces": [
+      {
+        "namespace": "gymtext/private/users",
+        "allowedGrant": "gymtext/private/users/u_123",
+        "unaffectedGrant": "gymtext/public/general",
+        "rejectedGrants": [
+          "gymtext",
+          "gymtext/private",
+          "gymtext/private/users"
+        ]
+      }
+    ]
+  },
   "resourceConfig": {
     "manifest": {
       "resources": {

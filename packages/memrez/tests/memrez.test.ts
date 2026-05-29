@@ -101,6 +101,30 @@ describe("memrez core", () => {
     ).rejects.toBeInstanceOf(MemrezScopeError);
   });
 
+  it("rejects broad grants that cover protected private namespace branches", async () => {
+    const reasoner = new FakeReasoner();
+    const memrez = createMemrez({
+      reasoner,
+      namespacePolicy: {
+        protectedNamespaces: [{ namespace: "gymtext/private/users" }],
+      },
+    });
+
+    await expect(
+      memrez.write(["gymtext"], "topic:prefs|Bad broad root."),
+    ).rejects.toThrow(/protected namespace/);
+    await expect(
+      memrez.write(["gymtext/private/users"], "topic:prefs|Bad all-users grant."),
+    ).rejects.toThrow(/protected namespace/);
+
+    await expect(
+      memrez.write(["gymtext/private/users/u_123"], "topic:prefs|User-specific memory."),
+    ).resolves.toMatchObject({
+      action: "appended",
+      entry: { scope: "gymtext/private/users/u_123" },
+    });
+  });
+
   it("dedupes exact active entries in the same scope", async () => {
     const reasoner = new FakeReasoner();
     const memrez = createMemrez({ reasoner });

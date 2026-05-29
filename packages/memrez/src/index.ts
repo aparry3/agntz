@@ -37,3 +37,4 @@ export type { AgntzClientLike, AgntzReasonerOptions, AgntzRunResult } from "./re
 export type { MemoryResourceConfig } from "./provider.js";
 export type { SqliteMemoryStoreOptions } from "./sqlite.js";
 export type { PostgresMemoryStoreOptions } from "./postgres.js";
+export type { NamespaceGrantPolicy, ProtectedNamespaceRule } from "@agntz/core";

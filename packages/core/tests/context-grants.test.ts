@@ -74,6 +74,31 @@ describe("runtime namespace context grants", () => {
     expect(provider.calls).toHaveLength(0);
   });
 
+  it("rejects grants that violate configured namespace security policy", async () => {
+    const provider = new MockModelProvider([{ text: "never", usage, finishReason: "stop" }]);
+    const runner = createRunner({
+      modelProvider: provider,
+      namespacePolicy: {
+        protectedNamespaces: [{ namespace: "gymtext/private/users" }],
+      },
+    });
+    runner.registerAgent(defineAgent({
+      id: "agent",
+      name: "Agent",
+      systemPrompt: "No tools.",
+      model: { provider: "openai", name: "test" },
+    }));
+
+    await expect(
+      runner.invoke("agent", "go", { context: ["gymtext"] }),
+    ).rejects.toThrow(NamespaceGrantError);
+    expect(provider.calls).toHaveLength(0);
+
+    await expect(
+      runner.invoke("agent", "go", { context: ["gymtext/private/users/u_123"] }),
+    ).resolves.toMatchObject({ output: "never" });
+  });
+
   it("inherits context grants through tool-driven child invocations", async () => {
     const provider = new MockModelProvider([
       {
