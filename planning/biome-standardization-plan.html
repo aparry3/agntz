@@ -1,0 +1,857 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TypeScript Formatter & Lint Standardization Plan</title>
+  <style>
+    :root {
+      --ink: #171321;
+      --muted: #5f5a6d;
+      --soft: #817989;
+      --paper: #f7f1e6;
+      --panel: #fffaf1;
+      --panel-2: #efe5d3;
+      --line: #d2c3aa;
+      --accent: #b24a24;
+      --accent-2: #315f78;
+      --accent-3: #5f7a3a;
+      --warn: #a46d1f;
+      --danger: #9d2f24;
+      --code: #201b2b;
+      --code-text: #f5ead6;
+      --radius: 8px;
+      --shadow: 0 16px 50px rgba(45, 35, 20, 0.12);
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --serif: Georgia, "Times New Roman", serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(135deg, rgba(178, 74, 36, 0.08), transparent 34%),
+        linear-gradient(220deg, rgba(49, 95, 120, 0.10), transparent 40%),
+        var(--paper);
+      font-family: var(--sans);
+      line-height: 1.58;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+      border-bottom: 1px solid rgba(178, 74, 36, 0.35);
+    }
+
+    a:hover {
+      border-bottom-color: var(--accent);
+    }
+
+    .shell {
+      width: min(1160px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 22px 0;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .brand {
+      color: var(--ink);
+      font-weight: 750;
+      letter-spacing: 0.05em;
+    }
+
+    .hero {
+      padding: clamp(52px, 9vw, 96px) 0 40px;
+    }
+
+    .eyebrow {
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 750;
+      letter-spacing: 0.16em;
+      margin-bottom: 18px;
+      text-transform: uppercase;
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0;
+      letter-spacing: 0;
+      line-height: 1.08;
+    }
+
+    h1 {
+      max-width: 920px;
+      font-family: var(--serif);
+      font-size: clamp(44px, 7vw, 82px);
+      font-weight: 500;
+    }
+
+    h2 {
+      margin-bottom: 18px;
+      font-family: var(--serif);
+      font-size: clamp(32px, 4vw, 48px);
+      font-weight: 500;
+    }
+
+    h3 {
+      margin-bottom: 10px;
+      font-size: 18px;
+      font-weight: 760;
+    }
+
+    .lede {
+      max-width: 780px;
+      margin: 24px 0 0;
+      color: var(--muted);
+      font-size: clamp(18px, 2.1vw, 22px);
+    }
+
+    .toc {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 0 0 42px;
+    }
+
+    .toc a,
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 34px;
+      padding: 8px 11px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255, 250, 241, 0.75);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    section {
+      padding: 48px 0;
+      border-top: 1px solid rgba(210, 195, 170, 0.78);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .grid.three {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .panel,
+    .rule,
+    .callout {
+      background: rgba(255, 250, 241, 0.86);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+    }
+
+    .panel {
+      padding: 24px;
+      box-shadow: var(--shadow);
+    }
+
+    .panel p,
+    .rule p,
+    .callout p,
+    li {
+      color: var(--muted);
+    }
+
+    .panel p,
+    .rule p,
+    .callout p {
+      margin: 0;
+    }
+
+    .stack {
+      display: grid;
+      gap: 16px;
+    }
+
+    .rule {
+      display: grid;
+      grid-template-columns: 170px minmax(0, 1fr);
+      overflow: hidden;
+    }
+
+    .rule strong {
+      padding: 18px;
+      border-right: 1px solid var(--line);
+      background: rgba(239, 229, 211, 0.7);
+      color: var(--accent-2);
+      font-size: 12px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .rule p {
+      padding: 18px;
+    }
+
+    .callout {
+      padding: 20px;
+      border-left: 5px solid var(--accent-2);
+    }
+
+    .callout.warning {
+      border-left-color: var(--warn);
+    }
+
+    .callout.danger {
+      border-left-color: var(--danger);
+    }
+
+    .callout.good {
+      border-left-color: var(--accent-3);
+    }
+
+    ul,
+    ol {
+      margin: 14px 0 0;
+      padding-left: 20px;
+    }
+
+    li + li {
+      margin-top: 7px;
+    }
+
+    code {
+      padding: 2px 5px;
+      border-radius: 5px;
+      background: rgba(49, 95, 120, 0.10);
+      color: var(--code);
+      font-family: var(--mono);
+      font-size: 0.92em;
+    }
+
+    pre {
+      margin: 18px 0 0;
+      padding: 18px;
+      overflow: auto;
+      border-radius: var(--radius);
+      background: var(--code);
+      color: var(--code-text);
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.55;
+      tab-size: 2;
+    }
+
+    pre code {
+      padding: 0;
+      background: transparent;
+      color: inherit;
+      font-size: inherit;
+    }
+
+    table {
+      width: 100%;
+      margin-top: 18px;
+      border-collapse: collapse;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255, 250, 241, 0.82);
+    }
+
+    th,
+    td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: rgba(239, 229, 211, 0.7);
+      color: var(--ink);
+      font-size: 12px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    td {
+      color: var(--muted);
+    }
+
+    .status {
+      color: var(--accent-3);
+      font-weight: 760;
+    }
+
+    .bad {
+      color: var(--danger);
+      font-weight: 760;
+    }
+
+    .warnmark {
+      color: var(--warn);
+      font-weight: 760;
+    }
+
+    .phase {
+      display: grid;
+      grid-template-columns: 54px minmax(0, 1fr);
+      gap: 0;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255, 250, 241, 0.86);
+    }
+
+    .phase .num {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--accent-2);
+      color: #fff;
+      font-family: var(--serif);
+      font-size: 26px;
+    }
+
+    .phase .body {
+      padding: 20px 22px;
+    }
+
+    .phase .body h3 {
+      margin-bottom: 6px;
+    }
+
+    .phase .body p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    footer {
+      padding: 36px 0 52px;
+      color: var(--soft);
+      font-size: 13px;
+    }
+
+    @media (max-width: 780px) {
+      .topbar {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .grid,
+      .grid.three,
+      .rule {
+        grid-template-columns: 1fr;
+      }
+
+      .rule strong {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">agntz planning</div>
+      <div>TypeScript Formatter &amp; Lint</div>
+    </header>
+
+    <main>
+      <section class="hero" id="top">
+        <div class="eyebrow">Tooling plan</div>
+        <h1>One formatter, one linter, one gate: finish adopting biome.</h1>
+        <p class="lede">
+          biome is already a dependency in six of eight TypeScript packages, but it has no config and nothing
+          enforces it. This plan commits a root config matched to the existing style, brings every package and
+          the two Next.js apps under it, and wires it into CI and pre-commit so it can never drift again &mdash;
+          landed as a single PR.
+        </p>
+      </section>
+
+      <nav class="toc" aria-label="Table of contents">
+        <a href="#current">Current State</a>
+        <a href="#decision">Decision</a>
+        <a href="#config">Root Config</a>
+        <a href="#next">Next.js Apps</a>
+        <a href="#scope">Scope</a>
+        <a href="#enforce">Enforcement</a>
+        <a href="#reflow">The Reflow</a>
+        <a href="#realfixes">Real Fixes</a>
+        <a href="#phases">Execution</a>
+        <a href="#risks">Risks</a>
+        <a href="#done">Done When</a>
+      </nav>
+
+      <section id="current">
+        <h2>Current State</h2>
+        <div class="callout">
+          <p>
+            The &ldquo;269 lint violations&rdquo; are mostly an illusion: biome runs on its default config (tab
+            indentation) while the codebase is 2-space. Point a config at the real style and the bulk disappears,
+            leaving import-sorting plus a handful of genuine rule fixes.
+          </p>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Fact</th>
+              <th>State today</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>biome dependency</td>
+              <td>Present in <code>core</code>, <code>sdk</code>, <code>manifest</code>, <code>client</code>, <code>worker</code>, <code>memrez</code> (6/8). Missing in <code>store-sqlite</code>, <code>store-postgres</code>.</td>
+            </tr>
+            <tr>
+              <td><code>lint</code> script</td>
+              <td>Wired (<code>biome check src/</code>) in 5 packages; <code>memrez</code> has the dep but no script; stores have neither.</td>
+            </tr>
+            <tr>
+              <td>biome config</td>
+              <td><span class="bad">None anywhere.</span> Runs on pure upstream defaults the code was never written to.</td>
+            </tr>
+            <tr>
+              <td>Other formatters</td>
+              <td>No Prettier, no <code>.editorconfig</code>. biome is the only tool installed.</td>
+            </tr>
+            <tr>
+              <td>Existing style</td>
+              <td>2-space indent, double quotes, semicolons. (biome default: tab, double, semicolons, 80-col.)</td>
+            </tr>
+            <tr>
+              <td>Next.js apps</td>
+              <td><code>app</code>, <code>site</code> use <code>next lint</code> (ESLint) with <span class="bad">no config</span> &mdash; the lint script hangs on an interactive setup prompt and fails.</td>
+            </tr>
+            <tr>
+              <td>CI enforcement</td>
+              <td><span class="bad">None.</span> The job named &ldquo;Lint &amp; Type Check&rdquo; runs <code>build</code> + <code>turbo typecheck</code> only &mdash; it never runs <code>pnpm lint</code>.</td>
+            </tr>
+            <tr>
+              <td>Violation profile</td>
+              <td>~269 across 5 packages: dominated by indentation (tab vs 2-space) + import-sorting. Real rule violations in source: <strong>4</strong> (see Real Fixes).</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="decision">
+        <h2>Decision</h2>
+        <div class="callout good">
+          <p>
+            <strong>Standardize on biome</strong> as the single formatter <em>and</em> linter for all TypeScript.
+            The choice is effectively already made &mdash; it is installed and partway adopted. Do not introduce
+            a Prettier + ESLint pair alongside it.
+          </p>
+        </div>
+        <div class="grid three" style="margin-top: 18px;">
+          <div class="panel">
+            <h3>One tool</h3>
+            <p>biome is formatter and linter in a single fast binary. Replaces the Prettier + ESLint + eslint-config-prettier dance with one root config.</p>
+          </div>
+          <div class="panel">
+            <h3>Already chosen</h3>
+            <p>Six packages already depend on it. The work is not picking a tool &mdash; it is giving the one we have a config and a gate.</p>
+          </div>
+          <div class="panel">
+            <h3>Low churn</h3>
+            <p>Matched to existing style, the reflow is small: indentation already matches once configured; quotes and semicolons already conform.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="config">
+        <h2>Root Config</h2>
+        <p style="color: var(--muted); margin-top: 0;">
+          A single <code>biome.json</code> at the repo root. biome walks up from each package to find it, so
+          per-package <code>lint</code> scripts keep working and resolve against this one file.
+        </p>
+        <pre><code>// biome.json (repo root)
+{
+  "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
+  "organizeImports": { "enabled": true },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double",
+      "semicolons": "always"
+    }
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "style": {
+        "noNonNullAssertion": "off"
+      }
+    }
+  },
+  "files": {
+    "ignore": ["**/dist/**", "**/.next/**", "**/node_modules/**", "**/*.gen.ts"]
+  },
+  "overrides": [
+    {
+      "include": ["**/tests/**", "**/__tests__/**", "**/*.test.ts"],
+      "linter": { "rules": { "suspicious": { "noExplicitAny": "off" } } }
+    }
+  ]
+}</code></pre>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Setting</th>
+              <th>Value</th>
+              <th>Why</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>indentStyle / width</td>
+              <td><code>space</code> / <code>2</code></td>
+              <td>Matches existing code. This single setting erases the bulk of the 269.</td>
+            </tr>
+            <tr>
+              <td>quoteStyle</td>
+              <td><code>double</code></td>
+              <td>Already matches (biome default). Zero churn.</td>
+            </tr>
+            <tr>
+              <td>semicolons</td>
+              <td><code>always</code></td>
+              <td>Already matches. Zero churn.</td>
+            </tr>
+            <tr>
+              <td>lineWidth</td>
+              <td><code>100</code></td>
+              <td>Modern default; less wrap churn than biome&rsquo;s 80. Tune after seeing the diff.</td>
+            </tr>
+            <tr>
+              <td>organizeImports</td>
+              <td><code>on</code></td>
+              <td>Sorts imports deterministically &mdash; the second-largest violation category.</td>
+            </tr>
+            <tr>
+              <td>noNonNullAssertion</td>
+              <td><code>off</code></td>
+              <td>Noisy, mostly fires in tests, and its autofix (<code>!</code>&rarr;<code>?.</code>) is behavior-changing &mdash; it silently no-ops instead of throwing, hiding test failures.</td>
+            </tr>
+            <tr>
+              <td>noExplicitAny (tests)</td>
+              <td><code>off</code> in tests</td>
+              <td><code>any</code> is acceptable in test scaffolding; keep it enforced in <code>src</code>.</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="callout" style="margin-top: 18px;">
+          <p>
+            Keep the rules with real signal enabled: <code>noExplicitAny</code> (in src), <code>noAssignInExpressions</code>,
+            <code>useLiteralKeys</code>. The point of the gate is to catch those, not to relitigate brace style.
+          </p>
+        </div>
+      </section>
+
+      <section id="next">
+        <h2>Next.js Apps</h2>
+        <div class="grid">
+          <div class="panel">
+            <h3>biome formats, ESLint guards</h3>
+            <p>
+              biome formats and lints <code>app</code> and <code>site</code> like everything else. A thin ESLint
+              config keeps only Next&rsquo;s framework rules (image/script/web-vitals) that biome does not replicate.
+            </p>
+          </div>
+          <div class="panel">
+            <h3>Minimal eslintrc</h3>
+            <p>
+              Each app gets <code>{ "extends": "next/core-web-vitals" }</code> &mdash; which they need anyway to
+              stop the interactive setup prompt. No formatting rules in ESLint; formatting is biome&rsquo;s job.
+            </p>
+          </div>
+        </div>
+        <pre><code>// packages/app/.eslintrc.json  (and packages/site/.eslintrc.json)
+{ "extends": "next/core-web-vitals" }</code></pre>
+        <div class="callout" style="margin-top: 18px;">
+          <p>
+            Rejected alternative: dropping <code>next lint</code> entirely for an all-biome setup. Simpler, but it
+            loses Next&rsquo;s accessibility and performance rules. The one extra config file is worth keeping them.
+          </p>
+        </div>
+      </section>
+
+      <section id="scope">
+        <h2>Scope</h2>
+        <div class="stack">
+          <div class="rule">
+            <strong>All 8 TS packages</strong>
+            <p>Add the biome devDependency and a <code>lint</code> script to <code>store-sqlite</code>, <code>store-postgres</code>, and <code>memrez</code> (currently unlinted). Consistency is the entire point.</p>
+          </div>
+          <div class="rule">
+            <strong>Lint tests too</strong>
+            <p>Point lint scripts at the package root (<code>biome check .</code>), not just <code>src/</code>, so test files are covered &mdash; with the test-file rule relaxations from the overrides block.</p>
+          </div>
+          <div class="rule">
+            <strong>Two Next apps</strong>
+            <p>biome for format + general lint; ESLint <code>next/core-web-vitals</code> for framework rules.</p>
+          </div>
+          <div class="rule">
+            <strong>One root config</strong>
+            <p>No per-package biome configs. Everything resolves against the single root <code>biome.json</code>.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="enforce">
+        <h2>Enforcement</h2>
+        <div class="callout warning">
+          <p>
+            A config does nothing on its own. Without CI + a hook, the repo drifts straight back to where it is
+            today. Enforcement is the part that makes this stick.
+          </p>
+        </div>
+        <div class="grid three" style="margin-top: 18px;">
+          <div class="panel">
+            <h3>CI gate</h3>
+            <p>Add a real <code>lint</code> step to the &ldquo;Lint &amp; Type Check&rdquo; job: <code>pnpm turbo lint</code> (or <code>biome ci .</code> at the root). It must actually fail the build on violations.</p>
+          </div>
+          <div class="panel">
+            <h3>Pre-commit hook</h3>
+            <p><strong>lefthook</strong> (lighter than husky) running <code>biome check --staged --no-errors-on-unmatched</code> on staged files only &mdash; fast, local, catches drift before it lands.</p>
+          </div>
+          <div class="panel">
+            <h3>Blame hygiene</h3>
+            <p>Add <code>.git-blame-ignore-revs</code> with the reflow commit SHA and set <code>git config blame.ignoreRevsFile</code>. GitHub honors it automatically.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="reflow">
+        <h2>The Reflow</h2>
+        <div class="stack">
+          <div class="rule">
+            <strong>One commit</strong>
+            <p>Run <code>biome check --write</code> (<em>safe</em> fixes only &mdash; not <code>--unsafe</code>). Land it as a single isolated commit: <code>style: apply biome formatting across monorepo</code>. No logic changes in this commit.</p>
+          </div>
+          <div class="rule">
+            <strong>Lands with the gate</strong>
+            <p>The reflow and CI enforcement must land together. Turn the gate on before reflowing and CI goes red; reflow without the gate and it drifts. One PR, sequenced commits.</p>
+          </div>
+          <div class="rule">
+            <strong>Timing</strong>
+            <p>Do it now: <code>main</code> is clean and in sync, and the window right after a merge &mdash; before new branches fan out &mdash; is the lowest-conflict moment for a repo-wide reflow.</p>
+          </div>
+        </div>
+        <div class="callout danger" style="margin-top: 18px;">
+          <p>
+            <strong>In-flight branch caveat.</strong> A repo-wide format touches nearly every file and will conflict
+            with anything outstanding. The <code>provider-harness</code> line is noted as carrying an unmerged core
+            fix &mdash; confirm it and any other active branches are merged or paused first, or land the config + gate
+            now and hold the reflow until the tree is quiet.
+          </p>
+        </div>
+      </section>
+
+      <section id="realfixes">
+        <h2>Real Fixes</h2>
+        <p style="color: var(--muted); margin-top: 0;">
+          Stripped of formatting noise, only four rule violations live in source &mdash; the only ones that might
+          mask a real bug rather than a style preference. Read and fix these <strong>by hand</strong>, not by autofix,
+          before the reflow.
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Location</th>
+              <th>Rule</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>core/src/pipeline/sequential.ts:71</code></td>
+              <td>noNonNullAssertion</td>
+              <td>Confirm the value is truly guaranteed non-null; replace <code>!</code> with a guard or keep with an intentional comment.</td>
+            </tr>
+            <tr>
+              <td><code>core/src/webhooks/dispatcher.ts:140</code></td>
+              <td>noNonNullAssertion</td>
+              <td>Same &mdash; a <code>!</code> in webhook dispatch could hide a missing-field case.</td>
+            </tr>
+            <tr>
+              <td><code>manifest/src/http-url.ts:38</code></td>
+              <td>noAssignInExpressions</td>
+              <td>Likely an intentional <code>exec()</code> loop; confirm and make the assignment explicit if so.</td>
+            </tr>
+            <tr>
+              <td><code>manifest/src/http-url.ts:110</code></td>
+              <td>noAssignInExpressions</td>
+              <td>Same pattern; verify it is not an accidental <code>=</code> for <code>===</code>.</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="callout" style="margin-top: 18px;">
+          <p>
+            The other ~11 non-null assertions, the lone <code>any</code>, and the computed-key nits all live in
+            test files and are handled by the config (rule off / test override) &mdash; no manual work.
+          </p>
+        </div>
+      </section>
+
+      <section id="phases">
+        <h2>Execution</h2>
+        <div class="stack">
+          <div class="phase">
+            <div class="num">0</div>
+            <div class="body">
+              <h3>Branch</h3>
+              <p>Cut <code>chore/biome-standardization</code> from a clean, in-sync <code>main</code>. Confirm no conflicting branches are mid-flight (see reflow caveat).</p>
+            </div>
+          </div>
+          <div class="phase">
+            <div class="num">1</div>
+            <div class="body">
+              <h3>Config &amp; coverage</h3>
+              <p>Add root <code>biome.json</code>. Add biome dep + <code>lint</code> script to <code>store-sqlite</code>, <code>store-postgres</code>, <code>memrez</code>; point all lint scripts at the package root. Add <code>next/core-web-vitals</code> eslintrc to <code>app</code> and <code>site</code>.</p>
+            </div>
+          </div>
+          <div class="phase">
+            <div class="num">2</div>
+            <div class="body">
+              <h3>Real fixes</h3>
+              <p>Hand-fix the four source violations. Commit: <code>fix: resolve genuine lint violations</code>. Keeps real changes out of the formatting noise.</p>
+            </div>
+          </div>
+          <div class="phase">
+            <div class="num">3</div>
+            <div class="body">
+              <h3>Reflow</h3>
+              <p>Run <code>biome check --write</code> across the repo. Commit: <code>style: apply biome formatting across monorepo</code>. Pure formatting + import-sorting, no logic.</p>
+            </div>
+          </div>
+          <div class="phase">
+            <div class="num">4</div>
+            <div class="body">
+              <h3>Blame hygiene</h3>
+              <p>Add <code>.git-blame-ignore-revs</code> with the reflow SHA; document <code>git config blame.ignoreRevsFile .git-blame-ignore-revs</code> in CONTRIBUTING.</p>
+            </div>
+          </div>
+          <div class="phase">
+            <div class="num">5</div>
+            <div class="body">
+              <h3>Gate</h3>
+              <p>Add the <code>lint</code> step to the CI job. Add lefthook pre-commit running biome on staged files. Add a root <code>lint</code> script if helpful.</p>
+            </div>
+          </div>
+          <div class="phase">
+            <div class="num">6</div>
+            <div class="body">
+              <h3>Verify &amp; PR</h3>
+              <p>Confirm <code>pnpm lint</code>, <code>pnpm build</code>, <code>pnpm turbo typecheck</code>, and <code>pnpm test</code> are all green. Open the PR; CI lint job must pass.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="risks">
+        <h2>Risks &amp; Mitigations</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Risk</th>
+              <th>Mitigation</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Reflow conflicts with in-flight branches</td>
+              <td>Time it between branches on a quiet tree; or land config + gate first and hold the reflow. Rebase outstanding branches right after it merges.</td>
+            </tr>
+            <tr>
+              <td>Unsafe autofixes change behavior</td>
+              <td>Use safe <code>--write</code> only. Hand-review the four real violations. Never run <code>--unsafe</code> in the reflow.</td>
+            </tr>
+            <tr>
+              <td>Blame noise from mass reformat</td>
+              <td><code>.git-blame-ignore-revs</code> pointed at the single reflow commit; honored by GitHub and local git.</td>
+            </tr>
+            <tr>
+              <td>Pre-commit friction slows commits</td>
+              <td>lefthook runs biome on <em>staged files only</em> &mdash; near-instant. Auto-fixes on commit where safe.</td>
+            </tr>
+            <tr>
+              <td>lineWidth 100 still over-wraps</td>
+              <td>It is one config line. Review the reflow diff; adjust before merging if a different width is calmer.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="done">
+        <h2>Done When</h2>
+        <div class="grid">
+          <div class="panel">
+            <h3>Green</h3>
+            <ul>
+              <li><code>pnpm lint</code> exits 0 across all 8 packages and both Next apps.</li>
+              <li><code>pnpm build</code>, <code>turbo typecheck</code>, and <code>pnpm test</code> still pass.</li>
+              <li>CI &ldquo;Lint &amp; Type Check&rdquo; job actually runs lint and passes.</li>
+            </ul>
+          </div>
+          <div class="panel">
+            <h3>Durable</h3>
+            <ul>
+              <li>One root <code>biome.json</code> matched to house style; no per-package configs.</li>
+              <li>lefthook pre-commit installed and documented.</li>
+              <li><code>.git-blame-ignore-revs</code> in place so blame survives the reflow.</li>
+              <li>The four real violations resolved by hand, not suppressed wholesale.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      planning/biome-standardization-plan.html
+    </footer>
+  </div>
+</body>
+</html>
