@@ -248,6 +248,11 @@ class Memrez:
         self.store = store or InMemoryMemoryStore()
         self.reasoner = reasoner or DeterministicReasoner()
 
+    def provider(self):
+        from .memrez_provider import create_memory_resource_provider
+
+        return create_memory_resource_provider(self)
+
     def scan(
         self,
         grants: Sequence[NamespaceGrant],
