@@ -26,6 +26,7 @@ from .core import (
 )
 from .memrez import Memrez, MemrezScopeError, create_memrez
 from .memrez_provider import MemoryResourceProvider, create_memory_resource_provider
+from .memrez_sqlite import SqliteMemoryStore, SqliteMemoryStoreOptions
 from .sdk import LocalClient, agntz
 from .stores import (
     LocalMessageRecord,
@@ -61,6 +62,8 @@ __all__ = [
     "ResourceRegistrationContext",
     "ResourceToolContext",
     "SQLiteStore",
+    "SqliteMemoryStore",
+    "SqliteMemoryStoreOptions",
     "StreamError",
     "ToolCall",
     "ToolDefinition",
