@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Namespace Grant Security Plan</title>
+  <style>
+    :root {
+      --ink: #171321;
+      --muted: #5f5a6d;
+      --soft: #817989;
+      --paper: #f7f1e6;
+      --panel: #fffaf1;
+      --panel-2: #efe5d3;
+      --line: #d2c3aa;
+      --accent: #b24a24;
+      --accent-2: #315f78;
+      --accent-3: #5f7a3a;
+      --warn: #a46d1f;
+      --danger: #9d2f24;
+      --code: #201b2b;
+      --code-text: #f5ead6;
+      --radius: 8px;
+      --shadow: 0 16px 50px rgba(45, 35, 20, 0.12);
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --serif: Georgia, "Times New Roman", serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(135deg, rgba(178, 74, 36, 0.08), transparent 34%),
+        linear-gradient(220deg, rgba(49, 95, 120, 0.10), transparent 40%),
+        var(--paper);
+      font-family: var(--sans);
+      line-height: 1.58;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+      border-bottom: 1px solid rgba(178, 74, 36, 0.35);
+    }
+
+    a:hover {
+      border-bottom-color: var(--accent);
+    }
+
+    .shell {
+      width: min(1160px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 22px 0;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .brand {
+      color: var(--ink);
+      font-weight: 750;
+      letter-spacing: 0.05em;
+    }
+
+    .hero {
+      padding: clamp(52px, 9vw, 96px) 0 40px;
+    }
+
+    .eyebrow {
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 750;
+      letter-spacing: 0.16em;
+      margin-bottom: 18px;
+      text-transform: uppercase;
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0;
+      letter-spacing: 0;
+      line-height: 1.08;
+    }
+
+    h1 {
+      max-width: 920px;
+      font-family: var(--serif);
+      font-size: clamp(44px, 7vw, 82px);
+      font-weight: 500;
+    }
+
+    h2 {
+      margin-bottom: 18px;
+      font-family: var(--serif);
+      font-size: clamp(32px, 4vw, 48px);
+      font-weight: 500;
+    }
+
+    h3 {
+      margin-bottom: 10px;
+      font-size: 18px;
+      font-weight: 760;
+    }
+
+    .lede {
+      max-width: 780px;
+      margin: 24px 0 0;
+      color: var(--muted);
+      font-size: clamp(18px, 2.1vw, 22px);
+    }
+
+    .toc {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 0 0 42px;
+    }
+
+    .toc a,
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 34px;
+      padding: 8px 11px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255, 250, 241, 0.75);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    section {
+      padding: 48px 0;
+      border-top: 1px solid rgba(210, 195, 170, 0.78);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .panel,
+    .rule,
+    .callout {
+      background: rgba(255, 250, 241, 0.86);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+    }
+
+    .panel {
+      padding: 24px;
+      box-shadow: var(--shadow);
+    }
+
+    .panel p,
+    .rule p,
+    .callout p,
+    li {
+      color: var(--muted);
+    }
+
+    .panel p,
+    .rule p,
+    .callout p {
+      margin: 0;
+    }
+
+    .stack {
+      display: grid;
+      gap: 16px;
+    }
+
+    .rule {
+      display: grid;
+      grid-template-columns: 150px minmax(0, 1fr);
+      overflow: hidden;
+    }
+
+    .rule strong {
+      padding: 18px;
+      border-right: 1px solid var(--line);
+      background: rgba(239, 229, 211, 0.7);
+      color: var(--accent-2);
+      font-size: 12px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .rule p {
+      padding: 18px;
+    }
+
+    .callout {
+      padding: 20px;
+      border-left: 5px solid var(--accent-2);
+    }
+
+    .callout.warning {
+      border-left-color: var(--warn);
+    }
+
+    .callout.danger {
+      border-left-color: var(--danger);
+    }
+
+    ul {
+      margin: 14px 0 0;
+      padding-left: 20px;
+    }
+
+    li + li {
+      margin-top: 7px;
+    }
+
+    code {
+      padding: 2px 5px;
+      border-radius: 5px;
+      background: rgba(49, 95, 120, 0.10);
+      color: var(--code);
+      font-family: var(--mono);
+      font-size: 0.92em;
+    }
+
+    pre {
+      margin: 18px 0 0;
+      padding: 18px;
+      overflow: auto;
+      border-radius: var(--radius);
+      background: var(--code);
+      color: var(--code-text);
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.55;
+      tab-size: 2;
+    }
+
+    pre code {
+      padding: 0;
+      background: transparent;
+      color: inherit;
+      font-size: inherit;
+    }
+
+    table {
+      width: 100%;
+      margin-top: 18px;
+      border-collapse: collapse;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255, 250, 241, 0.82);
+    }
+
+    th,
+    td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: rgba(239, 229, 211, 0.7);
+      color: var(--ink);
+      font-size: 12px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    td {
+      color: var(--muted);
+    }
+
+    .status {
+      color: var(--accent-3);
+      font-weight: 760;
+    }
+
+    .bad {
+      color: var(--danger);
+      font-weight: 760;
+    }
+
+    footer {
+      padding: 36px 0 52px;
+      color: var(--soft);
+      font-size: 13px;
+    }
+
+    @media (max-width: 780px) {
+      .topbar {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .grid,
+      .rule {
+        grid-template-columns: 1fr;
+      }
+
+      .rule strong {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">agntz planning</div>
+      <div>Namespace Grant Security</div>
+    </header>
+
+    <main>
+      <section class="hero" id="top">
+        <div class="eyebrow">Security plan</div>
+        <h1>Keep namespace grants generic, but make grant issuance policy controlled.</h1>
+        <p class="lede">
+          Namespace grants stay as reusable runtime capabilities. A new resource-level policy layer decides
+          which namespaces are legal to grant, which namespaces are structural only, and when elevated access
+          is required.
+        </p>
+      </section>
+
+      <nav class="toc" aria-label="Table of contents">
+        <a href="#problem">Problem</a>
+        <a href="#model">Security Model</a>
+        <a href="#resources">Resource Kinds</a>
+        <a href="#policy">Policy Shape</a>
+        <a href="#runtime">Runtime Flow</a>
+        <a href="#examples">Examples</a>
+        <a href="#tests">Contract Tests</a>
+      </nav>
+
+      <section id="problem">
+        <h2>Problem</h2>
+        <div class="grid">
+          <div class="panel">
+            <h3>Namespace hierarchy is powerful</h3>
+            <p>
+              A grant like <code>gymtext/private/users</code> can be meaningful for trusted jobs, but it is too
+              broad for normal user-scoped agent runs because it can expose every user branch below it.
+            </p>
+          </div>
+          <div class="panel">
+            <h3>The algorithm should not change</h3>
+            <p>
+              The current namespace algorithm still works: grants are normalized, reads can see allowed
+              ancestors, and writes stay within allowed target namespaces. The missing piece is an issuance
+              policy that prevents dangerous grants from being handed out.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="model">
+        <h2>Security Model</h2>
+        <div class="stack">
+          <div class="rule">
+            <strong>Namespaces</strong>
+            <p>Define hierarchy and addressability for resource data. They are not security by themselves.</p>
+          </div>
+          <div class="rule">
+            <strong>Grants</strong>
+            <p>Represent runtime access capabilities issued by trusted app or runtime code.</p>
+          </div>
+          <div class="rule">
+            <strong>Policy</strong>
+            <p>Defines which grants are legal to issue for a resource, subject, and capability set.</p>
+          </div>
+          <div class="rule">
+            <strong>Subject</strong>
+            <p>Binds grants to authenticated state such as <code>subject.userId</code>, organization, tenant, or service identity.</p>
+          </div>
+          <div class="rule">
+            <strong>Resource</strong>
+            <p>Still validates each read and write operation against the issued grants before touching storage.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="resources">
+        <h2>Resource Kinds</h2>
+        <div class="callout">
+          <p>
+            Memory is not a core keyword. A resource map key such as <code>memory</code> is the resource
+            instance name and tool prefix. The resource <code>kind</code> is the provider capability type.
+            When <code>kind</code> is omitted, it defaults to the resource name for shorthand.
+          </p>
+        </div>
+
+        <div class="grid" style="margin-top: 18px;">
+          <div class="panel">
+            <h3>Shorthand</h3>
+            <pre><code>resources:
+  memory:
+    mode: read-write</code></pre>
+            <p style="margin-top: 14px;">
+              This normalizes to <code>kind: memory</code> because the resource name is <code>memory</code>.
+            </p>
+          </div>
+          <div class="panel">
+            <h3>Explicit kind</h3>
+            <pre><code>resources:
+  privateMemory:
+    kind: memory
+    mode: read-write
+
+  sharedMemory:
+    kind: memory
+    mode: read</code></pre>
+            <p style="margin-top: 14px;">
+              This allows multiple memory resource instances with different names, modes, configs, and
+              namespace policies.
+            </p>
+          </div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Concept</th>
+              <th>Example</th>
+              <th>Purpose</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Resource name</td>
+              <td><code>privateMemory</code></td>
+              <td>Agent-local instance name and model tool prefix, such as <code>privateMemory_read</code>.</td>
+            </tr>
+            <tr>
+              <td>Resource kind</td>
+              <td><code>memory</code></td>
+              <td>Provider capability type used to find a compatible resource provider.</td>
+            </tr>
+            <tr>
+              <td>Provider instance</td>
+              <td><code>user-memory</code></td>
+              <td>Optional future selector for a concrete store/provider when several providers share one kind.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="callout warning" style="margin-top: 18px;">
+          <p>
+            Multiple memory resources are useful for separation and ergonomics, but they are not a substitute
+            for namespace policy. Broad grants still need to be rejected even if an agent uses separate
+            <code>privateMemory</code> and <code>sharedMemory</code> resource entries.
+          </p>
+        </div>
+      </section>
+
+      <section id="policy">
+        <h2>Policy Shape</h2>
+        <div class="callout">
+          <p>
+            This policy belongs to resource configuration, not to memrez specifically. The same shape can be
+            reused later by memory, RAG, document stores, search indexes, or any other namespaced resource.
+          </p>
+        </div>
+
+        <pre><code>resources:
+  privateMemory:
+    kind: memory
+    mode: read-write
+    namespacePolicy:
+      structuralOnly:
+        - gymtext
+        - gymtext/private
+        - gymtext/private/users
+
+      grantable:
+        - gymtext/public/**
+        - gymtext/private/users/{subject.userId}
+
+      elevatedGrantable:
+        memory:admin:
+          - gymtext/private/users/**
+          - gymtext/private/users
+
+  sharedMemory:
+    kind: memory
+    mode: read
+    namespacePolicy:
+      grantable:
+        - gymtext/public/**</code></pre>
+
+        <div class="grid" style="margin-top: 18px;">
+          <div class="panel">
+            <h3>Structural only</h3>
+            <p>
+              These namespaces can exist as parents, but normal runs cannot receive them as direct grants.
+              This prevents accidental tenant-parent access.
+            </p>
+          </div>
+          <div class="panel">
+            <h3>Subject bound</h3>
+            <p>
+              Placeholders like <code>{subject.userId}</code> are resolved from trusted authenticated state,
+              not model output or agent-provided input.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="runtime">
+        <h2>Runtime Flow</h2>
+        <div class="stack">
+          <div class="rule">
+            <strong>Normalize</strong>
+            <p>Normalize all runtime context grants before agent execution.</p>
+          </div>
+          <div class="rule">
+            <strong>Reject</strong>
+            <p>Reject grants listed in <code>structuralOnly</code> or outside normal <code>grantable</code> patterns.</p>
+          </div>
+          <div class="rule">
+            <strong>Bind</strong>
+            <p>Resolve subject placeholders from trusted request/session state and reject mismatches.</p>
+          </div>
+          <div class="rule">
+            <strong>Elevate</strong>
+            <p>Allow broad grants only when the caller has the required explicit capability.</p>
+          </div>
+          <div class="rule">
+            <strong>Recheck</strong>
+            <p>Resource tools continue to validate each read and write using the grants for that run.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="examples">
+        <h2>Examples</h2>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Grant</th>
+              <th>Subject</th>
+              <th>Capabilities</th>
+              <th>Result</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>gymtext/public/general</code></td>
+              <td>any user</td>
+              <td>none</td>
+              <td><span class="status">Allowed</span>. Public resource branch.</td>
+            </tr>
+            <tr>
+              <td><code>gymtext/private/users/user1</code></td>
+              <td><code>user1</code></td>
+              <td>none</td>
+              <td><span class="status">Allowed</span>. Subject-bound private branch.</td>
+            </tr>
+            <tr>
+              <td><code>gymtext/private/users/user2</code></td>
+              <td><code>user1</code></td>
+              <td>none</td>
+              <td><span class="bad">Rejected</span>. Subject mismatch.</td>
+            </tr>
+            <tr>
+              <td><code>gymtext/private/users</code></td>
+              <td><code>user1</code></td>
+              <td>none</td>
+              <td><span class="bad">Rejected</span>. Structural namespace and tenant parent.</td>
+            </tr>
+            <tr>
+              <td><code>gymtext/private/users</code></td>
+              <td>service identity</td>
+              <td><code>memory:admin</code></td>
+              <td><span class="status">Allowed</span>. Explicit elevated grant.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="callout warning" style="margin-top: 18px;">
+          <p>
+            Normal user runs should receive narrow grants such as
+            <code>gymtext/public/general</code> and <code>gymtext/private/users/user1</code>. Broad parent
+            grants should be reserved for trusted service identities, admin flows, migrations, backfills, and
+            controlled curation jobs.
+          </p>
+        </div>
+      </section>
+
+      <section id="tests">
+        <h2>Contract Tests</h2>
+        <div class="grid">
+          <div class="panel">
+            <h3>Positive cases</h3>
+            <ul>
+              <li>Allows <code>gymtext/private/users/user1</code> for subject <code>user1</code>.</li>
+              <li>Allows <code>gymtext/public/general</code> for normal runs.</li>
+              <li>Allows broad parent grants only with the required elevated capability.</li>
+              <li>Allows future resources to use the same policy shape without memory-specific keys.</li>
+            </ul>
+          </div>
+          <div class="panel">
+            <h3>Negative cases</h3>
+            <ul>
+              <li>Rejects <code>gymtext/private/users</code> for normal user runs.</li>
+              <li>Rejects <code>gymtext/private/users/user2</code> for subject <code>user1</code>.</li>
+              <li>Rejects grants outside configured <code>grantable</code> patterns.</li>
+              <li>Confirms resource read and write validation still runs after grant issuance.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section id="notes">
+        <h2>Implementation Notes</h2>
+        <div class="stack">
+          <div class="callout danger">
+            <p>
+              Agents and models must never be trusted to mint broad grants. Grants come from trusted runtime
+              code, and resource policies validate them before execution begins.
+            </p>
+          </div>
+          <div class="callout">
+            <p>
+              This should be additive to the current implementation: add policy validation ahead of execution,
+              keep namespace narrowing and resource operation checks intact, and keep memrez-specific write
+              decisions inside the memory resource.
+            </p>
+          </div>
+          <div class="callout">
+            <p>
+              The current provider lookup by <code>kind</code> is enough for multiple resource entries backed
+              by the same memrez provider. If we need physically separate memory stores, add an optional
+              <code>provider</code> or <code>instance</code> selector so <code>kind: memory</code> can resolve
+              to named provider instances such as <code>user-memory</code> and <code>org-memory</code>.
+            </p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      planning/namespace-grant-security-plan.html
+    </footer>
+  </div>
+</body>
+</html>
