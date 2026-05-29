@@ -1,6 +1,6 @@
 {
-  "name": "memrez",
-  "version": "0.1.0",
+  "name": "@agntz/memrez",
+  "version": "0.0.0",
   "description": "Durable tagged memory layer for agntz agents",
   "type": "module",
   "main": "./dist/index.js",
@@ -23,14 +23,35 @@
     "lint": "biome check src tests --no-errors-on-unmatched",
     "typecheck": "tsc --noEmit"
   },
+  "keywords": [
+    "ai",
+    "agents",
+    "memory",
+    "agntz",
+    "sqlite",
+    "postgres"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aparry3/agntz.git",
+    "directory": "packages/memrez"
+  },
+  "homepage": "https://github.com/aparry3/agntz#readme",
+  "author": "Aaron Bidworthy",
   "dependencies": {
-    "@agntz/core": "workspace:*",
     "better-sqlite3": "^11.8.1",
     "pg": "^8.20.0",
     "zod": "^3.25.0"
   },
+  "peerDependencies": {
+    "@agntz/core": ">=1.2.1"
+  },
   "devDependencies": {
+    "@agntz/core": "workspace:*",
     "@biomejs/biome": "^1.9.0",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.0.0",
