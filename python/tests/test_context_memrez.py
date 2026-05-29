@@ -6,8 +6,8 @@ import pytest
 
 from agntz import NamespaceGrantError, normalize_namespace_grant, normalize_namespace_grants
 from agntz.context import (
-    narrow_namespace_grants,
     namespace_ancestors,
+    narrow_namespace_grants,
 )
 from agntz.memrez import (
     EntryType,

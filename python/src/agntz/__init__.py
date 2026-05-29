@@ -8,19 +8,27 @@ from .client import (
     NotFoundError,
     StreamError,
 )
+from .context import NamespaceGrantError, normalize_namespace_grant, normalize_namespace_grants
 from .core import (
     GenerateTextResult,
     LiteLLMModelProvider,
     ModelMessage,
     ModelProvider,
     ModelTool,
+    ResourceProvider,
+    ResourceProviderToolDefinition,
+    ResourceRegistrationContext,
+    ResourceToolContext,
     ToolCall,
     ToolDefinition,
     ToolResult,
     tool,
 )
-from .context import NamespaceGrantError, normalize_namespace_grant, normalize_namespace_grants
 from .memrez import Memrez, MemrezScopeError, create_memrez
+from .memrez_postgres import PostgresMemoryStore, PostgresMemoryStoreOptions
+from .memrez_provider import MemoryResourceProvider, create_memory_resource_provider
+from .memrez_reasoner import AgntzReasoner, agntz_reasoner, memrez_agents_path
+from .memrez_sqlite import SqliteMemoryStore, SqliteMemoryStoreOptions
 from .sdk import LocalClient, agntz
 from .stores import (
     LocalMessageRecord,
@@ -34,6 +42,7 @@ __all__ = [
     "__version__",
     "AgntzClient",
     "AgntzError",
+    "AgntzReasoner",
     "AsyncAgntzClient",
     "AuthenticationError",
     "GenerateTextResult",
@@ -46,17 +55,29 @@ __all__ = [
     "ModelProvider",
     "ModelTool",
     "MemoryStore",
+    "MemoryResourceProvider",
     "Memrez",
     "MemrezScopeError",
     "NamespaceGrantError",
     "NotFoundError",
+    "PostgresMemoryStore",
+    "PostgresMemoryStoreOptions",
+    "ResourceProvider",
+    "ResourceProviderToolDefinition",
+    "ResourceRegistrationContext",
+    "ResourceToolContext",
     "SQLiteStore",
+    "SqliteMemoryStore",
+    "SqliteMemoryStoreOptions",
     "StreamError",
     "ToolCall",
     "ToolDefinition",
     "ToolResult",
     "agntz",
+    "agntz_reasoner",
+    "create_memory_resource_provider",
     "create_memrez",
+    "memrez_agents_path",
     "normalize_namespace_grant",
     "normalize_namespace_grants",
     "tool",
