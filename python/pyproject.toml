@@ -16,6 +16,9 @@ dependencies = [
 litellm = [
   "litellm>=1.75.0",
 ]
+postgres = [
+  "psycopg[binary]>=3.2.0",
+]
 dev = [
   "build>=1.2.0",
   "basedpyright>=1.31.0",

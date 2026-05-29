@@ -25,6 +25,7 @@ from .core import (
     tool,
 )
 from .memrez import Memrez, MemrezScopeError, create_memrez
+from .memrez_postgres import PostgresMemoryStore, PostgresMemoryStoreOptions
 from .memrez_provider import MemoryResourceProvider, create_memory_resource_provider
 from .memrez_reasoner import AgntzReasoner, agntz_reasoner, memrez_agents_path
 from .memrez_sqlite import SqliteMemoryStore, SqliteMemoryStoreOptions
@@ -59,6 +60,8 @@ __all__ = [
     "MemrezScopeError",
     "NamespaceGrantError",
     "NotFoundError",
+    "PostgresMemoryStore",
+    "PostgresMemoryStoreOptions",
     "ResourceProvider",
     "ResourceProviderToolDefinition",
     "ResourceRegistrationContext",

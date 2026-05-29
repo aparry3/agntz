@@ -3,6 +3,7 @@ export { agntzReasoner } from "./reasoner.js";
 export { createMemoryResourceProvider } from "./provider.js";
 export { InMemoryMemoryStore } from "./store.js";
 export { SqliteMemoryStore } from "./sqlite.js";
+export { PostgresMemoryStore } from "./postgres.js";
 export {
   DEFAULT_WRITE_POLICY,
   MemrezScopeError,
@@ -35,3 +36,4 @@ export type {
 export type { AgntzClientLike, AgntzReasonerOptions, AgntzRunResult } from "./reasoner.js";
 export type { MemoryResourceConfig } from "./provider.js";
 export type { SqliteMemoryStoreOptions } from "./sqlite.js";
+export type { PostgresMemoryStoreOptions } from "./postgres.js";
