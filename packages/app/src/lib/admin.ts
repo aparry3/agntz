@@ -9,19 +9,22 @@
  * in your env. The user's own Clerk ID is shown on /settings for easy copy.
  */
 export function isSuperAdmin(userId: string | null | undefined): boolean {
-  if (!userId) return false;
-  const raw = process.env.SUPER_ADMIN_USER_IDS ?? "";
-  const ids = raw.split(",").map((s) => s.trim()).filter(Boolean);
-  return ids.includes(userId);
+	if (!userId) return false;
+	const raw = process.env.SUPER_ADMIN_USER_IDS ?? "";
+	const ids = raw
+		.split(",")
+		.map((s) => s.trim())
+		.filter(Boolean);
+	return ids.includes(userId);
 }
 
 export class ForbiddenError extends Error {
-  status = 403;
-  constructor(message = "Forbidden") {
-    super(message);
-  }
+	status = 403;
+	constructor(message = "Forbidden") {
+		super(message);
+	}
 }
 
 export function requireSuperAdmin(userId: string | null | undefined): void {
-  if (!isSuperAdmin(userId)) throw new ForbiddenError();
+	if (!isSuperAdmin(userId)) throw new ForbiddenError();
 }

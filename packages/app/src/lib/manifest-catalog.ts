@@ -8,11 +8,11 @@ export const SPAWNABLE_KINDS = ["ref", "inline"] as const;
 export type SpawnableKind = (typeof SPAWNABLE_KINDS)[number];
 
 export const PROPERTY_TYPES = [
-  "string",
-  "number",
-  "integer",
-  "boolean",
-  "array",
-  "object",
+	"string",
+	"number",
+	"integer",
+	"boolean",
+	"array",
+	"object",
 ] as const;
 export type PropertyType = (typeof PROPERTY_TYPES)[number];

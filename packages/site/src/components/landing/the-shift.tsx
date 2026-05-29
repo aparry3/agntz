@@ -1,10 +1,10 @@
 "use client";
 
-import { ACCENTS, type AccentName, TOKENS } from "./tokens";
-import { Card, H2, Lede, Pill, Row, Section } from "./primitives";
-import { ArrowIcon } from "./icons";
-import { CodeBlock } from "./code-block";
 import { LanguageToggle, usePreferredLanguage } from "../language";
+import { CodeBlock } from "./code-block";
+import { ArrowIcon } from "./icons";
+import { Card, H2, Lede, Pill, Row, Section } from "./primitives";
+import { ACCENTS, type AccentName, TOKENS } from "./tokens";
 
 const LIB_CODE_TS = `// With a library — you wire the agent yourself.
 import Anthropic from '@anthropic-ai/sdk';
@@ -139,210 +139,236 @@ tools:
     method: GET`;
 
 const ROWS: [string, string][] = [
-  ["200+ lines of glue code", "30 lines of YAML"],
-  ["Import, compose, wire tools", "Define, run"],
-  ["You own the agent loop", "The runtime owns the loop"],
-  ["Hand-write tool adapters", "Point at your OpenAPI or manifest"],
-  ["Build session + context handling", "Sessions handled, context windowed"],
+	["200+ lines of glue code", "30 lines of YAML"],
+	["Import, compose, wire tools", "Define, run"],
+	["You own the agent loop", "The runtime owns the loop"],
+	["Hand-write tool adapters", "Point at your OpenAPI or manifest"],
+	["Build session + context handling", "Sessions handled, context windowed"],
 ];
 
 export function TheShift({ accent = "blue" }: { accent?: AccentName }) {
-  const a = ACCENTS[accent];
-  const { language } = usePreferredLanguage();
-  const libraryCode = language === "python" ? LIB_CODE_PY : LIB_CODE_TS;
-  const libraryLabel = language === "python" ? "anthropic" : "@anthropic-ai/sdk";
-  const libraryFilename = language === "python" ? "weather-bot.py" : "weather-bot.ts";
-  const runSnippet =
-    language === "python"
-      ? "client.agents.run(agent_id=\"weather-bot\", input={...})"
-      : "client.agents.run({...})";
+	const a = ACCENTS[accent];
+	const { language } = usePreferredLanguage();
+	const libraryCode = language === "python" ? LIB_CODE_PY : LIB_CODE_TS;
+	const libraryLabel =
+		language === "python" ? "anthropic" : "@anthropic-ai/sdk";
+	const libraryFilename =
+		language === "python" ? "weather-bot.py" : "weather-bot.ts";
+	const runSnippet =
+		language === "python"
+			? 'client.agents.run(agent_id="weather-bot", input={...})'
+			: "client.agents.run({...})";
 
-  return (
-    <Section id="shift" kicker="The shift" style={{ background: TOKENS.surface }}>
-      <div
-        style={{
-          marginBottom: 56,
-          display: "grid",
-          gridTemplateColumns: "1.05fr 0.95fr",
-          gap: 64,
-          alignItems: "end",
-        }}
-      >
-        <H2 size={56} style={{ letterSpacing: "-0.035em" }}>
-          A runtime,
-          <br />
-          <span style={{ color: TOKENS.muted }}>not a library.</span>
-        </H2>
-        <Lede>
-          Other frameworks hand you primitives and ask you to build the agent.{" "}
-          <b style={{ color: TOKENS.ink, fontWeight: 600 }}>
-            agntz <i>is</i> the agent
-          </b>{" "}
-          — you describe it, the runtime runs it.
-        </Lede>
-      </div>
+	return (
+		<Section
+			id="shift"
+			kicker="The shift"
+			style={{ background: TOKENS.surface }}
+		>
+			<div
+				style={{
+					marginBottom: 56,
+					display: "grid",
+					gridTemplateColumns: "1.05fr 0.95fr",
+					gap: 64,
+					alignItems: "end",
+				}}
+			>
+				<H2 size={56} style={{ letterSpacing: "-0.035em" }}>
+					A runtime,
+					<br />
+					<span style={{ color: TOKENS.muted }}>not a library.</span>
+				</H2>
+				<Lede>
+					Other frameworks hand you primitives and ask you to build the agent.{" "}
+					<b style={{ color: TOKENS.ink, fontWeight: 600 }}>
+						agntz <i>is</i> the agent
+					</b>{" "}
+					— you describe it, the runtime runs it.
+				</Lede>
+			</div>
 
-      <Card style={{ overflow: "hidden", marginBottom: 28 }}>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
-            borderBottom: `1px solid ${TOKENS.line}`,
-            background: TOKENS.warm,
-          }}
-        >
-          <div style={{ padding: "18px 22px" }}>
-            <Row gap={8} style={{ alignItems: "center", marginBottom: 4 }}>
-              <span
-                style={{ width: 8, height: 8, borderRadius: 2, background: TOKENS.muted }}
-              />
-              <span style={{ fontWeight: 600, fontSize: 15 }}>With a library</span>
-              <Pill mono style={{ marginLeft: 4 }}>
-                {libraryLabel}
-              </Pill>
-              <LanguageToggle compact label="Library example" />
-            </Row>
-            <span style={{ fontSize: 13, color: TOKENS.text2 }}>
-              Primitives. You build the agent.
-            </span>
-          </div>
-          <div
-            style={{
-              padding: "18px 22px",
-              borderLeft: `1px solid ${TOKENS.line}`,
-              background: a.bg,
-            }}
-          >
-            <Row gap={8} style={{ alignItems: "center", marginBottom: 4 }}>
-              <span style={{ width: 8, height: 8, borderRadius: 2, background: a.fg }} />
-              <span style={{ fontWeight: 600, fontSize: 15 }}>With agntz</span>
-              <Pill accent={accent} mono style={{ marginLeft: 4 }}>
-                declarative runtime
-              </Pill>
-            </Row>
-            <span style={{ fontSize: 13, color: TOKENS.text2 }}>
-              Description. The runtime runs it.
-            </span>
-          </div>
-        </div>
-        {ROWS.map((r, i) => (
-          <div
-            key={r[0]}
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              borderBottom: i < ROWS.length - 1 ? `1px solid ${TOKENS.line2}` : "none",
-              background: i % 2 === 1 ? TOKENS.warm : TOKENS.surface2,
-            }}
-          >
-            <div
-              style={{
-                padding: "16px 22px",
-                fontSize: 14,
-                color: TOKENS.text2,
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-              }}
-            >
-              <span
-                style={{
-                  fontFamily: "var(--mono)",
-                  fontSize: 10.5,
-                  color: TOKENS.muted,
-                  letterSpacing: "0.12em",
-                  textTransform: "uppercase",
-                  width: 16,
-                }}
-              >
-                0{i + 1}
-              </span>
-              {r[0]}
-            </div>
-            <div
-              style={{
-                padding: "16px 22px",
-                borderLeft: `1px solid ${TOKENS.line2}`,
-                fontSize: 14,
-                fontWeight: 500,
-                color: TOKENS.ink,
-                background: a.bg + "55",
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-              }}
-            >
-              <span style={{ color: a.fg, display: "inline-flex" }}>
-                <ArrowIcon />
-              </span>
-              {r[1]}
-            </div>
-          </div>
-        ))}
-      </Card>
+			<Card style={{ overflow: "hidden", marginBottom: 28 }}>
+				<div
+					style={{
+						display: "grid",
+						gridTemplateColumns: "1fr 1fr",
+						borderBottom: `1px solid ${TOKENS.line}`,
+						background: TOKENS.warm,
+					}}
+				>
+					<div style={{ padding: "18px 22px" }}>
+						<Row gap={8} style={{ alignItems: "center", marginBottom: 4 }}>
+							<span
+								style={{
+									width: 8,
+									height: 8,
+									borderRadius: 2,
+									background: TOKENS.muted,
+								}}
+							/>
+							<span style={{ fontWeight: 600, fontSize: 15 }}>
+								With a library
+							</span>
+							<Pill mono style={{ marginLeft: 4 }}>
+								{libraryLabel}
+							</Pill>
+							<LanguageToggle compact label="Library example" />
+						</Row>
+						<span style={{ fontSize: 13, color: TOKENS.text2 }}>
+							Primitives. You build the agent.
+						</span>
+					</div>
+					<div
+						style={{
+							padding: "18px 22px",
+							borderLeft: `1px solid ${TOKENS.line}`,
+							background: a.bg,
+						}}
+					>
+						<Row gap={8} style={{ alignItems: "center", marginBottom: 4 }}>
+							<span
+								style={{
+									width: 8,
+									height: 8,
+									borderRadius: 2,
+									background: a.fg,
+								}}
+							/>
+							<span style={{ fontWeight: 600, fontSize: 15 }}>With agntz</span>
+							<Pill accent={accent} mono style={{ marginLeft: 4 }}>
+								declarative runtime
+							</Pill>
+						</Row>
+						<span style={{ fontSize: 13, color: TOKENS.text2 }}>
+							Description. The runtime runs it.
+						</span>
+					</div>
+				</div>
+				{ROWS.map((r, i) => (
+					<div
+						key={r[0]}
+						style={{
+							display: "grid",
+							gridTemplateColumns: "1fr 1fr",
+							borderBottom:
+								i < ROWS.length - 1 ? `1px solid ${TOKENS.line2}` : "none",
+							background: i % 2 === 1 ? TOKENS.warm : TOKENS.surface2,
+						}}
+					>
+						<div
+							style={{
+								padding: "16px 22px",
+								fontSize: 14,
+								color: TOKENS.text2,
+								display: "flex",
+								alignItems: "center",
+								gap: 10,
+							}}
+						>
+							<span
+								style={{
+									fontFamily: "var(--mono)",
+									fontSize: 10.5,
+									color: TOKENS.muted,
+									letterSpacing: "0.12em",
+									textTransform: "uppercase",
+									width: 16,
+								}}
+							>
+								0{i + 1}
+							</span>
+							{r[0]}
+						</div>
+						<div
+							style={{
+								padding: "16px 22px",
+								borderLeft: `1px solid ${TOKENS.line2}`,
+								fontSize: 14,
+								fontWeight: 500,
+								color: TOKENS.ink,
+								background: a.bg + "55",
+								display: "flex",
+								alignItems: "center",
+								gap: 10,
+							}}
+						>
+							<span style={{ color: a.fg, display: "inline-flex" }}>
+								<ArrowIcon />
+							</span>
+							{r[1]}
+						</div>
+					</div>
+				))}
+			</Card>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
-        <div>
-          <Row gap={8} style={{ alignItems: "center", marginBottom: 10 }}>
-            <Pill mono>before</Pill>
-            <span
-              style={{
-                fontFamily: "var(--mono)",
-                fontSize: 11,
-                color: TOKENS.muted,
-                letterSpacing: "0.12em",
-                textTransform: "uppercase",
-              }}
-            >
-              imperative · same weather-bot, hand-wired
-            </span>
-          </Row>
-          <CodeBlock filename={libraryFilename} lang={language === "python" ? "python" : "ts"}>
-            {libraryCode}
-          </CodeBlock>
-        </div>
-        <div>
-          <Row gap={8} style={{ alignItems: "center", marginBottom: 10 }}>
-            <Pill accent={accent} dot mono>
-              after
-            </Pill>
-            <span
-              style={{
-                fontFamily: "var(--mono)",
-                fontSize: 11,
-                color: a.fg,
-                letterSpacing: "0.12em",
-                textTransform: "uppercase",
-              }}
-            >
-              declarative · same weather-bot, described
-            </span>
-          </Row>
-          <CodeBlock filename="weather-bot.yaml" lang="yaml" wrap>
-            {AGNTZ_CODE}
-          </CodeBlock>
-          <div
-            style={{
-              marginTop: 12,
-              padding: "12px 14px",
-              border: `1px solid ${TOKENS.line}`,
-              borderRadius: 8,
-              background: TOKENS.surface2,
-              fontFamily: "var(--mono)",
-              fontSize: 12.5,
-              color: TOKENS.text2,
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-            }}
-          >
-            <span style={{ color: TOKENS.muted }}>$</span>
-            <span style={{ color: TOKENS.ink }}>{runSnippet}</span>
-            <span style={{ flex: 1 }} />
-            <span style={{ color: TOKENS.muted }}>// that&apos;s the whole loop</span>
-          </div>
-        </div>
-      </div>
-    </Section>
-  );
+			<div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
+				<div>
+					<Row gap={8} style={{ alignItems: "center", marginBottom: 10 }}>
+						<Pill mono>before</Pill>
+						<span
+							style={{
+								fontFamily: "var(--mono)",
+								fontSize: 11,
+								color: TOKENS.muted,
+								letterSpacing: "0.12em",
+								textTransform: "uppercase",
+							}}
+						>
+							imperative · same weather-bot, hand-wired
+						</span>
+					</Row>
+					<CodeBlock
+						filename={libraryFilename}
+						lang={language === "python" ? "python" : "ts"}
+					>
+						{libraryCode}
+					</CodeBlock>
+				</div>
+				<div>
+					<Row gap={8} style={{ alignItems: "center", marginBottom: 10 }}>
+						<Pill accent={accent} dot mono>
+							after
+						</Pill>
+						<span
+							style={{
+								fontFamily: "var(--mono)",
+								fontSize: 11,
+								color: a.fg,
+								letterSpacing: "0.12em",
+								textTransform: "uppercase",
+							}}
+						>
+							declarative · same weather-bot, described
+						</span>
+					</Row>
+					<CodeBlock filename="weather-bot.yaml" lang="yaml" wrap>
+						{AGNTZ_CODE}
+					</CodeBlock>
+					<div
+						style={{
+							marginTop: 12,
+							padding: "12px 14px",
+							border: `1px solid ${TOKENS.line}`,
+							borderRadius: 8,
+							background: TOKENS.surface2,
+							fontFamily: "var(--mono)",
+							fontSize: 12.5,
+							color: TOKENS.text2,
+							display: "flex",
+							alignItems: "center",
+							gap: 10,
+						}}
+					>
+						<span style={{ color: TOKENS.muted }}>$</span>
+						<span style={{ color: TOKENS.ink }}>{runSnippet}</span>
+						<span style={{ flex: 1 }} />
+						<span style={{ color: TOKENS.muted }}>
+							// that&apos;s the whole loop
+						</span>
+					</div>
+				</div>
+			</div>
+		</Section>
+	);
 }

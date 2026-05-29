@@ -1,6 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireUserContext, AuthRequiredError } from "@/lib/user";
+import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import { workerValidateManifest } from "@/lib/worker-client";
+import { type NextRequest, NextResponse } from "next/server";
 
 /**
  * The agent id in this route addresses an agent *record*, not a specific
@@ -10,95 +10,116 @@ import { workerValidateManifest } from "@/lib/worker-client";
  * happens to match.
  */
 function rejectVersionSuffix(id: string): NextResponse | null {
-  if (id.includes("@")) {
-    return NextResponse.json(
-      {
-        error: `Agent id "${id}" must not contain '@'. Version syntax is supported on POST /api/run and the /versions subresource, not on this endpoint.`,
-      },
-      { status: 400 },
-    );
-  }
-  return null;
+	if (id.includes("@")) {
+		return NextResponse.json(
+			{
+				error: `Agent id "${id}" must not contain '@'. Version syntax is supported on POST /api/run and the /versions subresource, not on this endpoint.`,
+			},
+			{ status: 400 },
+		);
+	}
+	return null;
 }
 
 export async function GET(
-  _req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+	_req: NextRequest,
+	{ params }: { params: Promise<{ id: string }> },
 ) {
-  try {
-    const { id } = await params;
-    const bad = rejectVersionSuffix(id);
-    if (bad) return bad;
-    const { runner } = await requireUserContext();
-    const agent = await runner.agents.getAgent(id);
+	try {
+		const { id } = await params;
+		const bad = rejectVersionSuffix(id);
+		if (bad) return bad;
+		const { runner } = await requireUserContext();
+		const agent = await runner.agents.getAgent(id);
 
-    if (!agent) {
-      return NextResponse.json({ error: `Agent "${id}" not found` }, { status: 404 });
-    }
+		if (!agent) {
+			return NextResponse.json(
+				{ error: `Agent "${id}" not found` },
+				{ status: 404 },
+			);
+		}
 
-    return NextResponse.json(agent);
-  } catch (error) {
-    return errorResponse(error);
-  }
+		return NextResponse.json(agent);
+	} catch (error) {
+		return errorResponse(error);
+	}
 }
 
 export async function PUT(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+	req: NextRequest,
+	{ params }: { params: Promise<{ id: string }> },
 ) {
-  try {
-    const { id } = await params;
-    const bad = rejectVersionSuffix(id);
-    if (bad) return bad;
-    const { userId, runner } = await requireUserContext();
-    const body = await req.json();
-    const { name, manifest, ...rest } = body;
+	try {
+		const { id } = await params;
+		const bad = rejectVersionSuffix(id);
+		if (bad) return bad;
+		const { userId, runner } = await requireUserContext();
+		const body = await req.json();
+		const { name, manifest, ...rest } = body;
 
-    if (!manifest) {
-      return NextResponse.json({ error: "Missing required field: manifest" }, { status: 400 });
-    }
+		if (!manifest) {
+			return NextResponse.json(
+				{ error: "Missing required field: manifest" },
+				{ status: 400 },
+			);
+		}
 
-    const validation = await workerValidateManifest({ userId, manifest, strict: true });
-    if (validation.errors.length > 0) {
-      return NextResponse.json(
-        { error: "Invalid manifest", errors: validation.errors, warnings: validation.warnings },
-        { status: 400 }
-      );
-    }
+		const validation = await workerValidateManifest({
+			userId,
+			manifest,
+			strict: true,
+		});
+		if (validation.errors.length > 0) {
+			return NextResponse.json(
+				{
+					error: "Invalid manifest",
+					errors: validation.errors,
+					warnings: validation.warnings,
+				},
+				{ status: 400 },
+			);
+		}
 
-    await runner.agents.putAgent({
-      id,
-      name: name ?? id,
-      systemPrompt: "",
-      model: { provider: "openai", name: "gpt-5.4" },
-      metadata: { manifest, ...rest },
-    });
+		await runner.agents.putAgent({
+			id,
+			name: name ?? id,
+			systemPrompt: "",
+			model: { provider: "openai", name: "gpt-5.4" },
+			metadata: { manifest, ...rest },
+		});
 
-    return NextResponse.json({ id, updated: true, warnings: validation.warnings });
-  } catch (error) {
-    return errorResponse(error);
-  }
+		return NextResponse.json({
+			id,
+			updated: true,
+			warnings: validation.warnings,
+		});
+	} catch (error) {
+		return errorResponse(error);
+	}
 }
 
 export async function DELETE(
-  _req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+	_req: NextRequest,
+	{ params }: { params: Promise<{ id: string }> },
 ) {
-  try {
-    const { id } = await params;
-    const bad = rejectVersionSuffix(id);
-    if (bad) return bad;
-    const { runner } = await requireUserContext();
-    await runner.agents.deleteAgent(id);
-    return NextResponse.json({ id, deleted: true });
-  } catch (error) {
-    return errorResponse(error);
-  }
+	try {
+		const { id } = await params;
+		const bad = rejectVersionSuffix(id);
+		if (bad) return bad;
+		const { runner } = await requireUserContext();
+		await runner.agents.deleteAgent(id);
+		return NextResponse.json({ id, deleted: true });
+	} catch (error) {
+		return errorResponse(error);
+	}
 }
 
 function errorResponse(error: unknown) {
-  if (error instanceof AuthRequiredError) {
-    return NextResponse.json({ error: error.message }, { status: error.status });
-  }
-  return NextResponse.json({ error: String(error) }, { status: 500 });
+	if (error instanceof AuthRequiredError) {
+		return NextResponse.json(
+			{ error: error.message },
+			{ status: error.status },
+		);
+	}
+	return NextResponse.json({ error: String(error) }, { status: 500 });
 }

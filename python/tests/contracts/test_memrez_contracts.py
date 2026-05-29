@@ -51,9 +51,7 @@ def test_memrez_namespace_security_contract() -> None:
         for grant in rule["rejectedGrants"]:
             with pytest.raises(NamespaceGrantError):
                 normalize_namespace_grants([grant], policy)
-        assert normalize_namespace_grants([rule["allowedGrant"]], policy) == [
-            rule["allowedGrant"]
-        ]
+        assert normalize_namespace_grants([rule["allowedGrant"]], policy) == [rule["allowedGrant"]]
         assert normalize_namespace_grants([rule["unaffectedGrant"]], policy) == [
             rule["unaffectedGrant"]
         ]

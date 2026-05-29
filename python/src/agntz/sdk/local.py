@@ -717,9 +717,7 @@ class _LocalExecutionContext:
         if config.kind == "mcp":
             return await invoke_mcp_tool(config, state, http_client=self._client.http_client)
         if config.kind != "local":
-            raise RuntimeError(
-                f"Embedded Python SDK does not support {config.kind} tools yet"
-            )
+            raise RuntimeError(f"Embedded Python SDK does not support {config.kind} tools yet")
         definition = self._client.tools.get(config.name)
         if definition is None:
             raise RuntimeError(f"Local tool '{config.name}' was not registered")
@@ -767,9 +765,7 @@ class _LocalExecutionContext:
         if not manifest.resources:
             return []
         parent_modes = (
-            self._parent_resource_modes_stack[-1]
-            if self._parent_resource_modes_stack
-            else None
+            self._parent_resource_modes_stack[-1] if self._parent_resource_modes_stack else None
         )
         resolved: list[ResolvedResource] = []
         for name, definition in manifest.resources.items():
@@ -881,9 +877,7 @@ class _LocalExecutionContext:
             kind = resource.definition.kind or resource.name
             existing = modes.get(kind)
             modes[kind] = (
-                clamp_resource_mode(existing, resource.mode)
-                if existing
-                else resource.mode
+                clamp_resource_mode(existing, resource.mode) if existing else resource.mode
             )
         return modes
 

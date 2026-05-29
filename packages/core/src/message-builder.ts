@@ -1,8 +1,8 @@
 import type {
-  AgentDefinition,
-  Message,
-  ContextEntry,
-  ContentBlock,
+	AgentDefinition,
+	ContentBlock,
+	ContextEntry,
+	Message,
 } from "./types.js";
 import { isContentBlockArray } from "./types.js";
 
@@ -17,15 +17,23 @@ import { isContentBlockArray } from "./types.js";
  * produces base64 first, so we standardize on string.
  */
 export type AiMessagePart =
-  | { type: "text"; text: string }
-  | { type: "image"; image: string; mediaType?: string }
-  | { type: "tool-call"; toolCallId: string; toolName: string; input: unknown; providerOptions?: unknown }
-  | {
-      type: "tool-result";
-      toolCallId: string;
-      toolName: string;
-      output: { type: "text"; value: string } | { type: "json"; value: unknown };
-    };
+	| { type: "text"; text: string }
+	| { type: "image"; image: string; mediaType?: string }
+	| {
+			type: "tool-call";
+			toolCallId: string;
+			toolName: string;
+			input: unknown;
+			providerOptions?: unknown;
+	  }
+	| {
+			type: "tool-result";
+			toolCallId: string;
+			toolName: string;
+			output:
+				| { type: "text"; value: string }
+				| { type: "json"; value: unknown };
+	  };
 
 /**
  * Output message shape consumed by `ModelProvider.generateText` /
@@ -33,8 +41,8 @@ export type AiMessagePart =
  * and `AiMessagePart[]` for multimodal user messages.
  */
 export interface AiSdkMessage {
-  role: string;
-  content: string | AiMessagePart[];
+	role: string;
+	content: string | AiMessagePart[];
 }
 
 /**
@@ -46,83 +54,85 @@ export interface AiSdkMessage {
  * plain string for full backward compatibility with text-only providers.
  */
 export function buildMessages(options: {
-  agent: AgentDefinition;
-  input: string | ContentBlock[];
-  sessionHistory?: Message[];
-  contextEntries?: Map<string, ContextEntry[]>;
-  extraContext?: string;
+	agent: AgentDefinition;
+	input: string | ContentBlock[];
+	sessionHistory?: Message[];
+	contextEntries?: Map<string, ContextEntry[]>;
+	extraContext?: string;
 }): AiSdkMessage[] {
-  const { agent, input, sessionHistory, contextEntries, extraContext } = options;
-  const messages: AiSdkMessage[] = [];
+	const { agent, input, sessionHistory, contextEntries, extraContext } =
+		options;
+	const messages: AiSdkMessage[] = [];
 
-  // 1. System prompt (with context injected)
-  let systemContent = agent.systemPrompt;
+	// 1. System prompt (with context injected)
+	let systemContent = agent.systemPrompt;
 
-  // Inject few-shot examples
-  if (agent.examples?.length) {
-    systemContent += "\n\n## Examples\n";
-    for (const ex of agent.examples) {
-      systemContent += `\nUser: ${ex.input}\nAssistant: ${ex.output}\n`;
-    }
-  }
+	// Inject few-shot examples
+	if (agent.examples?.length) {
+		systemContent += "\n\n## Examples\n";
+		for (const ex of agent.examples) {
+			systemContent += `\nUser: ${ex.input}\nAssistant: ${ex.output}\n`;
+		}
+	}
 
-  // Inject context entries
-  if (contextEntries && contextEntries.size > 0) {
-    systemContent += "\n\n";
-    for (const [contextId, entries] of contextEntries) {
-      if (entries.length === 0) continue;
-      systemContent += `<context id="${contextId}">\n`;
-      for (const entry of entries) {
-        systemContent += `  <entry agent="${entry.agentId}" time="${entry.createdAt}">\n`;
-        systemContent += `    ${entry.content}\n`;
-        systemContent += `  </entry>\n`;
-      }
-      systemContent += `</context>\n`;
-    }
-  }
+	// Inject context entries
+	if (contextEntries && contextEntries.size > 0) {
+		systemContent += "\n\n";
+		for (const [contextId, entries] of contextEntries) {
+			if (entries.length === 0) continue;
+			systemContent += `<context id="${contextId}">\n`;
+			for (const entry of entries) {
+				systemContent += `  <entry agent="${entry.agentId}" time="${entry.createdAt}">\n`;
+				systemContent += `    ${entry.content}\n`;
+				systemContent += "  </entry>\n";
+			}
+			systemContent += "</context>\n";
+		}
+	}
 
-  // Inject extra context
-  if (extraContext) {
-    systemContent += `\n\n<extra-context>\n${extraContext}\n</extra-context>`;
-  }
+	// Inject extra context
+	if (extraContext) {
+		systemContent += `\n\n<extra-context>\n${extraContext}\n</extra-context>`;
+	}
 
-  messages.push({ role: "system", content: systemContent });
+	messages.push({ role: "system", content: systemContent });
 
-  // 2. Session history
-  if (sessionHistory?.length) {
-    for (const msg of sessionHistory) {
-      // Skip system messages from history, except conversation summaries.
-      // Use the flattened text view for the startsWith check so it works
-      // whether `content` is a string or a ContentBlock[].
-      const flat = flattenContentToText(msg.content);
-      if (msg.role === "system" && !flat.startsWith("[Conversation Summary]")) continue;
+	// 2. Session history
+	if (sessionHistory?.length) {
+		for (const msg of sessionHistory) {
+			// Skip system messages from history, except conversation summaries.
+			// Use the flattened text view for the startsWith check so it works
+			// whether `content` is a string or a ContentBlock[].
+			const flat = flattenContentToText(msg.content);
+			if (msg.role === "system" && !flat.startsWith("[Conversation Summary]"))
+				continue;
 
-      messages.push({
-        role: msg.role,
-        content: messageContentToAiSdk(msg.content),
-      });
-    }
-  }
+			messages.push({
+				role: msg.role,
+				content: messageContentToAiSdk(msg.content),
+			});
+		}
+	}
 
-  // 3. User input (apply template if defined)
-  if (isContentBlockArray(input)) {
-    // Multimodal — emit a parts array. The userPromptTemplate is intentionally
-    // bypassed: replacing `{{input}}` with a serialized blocks array would
-    // produce nonsense, and the standard MMS pattern is "text + image" in
-    // separate parts.
-    messages.push({
-      role: "user",
-      content: contentBlocksToAiSdkParts(input),
-    });
-  } else {
-    let userContent = input;
-    if (agent.userPromptTemplate) {
-      userContent = agent.userPromptTemplate.replace("{{input}}", input);
-    }
-    messages.push({ role: "user", content: userContent });
-  }
+	// 3. User input (apply template if defined)
+	if (isContentBlockArray(input)) {
+		// Multimodal — emit a parts array. The userPromptTemplate is intentionally
+		// bypassed: replacing `{{input}}` with a serialized blocks array would
+		// produce nonsense, and the standard MMS pattern is "text + image" in
+		// separate parts.
+		messages.push({
+			role: "user",
+			content: contentBlocksToAiSdkParts(input),
+		});
+	} else {
+		let userContent = input;
+		if (agent.userPromptTemplate) {
+			userContent = agent.userPromptTemplate.replace("{{input}}", input);
+		}
+		messages.push({ role: "user", content: userContent });
+	}
 
-  return messages;
+	return messages;
 }
 
 /**
@@ -131,10 +141,10 @@ export function buildMessages(options: {
  * array.
  */
 export function messageContentToAiSdk(
-  content: string | ContentBlock[],
+	content: string | ContentBlock[],
 ): string | AiMessagePart[] {
-  if (typeof content === "string") return content;
-  return contentBlocksToAiSdkParts(content);
+	if (typeof content === "string") return content;
+	return contentBlocksToAiSdkParts(content);
 }
 
 /**
@@ -146,22 +156,22 @@ export function messageContentToAiSdk(
  *   names the URL so the model isn't completely lost if it slips through.
  */
 export function contentBlocksToAiSdkParts(
-  blocks: ContentBlock[],
+	blocks: ContentBlock[],
 ): AiMessagePart[] {
-  const parts: AiMessagePart[] = [];
-  for (const b of blocks) {
-    if (b.type === "text") {
-      parts.push({ type: "text", text: b.text });
-      continue;
-    }
-    if ("base64" in b) {
-      parts.push({ type: "image", image: b.base64, mediaType: b.mediaType });
-      continue;
-    }
-    // image-with-url that escaped normalization: degrade gracefully.
-    parts.push({ type: "text", text: `[image: ${b.url}]` });
-  }
-  return parts;
+	const parts: AiMessagePart[] = [];
+	for (const b of blocks) {
+		if (b.type === "text") {
+			parts.push({ type: "text", text: b.text });
+			continue;
+		}
+		if ("base64" in b) {
+			parts.push({ type: "image", image: b.base64, mediaType: b.mediaType });
+			continue;
+		}
+		// image-with-url that escaped normalization: degrade gracefully.
+		parts.push({ type: "text", text: `[image: ${b.url}]` });
+	}
+	return parts;
 }
 
 /**
@@ -171,24 +181,24 @@ export function contentBlocksToAiSdkParts(
  * rendered as a `[image]` placeholder.
  */
 export function flattenContentToText(content: string | ContentBlock[]): string {
-  if (typeof content === "string") return content;
-  const pieces: string[] = [];
-  for (const b of content) {
-    if (b.type === "text") pieces.push(b.text);
-    else pieces.push("[image]");
-  }
-  return pieces.join(" ");
+	if (typeof content === "string") return content;
+	const pieces: string[] = [];
+	for (const b of content) {
+		if (b.type === "text") pieces.push(b.text);
+		else pieces.push("[image]");
+	}
+	return pieces.join(" ");
 }
 
 /**
  * Trim session history using sliding window strategy.
  */
 export function trimHistory(
-  messages: Message[],
-  maxMessages: number
+	messages: Message[],
+	maxMessages: number,
 ): Message[] {
-  if (messages.length <= maxMessages) return messages;
+	if (messages.length <= maxMessages) return messages;
 
-  // Keep the most recent messages
-  return messages.slice(-maxMessages);
+	// Keep the most recent messages
+	return messages.slice(-maxMessages);
 }

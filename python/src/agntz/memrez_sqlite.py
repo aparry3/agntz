@@ -21,9 +21,7 @@ class SqliteMemoryStoreOptions:
 class SqliteMemoryStore:
     def __init__(self, options: str | Path | SqliteMemoryStoreOptions) -> None:
         opts = (
-            SqliteMemoryStoreOptions(path=options)
-            if isinstance(options, str | Path)
-            else options
+            SqliteMemoryStoreOptions(path=options) if isinstance(options, str | Path) else options
         )
         self.path = str(opts.path)
         self._conn = sqlite3.connect(self.path)
@@ -204,7 +202,7 @@ class SqliteMemoryStore:
             SELECT DISTINCT e.*
             FROM memrez_entries e
             {joins}
-            WHERE {' AND '.join(clauses)}
+            WHERE {" AND ".join(clauses)}
             ORDER BY e.updated_at DESC
             """,
             tuple(params),
@@ -266,9 +264,7 @@ class SqliteMemoryStore:
             type=_entry_type(str(row["type"])),
             source=source,
             status=_entry_status(str(row["status"])),
-            superseded_by=(
-                str(row["superseded_by"]) if row["superseded_by"] is not None else None
-            ),
+            superseded_by=(str(row["superseded_by"]) if row["superseded_by"] is not None else None),
             created_at=str(row["created_at"]),
             updated_at=str(row["updated_at"]),
         )

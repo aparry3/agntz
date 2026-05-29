@@ -52,8 +52,11 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Lint
+        run: pnpm lint
+
       - name: Type check
-        run: pnpm turbo typecheck --filter="./packages/*"
+        run: pnpm turbo typecheck
 
   python:
     name: Python SDK

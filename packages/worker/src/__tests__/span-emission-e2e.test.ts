@@ -1,3 +1,7 @@
+import { MemoryStore, SpanEmitter, createRunner } from "@agntz/core";
+import type { ModelProvider, Span, TraceStore } from "@agntz/core";
+import { execute } from "@agntz/manifest";
+import type { SequentialAgentManifest } from "@agntz/manifest";
 /**
  * End-to-end span emission integration test.
  *
@@ -5,11 +9,7 @@
  * model provider and verifies the full span tree shape produced by a
  * sequential manifest.
  */
-import { describe, it, expect, beforeEach } from "vitest";
-import { MemoryStore, SpanEmitter, createRunner } from "@agntz/core";
-import { execute } from "@agntz/manifest";
-import type { Span, TraceStore } from "@agntz/core";
-import type { SequentialAgentManifest } from "@agntz/manifest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { createExecutionContext } from "../bridge.js";
 import { InMemoryTraceRegistry } from "../trace-registry.js";
 
@@ -18,86 +18,92 @@ import { InMemoryTraceRegistry } from "../trace-registry.js";
 // ---------------------------------------------------------------------------
 
 /** Minimal stub model provider that never calls a real API. */
-function makeStubModelProvider() {
-  return {
-    generateText: async () => ({
-      text: "ok",
-      toolCalls: [],
-      usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
-      finishReason: "stop",
-    }),
-  } as any;
+function makeStubModelProvider(): ModelProvider {
+	return {
+		generateText: async () => ({
+			text: "ok",
+			toolCalls: [],
+			usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+			finishReason: "stop",
+		}),
+	};
 }
 
 interface TestHarness {
-  registry: InMemoryTraceRegistry;
-  emitter: SpanEmitter;
-  runner: ReturnType<typeof createRunner>;
-  /** All span-start Span objects seen by the traceSink. */
-  seenSpans: Span[];
-  /** spanId → merged attributes from the span-end patch. */
-  endedAttrs: Record<string, Record<string, string | number | boolean>>;
-  /** Flush registry and return the root traceId from seen spans. */
-  finalise(ownerId: string): Promise<string>;
+	registry: InMemoryTraceRegistry;
+	emitter: SpanEmitter;
+	runner: ReturnType<typeof createRunner>;
+	/** All span-start Span objects seen by the traceSink. */
+	seenSpans: Span[];
+	/** spanId → merged attributes from the span-end patch. */
+	endedAttrs: Record<string, Record<string, string | number | boolean>>;
+	/** Flush registry and return the root traceId from seen spans. */
+	finalise(ownerId: string): Promise<string>;
 }
 
 function makeTestHarness(store: MemoryStore): TestHarness {
-  const traceStore = store as unknown as TraceStore;
-  const seenSpans: Span[] = [];
-  const endedAttrs: Record<string, Record<string, string | number | boolean>> = {};
+	const traceStore = store as unknown as TraceStore;
+	const seenSpans: Span[] = [];
+	const endedAttrs: Record<
+		string,
+		Record<string, string | number | boolean>
+	> = {};
 
-  const registry = new InMemoryTraceRegistry({
-    store: traceStore,
-    flushBatchSize: 1,
-    flushIntervalMs: 50,
-  });
+	const registry = new InMemoryTraceRegistry({
+		store: traceStore,
+		flushBatchSize: 1,
+		flushIntervalMs: 50,
+	});
 
-  const emitter = new SpanEmitter({
-    traceSink: (event) => {
-      if (event.type === "span-start") {
-        seenSpans.push(event.span);
-        registry.spanStart(event.span);
-      } else if (event.type === "span-end") {
-        endedAttrs[event.spanId] = (event.patch.attributes ?? {}) as Record<string, string | number | boolean>;
-        registry.spanEnd(event.spanId, event.patch);
-      }
-      // trace-done is not auto-emitted by SpanEmitter; handled manually in finalise().
-    },
-  });
+	const emitter = new SpanEmitter({
+		traceSink: (event) => {
+			if (event.type === "span-start") {
+				seenSpans.push(event.span);
+				registry.spanStart(event.span);
+			} else if (event.type === "span-end") {
+				endedAttrs[event.spanId] = (event.patch.attributes ?? {}) as Record<
+					string,
+					string | number | boolean
+				>;
+				registry.spanEnd(event.spanId, event.patch);
+			}
+			// trace-done is not auto-emitted by SpanEmitter; handled manually in finalise().
+		},
+	});
 
-  const runner = createRunner({
-    store,
-    modelProvider: makeStubModelProvider(),
-  });
+	const runner = createRunner({
+		store,
+		modelProvider: makeStubModelProvider(),
+	});
 
-  async function finalise(ownerId: string): Promise<string> {
-    await registry.waitForFlush();
+	async function finalise(ownerId: string): Promise<string> {
+		await registry.waitForFlush();
 
-    const rootSpan = seenSpans.find((s) => s.parentId === null);
-    const traceId = rootSpan?.traceId ?? seenSpans[0]?.traceId ?? "";
+		const rootSpan = seenSpans.find((s) => s.parentId === null);
+		const traceId = rootSpan?.traceId ?? seenSpans[0]?.traceId ?? "";
 
-    // Manually synthesise a TraceSummary so registry.traceDone() upserts it.
-    // In production this would be emitted by SpanEmitter when the outermost
-    // span ends (not yet implemented — another gap to address).
-    registry.traceDone(traceId, ownerId, {
-      traceId,
-      ownerId,
-      rootName: rootSpan?.name ?? "agent.manifest",
-      agentId: null,
-      startedAt: rootSpan?.startedAt ?? new Date().toISOString(),
-      endedAt: new Date().toISOString(),
-      durationMs: 0,
-      spanCount: seenSpans.length,
-      status: "ok",
-      totalTokens: 0,
-      totalCostUsd: null,
-    });
-    await registry.waitForFlush();
+		// Manually synthesise a TraceSummary so registry.traceDone() upserts it.
+		// In production this would be emitted by SpanEmitter when the outermost
+		// span ends (not yet implemented — another gap to address).
+		registry.traceDone(traceId, ownerId, {
+			traceId,
+			ownerId,
+			rootName: rootSpan?.name ?? "agent.manifest",
+			agentId: null,
+			startedAt: rootSpan?.startedAt ?? new Date().toISOString(),
+			endedAt: new Date().toISOString(),
+			durationMs: 0,
+			spanCount: seenSpans.length,
+			status: "ok",
+			totalTokens: 0,
+			totalCostUsd: null,
+		});
+		await registry.waitForFlush();
 
-    return traceId;
-  }
+		return traceId;
+	}
 
-  return { registry, emitter, runner, seenSpans, endedAttrs, finalise };
+	return { registry, emitter, runner, seenSpans, endedAttrs, finalise };
 }
 
 // ---------------------------------------------------------------------------
@@ -105,151 +111,164 @@ function makeTestHarness(store: MemoryStore): TestHarness {
 // ---------------------------------------------------------------------------
 
 describe("span emission end-to-end", () => {
-  let store: MemoryStore;
+	let store: MemoryStore;
 
-  beforeEach(() => {
-    store = new MemoryStore();
-  });
+	beforeEach(() => {
+		store = new MemoryStore();
+	});
 
-  it("produces manifest > step > manifest(llm) > invoke > model.call hierarchy", async () => {
-    const manifest: SequentialAgentManifest = {
-      id: "test-seq",
-      kind: "sequential",
-      steps: [
-        {
-          agent: {
-            id: "step1",
-            kind: "llm",
-            model: { provider: "anthropic", name: "claude-sonnet-4-6" },
-            instruction: "say hi",
-          },
-        },
-        {
-          agent: {
-            id: "step2",
-            kind: "llm",
-            model: { provider: "anthropic", name: "claude-sonnet-4-6" },
-            instruction: "say bye",
-          },
-        },
-      ],
-    };
+	it("produces manifest > step > manifest(llm) > invoke > model.call hierarchy", async () => {
+		const manifest: SequentialAgentManifest = {
+			id: "test-seq",
+			kind: "sequential",
+			steps: [
+				{
+					agent: {
+						id: "step1",
+						kind: "llm",
+						model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+						instruction: "say hi",
+					},
+				},
+				{
+					agent: {
+						id: "step2",
+						kind: "llm",
+						model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+						instruction: "say bye",
+					},
+				},
+			],
+		};
 
-    const OWNER = "u_e2e";
-    const { emitter, runner, seenSpans, finalise } = makeTestHarness(store);
-    const ctx = createExecutionContext(runner, { spanEmitter: emitter, ownerId: OWNER });
+		const OWNER = "u_e2e";
+		const { emitter, runner, seenSpans, finalise } = makeTestHarness(store);
+		const ctx = createExecutionContext(runner, {
+			spanEmitter: emitter,
+			ownerId: OWNER,
+		});
 
-    await execute(manifest, "input", ctx);
-    await finalise(OWNER);
+		await execute(manifest, "input", ctx);
+		await finalise(OWNER);
 
-    // ── All spans are visible via seenSpans (traceSink sees all, regardless of ownerId) ──
-    expect(seenSpans.length).toBeGreaterThan(0);
+		// ── All spans are visible via seenSpans (traceSink sees all, regardless of ownerId) ──
+		expect(seenSpans.length).toBeGreaterThan(0);
 
-    const byKind = seenSpans.reduce(
-      (acc, s) => {
-        (acc[s.kind] ??= []).push(s);
-        return acc;
-      },
-      {} as Record<string, Span[]>,
-    );
+		const byKind = seenSpans.reduce(
+			(acc, s) => {
+				const spans = acc[s.kind] ?? [];
+				spans.push(s);
+				acc[s.kind] = spans;
+				return acc;
+			},
+			{} as Record<string, Span[]>,
+		);
 
-    // Root sequential manifest span
-    expect(byKind["manifest"]).toBeDefined();
-    // 1 sequential root + 2 inline llm manifests (one per step)
-    expect(byKind["manifest"]!.length).toBe(3);
+		// Root sequential manifest span
+		expect(byKind.manifest).toBeDefined();
+		// 1 sequential root + 2 inline llm manifests (one per step)
+		expect(byKind.manifest?.length).toBe(3);
 
-    // Two step spans — one per sequential step — both children of the sequential manifest
-    expect(byKind["step"]?.length).toBe(2);
+		// Two step spans — one per sequential step — both children of the sequential manifest
+		expect(byKind.step?.length).toBe(2);
 
-    // Two invoke spans — one per LLM agent invocation
-    expect(byKind["invoke"]?.length).toBe(2);
+		// Two invoke spans — one per LLM agent invocation
+		expect(byKind.invoke?.length).toBe(2);
 
-    // Two model.call spans
-    expect(byKind["model"]?.length).toBe(2);
+		// Two model.call spans
+		expect(byKind.model?.length).toBe(2);
 
-    // Sequential manifest span is the trace root (no parent)
-    const seqManifestSpan = byKind["manifest"]!.find((s) => s.parentId === null);
-    expect(seqManifestSpan).toBeDefined();
+		// Sequential manifest span is the trace root (no parent)
+		const seqManifestSpan = byKind.manifest?.find((s) => s.parentId === null);
+		expect(seqManifestSpan).toBeDefined();
 
-    // Step spans are direct children of the sequential manifest
-    for (const stepSpan of byKind["step"]!) {
-      expect(stepSpan.parentId).toBe(seqManifestSpan!.spanId);
-    }
+		// Step spans are direct children of the sequential manifest
+		for (const stepSpan of byKind.step ?? []) {
+			expect(stepSpan.parentId).toBe(seqManifestSpan?.spanId);
+		}
 
-    // Each step has a child llm manifest span
-    const stepIds = new Set(byKind["step"]!.map((s) => s.spanId));
-    const llmManifestSpans = byKind["manifest"]!.filter((s) => s.parentId !== null);
-    for (const llmManifest of llmManifestSpans) {
-      expect(stepIds.has(llmManifest.parentId ?? "")).toBe(true);
-    }
+		// Each step has a child llm manifest span
+		const stepIds = new Set(byKind.step?.map((s) => s.spanId));
+		const llmManifestSpans = byKind.manifest?.filter(
+			(s) => s.parentId !== null,
+		);
+		for (const llmManifest of llmManifestSpans) {
+			expect(stepIds.has(llmManifest.parentId ?? "")).toBe(true);
+		}
 
-    // Invoke spans are children of an llm manifest span
-    const llmManifestIds = new Set(llmManifestSpans.map((s) => s.spanId));
-    for (const invokeSpan of byKind["invoke"]!) {
-      expect(llmManifestIds.has(invokeSpan.parentId ?? "")).toBe(true);
-    }
+		// Invoke spans are children of an llm manifest span
+		const llmManifestIds = new Set(llmManifestSpans.map((s) => s.spanId));
+		for (const invokeSpan of byKind.invoke ?? []) {
+			expect(llmManifestIds.has(invokeSpan.parentId ?? "")).toBe(true);
+		}
 
-    // Model spans are children of invoke spans
-    const invokeIds = new Set(byKind["invoke"]!.map((s) => s.spanId));
-    for (const modelSpan of byKind["model"]!) {
-      expect(invokeIds.has(modelSpan.parentId ?? "")).toBe(true);
-    }
+		// Model spans are children of invoke spans
+		const invokeIds = new Set((byKind.invoke ?? []).map((s) => s.spanId));
+		for (const modelSpan of byKind.model ?? []) {
+			expect(invokeIds.has(modelSpan.parentId ?? "")).toBe(true);
+		}
 
-    // All spans — including invoke and model — should now be persisted under
-    // the correct owner now that ownerId is threaded through InvokeOptions
-    // into spanEmitter.startInvoke().
-    const traceStore = store as unknown as TraceStore;
-    const traceId = seqManifestSpan!.traceId;
-    const storedSpans = await traceStore.getTrace(traceId, OWNER);
-    // manifest(sequential) + step×2 + manifest(llm)×2 + invoke×2 + model×2 = 9 owner-scoped spans
-    expect(storedSpans.length).toBe(9);
-    expect(storedSpans.every((s) => s.ownerId === OWNER)).toBe(true);
+		// All spans — including invoke and model — should now be persisted under
+		// the correct owner now that ownerId is threaded through InvokeOptions
+		// into spanEmitter.startInvoke().
+		const traceStore = store as unknown as TraceStore;
+		const traceId = seqManifestSpan?.traceId;
+		if (!traceId) throw new Error("expected sequential manifest traceId");
+		const storedSpans = await traceStore.getTrace(traceId, OWNER);
+		// manifest(sequential) + step×2 + manifest(llm)×2 + invoke×2 + model×2 = 9 owner-scoped spans
+		expect(storedSpans.length).toBe(9);
+		expect(storedSpans.every((s) => s.ownerId === OWNER)).toBe(true);
 
-    // After the fix: invoke + model spans should also land in the persisted
-    // trace under the right owner. (Pre-fix: only manifest+step spans appeared.)
-    const persistedSpans = await traceStore.getTrace(traceId, OWNER);
-    const persistedKinds = new Set(persistedSpans.map((s) => s.kind));
-    expect(persistedKinds.has("invoke")).toBe(true);
-    expect(persistedKinds.has("model")).toBe(true);
-  });
+		// After the fix: invoke + model spans should also land in the persisted
+		// trace under the right owner. (Pre-fix: only manifest+step spans appeared.)
+		const persistedSpans = await traceStore.getTrace(traceId, OWNER);
+		const persistedKinds = new Set(persistedSpans.map((s) => s.kind));
+		expect(persistedKinds.has("invoke")).toBe(true);
+		expect(persistedKinds.has("model")).toBe(true);
+	});
 
-  it("model.call span carries agent.cost_usd attribute when the model has a known rate", async () => {
-    const manifest: SequentialAgentManifest = {
-      id: "test-cost",
-      kind: "sequential",
-      steps: [
-        {
-          agent: {
-            id: "step1",
-            kind: "llm",
-            model: { provider: "anthropic", name: "claude-haiku-4-5" },
-            instruction: "ping",
-          },
-        },
-      ],
-    };
+	it("model.call span carries agent.cost_usd attribute when the model has a known rate", async () => {
+		const manifest: SequentialAgentManifest = {
+			id: "test-cost",
+			kind: "sequential",
+			steps: [
+				{
+					agent: {
+						id: "step1",
+						kind: "llm",
+						model: { provider: "anthropic", name: "claude-haiku-4-5" },
+						instruction: "ping",
+					},
+				},
+			],
+		};
 
-    const COST_OWNER = "u_cost";
-    const { emitter, runner, seenSpans, endedAttrs, finalise } = makeTestHarness(store);
-    const ctx = createExecutionContext(runner, { spanEmitter: emitter, ownerId: COST_OWNER });
+		const COST_OWNER = "u_cost";
+		const { emitter, runner, seenSpans, endedAttrs, finalise } =
+			makeTestHarness(store);
+		const ctx = createExecutionContext(runner, {
+			spanEmitter: emitter,
+			ownerId: COST_OWNER,
+		});
 
-    await execute(manifest, "in", ctx);
-    await finalise(COST_OWNER);
+		await execute(manifest, "in", ctx);
+		await finalise(COST_OWNER);
 
-    // Find the model span from live seenSpans.
-    const modelSpan = seenSpans.find((s) => s.kind === "model");
-    expect(modelSpan).toBeDefined();
+		// Find the model span from live seenSpans.
+		const modelSpan = seenSpans.find((s) => s.kind === "model");
+		expect(modelSpan).toBeDefined();
+		if (!modelSpan) throw new Error("expected model span");
 
-    // cost_usd is set via setModelResult() before closeSpan(), so it appears
-    // in the span-end patch's attributes (not in span.costUsd, which is set
-    // only at span-start time by stateToSpan before setResult is called).
-    const attrs = endedAttrs[modelSpan!.spanId];
-    expect(attrs).toBeDefined();
+		// cost_usd is set via setModelResult() before closeSpan(), so it appears
+		// in the span-end patch's attributes (not in span.costUsd, which is set
+		// only at span-start time by stateToSpan before setResult is called).
+		const attrs = endedAttrs[modelSpan.spanId];
+		expect(attrs).toBeDefined();
 
-    const costAttr = attrs["agent.cost_usd"];
-    expect(typeof costAttr).toBe("number");
-    // anthropic/claude-haiku-4-5: 10 prompt × $1/1M + 5 completion × $5/1M = $0.000035
-    expect(costAttr as number).toBeGreaterThan(0);
-    expect(costAttr as number).toBeLessThan(0.001);
-  });
+		const costAttr = attrs["agent.cost_usd"];
+		expect(typeof costAttr).toBe("number");
+		// anthropic/claude-haiku-4-5: 10 prompt × $1/1M + 5 completion × $5/1M = $0.000035
+		expect(costAttr as number).toBeGreaterThan(0);
+		expect(costAttr as number).toBeLessThan(0.001);
+	});
 });

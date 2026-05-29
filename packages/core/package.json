@@ -24,7 +24,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "bench": "vitest bench",
-    "lint": "biome check src/",
+    "lint": "biome check src tests --no-errors-on-unmatched",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "tsup"
   },

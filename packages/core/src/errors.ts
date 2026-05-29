@@ -7,47 +7,47 @@
  * Catch this to handle any SDK error.
  */
 export class AgntzError extends Error {
-  readonly code: string;
+	readonly code: string;
 
-  constructor(code: string, message: string, options?: ErrorOptions) {
-    super(message, options);
-    this.name = "AgntzError";
-    this.code = code;
-  }
+	constructor(code: string, message: string, options?: ErrorOptions) {
+		super(message, options);
+		this.name = "AgntzError";
+		this.code = code;
+	}
 }
 
 /**
  * Thrown when an agent is not found in registered agents or the store.
  */
 export class AgentNotFoundError extends AgntzError {
-  readonly agentId: string;
+	readonly agentId: string;
 
-  constructor(agentId: string) {
-    super(
-      "AGENT_NOT_FOUND",
-      `Agent "${agentId}" not found. Register it with runner.registerAgent() or add it to the agent store.`,
-    );
-    this.name = "AgentNotFoundError";
-    this.agentId = agentId;
-  }
+	constructor(agentId: string) {
+		super(
+			"AGENT_NOT_FOUND",
+			`Agent "${agentId}" not found. Register it with runner.registerAgent() or add it to the agent store.`,
+		);
+		this.name = "AgentNotFoundError";
+		this.agentId = agentId;
+	}
 }
 
 /**
  * Thrown when an agent exists but the requested version does not.
  */
 export class AgentVersionNotFoundError extends AgntzError {
-  readonly agentId: string;
-  readonly version: string;
+	readonly agentId: string;
+	readonly version: string;
 
-  constructor(agentId: string, version: string) {
-    super(
-      "AGENT_VERSION_NOT_FOUND",
-      `Version "${version}" of agent "${agentId}" not found. List versions via the /versions API to see available timestamps.`,
-    );
-    this.name = "AgentVersionNotFoundError";
-    this.agentId = agentId;
-    this.version = version;
-  }
+	constructor(agentId: string, version: string) {
+		super(
+			"AGENT_VERSION_NOT_FOUND",
+			`Version "${version}" of agent "${agentId}" not found. List versions via the /versions API to see available timestamps.`,
+		);
+		this.name = "AgentVersionNotFoundError";
+		this.agentId = agentId;
+		this.version = version;
+	}
 }
 
 /**
@@ -55,13 +55,13 @@ export class AgentVersionNotFoundError extends AgntzError {
  * The accepted forms are `<id>`, `<id>@latest`, and `<id>@<ISO timestamp>`.
  */
 export class InvalidAgentRefError extends AgntzError {
-  readonly input: string;
+	readonly input: string;
 
-  constructor(input: string, detail: string) {
-    super("INVALID_AGENT_REF", `Invalid agent reference "${input}": ${detail}`);
-    this.name = "InvalidAgentRefError";
-    this.input = input;
-  }
+	constructor(input: string, detail: string) {
+		super("INVALID_AGENT_REF", `Invalid agent reference "${input}": ${detail}`);
+		this.name = "InvalidAgentRefError";
+		this.input = input;
+	}
 }
 
 /**
@@ -69,94 +69,89 @@ export class InvalidAgentRefError extends AgntzError {
  * to widen beyond the parent invocation's grant set.
  */
 export class NamespaceGrantError extends AgntzError {
-  readonly input: unknown;
+	readonly input: unknown;
 
-  constructor(input: unknown, detail: string) {
-    super(
-      "NAMESPACE_GRANT_INVALID",
-      `Invalid namespace grant "${String(input)}": ${detail}`,
-    );
-    this.name = "NamespaceGrantError";
-    this.input = input;
-  }
+	constructor(input: unknown, detail: string) {
+		super(
+			"NAMESPACE_GRANT_INVALID",
+			`Invalid namespace grant "${String(input)}": ${detail}`,
+		);
+		this.name = "NamespaceGrantError";
+		this.input = input;
+	}
 }
 
 /**
  * Thrown when a tool is not found in the registry.
  */
 export class ToolNotFoundError extends AgntzError {
-  readonly toolName: string;
+	readonly toolName: string;
 
-  constructor(toolName: string) {
-    super(
-      "TOOL_NOT_FOUND",
-      `Tool "${toolName}" not found in the registry.`,
-    );
-    this.name = "ToolNotFoundError";
-    this.toolName = toolName;
-  }
+	constructor(toolName: string) {
+		super("TOOL_NOT_FOUND", `Tool "${toolName}" not found in the registry.`);
+		this.name = "ToolNotFoundError";
+		this.toolName = toolName;
+	}
 }
 
 /**
  * Thrown when a tool execution fails.
  */
 export class ToolExecutionError extends AgntzError {
-  readonly toolName: string;
+	readonly toolName: string;
 
-  constructor(toolName: string, cause?: Error) {
-    super(
-      "TOOL_EXECUTION_ERROR",
-      `Tool "${toolName}" execution failed: ${cause?.message ?? "unknown error"}`,
-      { cause },
-    );
-    this.name = "ToolExecutionError";
-    this.toolName = toolName;
-  }
+	constructor(toolName: string, cause?: Error) {
+		super(
+			"TOOL_EXECUTION_ERROR",
+			`Tool "${toolName}" execution failed: ${cause?.message ?? "unknown error"}`,
+			{ cause },
+		);
+		this.name = "ToolExecutionError";
+		this.toolName = toolName;
+	}
 }
 
 /**
  * Thrown when the model provider returns an error.
  */
 export class ModelError extends AgntzError {
-  readonly provider: string;
-  readonly model: string;
+	readonly provider: string;
+	readonly model: string;
 
-  constructor(provider: string, model: string, message: string, cause?: Error) {
-    super(
-      "MODEL_ERROR",
-      `Model error (${provider}/${model}): ${message}`,
-      { cause },
-    );
-    this.name = "ModelError";
-    this.provider = provider;
-    this.model = model;
-  }
+	constructor(provider: string, model: string, message: string, cause?: Error) {
+		super("MODEL_ERROR", `Model error (${provider}/${model}): ${message}`, {
+			cause,
+		});
+		this.name = "ModelError";
+		this.provider = provider;
+		this.model = model;
+	}
 }
 
 /**
  * Thrown when an unknown model provider is specified.
  */
 export class ProviderNotFoundError extends AgntzError {
-  readonly provider: string;
+	readonly provider: string;
 
-  constructor(provider: string) {
-    super(
-      "PROVIDER_NOT_FOUND",
-      `Unknown model provider "${provider}". Supported: openai, anthropic, google. For other providers, pass a custom modelProvider to createRunner().`,
-    );
-    this.name = "ProviderNotFoundError";
-    this.provider = provider;
-  }
+	constructor(provider: string) {
+		super(
+			"PROVIDER_NOT_FOUND",
+			`Unknown model provider "${provider}". Supported: openai, anthropic, google. For other providers, pass a custom modelProvider to createRunner().`,
+		);
+		this.name = "ProviderNotFoundError";
+		this.provider = provider;
+	}
 }
 
 /**
  * Thrown when an invocation is cancelled via AbortSignal.
  */
 export class InvocationCancelledError extends AgntzError {
-  constructor() {
-    super("INVOCATION_CANCELLED", "Invocation was cancelled.");
-    this.name = "InvocationCancelledError";
-  }
+	constructor() {
+		super("INVOCATION_CANCELLED", "Invocation was cancelled.");
+		this.name = "InvocationCancelledError";
+	}
 }
 
 /**
@@ -166,36 +161,36 @@ export class InvocationCancelledError extends AgntzError {
  * `min(AgentDefinition.timeoutMs, InvokeOptions.timeoutMs)`.
  */
 export class InvocationTimeoutError extends AgntzError {
-  readonly agentId: string;
-  readonly timeoutMs: number;
+	readonly agentId: string;
+	readonly timeoutMs: number;
 
-  constructor(agentId: string, timeoutMs: number) {
-    super(
-      "INVOCATION_TIMEOUT",
-      `Agent "${agentId}" exceeded wall-clock timeout (${timeoutMs} ms). Raise the limit via AgentDefinition.timeoutMs or InvokeOptions.timeoutMs.`,
-    );
-    this.name = "InvocationTimeoutError";
-    this.agentId = agentId;
-    this.timeoutMs = timeoutMs;
-  }
+	constructor(agentId: string, timeoutMs: number) {
+		super(
+			"INVOCATION_TIMEOUT",
+			`Agent "${agentId}" exceeded wall-clock timeout (${timeoutMs} ms). Raise the limit via AgentDefinition.timeoutMs or InvokeOptions.timeoutMs.`,
+		);
+		this.name = "InvocationTimeoutError";
+		this.agentId = agentId;
+		this.timeoutMs = timeoutMs;
+	}
 }
 
 /**
  * Thrown when the agent execution loop exceeds the max step limit.
  */
 export class MaxStepsExceededError extends AgntzError {
-  readonly maxSteps: number;
-  readonly agentId: string;
+	readonly maxSteps: number;
+	readonly agentId: string;
 
-  constructor(agentId: string, maxSteps: number) {
-    super(
-      "MAX_STEPS_EXCEEDED",
-      `Agent "${agentId}" exceeded maximum tool call steps (${maxSteps}). This may indicate an infinite loop.`,
-    );
-    this.name = "MaxStepsExceededError";
-    this.agentId = agentId;
-    this.maxSteps = maxSteps;
-  }
+	constructor(agentId: string, maxSteps: number) {
+		super(
+			"MAX_STEPS_EXCEEDED",
+			`Agent "${agentId}" exceeded maximum tool call steps (${maxSteps}). This may indicate an infinite loop.`,
+		);
+		this.name = "MaxStepsExceededError";
+		this.agentId = agentId;
+		this.maxSteps = maxSteps;
+	}
 }
 
 /**
@@ -205,82 +200,82 @@ export class MaxStepsExceededError extends AgntzError {
  * tighten an agent's ceiling but not raise it.
  */
 export class TokenBudgetExceededError extends AgntzError {
-  readonly tokenBudget: number;
-  readonly tokensUsed: number;
-  readonly agentId: string;
+	readonly tokenBudget: number;
+	readonly tokensUsed: number;
+	readonly agentId: string;
 
-  constructor(agentId: string, tokenBudget: number, tokensUsed: number) {
-    super(
-      "TOKEN_BUDGET_EXCEEDED",
-      `Agent "${agentId}" exceeded token budget (${tokensUsed}/${tokenBudget} tokens). Raise the limit via AgentDefinition.tokenBudget or InvokeOptions.tokenBudget.`,
-    );
-    this.name = "TokenBudgetExceededError";
-    this.agentId = agentId;
-    this.tokenBudget = tokenBudget;
-    this.tokensUsed = tokensUsed;
-  }
+	constructor(agentId: string, tokenBudget: number, tokensUsed: number) {
+		super(
+			"TOKEN_BUDGET_EXCEEDED",
+			`Agent "${agentId}" exceeded token budget (${tokensUsed}/${tokenBudget} tokens). Raise the limit via AgentDefinition.tokenBudget or InvokeOptions.tokenBudget.`,
+		);
+		this.name = "TokenBudgetExceededError";
+		this.agentId = agentId;
+		this.tokenBudget = tokenBudget;
+		this.tokensUsed = tokensUsed;
+	}
 }
 
 /**
  * Thrown when agent-as-tool recursion exceeds the max depth.
  */
 export class MaxRecursionDepthError extends AgntzError {
-  readonly maxDepth: number;
-  readonly agentId: string;
+	readonly maxDepth: number;
+	readonly agentId: string;
 
-  constructor(agentId: string, maxDepth: number) {
-    super(
-      "MAX_RECURSION_DEPTH",
-      `Agent "${agentId}" exceeded maximum recursion depth (${maxDepth}). This may indicate circular agent-as-tool references.`,
-    );
-    this.name = "MaxRecursionDepthError";
-    this.agentId = agentId;
-    this.maxDepth = maxDepth;
-  }
+	constructor(agentId: string, maxDepth: number) {
+		super(
+			"MAX_RECURSION_DEPTH",
+			`Agent "${agentId}" exceeded maximum recursion depth (${maxDepth}). This may indicate circular agent-as-tool references.`,
+		);
+		this.name = "MaxRecursionDepthError";
+		this.agentId = agentId;
+		this.maxDepth = maxDepth;
+	}
 }
 
 /**
  * Thrown when a model call fails after all retries are exhausted.
  */
 export class RetryExhaustedError extends AgntzError {
-  readonly attempts: number;
+	readonly attempts: number;
 
-  constructor(attempts: number, cause?: Error) {
-    super(
-      "RETRY_EXHAUSTED",
-      `Model call failed after ${attempts} attempts: ${cause?.message ?? "unknown error"}`,
-      { cause },
-    );
-    this.name = "RetryExhaustedError";
-    this.attempts = attempts;
-  }
+	constructor(attempts: number, cause?: Error) {
+		super(
+			"RETRY_EXHAUSTED",
+			`Model call failed after ${attempts} attempts: ${cause?.message ?? "unknown error"}`,
+			{ cause },
+		);
+		this.name = "RetryExhaustedError";
+		this.attempts = attempts;
+	}
 }
 
 /**
  * Thrown when agent definition validation fails.
  */
 export class ValidationError extends AgntzError {
-  readonly details: string[];
+	readonly details: string[];
 
-  constructor(message: string, details: string[] = []) {
-    super("VALIDATION_ERROR", message);
-    this.name = "ValidationError";
-    this.details = details;
-  }
+	constructor(message: string, details: string[] = []) {
+		super("VALIDATION_ERROR", message);
+		this.name = "ValidationError";
+		this.details = details;
+	}
 }
 
 /**
  * Thrown when a skill is referenced but not found in the SkillStore.
  */
 export class SkillNotFoundError extends AgntzError {
-  readonly skillName: string;
+	readonly skillName: string;
 
-  constructor(skillName: string) {
-    super(
-      "SKILL_NOT_FOUND",
-      `Skill "${skillName}" not found. Save it via SkillStore.putSkill() before referencing it from an agent.`,
-    );
-    this.name = "SkillNotFoundError";
-    this.skillName = skillName;
-  }
+	constructor(skillName: string) {
+		super(
+			"SKILL_NOT_FOUND",
+			`Skill "${skillName}" not found. Save it via SkillStore.putSkill() before referencing it from an agent.`,
+		);
+		this.name = "SkillNotFoundError";
+		this.skillName = skillName;
+	}
 }

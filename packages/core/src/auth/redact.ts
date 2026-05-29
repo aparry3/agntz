@@ -20,20 +20,20 @@ const REDACTED = "***REDACTED***";
  * data. Lowercased for case-insensitive matching.
  */
 export const SENSITIVE_HEADER_NAMES: ReadonlySet<string> = new Set([
-  "authorization",
-  "proxy-authorization",
-  "cookie",
-  "set-cookie",
-  "x-api-key",
-  "x-auth-token",
-  "x-amz-security-token",
+	"authorization",
+	"proxy-authorization",
+	"cookie",
+	"set-cookie",
+	"x-api-key",
+	"x-auth-token",
+	"x-amz-security-token",
 ]);
 
 export interface RedactSources {
-  /** Cache holding live tokens. Optional — when absent, only secrets are scrubbed. */
-  tokenCache?: TokenCache;
-  /** Pre-fetched secrets from state.secrets. Optional. */
-  secrets?: Record<string, string>;
+	/** Cache holding live tokens. Optional — when absent, only secrets are scrubbed. */
+	tokenCache?: TokenCache;
+	/** Pre-fetched secrets from state.secrets. Optional. */
+	secrets?: Record<string, string>;
 }
 
 /**
@@ -42,20 +42,22 @@ export interface RedactSources {
  * may have invalidated entries between calls).
  */
 export function collectSensitiveValues(sources: RedactSources): string[] {
-  const values: string[] = [];
-  if (sources.secrets) {
-    for (const v of Object.values(sources.secrets)) {
-      if (typeof v === "string" && v.length >= MIN_SCRUB_LEN) values.push(v);
-    }
-  }
-  const cache = sources.tokenCache as unknown as { getKnownTokens?: () => string[] } | undefined;
-  if (cache && typeof cache.getKnownTokens === "function") {
-    const tokens = cache.getKnownTokens();
-    for (const t of tokens) {
-      if (typeof t === "string" && t.length >= MIN_SCRUB_LEN) values.push(t);
-    }
-  }
-  return values;
+	const values: string[] = [];
+	if (sources.secrets) {
+		for (const v of Object.values(sources.secrets)) {
+			if (typeof v === "string" && v.length >= MIN_SCRUB_LEN) values.push(v);
+		}
+	}
+	const cache = sources.tokenCache as unknown as
+		| { getKnownTokens?: () => string[] }
+		| undefined;
+	if (cache && typeof cache.getKnownTokens === "function") {
+		const tokens = cache.getKnownTokens();
+		for (const t of tokens) {
+			if (typeof t === "string" && t.length >= MIN_SCRUB_LEN) values.push(t);
+		}
+	}
+	return values;
 }
 
 /**
@@ -63,12 +65,12 @@ export function collectSensitiveValues(sources: RedactSources): string[] {
  * marker. Pure string substitution — does not regex-escape.
  */
 export function scrubString(text: string, sensitive: string[]): string {
-  let out = text;
-  for (const v of sensitive) {
-    if (!v || v.length < MIN_SCRUB_LEN) continue;
-    if (out.includes(v)) out = out.split(v).join(REDACTED);
-  }
-  return out;
+	let out = text;
+	for (const v of sensitive) {
+		if (!v || v.length < MIN_SCRUB_LEN) continue;
+		if (out.includes(v)) out = out.split(v).join(REDACTED);
+	}
+	return out;
 }
 
 /**
@@ -77,16 +79,17 @@ export function scrubString(text: string, sensitive: string[]): string {
  * structural — secrets live in values).
  */
 export function scrubValue<T>(node: T, sensitive: string[]): T {
-  if (typeof node === "string") return scrubString(node, sensitive) as T;
-  if (Array.isArray(node)) return node.map((n) => scrubValue(n, sensitive)) as T;
-  if (node != null && typeof node === "object") {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
-      out[k] = scrubValue(v, sensitive);
-    }
-    return out as T;
-  }
-  return node;
+	if (typeof node === "string") return scrubString(node, sensitive) as T;
+	if (Array.isArray(node))
+		return node.map((n) => scrubValue(n, sensitive)) as T;
+	if (node != null && typeof node === "object") {
+		const out: Record<string, unknown> = {};
+		for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+			out[k] = scrubValue(v, sensitive);
+		}
+		return out as T;
+	}
+	return node;
 }
 
 /**
@@ -95,11 +98,11 @@ export function scrubValue<T>(node: T, sensitive: string[]): T {
  * outgoing request shape for traces or debug logs.
  */
 export function redactHeaders(
-  headers: Record<string, string>,
+	headers: Record<string, string>,
 ): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(headers)) {
-    out[k] = SENSITIVE_HEADER_NAMES.has(k.toLowerCase()) ? REDACTED : v;
-  }
-  return out;
+	const out: Record<string, string> = {};
+	for (const [k, v] of Object.entries(headers)) {
+		out[k] = SENSITIVE_HEADER_NAMES.has(k.toLowerCase()) ? REDACTED : v;
+	}
+	return out;
 }

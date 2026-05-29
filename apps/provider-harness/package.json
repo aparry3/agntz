@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "tsx --env-file-if-exists=.env.local --env-file-if-exists=../../.env.local src/index.ts",
+    "lint": "biome check src --no-errors-on-unmatched",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

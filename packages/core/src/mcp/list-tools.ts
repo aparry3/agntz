@@ -1,14 +1,14 @@
 import type { MCPServerConfig } from "../types.js";
 import {
-  assertOutboundUrlAllowed,
-  type OutboundUrlPolicyOptions,
+	type OutboundUrlPolicyOptions,
+	assertOutboundUrlAllowed,
 } from "../utils/outbound-url.js";
 
 export interface ListToolsOptions {
-  /** Abort the connection if listTools hasn't returned within this many ms. */
-  timeoutMs?: number;
-  /** Override outbound URL policy. */
-  outboundUrlPolicy?: OutboundUrlPolicyOptions;
+	/** Abort the connection if listTools hasn't returned within this many ms. */
+	timeoutMs?: number;
+	/** Override outbound URL policy. */
+	outboundUrlPolicy?: OutboundUrlPolicyOptions;
 }
 
 /**
@@ -17,44 +17,45 @@ export interface ListToolsOptions {
  * Intended for validation-time use; for long-lived connections use MCPClientManager.
  */
 export async function listToolsOnServer(
-  config: MCPServerConfig,
-  options: ListToolsOptions = {},
+	config: MCPServerConfig,
+	options: ListToolsOptions = {},
 ): Promise<string[]> {
-  if (!config.url) {
-    throw new Error("MCP server config must include a url");
-  }
-  const url = await assertOutboundUrlAllowed(config.url, options.outboundUrlPolicy);
+	if (!config.url) {
+		throw new Error("MCP server config must include a url");
+	}
+	const url = await assertOutboundUrlAllowed(
+		config.url,
+		options.outboundUrlPolicy,
+	);
 
-  const { Client } = await import(
-    "@modelcontextprotocol/sdk/client/index.js"
-  );
-  const { StreamableHTTPClientTransport } = await import(
-    "@modelcontextprotocol/sdk/client/streamableHttp.js"
-  );
+	const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+	const { StreamableHTTPClientTransport } = await import(
+		"@modelcontextprotocol/sdk/client/streamableHttp.js"
+	);
 
-  const client = new Client({ name: "agntz-validator", version: "0.1.0" });
-  const transport = new StreamableHTTPClientTransport(url, {
-    requestInit: config.headers ? { headers: config.headers } : undefined,
-  });
+	const client = new Client({ name: "agntz-validator", version: "0.1.0" });
+	const transport = new StreamableHTTPClientTransport(url, {
+		requestInit: config.headers ? { headers: config.headers } : undefined,
+	});
 
-  const timeoutMs = options.timeoutMs ?? 10_000;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      reject(new Error(`Timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-  });
+	const timeoutMs = options.timeoutMs ?? 10_000;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const timeout = new Promise<never>((_, reject) => {
+		timer = setTimeout(() => {
+			reject(new Error(`Timed out after ${timeoutMs}ms`));
+		}, timeoutMs);
+	});
 
-  try {
-    await Promise.race([client.connect(transport), timeout]);
-    const result = await Promise.race([client.listTools(), timeout]);
-    return (result.tools ?? []).map((t: { name: string }) => t.name);
-  } finally {
-    if (timer) clearTimeout(timer);
-    try {
-      await client.close();
-    } catch {
-      // Ignore close errors
-    }
-  }
+	try {
+		await Promise.race([client.connect(transport), timeout]);
+		const result = await Promise.race([client.listTools(), timeout]);
+		return (result.tools ?? []).map((t: { name: string }) => t.name);
+	} finally {
+		if (timer) clearTimeout(timer);
+		try {
+			await client.close();
+		} catch {
+			// Ignore close errors
+		}
+	}
 }

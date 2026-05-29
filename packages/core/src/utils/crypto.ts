@@ -19,40 +19,40 @@ const KEY_BYTES = 32; // AES-256
 let cachedKey: Buffer | null = null;
 
 function loadMasterKey(): Buffer {
-  if (cachedKey) return cachedKey;
+	if (cachedKey) return cachedKey;
 
-  const raw = process.env.AGNTZ_SECRET_KEY;
-  if (!raw) {
-    throw new Error(
-      "AGNTZ_SECRET_KEY must be a 32-byte key encoded as 64 hex chars or 44 base64 chars."
-    );
-  }
+	const raw = process.env.AGNTZ_SECRET_KEY;
+	if (!raw) {
+		throw new Error(
+			"AGNTZ_SECRET_KEY must be a 32-byte key encoded as 64 hex chars or 44 base64 chars.",
+		);
+	}
 
-  let buf: Buffer | null = null;
+	let buf: Buffer | null = null;
 
-  // Try hex (64 chars).
-  if (/^[0-9a-fA-F]{64}$/.test(raw)) {
-    buf = Buffer.from(raw, "hex");
-  } else {
-    // Try base64. 32 bytes encodes to 44 base64 chars (with `=` padding).
-    try {
-      const decoded = Buffer.from(raw, "base64");
-      if (decoded.length === KEY_BYTES) {
-        buf = decoded;
-      }
-    } catch {
-      // fall through to reject
-    }
-  }
+	// Try hex (64 chars).
+	if (/^[0-9a-fA-F]{64}$/.test(raw)) {
+		buf = Buffer.from(raw, "hex");
+	} else {
+		// Try base64. 32 bytes encodes to 44 base64 chars (with `=` padding).
+		try {
+			const decoded = Buffer.from(raw, "base64");
+			if (decoded.length === KEY_BYTES) {
+				buf = decoded;
+			}
+		} catch {
+			// fall through to reject
+		}
+	}
 
-  if (!buf || buf.length !== KEY_BYTES) {
-    throw new Error(
-      "AGNTZ_SECRET_KEY must be a 32-byte key encoded as 64 hex chars or 44 base64 chars."
-    );
-  }
+	if (!buf || buf.length !== KEY_BYTES) {
+		throw new Error(
+			"AGNTZ_SECRET_KEY must be a 32-byte key encoded as 64 hex chars or 44 base64 chars.",
+		);
+	}
 
-  cachedKey = buf;
-  return cachedKey;
+	cachedKey = buf;
+	return cachedKey;
 }
 
 /**
@@ -60,7 +60,7 @@ function loadMasterKey(): Buffer {
  * @internal
  */
 export function _resetCryptoKeyCache(): void {
-  cachedKey = null;
+	cachedKey = null;
 }
 
 /**
@@ -70,15 +70,15 @@ export function _resetCryptoKeyCache(): void {
  * @returns `base64(iv):base64(authTag):base64(ciphertext)`.
  */
 export function encryptSecret(plaintext: string): string {
-  const key = loadMasterKey();
-  const iv = randomBytes(IV_BYTES);
-  const cipher = createCipheriv(ALGORITHM, key, iv);
-  const ciphertext = Buffer.concat([
-    cipher.update(plaintext, "utf8"),
-    cipher.final(),
-  ]);
-  const authTag = cipher.getAuthTag();
-  return `${iv.toString("base64")}:${authTag.toString("base64")}:${ciphertext.toString("base64")}`;
+	const key = loadMasterKey();
+	const iv = randomBytes(IV_BYTES);
+	const cipher = createCipheriv(ALGORITHM, key, iv);
+	const ciphertext = Buffer.concat([
+		cipher.update(plaintext, "utf8"),
+		cipher.final(),
+	]);
+	const authTag = cipher.getAuthTag();
+	return `${iv.toString("base64")}:${authTag.toString("base64")}:${ciphertext.toString("base64")}`;
 }
 
 /**
@@ -90,22 +90,22 @@ export function encryptSecret(plaintext: string): string {
  *         encoding is malformed.
  */
 export function decryptSecret(ciphertext: string): string {
-  const key = loadMasterKey();
-  const parts = ciphertext.split(":");
-  if (parts.length !== 3) {
-    throw new Error("decryptSecret: malformed ciphertext (expected iv:tag:ct)");
-  }
-  const [ivB64, tagB64, ctB64] = parts;
-  const iv = Buffer.from(ivB64, "base64");
-  const tag = Buffer.from(tagB64, "base64");
-  const ct = Buffer.from(ctB64, "base64");
-  if (iv.length !== IV_BYTES) {
-    throw new Error(`decryptSecret: invalid IV length (expected ${IV_BYTES})`);
-  }
-  const decipher = createDecipheriv(ALGORITHM, key, iv);
-  decipher.setAuthTag(tag);
-  const plaintext = Buffer.concat([decipher.update(ct), decipher.final()]);
-  return plaintext.toString("utf8");
+	const key = loadMasterKey();
+	const parts = ciphertext.split(":");
+	if (parts.length !== 3) {
+		throw new Error("decryptSecret: malformed ciphertext (expected iv:tag:ct)");
+	}
+	const [ivB64, tagB64, ctB64] = parts;
+	const iv = Buffer.from(ivB64, "base64");
+	const tag = Buffer.from(tagB64, "base64");
+	const ct = Buffer.from(ctB64, "base64");
+	if (iv.length !== IV_BYTES) {
+		throw new Error(`decryptSecret: invalid IV length (expected ${IV_BYTES})`);
+	}
+	const decipher = createDecipheriv(ALGORITHM, key, iv);
+	decipher.setAuthTag(tag);
+	const plaintext = Buffer.concat([decipher.update(ct), decipher.final()]);
+	return plaintext.toString("utf8");
 }
 
 /**
@@ -114,6 +114,6 @@ export function decryptSecret(ciphertext: string): string {
  * as-is — masking shorter values isn't useful and would be misleading.
  */
 export function getLastFour(plaintext: string): string {
-  if (plaintext.length <= 4) return plaintext;
-  return plaintext.slice(-4);
+	if (plaintext.length <= 4) return plaintext;
+	return plaintext.slice(-4);
 }
