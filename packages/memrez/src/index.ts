@@ -2,6 +2,7 @@ export { createMemrez, Memrez } from "./memrez.js";
 export { agntzReasoner } from "./reasoner.js";
 export { createMemoryResourceProvider } from "./provider.js";
 export { InMemoryMemoryStore } from "./store.js";
+export { SqliteMemoryStore } from "./sqlite.js";
 export {
   DEFAULT_WRITE_POLICY,
   MemrezScopeError,
@@ -33,3 +34,4 @@ export type {
 } from "./types.js";
 export type { AgntzClientLike, AgntzReasonerOptions, AgntzRunResult } from "./reasoner.js";
 export type { MemoryResourceConfig } from "./provider.js";
+export type { SqliteMemoryStoreOptions } from "./sqlite.js";
