@@ -1,20 +1,20 @@
 import {
-  createRunner,
-  listToolsOnServer,
-  resolveMCPServer,
-  type UnifiedStore,
-  type OutboundUrlPolicyOptions,
+	type OutboundUrlPolicyOptions,
+	type UnifiedStore,
+	createRunner,
+	listToolsOnServer,
+	resolveMCPServer,
 } from "@agntz/core";
 import type { ValidationContext } from "@agntz/manifest";
 import { LOCAL_TOOL_NAMES } from "./tools/registry.js";
 
 export interface BuildValidationContextOptions {
-  /** When true, MCP connection failures are reported as errors (save-time). */
-  strict?: boolean;
-  /** Override outbound URL policy for validation network calls. */
-  outboundUrlPolicy?: OutboundUrlPolicyOptions;
-  /** Timeout for each MCP connection + listTools call. */
-  mcpTimeoutMs?: number;
+	/** When true, MCP connection failures are reported as errors (save-time). */
+	strict?: boolean;
+	/** Override outbound URL policy for validation network calls. */
+	outboundUrlPolicy?: OutboundUrlPolicyOptions;
+	/** Timeout for each MCP connection + listTools call. */
+	mcpTimeoutMs?: number;
 }
 
 /**
@@ -27,44 +27,44 @@ export interface BuildValidationContextOptions {
  * accessors — no tools or defaults are required for validation.
  */
 export function buildValidationContext(
-  store: UnifiedStore,
-  options: BuildValidationContextOptions = {},
+	store: UnifiedStore,
+	options: BuildValidationContextOptions = {},
 ): ValidationContext {
-  const runner = createRunner({ store });
-  const toolCache = new Map<string, Promise<string[]>>();
+	const runner = createRunner({ store });
+	const toolCache = new Map<string, Promise<string[]>>();
 
-  return {
-    strict: options.strict,
-    outboundUrlPolicy: options.outboundUrlPolicy,
-    localTools: [...LOCAL_TOOL_NAMES],
-    resolveAgent: async (id: string) => {
-      const agent = await runner.agents.getAgent(id);
-      return agent != null;
-    },
-    resolveSkill: async (name: string) => {
-      const skill = await store.getSkill(name);
-      return skill != null;
-    },
-    resolveSecret: async (name: string) => {
-      const meta = await store.getSecretMetadata(name);
-      return meta != null;
-    },
-    resolveTools: async (ref: string) => {
-      const connections = runner.connections;
-      const resolved = connections
-        ? await resolveMCPServer(ref, connections)
-        : { url: ref, source: "url" as const };
-      const cached = toolCache.get(resolved.url);
-      if (cached) return cached;
-      const promise = listToolsOnServer(
-        { url: resolved.url, headers: resolved.headers },
-        {
-          timeoutMs: options.mcpTimeoutMs ?? 10_000,
-          outboundUrlPolicy: options.outboundUrlPolicy,
-        },
-      );
-      toolCache.set(resolved.url, promise);
-      return promise;
-    },
-  };
+	return {
+		strict: options.strict,
+		outboundUrlPolicy: options.outboundUrlPolicy,
+		localTools: [...LOCAL_TOOL_NAMES],
+		resolveAgent: async (id: string) => {
+			const agent = await runner.agents.getAgent(id);
+			return agent != null;
+		},
+		resolveSkill: async (name: string) => {
+			const skill = await store.getSkill(name);
+			return skill != null;
+		},
+		resolveSecret: async (name: string) => {
+			const meta = await store.getSecretMetadata(name);
+			return meta != null;
+		},
+		resolveTools: async (ref: string) => {
+			const connections = runner.connections;
+			const resolved = connections
+				? await resolveMCPServer(ref, connections)
+				: { url: ref, source: "url" as const };
+			const cached = toolCache.get(resolved.url);
+			if (cached) return cached;
+			const promise = listToolsOnServer(
+				{ url: resolved.url, headers: resolved.headers },
+				{
+					timeoutMs: options.mcpTimeoutMs ?? 10_000,
+					outboundUrlPolicy: options.outboundUrlPolicy,
+				},
+			);
+			toolCache.set(resolved.url, promise);
+			return promise;
+		},
+	};
 }

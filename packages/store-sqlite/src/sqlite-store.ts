@@ -1,45 +1,45 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import Database from "better-sqlite3";
-import type { Database as DatabaseType } from "better-sqlite3";
 import {
-  defineSkill,
-  encryptSecret,
-  decryptSecret,
-  getLastFour,
-  INVOCATION_LOG_BLOCKS_PREFIX as BLOCKS_JSON_PREFIX,
+	INVOCATION_LOG_BLOCKS_PREFIX as BLOCKS_JSON_PREFIX,
+	decryptSecret,
+	defineSkill,
+	encryptSecret,
+	getLastFour,
 } from "@agntz/core";
 import type {
-  AgentDefinition,
-  AgentVersionSummary,
-  ContentBlock,
-  ProviderConfig,
-  UnifiedStore,
-  ApiKeyRecord,
-  Connection,
-  ConnectionKind,
-  ConnectionConfig,
-  Message,
-  SessionSummary,
-  ContextEntry,
-  InvocationLog,
-  InvokeResult,
-  LogFilter,
-  Run,
-  RunListFilters,
-  RunListResult,
-  RunStatus,
-  SecretDefinition,
-  SecretMetadata,
-  SkillDefinition,
-  Span,
-  TraceSummary,
-  TraceFilter,
-  WebhookDelivery,
+	AgentDefinition,
+	AgentVersionSummary,
+	ApiKeyRecord,
+	Connection,
+	ConnectionConfig,
+	ConnectionKind,
+	ContentBlock,
+	ContextEntry,
+	InvocationLog,
+	InvokeResult,
+	LogFilter,
+	Message,
+	ProviderConfig,
+	Run,
+	RunListFilters,
+	RunListResult,
+	RunStatus,
+	SecretDefinition,
+	SecretMetadata,
+	SessionSummary,
+	SkillDefinition,
+	Span,
+	TraceFilter,
+	TraceSummary,
+	UnifiedStore,
+	WebhookDelivery,
 } from "@agntz/core";
+import Database from "better-sqlite3";
+import type { Database as DatabaseType } from "better-sqlite3";
 
 const MIGRATIONS = [
-  // v1: Initial schema
-  `
+	// v1: Initial schema
+	`
   CREATE TABLE IF NOT EXISTS agents (
     agent_id TEXT NOT NULL,
     name TEXT NOT NULL,
@@ -104,8 +104,8 @@ const MIGRATIONS = [
   );
   INSERT INTO schema_version (version) VALUES (1);
   `,
-  // v2: Provider configuration
-  `
+	// v2: Provider configuration
+	`
   CREATE TABLE IF NOT EXISTS providers (
     id TEXT PRIMARY KEY,
     api_key TEXT NOT NULL,
@@ -115,8 +115,8 @@ const MIGRATIONS = [
   );
   UPDATE schema_version SET version = 2;
   `,
-  // v3: Per-user scoping + API keys. Dev data is wiped (can't backfill).
-  `
+	// v3: Per-user scoping + API keys. Dev data is wiped (can't backfill).
+	`
   DROP TABLE IF EXISTS workspaces;
 
   CREATE TABLE IF NOT EXISTS api_keys (
@@ -153,8 +153,8 @@ const MIGRATIONS = [
 
   UPDATE schema_version SET version = 3;
   `,
-  // v4: User-scoped connections (MCP servers today; more kinds later).
-  `
+	// v4: User-scoped connections (MCP servers today; more kinds later).
+	`
   CREATE TABLE IF NOT EXISTS connections (
     user_id      TEXT NOT NULL,
     kind         TEXT NOT NULL,
@@ -170,10 +170,10 @@ const MIGRATIONS = [
 
   UPDATE schema_version SET version = 4;
   `,
-  // v5: Runs — first-class agent invocations tracked by RunRegistry.
-  // Composite PK on (user_id, id) so Run ids are unique per user, mirroring
-  // the per-user scoping used by providers/connections.
-  `
+	// v5: Runs — first-class agent invocations tracked by RunRegistry.
+	// Composite PK on (user_id, id) so Run ids are unique per user, mirroring
+	// the per-user scoping used by providers/connections.
+	`
   CREATE TABLE IF NOT EXISTS runs (
     user_id           TEXT NOT NULL,
     id                TEXT NOT NULL,
@@ -199,8 +199,8 @@ const MIGRATIONS = [
 
   UPDATE schema_version SET version = 5;
   `,
-  // v6: Distributed tracing — spans + trace summaries.
-  `
+	// v6: Distributed tracing — spans + trace summaries.
+	`
   CREATE TABLE IF NOT EXISTS ar_spans (
     span_id      TEXT PRIMARY KEY,
     trace_id     TEXT NOT NULL,
@@ -242,9 +242,9 @@ const MIGRATIONS = [
 
   UPDATE schema_version SET version = 6;
   `,
-  // v7: Skills — reusable (instruction + tools) bundles per user.
-  // Composite PK on (user_id, name); same skill name may exist for different users.
-  `
+	// v7: Skills — reusable (instruction + tools) bundles per user.
+	// Composite PK on (user_id, name); same skill name may exist for different users.
+	`
   CREATE TABLE IF NOT EXISTS skills (
     user_id      TEXT NOT NULL,
     name         TEXT NOT NULL,
@@ -260,27 +260,27 @@ const MIGRATIONS = [
 
   UPDATE schema_version SET version = 7;
   `,
-  // v8: GymText integration + HTTP tool + unified secrets.
-  // Four schema changes that ship together as one PR:
-  //   1. invocation_logs.status — terminal state ("completed" | "cancelled"
-  //      | "failed") for billing/audit when a run is superseded by
-  //      cancel-and-replace.
-  //   2. messages.content_blocks — multimodal payload (JSON ContentBlock[])
-  //      alongside the legacy text-only `content` column. Writes are dual:
-  //      `content` always holds a flattened text view, `content_blocks` is
-  //      non-null only when the original message was multimodal. Sqlite
-  //      has no native JSONB; TEXT storing JSON is fine.
-  //   3. `secrets` table — user-scoped encrypted credentials used for both
-  //      HTTP-tool auth tokens and webhook HMAC signing keys. `value` is
-  //      AES-256-GCM ciphertext (`base64(iv):base64(tag):base64(ct)`),
-  //      `last_four` is the last 4 chars of plaintext for masked-UI
-  //      display. Rotation is in-place via SecretStore.putSecret upsert
-  //      on (user_id, name).
-  //   4. `webhook_deliveries` outbox. `secret_name` references the active
-  //      HMAC signing key by name — the dispatcher resolves it at each
-  //      delivery attempt so an out-of-band rotation flows through
-  //      naturally.
-  `
+	// v8: GymText integration + HTTP tool + unified secrets.
+	// Four schema changes that ship together as one PR:
+	//   1. invocation_logs.status — terminal state ("completed" | "cancelled"
+	//      | "failed") for billing/audit when a run is superseded by
+	//      cancel-and-replace.
+	//   2. messages.content_blocks — multimodal payload (JSON ContentBlock[])
+	//      alongside the legacy text-only `content` column. Writes are dual:
+	//      `content` always holds a flattened text view, `content_blocks` is
+	//      non-null only when the original message was multimodal. Sqlite
+	//      has no native JSONB; TEXT storing JSON is fine.
+	//   3. `secrets` table — user-scoped encrypted credentials used for both
+	//      HTTP-tool auth tokens and webhook HMAC signing keys. `value` is
+	//      AES-256-GCM ciphertext (`base64(iv):base64(tag):base64(ct)`),
+	//      `last_four` is the last 4 chars of plaintext for masked-UI
+	//      display. Rotation is in-place via SecretStore.putSecret upsert
+	//      on (user_id, name).
+	//   4. `webhook_deliveries` outbox. `secret_name` references the active
+	//      HMAC signing key by name — the dispatcher resolves it at each
+	//      delivery attempt so an out-of-band rotation flows through
+	//      naturally.
+	`
   ALTER TABLE invocation_logs ADD COLUMN status TEXT;
 
   ALTER TABLE messages ADD COLUMN content_blocks TEXT;
@@ -316,11 +316,11 @@ const MIGRATIONS = [
 
   UPDATE schema_version SET version = 8;
   `,
-  // v9: Per-version aliases (`stable`, `prod`, `pre-tools-overhaul`).
-  // Aliases are scoped to (user_id, agent_id) so two agents can share names
-  // like `stable`. Pointing an alias is "last write wins" — assigning it to
-  // a new version moves it.
-  `
+	// v9: Per-version aliases (`stable`, `prod`, `pre-tools-overhaul`).
+	// Aliases are scoped to (user_id, agent_id) so two agents can share names
+	// like `stable`. Pointing an alias is "last write wins" — assigning it to
+	// a new version moves it.
+	`
   CREATE TABLE IF NOT EXISTS agent_aliases (
     user_id            TEXT NOT NULL,
     agent_id           TEXT NOT NULL,
@@ -337,696 +337,767 @@ const MIGRATIONS = [
 ];
 
 export interface SqliteStoreOptions {
-  path: string;
-  wal?: boolean;
-  verbose?: boolean;
-  userId?: string;
+	path: string;
+	wal?: boolean;
+	verbose?: boolean;
+	userId?: string;
 }
 
 export class SqliteStore implements UnifiedStore {
-  private db: DatabaseType;
-  private ownsDb: boolean;
-  private lastTs = 0;
-  readonly userId: string | null;
+	private db: DatabaseType;
+	private ownsDb: boolean;
+	private lastTs = 0;
+	readonly userId: string | null;
 
-  private nextTimestamp(): string {
-    const now = Date.now();
-    const next = now > this.lastTs ? now : this.lastTs + 1;
-    this.lastTs = next;
-    return new Date(next).toISOString();
-  }
+	private nextTimestamp(): string {
+		const now = Date.now();
+		const next = now > this.lastTs ? now : this.lastTs + 1;
+		this.lastTs = next;
+		return new Date(next).toISOString();
+	}
 
-  constructor(options: SqliteStoreOptions | string, _internal?: { db: DatabaseType; userId: string }) {
-    if (_internal) {
-      this.db = _internal.db;
-      this.ownsDb = false;
-      this.userId = _internal.userId;
-      return;
-    }
+	constructor(
+		options: SqliteStoreOptions | string,
+		_internal?: { db: DatabaseType; userId: string },
+	) {
+		if (_internal) {
+			this.db = _internal.db;
+			this.ownsDb = false;
+			this.userId = _internal.userId;
+			return;
+		}
 
-    const opts: SqliteStoreOptions =
-      typeof options === "string" ? { path: options } : options;
+		const opts: SqliteStoreOptions =
+			typeof options === "string" ? { path: options } : options;
 
-    this.db = new Database(opts.path, {
-      verbose: opts.verbose ? console.log : undefined,
-    });
-    this.ownsDb = true;
-    this.userId = opts.userId ?? null;
+		this.db = new Database(opts.path, {
+			verbose: opts.verbose ? console.log : undefined,
+		});
+		this.ownsDb = true;
+		this.userId = opts.userId ?? null;
 
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma("synchronous = NORMAL");
-    this.db.pragma("foreign_keys = ON");
-    this.db.pragma("busy_timeout = 5000");
+		this.db.pragma("journal_mode = WAL");
+		this.db.pragma("synchronous = NORMAL");
+		this.db.pragma("foreign_keys = ON");
+		this.db.pragma("busy_timeout = 5000");
 
-    if (opts.wal === false) {
-      this.db.pragma("journal_mode = DELETE");
-    }
+		if (opts.wal === false) {
+			this.db.pragma("journal_mode = DELETE");
+		}
 
-    this.migrate();
-  }
+		this.migrate();
+	}
 
-  forUser(userId: string): SqliteStore {
-    return new SqliteStore({ path: ":memory:" }, { db: this.db, userId });
-  }
+	forUser(userId: string): SqliteStore {
+		return new SqliteStore({ path: ":memory:" }, { db: this.db, userId });
+	}
 
-  private requireUser(): string {
-    if (!this.userId) {
-      throw new Error("SqliteStore: user not set. Call forUser(id) first.");
-    }
-    return this.userId;
-  }
+	private requireUser(): string {
+		if (!this.userId) {
+			throw new Error("SqliteStore: user not set. Call forUser(id) first.");
+		}
+		return this.userId;
+	}
 
-  private migrate(): void {
-    const currentVersion = this.getSchemaVersion();
-    for (let i = currentVersion; i < MIGRATIONS.length; i++) {
-      this.db.exec(MIGRATIONS[i]);
-    }
-  }
+	private migrate(): void {
+		const currentVersion = this.getSchemaVersion();
+		for (let i = currentVersion; i < MIGRATIONS.length; i++) {
+			this.db.exec(MIGRATIONS[i]);
+		}
+	}
 
-  private getSchemaVersion(): number {
-    try {
-      const row = this.db
-        .prepare("SELECT version FROM schema_version ORDER BY version DESC LIMIT 1")
-        .get() as { version: number } | undefined;
-      return row?.version ?? 0;
-    } catch {
-      return 0;
-    }
-  }
+	private getSchemaVersion(): number {
+		try {
+			const row = this.db
+				.prepare(
+					"SELECT version FROM schema_version ORDER BY version DESC LIMIT 1",
+				)
+				.get() as { version: number } | undefined;
+			return row?.version ?? 0;
+		} catch {
+			return 0;
+		}
+	}
 
-  // ═══ AgentStore ═══
+	// ═══ AgentStore ═══
 
-  async getAgent(id: string): Promise<AgentDefinition | null> {
-    const u = this.requireUser();
-    const row = this.db
-      .prepare(
-        `SELECT definition FROM agents
+	async getAgent(id: string): Promise<AgentDefinition | null> {
+		const u = this.requireUser();
+		const row = this.db
+			.prepare(
+				`SELECT definition FROM agents
          WHERE user_id = ? AND agent_id = ?
          ORDER BY activated_at DESC NULLS LAST
-         LIMIT 1`
-      )
-      .get(u, id) as { definition: string } | undefined;
-    if (!row) return null;
-    return JSON.parse(row.definition) as AgentDefinition;
-  }
+         LIMIT 1`,
+			)
+			.get(u, id) as { definition: string } | undefined;
+		if (!row) return null;
+		return JSON.parse(row.definition) as AgentDefinition;
+	}
 
-  async listAgents(): Promise<Array<{ id: string; name: string; description?: string }>> {
-    const u = this.requireUser();
-    const rows = this.db
-      .prepare(
-        `SELECT agent_id, name, description FROM agents
+	async listAgents(): Promise<
+		Array<{ id: string; name: string; description?: string }>
+	> {
+		const u = this.requireUser();
+		const rows = this.db
+			.prepare(
+				`SELECT agent_id, name, description FROM agents
          WHERE user_id = ? AND (agent_id, activated_at) IN (
            SELECT agent_id, MAX(activated_at) FROM agents
            WHERE user_id = ? AND activated_at IS NOT NULL
            GROUP BY agent_id
          )
-         ORDER BY name`
-      )
-      .all(u, u) as Array<{ agent_id: string; name: string; description: string | null }>;
+         ORDER BY name`,
+			)
+			.all(u, u) as Array<{
+			agent_id: string;
+			name: string;
+			description: string | null;
+		}>;
 
-    return rows.map((r) => ({
-      id: r.agent_id,
-      name: r.name,
-      description: r.description ?? undefined,
-    }));
-  }
+		return rows.map((r) => ({
+			id: r.agent_id,
+			name: r.name,
+			description: r.description ?? undefined,
+		}));
+	}
 
-  async putAgent(agent: AgentDefinition): Promise<void> {
-    const u = this.requireUser();
-    const now = this.nextTimestamp();
-    const agentWithTimestamp = { ...agent, createdAt: now, updatedAt: now };
-    this.db
-      .prepare(
-        `INSERT INTO agents (user_id, agent_id, name, description, definition, created_at, activated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(u, agent.id, agent.name, agent.description ?? null, JSON.stringify(agentWithTimestamp), now, now);
-  }
+	async putAgent(agent: AgentDefinition): Promise<void> {
+		const u = this.requireUser();
+		const now = this.nextTimestamp();
+		const agentWithTimestamp = { ...agent, createdAt: now, updatedAt: now };
+		this.db
+			.prepare(
+				`INSERT INTO agents (user_id, agent_id, name, description, definition, created_at, activated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			)
+			.run(
+				u,
+				agent.id,
+				agent.name,
+				agent.description ?? null,
+				JSON.stringify(agentWithTimestamp),
+				now,
+				now,
+			);
+	}
 
-  async deleteAgent(id: string): Promise<void> {
-    const u = this.requireUser();
-    this.db.prepare("DELETE FROM agents WHERE user_id = ? AND agent_id = ?").run(u, id);
-  }
+	async deleteAgent(id: string): Promise<void> {
+		const u = this.requireUser();
+		this.db
+			.prepare("DELETE FROM agents WHERE user_id = ? AND agent_id = ?")
+			.run(u, id);
+	}
 
-  async listAgentVersions(agentId: string): Promise<AgentVersionSummary[]> {
-    const u = this.requireUser();
-    const versionRows = this.db
-      .prepare(
-        `SELECT created_at, activated_at FROM agents
+	async listAgentVersions(agentId: string): Promise<AgentVersionSummary[]> {
+		const u = this.requireUser();
+		const versionRows = this.db
+			.prepare(
+				`SELECT created_at, activated_at FROM agents
          WHERE user_id = ? AND agent_id = ?
-         ORDER BY created_at DESC`
-      )
-      .all(u, agentId) as Array<{ created_at: string; activated_at: string | null }>;
-    const aliasRows = this.db
-      .prepare(
-        `SELECT alias, version_created_at FROM agent_aliases
+         ORDER BY created_at DESC`,
+			)
+			.all(u, agentId) as Array<{
+			created_at: string;
+			activated_at: string | null;
+		}>;
+		const aliasRows = this.db
+			.prepare(
+				`SELECT alias, version_created_at FROM agent_aliases
          WHERE user_id = ? AND agent_id = ?
-         ORDER BY alias ASC`
-      )
-      .all(u, agentId) as Array<{ alias: string; version_created_at: string }>;
-    const aliasesByVersion = new Map<string, string[]>();
-    for (const r of aliasRows) {
-      const list = aliasesByVersion.get(r.version_created_at) ?? [];
-      list.push(r.alias);
-      aliasesByVersion.set(r.version_created_at, list);
-    }
-    return versionRows.map((r) => ({
-      createdAt: r.created_at,
-      activatedAt: r.activated_at,
-      aliases: aliasesByVersion.get(r.created_at) ?? [],
-    }));
-  }
+         ORDER BY alias ASC`,
+			)
+			.all(u, agentId) as Array<{ alias: string; version_created_at: string }>;
+		const aliasesByVersion = new Map<string, string[]>();
+		for (const r of aliasRows) {
+			const list = aliasesByVersion.get(r.version_created_at) ?? [];
+			list.push(r.alias);
+			aliasesByVersion.set(r.version_created_at, list);
+		}
+		return versionRows.map((r) => ({
+			createdAt: r.created_at,
+			activatedAt: r.activated_at,
+			aliases: aliasesByVersion.get(r.created_at) ?? [],
+		}));
+	}
 
-  async getAgentVersion(agentId: string, createdAt: string): Promise<AgentDefinition | null> {
-    const u = this.requireUser();
-    const row = this.db
-      .prepare(
-        `SELECT definition FROM agents
-         WHERE user_id = ? AND agent_id = ? AND created_at = ?`
-      )
-      .get(u, agentId, createdAt) as { definition: string } | undefined;
-    if (!row) return null;
-    return JSON.parse(row.definition) as AgentDefinition;
-  }
+	async getAgentVersion(
+		agentId: string,
+		createdAt: string,
+	): Promise<AgentDefinition | null> {
+		const u = this.requireUser();
+		const row = this.db
+			.prepare(
+				`SELECT definition FROM agents
+         WHERE user_id = ? AND agent_id = ? AND created_at = ?`,
+			)
+			.get(u, agentId, createdAt) as { definition: string } | undefined;
+		if (!row) return null;
+		return JSON.parse(row.definition) as AgentDefinition;
+	}
 
-  async activateAgentVersion(agentId: string, createdAt: string): Promise<void> {
-    const u = this.requireUser();
-    const now = this.nextTimestamp();
-    this.db
-      .prepare(
-        `UPDATE agents SET activated_at = ?
-         WHERE user_id = ? AND agent_id = ? AND created_at = ?`
-      )
-      .run(now, u, agentId, createdAt);
-  }
+	async activateAgentVersion(
+		agentId: string,
+		createdAt: string,
+	): Promise<void> {
+		const u = this.requireUser();
+		const now = this.nextTimestamp();
+		this.db
+			.prepare(
+				`UPDATE agents SET activated_at = ?
+         WHERE user_id = ? AND agent_id = ? AND created_at = ?`,
+			)
+			.run(now, u, agentId, createdAt);
+	}
 
-  async resolveAgentAlias(agentId: string, alias: string): Promise<string | null> {
-    const u = this.requireUser();
-    const row = this.db
-      .prepare(
-        `SELECT version_created_at FROM agent_aliases
-         WHERE user_id = ? AND agent_id = ? AND alias = ?`
-      )
-      .get(u, agentId, alias) as { version_created_at: string } | undefined;
-    return row?.version_created_at ?? null;
-  }
+	async resolveAgentAlias(
+		agentId: string,
+		alias: string,
+	): Promise<string | null> {
+		const u = this.requireUser();
+		const row = this.db
+			.prepare(
+				`SELECT version_created_at FROM agent_aliases
+         WHERE user_id = ? AND agent_id = ? AND alias = ?`,
+			)
+			.get(u, agentId, alias) as { version_created_at: string } | undefined;
+		return row?.version_created_at ?? null;
+	}
 
-  async setAgentVersionAlias(agentId: string, createdAt: string, alias: string): Promise<void> {
-    const u = this.requireUser();
-    const exists = this.db
-      .prepare(
-        `SELECT 1 FROM agents
-         WHERE user_id = ? AND agent_id = ? AND created_at = ?`
-      )
-      .get(u, agentId, createdAt);
-    if (!exists) {
-      throw new Error(`Agent version not found: ${agentId}@${createdAt}`);
-    }
-    const now = this.nextTimestamp();
-    this.db
-      .prepare(
-        `INSERT INTO agent_aliases (user_id, agent_id, alias, version_created_at, created_at)
+	async setAgentVersionAlias(
+		agentId: string,
+		createdAt: string,
+		alias: string,
+	): Promise<void> {
+		const u = this.requireUser();
+		const exists = this.db
+			.prepare(
+				`SELECT 1 FROM agents
+         WHERE user_id = ? AND agent_id = ? AND created_at = ?`,
+			)
+			.get(u, agentId, createdAt);
+		if (!exists) {
+			throw new Error(`Agent version not found: ${agentId}@${createdAt}`);
+		}
+		const now = this.nextTimestamp();
+		this.db
+			.prepare(
+				`INSERT INTO agent_aliases (user_id, agent_id, alias, version_created_at, created_at)
          VALUES (?, ?, ?, ?, ?)
          ON CONFLICT(user_id, agent_id, alias)
-         DO UPDATE SET version_created_at = excluded.version_created_at, created_at = excluded.created_at`
-      )
-      .run(u, agentId, alias, createdAt, now);
-  }
+         DO UPDATE SET version_created_at = excluded.version_created_at, created_at = excluded.created_at`,
+			)
+			.run(u, agentId, alias, createdAt, now);
+	}
 
-  async removeAgentVersionAlias(agentId: string, alias: string): Promise<void> {
-    const u = this.requireUser();
-    this.db
-      .prepare(
-        `DELETE FROM agent_aliases
-         WHERE user_id = ? AND agent_id = ? AND alias = ?`
-      )
-      .run(u, agentId, alias);
-  }
+	async removeAgentVersionAlias(agentId: string, alias: string): Promise<void> {
+		const u = this.requireUser();
+		this.db
+			.prepare(
+				`DELETE FROM agent_aliases
+         WHERE user_id = ? AND agent_id = ? AND alias = ?`,
+			)
+			.run(u, agentId, alias);
+	}
 
-  // ═══ SessionStore ═══
+	// ═══ SessionStore ═══
 
-  async getMessages(sessionId: string): Promise<Message[]> {
-    const u = this.requireUser();
-    const rows = this.db
-      .prepare(
-        `SELECT m.role, m.content, m.content_blocks, m.tool_calls, m.tool_call_id, m.timestamp
+	async getMessages(sessionId: string): Promise<Message[]> {
+		const u = this.requireUser();
+		const rows = this.db
+			.prepare(
+				`SELECT m.role, m.content, m.content_blocks, m.tool_calls, m.tool_call_id, m.timestamp
          FROM messages m
          INNER JOIN sessions s ON s.id = m.session_id
          WHERE s.user_id = ? AND m.session_id = ?
-         ORDER BY m.id`
-      )
-      .all(u, sessionId) as Array<{
-      role: string;
-      content: string;
-      content_blocks: string | null;
-      tool_calls: string | null;
-      tool_call_id: string | null;
-      timestamp: string;
-    }>;
+         ORDER BY m.id`,
+			)
+			.all(u, sessionId) as Array<{
+			role: string;
+			content: string;
+			content_blocks: string | null;
+			tool_calls: string | null;
+			tool_call_id: string | null;
+			timestamp: string;
+		}>;
 
-    return rows.map((r) => {
-      // Prefer the multimodal blocks payload if present; fall back to the
-      // legacy text-only column.
-      let content: string | ContentBlock[] = r.content;
-      if (r.content_blocks) {
-        try {
-          const parsed = JSON.parse(r.content_blocks);
-          if (Array.isArray(parsed)) content = parsed as ContentBlock[];
-        } catch {
-          // Malformed JSON — surface text fallback rather than throwing.
-        }
-      }
+		return rows.map((r) => {
+			// Prefer the multimodal blocks payload if present; fall back to the
+			// legacy text-only column.
+			let content: string | ContentBlock[] = r.content;
+			if (r.content_blocks) {
+				try {
+					const parsed = JSON.parse(r.content_blocks);
+					if (Array.isArray(parsed)) content = parsed as ContentBlock[];
+				} catch {
+					// Malformed JSON — surface text fallback rather than throwing.
+				}
+			}
 
-      const msg: Message = {
-        role: r.role as Message["role"],
-        content,
-        timestamp: r.timestamp,
-      };
-      if (r.tool_calls) msg.toolCalls = JSON.parse(r.tool_calls);
-      if (r.tool_call_id) msg.toolCallId = r.tool_call_id;
-      return msg;
-    });
-  }
+			const msg: Message = {
+				role: r.role as Message["role"],
+				content,
+				timestamp: r.timestamp,
+			};
+			if (r.tool_calls) msg.toolCalls = JSON.parse(r.tool_calls);
+			if (r.tool_call_id) msg.toolCallId = r.tool_call_id;
+			return msg;
+		});
+	}
 
-  async append(sessionId: string, messages: Message[]): Promise<void> {
-    const u = this.requireUser();
-    const now = new Date().toISOString();
+	async append(sessionId: string, messages: Message[]): Promise<void> {
+		const u = this.requireUser();
+		const now = new Date().toISOString();
 
-    const checkOwnership = this.db.prepare("SELECT user_id FROM sessions WHERE id = ?");
-    const upsertSession = this.db.prepare(
-      `INSERT INTO sessions (user_id, id, created_at, updated_at) VALUES (?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at`
-    );
-    const insertMsg = this.db.prepare(
-      `INSERT INTO messages (session_id, role, content, content_blocks, tool_calls, tool_call_id, timestamp)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-    );
+		const checkOwnership = this.db.prepare(
+			"SELECT user_id FROM sessions WHERE id = ?",
+		);
+		const upsertSession = this.db.prepare(
+			`INSERT INTO sessions (user_id, id, created_at, updated_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at`,
+		);
+		const insertMsg = this.db.prepare(
+			`INSERT INTO messages (session_id, role, content, content_blocks, tool_calls, tool_call_id, timestamp)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		);
 
-    const transaction = this.db.transaction(() => {
-      const existing = checkOwnership.get(sessionId) as { user_id: string } | undefined;
-      if (existing && existing.user_id !== u) {
-        throw new Error(`Session ${sessionId} belongs to a different user`);
-      }
-      upsertSession.run(u, sessionId, now, now);
-      for (const msg of messages) {
-        // Dual-write: legacy text column always populated (flattened view of
-        // any blocks), content_blocks only when input was multimodal.
-        const { contentText, contentBlocksJson } = serializeContent(msg.content);
-        insertMsg.run(
-          sessionId,
-          msg.role,
-          contentText,
-          contentBlocksJson,
-          msg.toolCalls ? JSON.stringify(msg.toolCalls) : null,
-          msg.toolCallId ?? null,
-          msg.timestamp
-        );
-      }
-    });
+		const transaction = this.db.transaction(() => {
+			const existing = checkOwnership.get(sessionId) as
+				| { user_id: string }
+				| undefined;
+			if (existing && existing.user_id !== u) {
+				throw new Error(`Session ${sessionId} belongs to a different user`);
+			}
+			upsertSession.run(u, sessionId, now, now);
+			for (const msg of messages) {
+				// Dual-write: legacy text column always populated (flattened view of
+				// any blocks), content_blocks only when input was multimodal.
+				const { contentText, contentBlocksJson } = serializeContent(
+					msg.content,
+				);
+				insertMsg.run(
+					sessionId,
+					msg.role,
+					contentText,
+					contentBlocksJson,
+					msg.toolCalls ? JSON.stringify(msg.toolCalls) : null,
+					msg.toolCallId ?? null,
+					msg.timestamp,
+				);
+			}
+		});
 
-    transaction();
-  }
+		transaction();
+	}
 
-  async deleteSession(sessionId: string): Promise<void> {
-    const u = this.requireUser();
-    const transaction = this.db.transaction(() => {
-      this.db
-        .prepare(
-          `DELETE FROM messages WHERE session_id IN (
+	async deleteSession(sessionId: string): Promise<void> {
+		const u = this.requireUser();
+		const transaction = this.db.transaction(() => {
+			this.db
+				.prepare(
+					`DELETE FROM messages WHERE session_id IN (
             SELECT id FROM sessions WHERE user_id = ? AND id = ?
-          )`
-        )
-        .run(u, sessionId);
-      this.db.prepare("DELETE FROM sessions WHERE user_id = ? AND id = ?").run(u, sessionId);
-    });
-    transaction();
-  }
+          )`,
+				)
+				.run(u, sessionId);
+			this.db
+				.prepare("DELETE FROM sessions WHERE user_id = ? AND id = ?")
+				.run(u, sessionId);
+		});
+		transaction();
+	}
 
-  async getOrCreateSession(sessionId: string): Promise<void> {
-    const u = this.requireUser();
-    // Ownership check: if a row exists for a different user, surface that
-    // rather than silently aliasing the id.
-    const existing = this.db
-      .prepare("SELECT user_id FROM sessions WHERE id = ?")
-      .get(sessionId) as { user_id: string } | undefined;
-    if (existing && existing.user_id !== u) {
-      throw new Error(`Session ${sessionId} belongs to a different user`);
-    }
-    const now = new Date().toISOString();
-    this.db
-      .prepare(
-        `INSERT OR IGNORE INTO sessions (user_id, id, agent_id, created_at, updated_at)
-         VALUES (?, ?, NULL, ?, ?)`
-      )
-      .run(u, sessionId, now, now);
-  }
+	async getOrCreateSession(sessionId: string): Promise<void> {
+		const u = this.requireUser();
+		// Ownership check: if a row exists for a different user, surface that
+		// rather than silently aliasing the id.
+		const existing = this.db
+			.prepare("SELECT user_id FROM sessions WHERE id = ?")
+			.get(sessionId) as { user_id: string } | undefined;
+		if (existing && existing.user_id !== u) {
+			throw new Error(`Session ${sessionId} belongs to a different user`);
+		}
+		const now = new Date().toISOString();
+		this.db
+			.prepare(
+				`INSERT OR IGNORE INTO sessions (user_id, id, agent_id, created_at, updated_at)
+         VALUES (?, ?, NULL, ?, ?)`,
+			)
+			.run(u, sessionId, now, now);
+	}
 
-  async listSessions(agentId?: string): Promise<SessionSummary[]> {
-    const u = this.requireUser();
-    let query = `
+	async listSessions(agentId?: string): Promise<SessionSummary[]> {
+		const u = this.requireUser();
+		let query = `
       SELECT s.id, s.agent_id, s.created_at, s.updated_at,
              COUNT(m.id) as message_count
       FROM sessions s
       LEFT JOIN messages m ON m.session_id = s.id
       WHERE s.user_id = ?
     `;
-    const params: string[] = [u];
+		const params: string[] = [u];
 
-    if (agentId) {
-      query += " AND s.agent_id = ?";
-      params.push(agentId);
-    }
+		if (agentId) {
+			query += " AND s.agent_id = ?";
+			params.push(agentId);
+		}
 
-    query += " GROUP BY s.id ORDER BY s.updated_at DESC";
+		query += " GROUP BY s.id ORDER BY s.updated_at DESC";
 
-    const rows = this.db.prepare(query).all(...params) as Array<{
-      id: string;
-      agent_id: string | null;
-      created_at: string;
-      updated_at: string;
-      message_count: number;
-    }>;
+		const rows = this.db.prepare(query).all(...params) as Array<{
+			id: string;
+			agent_id: string | null;
+			created_at: string;
+			updated_at: string;
+			message_count: number;
+		}>;
 
-    return rows.map((r) => ({
-      sessionId: r.id,
-      agentId: r.agent_id ?? undefined,
-      messageCount: r.message_count,
-      createdAt: r.created_at,
-      updatedAt: r.updated_at,
-    }));
-  }
+		return rows.map((r) => ({
+			sessionId: r.id,
+			agentId: r.agent_id ?? undefined,
+			messageCount: r.message_count,
+			createdAt: r.created_at,
+			updatedAt: r.updated_at,
+		}));
+	}
 
-  // ═══ ContextStore ═══
+	// ═══ ContextStore ═══
 
-  async getContext(contextId: string): Promise<ContextEntry[]> {
-    const u = this.requireUser();
-    const rows = this.db
-      .prepare(
-        `SELECT context_id, agent_id, invocation_id, content, created_at FROM context_entries
-         WHERE user_id = ? AND context_id = ? ORDER BY id`
-      )
-      .all(u, contextId) as Array<{
-      context_id: string;
-      agent_id: string;
-      invocation_id: string;
-      content: string;
-      created_at: string;
-    }>;
+	async getContext(contextId: string): Promise<ContextEntry[]> {
+		const u = this.requireUser();
+		const rows = this.db
+			.prepare(
+				`SELECT context_id, agent_id, invocation_id, content, created_at FROM context_entries
+         WHERE user_id = ? AND context_id = ? ORDER BY id`,
+			)
+			.all(u, contextId) as Array<{
+			context_id: string;
+			agent_id: string;
+			invocation_id: string;
+			content: string;
+			created_at: string;
+		}>;
 
-    return rows.map((r) => ({
-      contextId: r.context_id,
-      agentId: r.agent_id,
-      invocationId: r.invocation_id,
-      content: r.content,
-      createdAt: r.created_at,
-    }));
-  }
+		return rows.map((r) => ({
+			contextId: r.context_id,
+			agentId: r.agent_id,
+			invocationId: r.invocation_id,
+			content: r.content,
+			createdAt: r.created_at,
+		}));
+	}
 
-  async addContext(contextId: string, entry: ContextEntry): Promise<void> {
-    const u = this.requireUser();
-    this.db
-      .prepare(
-        `INSERT INTO context_entries (user_id, context_id, agent_id, invocation_id, content, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`
-      )
-      .run(u, contextId, entry.agentId, entry.invocationId, entry.content, entry.createdAt);
-  }
+	async addContext(contextId: string, entry: ContextEntry): Promise<void> {
+		const u = this.requireUser();
+		this.db
+			.prepare(
+				`INSERT INTO context_entries (user_id, context_id, agent_id, invocation_id, content, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+			)
+			.run(
+				u,
+				contextId,
+				entry.agentId,
+				entry.invocationId,
+				entry.content,
+				entry.createdAt,
+			);
+	}
 
-  async clearContext(contextId: string): Promise<void> {
-    const u = this.requireUser();
-    this.db
-      .prepare("DELETE FROM context_entries WHERE user_id = ? AND context_id = ?")
-      .run(u, contextId);
-  }
+	async clearContext(contextId: string): Promise<void> {
+		const u = this.requireUser();
+		this.db
+			.prepare(
+				"DELETE FROM context_entries WHERE user_id = ? AND context_id = ?",
+			)
+			.run(u, contextId);
+	}
 
-  // ═══ LogStore ═══
+	// ═══ LogStore ═══
 
-  async log(entry: InvocationLog): Promise<void> {
-    const u = this.requireUser();
-    // For multimodal input we serialize the blocks JSON into the existing
-    // `input` TEXT column with a sentinel prefix so the column shape stays
-    // backward-compatible: legacy readers see the prefix + JSON (still a
-    // string); the row helper below detects the prefix and rehydrates the
-    // blocks. Avoids adding a separate input_blocks column.
-    const inputStored =
-      typeof entry.input === "string"
-        ? entry.input
-        : `${BLOCKS_JSON_PREFIX}${JSON.stringify(entry.input)}`;
-    this.db
-      .prepare(
-        `INSERT INTO invocation_logs (user_id, id, agent_id, session_id, input, output, tool_calls,
+	async log(entry: InvocationLog): Promise<void> {
+		const u = this.requireUser();
+		// For multimodal input we serialize the blocks JSON into the existing
+		// `input` TEXT column with a sentinel prefix so the column shape stays
+		// backward-compatible: legacy readers see the prefix + JSON (still a
+		// string); the row helper below detects the prefix and rehydrates the
+		// blocks. Avoids adding a separate input_blocks column.
+		const inputStored =
+			typeof entry.input === "string"
+				? entry.input
+				: `${BLOCKS_JSON_PREFIX}${JSON.stringify(entry.input)}`;
+		this.db
+			.prepare(
+				`INSERT INTO invocation_logs (user_id, id, agent_id, session_id, input, output, tool_calls,
           prompt_tokens, completion_tokens, total_tokens, duration, model, error, timestamp, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        u,
-        entry.id,
-        entry.agentId,
-        entry.sessionId ?? null,
-        inputStored,
-        entry.output,
-        JSON.stringify(entry.toolCalls),
-        entry.usage.promptTokens,
-        entry.usage.completionTokens,
-        entry.usage.totalTokens,
-        entry.duration,
-        entry.model,
-        entry.error ?? null,
-        entry.timestamp,
-        entry.status ?? null
-      );
-  }
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			)
+			.run(
+				u,
+				entry.id,
+				entry.agentId,
+				entry.sessionId ?? null,
+				inputStored,
+				entry.output,
+				JSON.stringify(entry.toolCalls),
+				entry.usage.promptTokens,
+				entry.usage.completionTokens,
+				entry.usage.totalTokens,
+				entry.duration,
+				entry.model,
+				entry.error ?? null,
+				entry.timestamp,
+				entry.status ?? null,
+			);
+	}
 
-  async getLogs(filter?: LogFilter): Promise<InvocationLog[]> {
-    const u = this.requireUser();
-    let query = "SELECT * FROM invocation_logs WHERE user_id = ?";
-    const params: unknown[] = [u];
+	async getLogs(filter?: LogFilter): Promise<InvocationLog[]> {
+		const u = this.requireUser();
+		let query = "SELECT * FROM invocation_logs WHERE user_id = ?";
+		const params: unknown[] = [u];
 
-    if (filter?.agentId) {
-      query += " AND agent_id = ?";
-      params.push(filter.agentId);
-    }
-    if (filter?.sessionId) {
-      query += " AND session_id = ?";
-      params.push(filter.sessionId);
-    }
-    if (filter?.since) {
-      query += " AND timestamp >= ?";
-      params.push(filter.since);
-    }
+		if (filter?.agentId) {
+			query += " AND agent_id = ?";
+			params.push(filter.agentId);
+		}
+		if (filter?.sessionId) {
+			query += " AND session_id = ?";
+			params.push(filter.sessionId);
+		}
+		if (filter?.since) {
+			query += " AND timestamp >= ?";
+			params.push(filter.since);
+		}
 
-    query += " ORDER BY timestamp DESC";
+		query += " ORDER BY timestamp DESC";
 
-    if (filter?.limit) {
-      query += " LIMIT ?";
-      params.push(filter.limit);
-    }
-    if (filter?.offset) {
-      query += " OFFSET ?";
-      params.push(filter.offset);
-    }
+		if (filter?.limit) {
+			query += " LIMIT ?";
+			params.push(filter.limit);
+		}
+		if (filter?.offset) {
+			query += " OFFSET ?";
+			params.push(filter.offset);
+		}
 
-    const rows = this.db.prepare(query).all(...params) as Array<LogRow>;
-    return rows.map(rowToLog);
-  }
+		const rows = this.db.prepare(query).all(...params) as Array<LogRow>;
+		return rows.map(rowToLog);
+	}
 
-  async getLog(id: string): Promise<InvocationLog | null> {
-    const u = this.requireUser();
-    const row = this.db
-      .prepare("SELECT * FROM invocation_logs WHERE user_id = ? AND id = ?")
-      .get(u, id) as LogRow | undefined;
-    if (!row) return null;
-    return rowToLog(row);
-  }
+	async getLog(id: string): Promise<InvocationLog | null> {
+		const u = this.requireUser();
+		const row = this.db
+			.prepare("SELECT * FROM invocation_logs WHERE user_id = ? AND id = ?")
+			.get(u, id) as LogRow | undefined;
+		if (!row) return null;
+		return rowToLog(row);
+	}
 
-  // ═══ ProviderStore ═══
+	// ═══ ProviderStore ═══
 
-  async getProvider(id: string): Promise<ProviderConfig | null> {
-    const u = this.requireUser();
-    const row = this.db
-      .prepare(
-        "SELECT id, api_key, base_url, config, updated_at FROM providers WHERE user_id = ? AND id = ?"
-      )
-      .get(u, id) as
-      | { id: string; api_key: string; base_url: string | null; config: string | null; updated_at: string }
-      | undefined;
-    if (!row) return null;
-    return {
-      id: row.id,
-      apiKey: row.api_key,
-      baseUrl: row.base_url ?? undefined,
-      config: row.config ? (JSON.parse(row.config) as Record<string, unknown>) : undefined,
-      updatedAt: row.updated_at,
-    };
-  }
+	async getProvider(id: string): Promise<ProviderConfig | null> {
+		const u = this.requireUser();
+		const row = this.db
+			.prepare(
+				"SELECT id, api_key, base_url, config, updated_at FROM providers WHERE user_id = ? AND id = ?",
+			)
+			.get(u, id) as
+			| {
+					id: string;
+					api_key: string;
+					base_url: string | null;
+					config: string | null;
+					updated_at: string;
+			  }
+			| undefined;
+		if (!row) return null;
+		return {
+			id: row.id,
+			apiKey: row.api_key,
+			baseUrl: row.base_url ?? undefined,
+			config: row.config
+				? (JSON.parse(row.config) as Record<string, unknown>)
+				: undefined,
+			updatedAt: row.updated_at,
+		};
+	}
 
-  async listProviders(): Promise<Array<{ id: string; configured: boolean }>> {
-    const u = this.requireUser();
-    const rows = this.db
-      .prepare("SELECT id, api_key FROM providers WHERE user_id = ? ORDER BY id")
-      .all(u) as Array<{ id: string; api_key: string }>;
-    return rows.map((r) => ({ id: r.id, configured: !!r.api_key }));
-  }
+	async listProviders(): Promise<Array<{ id: string; configured: boolean }>> {
+		const u = this.requireUser();
+		const rows = this.db
+			.prepare(
+				"SELECT id, api_key FROM providers WHERE user_id = ? ORDER BY id",
+			)
+			.all(u) as Array<{ id: string; api_key: string }>;
+		return rows.map((r) => ({ id: r.id, configured: !!r.api_key }));
+	}
 
-  async putProvider(provider: ProviderConfig): Promise<void> {
-    const u = this.requireUser();
-    const now = new Date().toISOString();
-    const existing = this.db
-      .prepare("SELECT id FROM providers WHERE user_id = ? AND id = ?")
-      .get(u, provider.id);
-    if (existing) {
-      this.db
-        .prepare(
-          `UPDATE providers SET api_key = ?, base_url = ?, config = ?, updated_at = ?
-           WHERE user_id = ? AND id = ?`
-        )
-        .run(
-          provider.apiKey,
-          provider.baseUrl ?? null,
-          provider.config ? JSON.stringify(provider.config) : null,
-          now,
-          u,
-          provider.id
-        );
-    } else {
-      this.db
-        .prepare(
-          `INSERT INTO providers (user_id, id, api_key, base_url, config, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?)`
-        )
-        .run(
-          u,
-          provider.id,
-          provider.apiKey,
-          provider.baseUrl ?? null,
-          provider.config ? JSON.stringify(provider.config) : null,
-          now
-        );
-    }
-  }
+	async putProvider(provider: ProviderConfig): Promise<void> {
+		const u = this.requireUser();
+		const now = new Date().toISOString();
+		const existing = this.db
+			.prepare("SELECT id FROM providers WHERE user_id = ? AND id = ?")
+			.get(u, provider.id);
+		if (existing) {
+			this.db
+				.prepare(
+					`UPDATE providers SET api_key = ?, base_url = ?, config = ?, updated_at = ?
+           WHERE user_id = ? AND id = ?`,
+				)
+				.run(
+					provider.apiKey,
+					provider.baseUrl ?? null,
+					provider.config ? JSON.stringify(provider.config) : null,
+					now,
+					u,
+					provider.id,
+				);
+		} else {
+			this.db
+				.prepare(
+					`INSERT INTO providers (user_id, id, api_key, base_url, config, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+				)
+				.run(
+					u,
+					provider.id,
+					provider.apiKey,
+					provider.baseUrl ?? null,
+					provider.config ? JSON.stringify(provider.config) : null,
+					now,
+				);
+		}
+	}
 
-  async deleteProvider(id: string): Promise<void> {
-    const u = this.requireUser();
-    this.db.prepare("DELETE FROM providers WHERE user_id = ? AND id = ?").run(u, id);
-  }
+	async deleteProvider(id: string): Promise<void> {
+		const u = this.requireUser();
+		this.db
+			.prepare("DELETE FROM providers WHERE user_id = ? AND id = ?")
+			.run(u, id);
+	}
 
-  // ═══ ConnectionStore ═══
+	// ═══ ConnectionStore ═══
 
-  async getConnection(kind: ConnectionKind, id: string): Promise<Connection | null> {
-    const u = this.requireUser();
-    const row = this.db
-      .prepare(
-        `SELECT id, kind, display_name, description, config, created_at, updated_at
+	async getConnection(
+		kind: ConnectionKind,
+		id: string,
+	): Promise<Connection | null> {
+		const u = this.requireUser();
+		const row = this.db
+			.prepare(
+				`SELECT id, kind, display_name, description, config, created_at, updated_at
          FROM connections
-         WHERE user_id = ? AND kind = ? AND id = ?`
-      )
-      .get(u, kind, id) as
-      | {
-          id: string;
-          kind: string;
-          display_name: string;
-          description: string | null;
-          config: string;
-          created_at: string;
-          updated_at: string;
-        }
-      | undefined;
-    if (!row) return null;
-    return sqliteRowToConnection(row);
-  }
+         WHERE user_id = ? AND kind = ? AND id = ?`,
+			)
+			.get(u, kind, id) as
+			| {
+					id: string;
+					kind: string;
+					display_name: string;
+					description: string | null;
+					config: string;
+					created_at: string;
+					updated_at: string;
+			  }
+			| undefined;
+		if (!row) return null;
+		return sqliteRowToConnection(row);
+	}
 
-  async listConnections(kind?: ConnectionKind): Promise<Connection[]> {
-    const u = this.requireUser();
-    const rows = kind
-      ? (this.db
-          .prepare(
-            `SELECT id, kind, display_name, description, config, created_at, updated_at
-             FROM connections WHERE user_id = ? AND kind = ? ORDER BY kind, id`
-          )
-          .all(u, kind) as Array<{
-          id: string;
-          kind: string;
-          display_name: string;
-          description: string | null;
-          config: string;
-          created_at: string;
-          updated_at: string;
-        }>)
-      : (this.db
-          .prepare(
-            `SELECT id, kind, display_name, description, config, created_at, updated_at
-             FROM connections WHERE user_id = ? ORDER BY kind, id`
-          )
-          .all(u) as Array<{
-          id: string;
-          kind: string;
-          display_name: string;
-          description: string | null;
-          config: string;
-          created_at: string;
-          updated_at: string;
-        }>);
-    return rows.map(sqliteRowToConnection);
-  }
+	async listConnections(kind?: ConnectionKind): Promise<Connection[]> {
+		const u = this.requireUser();
+		const rows = kind
+			? (this.db
+					.prepare(
+						`SELECT id, kind, display_name, description, config, created_at, updated_at
+             FROM connections WHERE user_id = ? AND kind = ? ORDER BY kind, id`,
+					)
+					.all(u, kind) as Array<{
+					id: string;
+					kind: string;
+					display_name: string;
+					description: string | null;
+					config: string;
+					created_at: string;
+					updated_at: string;
+				}>)
+			: (this.db
+					.prepare(
+						`SELECT id, kind, display_name, description, config, created_at, updated_at
+             FROM connections WHERE user_id = ? ORDER BY kind, id`,
+					)
+					.all(u) as Array<{
+					id: string;
+					kind: string;
+					display_name: string;
+					description: string | null;
+					config: string;
+					created_at: string;
+					updated_at: string;
+				}>);
+		return rows.map(sqliteRowToConnection);
+	}
 
-  async putConnection(connection: Connection): Promise<void> {
-    const u = this.requireUser();
-    const now = new Date().toISOString();
-    const existing = this.db
-      .prepare(
-        `SELECT 1 FROM connections WHERE user_id = ? AND kind = ? AND id = ?`
-      )
-      .get(u, connection.kind, connection.id);
-    if (existing) {
-      this.db
-        .prepare(
-          `UPDATE connections
+	async putConnection(connection: Connection): Promise<void> {
+		const u = this.requireUser();
+		const now = new Date().toISOString();
+		const existing = this.db
+			.prepare(
+				"SELECT 1 FROM connections WHERE user_id = ? AND kind = ? AND id = ?",
+			)
+			.get(u, connection.kind, connection.id);
+		if (existing) {
+			this.db
+				.prepare(
+					`UPDATE connections
            SET display_name = ?, description = ?, config = ?, updated_at = ?
-           WHERE user_id = ? AND kind = ? AND id = ?`
-        )
-        .run(
-          connection.displayName,
-          connection.description ?? null,
-          JSON.stringify(connection.config),
-          now,
-          u,
-          connection.kind,
-          connection.id
-        );
-    } else {
-      this.db
-        .prepare(
-          `INSERT INTO connections
+           WHERE user_id = ? AND kind = ? AND id = ?`,
+				)
+				.run(
+					connection.displayName,
+					connection.description ?? null,
+					JSON.stringify(connection.config),
+					now,
+					u,
+					connection.kind,
+					connection.id,
+				);
+		} else {
+			this.db
+				.prepare(
+					`INSERT INTO connections
              (user_id, kind, id, display_name, description, config, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-        )
-        .run(
-          u,
-          connection.kind,
-          connection.id,
-          connection.displayName,
-          connection.description ?? null,
-          JSON.stringify(connection.config),
-          now,
-          now
-        );
-    }
-  }
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+				)
+				.run(
+					u,
+					connection.kind,
+					connection.id,
+					connection.displayName,
+					connection.description ?? null,
+					JSON.stringify(connection.config),
+					now,
+					now,
+				);
+		}
+	}
 
-  async deleteConnection(kind: ConnectionKind, id: string): Promise<void> {
-    const u = this.requireUser();
-    this.db
-      .prepare("DELETE FROM connections WHERE user_id = ? AND kind = ? AND id = ?")
-      .run(u, kind, id);
-  }
+	async deleteConnection(kind: ConnectionKind, id: string): Promise<void> {
+		const u = this.requireUser();
+		this.db
+			.prepare(
+				"DELETE FROM connections WHERE user_id = ? AND kind = ? AND id = ?",
+			)
+			.run(u, kind, id);
+	}
 
-  // ═══ RunStore ═══
+	// ═══ RunStore ═══
 
-  async putRun(run: Run): Promise<void> {
-    const u = this.requireUser();
-    this.db
-      .prepare(
-        `INSERT INTO runs (
+	async putRun(run: Run): Promise<void> {
+		const u = this.requireUser();
+		this.db
+			.prepare(
+				`INSERT INTO runs (
             user_id, id, root_id, parent_id, agent_id, session_id,
             spawn_tool_use_id, status, input, output, result_json, error,
             started_at, ended_at, depth
@@ -1044,63 +1115,63 @@ export class SqliteStore implements UnifiedStore {
            error = excluded.error,
            started_at = excluded.started_at,
            ended_at = excluded.ended_at,
-           depth = excluded.depth`
-      )
-      .run(
-        u,
-        run.id,
-        run.rootId,
-        run.parentId ?? null,
-        run.agentId,
-        run.sessionId ?? null,
-        run.spawnToolUseId ?? null,
-        run.status,
-        run.input,
-        run.result?.output ?? null,
-        run.result ? JSON.stringify(run.result) : null,
-        run.error ?? null,
-        run.startedAt,
-        run.endedAt ?? null,
-        run.depth
-      );
-  }
+           depth = excluded.depth`,
+			)
+			.run(
+				u,
+				run.id,
+				run.rootId,
+				run.parentId ?? null,
+				run.agentId,
+				run.sessionId ?? null,
+				run.spawnToolUseId ?? null,
+				run.status,
+				run.input,
+				run.result?.output ?? null,
+				run.result ? JSON.stringify(run.result) : null,
+				run.error ?? null,
+				run.startedAt,
+				run.endedAt ?? null,
+				run.depth,
+			);
+	}
 
-  async getRun(runId: string): Promise<Run | null> {
-    const u = this.requireUser();
-    const row = this.db
-      .prepare(
-        `SELECT id, user_id, root_id, parent_id, agent_id, session_id,
+	async getRun(runId: string): Promise<Run | null> {
+		const u = this.requireUser();
+		const row = this.db
+			.prepare(
+				`SELECT id, user_id, root_id, parent_id, agent_id, session_id,
                 spawn_tool_use_id, status, input, output, result_json, error,
                 started_at, ended_at, depth
          FROM runs
-         WHERE user_id = ? AND id = ?`
-      )
-      .get(u, runId) as RunRow | undefined;
-    return row ? rowToRun(row) : null;
-  }
+         WHERE user_id = ? AND id = ?`,
+			)
+			.get(u, runId) as RunRow | undefined;
+		return row ? rowToRun(row) : null;
+	}
 
-  async listChildren(parentRunId: string): Promise<Run[]> {
-    const u = this.requireUser();
-    const rows = this.db
-      .prepare(
-        `SELECT id, user_id, root_id, parent_id, agent_id, session_id,
+	async listChildren(parentRunId: string): Promise<Run[]> {
+		const u = this.requireUser();
+		const rows = this.db
+			.prepare(
+				`SELECT id, user_id, root_id, parent_id, agent_id, session_id,
                 spawn_tool_use_id, status, input, output, result_json, error,
                 started_at, ended_at, depth
          FROM runs
          WHERE user_id = ? AND parent_id = ?
-         ORDER BY started_at, id`
-      )
-      .all(u, parentRunId) as RunRow[];
-    return rows.map(rowToRun);
-  }
+         ORDER BY started_at, id`,
+			)
+			.all(u, parentRunId) as RunRow[];
+		return rows.map(rowToRun);
+	}
 
-  async listSubtree(rootId: string): Promise<Run[]> {
-    const u = this.requireUser();
-    // Recursive CTE walks the parent_id graph starting at rootId.
-    // Includes the root itself when present.
-    const rows = this.db
-      .prepare(
-        `WITH RECURSIVE subtree(id) AS (
+	async listSubtree(rootId: string): Promise<Run[]> {
+		const u = this.requireUser();
+		// Recursive CTE walks the parent_id graph starting at rootId.
+		// Includes the root itself when present.
+		const rows = this.db
+			.prepare(
+				`WITH RECURSIVE subtree(id) AS (
             SELECT id FROM runs WHERE user_id = ? AND id = ?
             UNION ALL
             SELECT r.id FROM runs r
@@ -1113,685 +1184,737 @@ export class SqliteStore implements UnifiedStore {
          FROM runs r
          INNER JOIN subtree s ON s.id = r.id
          WHERE r.user_id = ?
-         ORDER BY r.depth, r.started_at, r.id`
-      )
-      .all(u, rootId, u, u) as RunRow[];
-    return rows.map(rowToRun);
-  }
+         ORDER BY r.depth, r.started_at, r.id`,
+			)
+			.all(u, rootId, u, u) as RunRow[];
+		return rows.map(rowToRun);
+	}
 
-  async listRuns(filters: RunListFilters): Promise<RunListResult> {
-    const u = this.requireUser();
-    const limit = Math.min(Math.max(filters.limit ?? 50, 1), 200);
-    const rootsOnly = filters.rootsOnly ?? true;
+	async listRuns(filters: RunListFilters): Promise<RunListResult> {
+		const u = this.requireUser();
+		const limit = Math.min(Math.max(filters.limit ?? 50, 1), 200);
+		const rootsOnly = filters.rootsOnly ?? true;
 
-    const clauses: string[] = ["user_id = ?"];
-    const args: unknown[] = [u];
+		const clauses: string[] = ["user_id = ?"];
+		const args: unknown[] = [u];
 
-    if (rootsOnly) clauses.push("parent_id IS NULL");
-    if (filters.agentId) { clauses.push("agent_id = ?"); args.push(filters.agentId); }
-    if (filters.status) { clauses.push("status = ?"); args.push(filters.status); }
-    if (filters.startedAfter) {
-      const t = Date.parse(filters.startedAfter);
-      if (Number.isFinite(t)) { clauses.push("started_at >= ?"); args.push(t); }
-    }
-    if (filters.startedBefore) {
-      const t = Date.parse(filters.startedBefore);
-      if (Number.isFinite(t)) { clauses.push("started_at <= ?"); args.push(t); }
-    }
-    if (filters.cursor) {
-      const c = decodeRunCursor(filters.cursor);
-      if (c) {
-        // strict less-than on (started_at DESC, id DESC)
-        clauses.push("(started_at < ? OR (started_at = ? AND id < ?))");
-        args.push(c.startedAt, c.startedAt, c.id);
-      }
-    }
+		if (rootsOnly) clauses.push("parent_id IS NULL");
+		if (filters.agentId) {
+			clauses.push("agent_id = ?");
+			args.push(filters.agentId);
+		}
+		if (filters.status) {
+			clauses.push("status = ?");
+			args.push(filters.status);
+		}
+		if (filters.startedAfter) {
+			const t = Date.parse(filters.startedAfter);
+			if (Number.isFinite(t)) {
+				clauses.push("started_at >= ?");
+				args.push(t);
+			}
+		}
+		if (filters.startedBefore) {
+			const t = Date.parse(filters.startedBefore);
+			if (Number.isFinite(t)) {
+				clauses.push("started_at <= ?");
+				args.push(t);
+			}
+		}
+		if (filters.cursor) {
+			const c = decodeRunCursor(filters.cursor);
+			if (c) {
+				// strict less-than on (started_at DESC, id DESC)
+				clauses.push("(started_at < ? OR (started_at = ? AND id < ?))");
+				args.push(c.startedAt, c.startedAt, c.id);
+			}
+		}
 
-    args.push(limit + 1); // fetch one extra to detect a next page
+		args.push(limit + 1); // fetch one extra to detect a next page
 
-    const stmt = this.db.prepare(
-      `SELECT * FROM runs
+		const stmt = this.db.prepare(
+			`SELECT * FROM runs
        WHERE ${clauses.join(" AND ")}
        ORDER BY started_at DESC, id DESC
        LIMIT ?`,
-    );
-    const rawRows = stmt.all(...args) as RunRow[];
-    const hasMore = rawRows.length > limit;
-    const page = hasMore ? rawRows.slice(0, limit) : rawRows;
-    const rows = page.map((r) => rowToRun(r));
+		);
+		const rawRows = stmt.all(...args) as RunRow[];
+		const hasMore = rawRows.length > limit;
+		const page = hasMore ? rawRows.slice(0, limit) : rawRows;
+		const rows = page.map((r) => rowToRun(r));
 
-    let cursor: string | undefined;
-    if (hasMore) {
-      const last = rows[rows.length - 1];
-      cursor = encodeRunCursor({ startedAt: last.startedAt, id: last.id });
-    }
-    return { rows, cursor };
-  }
+		let cursor: string | undefined;
+		if (hasMore) {
+			const last = rows[rows.length - 1];
+			cursor = encodeRunCursor({ startedAt: last.startedAt, id: last.id });
+		}
+		return { rows, cursor };
+	}
 
-  // ═══ TraceStore ═══
+	// ═══ TraceStore ═══
 
-  async insertSpan(span: Span): Promise<void> {
-    this.db
-      .prepare(
-        `INSERT OR REPLACE INTO ar_spans (
+	async insertSpan(span: Span): Promise<void> {
+		this.db
+			.prepare(
+				`INSERT OR REPLACE INTO ar_spans (
           span_id, trace_id, parent_id, owner_id, run_id, session_id,
           name, kind, started_at, ended_at, duration_ms, status, error,
           attributes, events, scores, cost_usd
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        span.spanId,
-        span.traceId,
-        span.parentId,
-        span.ownerId,
-        span.runId,
-        span.sessionId,
-        span.name,
-        span.kind,
-        span.startedAt,
-        span.endedAt,
-        span.durationMs,
-        span.status,
-        span.error,
-        JSON.stringify(span.attributes),
-        JSON.stringify(span.events),
-        JSON.stringify(span.scores),
-        span.costUsd
-      );
-  }
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			)
+			.run(
+				span.spanId,
+				span.traceId,
+				span.parentId,
+				span.ownerId,
+				span.runId,
+				span.sessionId,
+				span.name,
+				span.kind,
+				span.startedAt,
+				span.endedAt,
+				span.durationMs,
+				span.status,
+				span.error,
+				JSON.stringify(span.attributes),
+				JSON.stringify(span.events),
+				JSON.stringify(span.scores),
+				span.costUsd,
+			);
+	}
 
-  async insertSpansBatch(spans: Span[]): Promise<void> {
-    const stmt = this.db.prepare(
-      `INSERT OR REPLACE INTO ar_spans (
+	async insertSpansBatch(spans: Span[]): Promise<void> {
+		const stmt = this.db.prepare(
+			`INSERT OR REPLACE INTO ar_spans (
         span_id, trace_id, parent_id, owner_id, run_id, session_id,
         name, kind, started_at, ended_at, duration_ms, status, error,
         attributes, events, scores, cost_usd
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    );
-    const insertMany = this.db.transaction((rows: Span[]) => {
-      for (const s of rows) {
-        stmt.run(
-          s.spanId, s.traceId, s.parentId, s.ownerId, s.runId, s.sessionId,
-          s.name, s.kind, s.startedAt, s.endedAt, s.durationMs, s.status, s.error,
-          JSON.stringify(s.attributes), JSON.stringify(s.events), JSON.stringify(s.scores),
-          s.costUsd
-        );
-      }
-    });
-    insertMany(spans);
-  }
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		);
+		const insertMany = this.db.transaction((rows: Span[]) => {
+			for (const s of rows) {
+				stmt.run(
+					s.spanId,
+					s.traceId,
+					s.parentId,
+					s.ownerId,
+					s.runId,
+					s.sessionId,
+					s.name,
+					s.kind,
+					s.startedAt,
+					s.endedAt,
+					s.durationMs,
+					s.status,
+					s.error,
+					JSON.stringify(s.attributes),
+					JSON.stringify(s.events),
+					JSON.stringify(s.scores),
+					s.costUsd,
+				);
+			}
+		});
+		insertMany(spans);
+	}
 
-  async updateSpan(spanId: string, ownerId: string, patch: Partial<Span>): Promise<void> {
-    // Owner-scoped: read first, ensure match, then re-insert (PK collision REPLACEs).
-    const existing = this.db
-      .prepare(`SELECT * FROM ar_spans WHERE span_id = ? AND owner_id = ?`)
-      .get(spanId, ownerId) as Record<string, unknown> | undefined;
-    if (!existing) return;
-    const merged: Span = { ...sqliteRowToSpan(existing), ...patch, spanId, ownerId };
-    await this.insertSpan(merged);
-  }
+	async updateSpan(
+		spanId: string,
+		ownerId: string,
+		patch: Partial<Span>,
+	): Promise<void> {
+		// Owner-scoped: read first, ensure match, then re-insert (PK collision REPLACEs).
+		const existing = this.db
+			.prepare("SELECT * FROM ar_spans WHERE span_id = ? AND owner_id = ?")
+			.get(spanId, ownerId) as Record<string, unknown> | undefined;
+		if (!existing) return;
+		const merged: Span = {
+			...sqliteRowToSpan(existing),
+			...patch,
+			spanId,
+			ownerId,
+		};
+		await this.insertSpan(merged);
+	}
 
-  async upsertSummary(summary: TraceSummary): Promise<void> {
-    this.db
-      .prepare(
-        `INSERT OR REPLACE INTO ar_trace_summaries (
+	async upsertSummary(summary: TraceSummary): Promise<void> {
+		this.db
+			.prepare(
+				`INSERT OR REPLACE INTO ar_trace_summaries (
           trace_id, owner_id, root_name, agent_id, started_at, ended_at,
           duration_ms, span_count, status, total_tokens, total_cost_usd
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        summary.traceId,
-        summary.ownerId,
-        summary.rootName,
-        summary.agentId,
-        summary.startedAt,
-        summary.endedAt,
-        summary.durationMs,
-        summary.spanCount,
-        summary.status,
-        summary.totalTokens,
-        summary.totalCostUsd
-      );
-  }
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			)
+			.run(
+				summary.traceId,
+				summary.ownerId,
+				summary.rootName,
+				summary.agentId,
+				summary.startedAt,
+				summary.endedAt,
+				summary.durationMs,
+				summary.spanCount,
+				summary.status,
+				summary.totalTokens,
+				summary.totalCostUsd,
+			);
+	}
 
-  async getTrace(traceId: string, ownerId: string): Promise<Span[]> {
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM ar_spans
+	async getTrace(traceId: string, ownerId: string): Promise<Span[]> {
+		const rows = this.db
+			.prepare(
+				`SELECT * FROM ar_spans
          WHERE trace_id = ? AND owner_id = ?
-         ORDER BY started_at ASC, span_id ASC`
-      )
-      .all(traceId, ownerId) as Record<string, unknown>[];
-    return rows.map(sqliteRowToSpan);
-  }
+         ORDER BY started_at ASC, span_id ASC`,
+			)
+			.all(traceId, ownerId) as Record<string, unknown>[];
+		return rows.map(sqliteRowToSpan);
+	}
 
-  async getSummary(traceId: string, ownerId: string): Promise<TraceSummary | null> {
-    const row = this.db
-      .prepare(
-        `SELECT * FROM ar_trace_summaries
-         WHERE trace_id = ? AND owner_id = ?`
-      )
-      .get(traceId, ownerId) as Record<string, unknown> | undefined;
-    return row ? sqliteRowToSummary(row) : null;
-  }
+	async getSummary(
+		traceId: string,
+		ownerId: string,
+	): Promise<TraceSummary | null> {
+		const row = this.db
+			.prepare(
+				`SELECT * FROM ar_trace_summaries
+         WHERE trace_id = ? AND owner_id = ?`,
+			)
+			.get(traceId, ownerId) as Record<string, unknown> | undefined;
+		return row ? sqliteRowToSummary(row) : null;
+	}
 
-  async listTraces(filter: TraceFilter): Promise<{ rows: TraceSummary[]; cursor?: string }> {
-    const limit = Math.min(Math.max(filter.limit ?? 50, 1), 200);
-    const clauses = [`owner_id = ?`];
-    const args: unknown[] = [filter.ownerId];
-    if (filter.agentId) {
-      clauses.push(`agent_id = ?`);
-      args.push(filter.agentId);
-    }
-    if (filter.status) {
-      clauses.push(`status = ?`);
-      args.push(filter.status);
-    }
-    if (filter.startedAfter) {
-      clauses.push(`started_at >= ?`);
-      args.push(filter.startedAfter);
-    }
-    if (filter.startedBefore) {
-      clauses.push(`started_at <= ?`);
-      args.push(filter.startedBefore);
-    }
-    if (filter.cursor) {
-      const decoded = decodeSqliteTraceCursor(filter.cursor);
-      if (decoded) {
-        clauses.push(`(started_at < ? OR (started_at = ? AND trace_id < ?))`);
-        args.push(decoded.startedAt, decoded.startedAt, decoded.traceId);
-      }
-    }
+	async listTraces(
+		filter: TraceFilter,
+	): Promise<{ rows: TraceSummary[]; cursor?: string }> {
+		const limit = Math.min(Math.max(filter.limit ?? 50, 1), 200);
+		const clauses = ["owner_id = ?"];
+		const args: unknown[] = [filter.ownerId];
+		if (filter.agentId) {
+			clauses.push("agent_id = ?");
+			args.push(filter.agentId);
+		}
+		if (filter.status) {
+			clauses.push("status = ?");
+			args.push(filter.status);
+		}
+		if (filter.startedAfter) {
+			clauses.push("started_at >= ?");
+			args.push(filter.startedAfter);
+		}
+		if (filter.startedBefore) {
+			clauses.push("started_at <= ?");
+			args.push(filter.startedBefore);
+		}
+		if (filter.cursor) {
+			const decoded = decodeSqliteTraceCursor(filter.cursor);
+			if (decoded) {
+				clauses.push("(started_at < ? OR (started_at = ? AND trace_id < ?))");
+				args.push(decoded.startedAt, decoded.startedAt, decoded.traceId);
+			}
+		}
 
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM ar_trace_summaries
+		const rows = this.db
+			.prepare(
+				`SELECT * FROM ar_trace_summaries
          WHERE ${clauses.join(" AND ")}
          ORDER BY started_at DESC, trace_id DESC
-         LIMIT ?`
-      )
-      .all(...args, limit) as Record<string, unknown>[];
+         LIMIT ?`,
+			)
+			.all(...args, limit) as Record<string, unknown>[];
 
-    const summaries = rows.map(sqliteRowToSummary);
-    const cursor =
-      summaries.length === limit
-        ? encodeSqliteTraceCursor({
-            startedAt: summaries[summaries.length - 1].startedAt,
-            traceId: summaries[summaries.length - 1].traceId,
-          })
-        : undefined;
-    return { rows: summaries, cursor };
-  }
+		const summaries = rows.map(sqliteRowToSummary);
+		const cursor =
+			summaries.length === limit
+				? encodeSqliteTraceCursor({
+						startedAt: summaries[summaries.length - 1].startedAt,
+						traceId: summaries[summaries.length - 1].traceId,
+					})
+				: undefined;
+		return { rows: summaries, cursor };
+	}
 
-  async deleteTrace(traceId: string, ownerId: string): Promise<void> {
-    const tx = this.db.transaction(() => {
-      this.db
-        .prepare(`DELETE FROM ar_spans WHERE trace_id = ? AND owner_id = ?`)
-        .run(traceId, ownerId);
-      this.db
-        .prepare(`DELETE FROM ar_trace_summaries WHERE trace_id = ? AND owner_id = ?`)
-        .run(traceId, ownerId);
-    });
-    tx();
-  }
+	async deleteTrace(traceId: string, ownerId: string): Promise<void> {
+		const tx = this.db.transaction(() => {
+			this.db
+				.prepare("DELETE FROM ar_spans WHERE trace_id = ? AND owner_id = ?")
+				.run(traceId, ownerId);
+			this.db
+				.prepare(
+					"DELETE FROM ar_trace_summaries WHERE trace_id = ? AND owner_id = ?",
+				)
+				.run(traceId, ownerId);
+		});
+		tx();
+	}
 
-  async deleteOlderThan(ownerId: string, before: Date): Promise<number> {
-    const beforeIso = before.toISOString();
-    let deletedCount = 0;
-    const tx = this.db.transaction(() => {
-      const summaryRows = this.db
-        .prepare(
-          `SELECT trace_id FROM ar_trace_summaries
-           WHERE owner_id = ? AND started_at < ?`
-        )
-        .all(ownerId, beforeIso) as { trace_id: string }[];
-      deletedCount = summaryRows.length;
-      for (const r of summaryRows) {
-        this.db
-          .prepare(`DELETE FROM ar_spans WHERE trace_id = ? AND owner_id = ?`)
-          .run(r.trace_id, ownerId);
-      }
-      this.db
-        .prepare(
-          `DELETE FROM ar_trace_summaries
-           WHERE owner_id = ? AND started_at < ?`
-        )
-        .run(ownerId, beforeIso);
-    });
-    tx();
-    return deletedCount;
-  }
+	async deleteOlderThan(ownerId: string, before: Date): Promise<number> {
+		const beforeIso = before.toISOString();
+		let deletedCount = 0;
+		const tx = this.db.transaction(() => {
+			const summaryRows = this.db
+				.prepare(
+					`SELECT trace_id FROM ar_trace_summaries
+           WHERE owner_id = ? AND started_at < ?`,
+				)
+				.all(ownerId, beforeIso) as { trace_id: string }[];
+			deletedCount = summaryRows.length;
+			for (const r of summaryRows) {
+				this.db
+					.prepare("DELETE FROM ar_spans WHERE trace_id = ? AND owner_id = ?")
+					.run(r.trace_id, ownerId);
+			}
+			this.db
+				.prepare(
+					`DELETE FROM ar_trace_summaries
+           WHERE owner_id = ? AND started_at < ?`,
+				)
+				.run(ownerId, beforeIso);
+		});
+		tx();
+		return deletedCount;
+	}
 
-  // ═══ SkillStore ═══
+	// ═══ SkillStore ═══
 
-  async getSkill(name: string): Promise<SkillDefinition | null> {
-    const u = this.requireUser();
-    const row = this.db
-      .prepare(
-        `SELECT name, description, instructions, tools, metadata, created_at, updated_at
-         FROM skills WHERE user_id = ? AND name = ?`
-      )
-      .get(u, name) as SkillRow | undefined;
-    return row ? rowToSkill(row) : null;
-  }
+	async getSkill(name: string): Promise<SkillDefinition | null> {
+		const u = this.requireUser();
+		const row = this.db
+			.prepare(
+				`SELECT name, description, instructions, tools, metadata, created_at, updated_at
+         FROM skills WHERE user_id = ? AND name = ?`,
+			)
+			.get(u, name) as SkillRow | undefined;
+		return row ? rowToSkill(row) : null;
+	}
 
-  async listSkills(): Promise<Array<{ name: string; description: string }>> {
-    const u = this.requireUser();
-    return this.db
-      .prepare(`SELECT name, description FROM skills WHERE user_id = ? ORDER BY name`)
-      .all(u) as Array<{ name: string; description: string }>;
-  }
+	async listSkills(): Promise<Array<{ name: string; description: string }>> {
+		const u = this.requireUser();
+		return this.db
+			.prepare(
+				"SELECT name, description FROM skills WHERE user_id = ? ORDER BY name",
+			)
+			.all(u) as Array<{ name: string; description: string }>;
+	}
 
-  async putSkill(skill: SkillDefinition): Promise<void> {
-    // Structural validation before persisting; throws on malformed input.
-    const validated = defineSkill(skill);
-    const u = this.requireUser();
-    const now = this.nextTimestamp();
-    const createdAt = validated.createdAt ?? now;
-    this.db
-      .prepare(
-        `INSERT INTO skills (user_id, name, description, instructions, tools, metadata, created_at, updated_at)
+	async putSkill(skill: SkillDefinition): Promise<void> {
+		// Structural validation before persisting; throws on malformed input.
+		const validated = defineSkill(skill);
+		const u = this.requireUser();
+		const now = this.nextTimestamp();
+		const createdAt = validated.createdAt ?? now;
+		this.db
+			.prepare(
+				`INSERT INTO skills (user_id, name, description, instructions, tools, metadata, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(user_id, name) DO UPDATE SET
            description = excluded.description,
            instructions = excluded.instructions,
            tools = excluded.tools,
            metadata = excluded.metadata,
-           updated_at = excluded.updated_at`
-      )
-      .run(
-        u,
-        validated.name,
-        validated.description,
-        validated.instructions,
-        validated.tools ? JSON.stringify(validated.tools) : null,
-        validated.metadata ? JSON.stringify(validated.metadata) : null,
-        createdAt,
-        now
-      );
-  }
+           updated_at = excluded.updated_at`,
+			)
+			.run(
+				u,
+				validated.name,
+				validated.description,
+				validated.instructions,
+				validated.tools ? JSON.stringify(validated.tools) : null,
+				validated.metadata ? JSON.stringify(validated.metadata) : null,
+				createdAt,
+				now,
+			);
+	}
 
-  async deleteSkill(name: string): Promise<void> {
-    const u = this.requireUser();
-    this.db.prepare("DELETE FROM skills WHERE user_id = ? AND name = ?").run(u, name);
-  }
+	async deleteSkill(name: string): Promise<void> {
+		const u = this.requireUser();
+		this.db
+			.prepare("DELETE FROM skills WHERE user_id = ? AND name = ?")
+			.run(u, name);
+	}
 
-  // ═══ SecretStore ═══
+	// ═══ SecretStore ═══
 
-  async listSecrets(): Promise<SecretMetadata[]> {
-    const u = this.requireUser();
-    const rows = this.db
-      .prepare(
-        `SELECT name, last_four, description, created_at, updated_at
-         FROM secrets WHERE user_id = ? ORDER BY name ASC`
-      )
-      .all(u) as Array<{
-        name: string;
-        last_four: string;
-        description: string | null;
-        created_at: string;
-        updated_at: string;
-      }>;
-    return rows.map((r) => ({
-      name: r.name,
-      lastFour: r.last_four,
-      description: r.description ?? undefined,
-      createdAt: r.created_at,
-      updatedAt: r.updated_at,
-    }));
-  }
+	async listSecrets(): Promise<SecretMetadata[]> {
+		const u = this.requireUser();
+		const rows = this.db
+			.prepare(
+				`SELECT name, last_four, description, created_at, updated_at
+         FROM secrets WHERE user_id = ? ORDER BY name ASC`,
+			)
+			.all(u) as Array<{
+			name: string;
+			last_four: string;
+			description: string | null;
+			created_at: string;
+			updated_at: string;
+		}>;
+		return rows.map((r) => ({
+			name: r.name,
+			lastFour: r.last_four,
+			description: r.description ?? undefined,
+			createdAt: r.created_at,
+			updatedAt: r.updated_at,
+		}));
+	}
 
-  async getSecretMetadata(name: string): Promise<SecretMetadata | null> {
-    const u = this.requireUser();
-    const row = this.db
-      .prepare(
-        `SELECT name, last_four, description, created_at, updated_at
-         FROM secrets WHERE user_id = ? AND name = ?`
-      )
-      .get(u, name) as
-      | {
-          name: string;
-          last_four: string;
-          description: string | null;
-          created_at: string;
-          updated_at: string;
-        }
-      | undefined;
-    if (!row) return null;
-    return {
-      name: row.name,
-      lastFour: row.last_four,
-      description: row.description ?? undefined,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    };
-  }
+	async getSecretMetadata(name: string): Promise<SecretMetadata | null> {
+		const u = this.requireUser();
+		const row = this.db
+			.prepare(
+				`SELECT name, last_four, description, created_at, updated_at
+         FROM secrets WHERE user_id = ? AND name = ?`,
+			)
+			.get(u, name) as
+			| {
+					name: string;
+					last_four: string;
+					description: string | null;
+					created_at: string;
+					updated_at: string;
+			  }
+			| undefined;
+		if (!row) return null;
+		return {
+			name: row.name,
+			lastFour: row.last_four,
+			description: row.description ?? undefined,
+			createdAt: row.created_at,
+			updatedAt: row.updated_at,
+		};
+	}
 
-  async getSecretValue(name: string): Promise<string | null> {
-    const u = this.requireUser();
-    const row = this.db
-      .prepare(
-        `SELECT value FROM secrets WHERE user_id = ? AND name = ?`
-      )
-      .get(u, name) as { value: string } | undefined;
-    if (!row) return null;
-    return decryptSecret(row.value);
-  }
+	async getSecretValue(name: string): Promise<string | null> {
+		const u = this.requireUser();
+		const row = this.db
+			.prepare("SELECT value FROM secrets WHERE user_id = ? AND name = ?")
+			.get(u, name) as { value: string } | undefined;
+		if (!row) return null;
+		return decryptSecret(row.value);
+	}
 
-  async putSecret(secret: SecretDefinition): Promise<void> {
-    const u = this.requireUser();
-    if (!secret.name) {
-      throw new Error("putSecret: name is required");
-    }
-    if (secret.value === undefined || secret.value === null) {
-      throw new Error("putSecret: value is required");
-    }
-    const encrypted = encryptSecret(secret.value);
-    const lastFour = getLastFour(secret.value);
-    const now = this.nextTimestamp();
-    const createdAt = secret.createdAt ?? now;
-    this.db
-      .prepare(
-        `INSERT INTO secrets (user_id, name, value, last_four, description, created_at, updated_at)
+	async putSecret(secret: SecretDefinition): Promise<void> {
+		const u = this.requireUser();
+		if (!secret.name) {
+			throw new Error("putSecret: name is required");
+		}
+		if (secret.value === undefined || secret.value === null) {
+			throw new Error("putSecret: value is required");
+		}
+		const encrypted = encryptSecret(secret.value);
+		const lastFour = getLastFour(secret.value);
+		const now = this.nextTimestamp();
+		const createdAt = secret.createdAt ?? now;
+		this.db
+			.prepare(
+				`INSERT INTO secrets (user_id, name, value, last_four, description, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(user_id, name) DO UPDATE SET
            value = excluded.value,
            last_four = excluded.last_four,
            description = excluded.description,
-           updated_at = excluded.updated_at`
-      )
-      .run(
-        u,
-        secret.name,
-        encrypted,
-        lastFour,
-        secret.description ?? null,
-        createdAt,
-        now
-      );
-  }
+           updated_at = excluded.updated_at`,
+			)
+			.run(
+				u,
+				secret.name,
+				encrypted,
+				lastFour,
+				secret.description ?? null,
+				createdAt,
+				now,
+			);
+	}
 
-  async updateSecretDescription(
-    name: string,
-    description: string | undefined,
-  ): Promise<boolean> {
-    const u = this.requireUser();
-    const now = this.nextTimestamp();
-    const info = this.db
-      .prepare(
-        `UPDATE secrets SET description = ?, updated_at = ?
+	async updateSecretDescription(
+		name: string,
+		description: string | undefined,
+	): Promise<boolean> {
+		const u = this.requireUser();
+		const now = this.nextTimestamp();
+		const info = this.db
+			.prepare(
+				`UPDATE secrets SET description = ?, updated_at = ?
          WHERE user_id = ? AND name = ?`,
-      )
-      .run(description ?? null, now, u, name);
-    return info.changes > 0;
-  }
+			)
+			.run(description ?? null, now, u, name);
+		return info.changes > 0;
+	}
 
-  async deleteSecret(name: string): Promise<void> {
-    const u = this.requireUser();
-    this.db.prepare("DELETE FROM secrets WHERE user_id = ? AND name = ?").run(u, name);
-  }
+	async deleteSecret(name: string): Promise<void> {
+		const u = this.requireUser();
+		this.db
+			.prepare("DELETE FROM secrets WHERE user_id = ? AND name = ?")
+			.run(u, name);
+	}
 
-  // ═══ ApiKeyStore (unscoped) ═══
+	// ═══ ApiKeyStore (unscoped) ═══
 
-  async createApiKey(params: { userId: string; name: string }): Promise<{ record: ApiKeyRecord; rawKey: string }> {
-    const rawKey = `ar_live_${randomBytes(24).toString("base64url")}`;
-    const keyPrefix = rawKey.slice(0, 14);
-    const keyHash = createHash("sha256").update(rawKey).digest("hex");
-    const id = randomUUID();
-    const now = new Date().toISOString();
-    this.db
-      .prepare(
-        `INSERT INTO api_keys (id, user_id, name, key_prefix, key_hash, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`
-      )
-      .run(id, params.userId, params.name, keyPrefix, keyHash, now);
-    return {
-      record: {
-        id,
-        userId: params.userId,
-        name: params.name,
-        keyPrefix,
-        createdAt: now,
-        lastUsedAt: null,
-        revokedAt: null,
-      },
-      rawKey,
-    };
-  }
+	async createApiKey(params: { userId: string; name: string }): Promise<{
+		record: ApiKeyRecord;
+		rawKey: string;
+	}> {
+		const rawKey = `ar_live_${randomBytes(24).toString("base64url")}`;
+		const keyPrefix = rawKey.slice(0, 14);
+		const keyHash = createHash("sha256").update(rawKey).digest("hex");
+		const id = randomUUID();
+		const now = new Date().toISOString();
+		this.db
+			.prepare(
+				`INSERT INTO api_keys (id, user_id, name, key_prefix, key_hash, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+			)
+			.run(id, params.userId, params.name, keyPrefix, keyHash, now);
+		return {
+			record: {
+				id,
+				userId: params.userId,
+				name: params.name,
+				keyPrefix,
+				createdAt: now,
+				lastUsedAt: null,
+				revokedAt: null,
+			},
+			rawKey,
+		};
+	}
 
-  async listApiKeys(userId: string): Promise<ApiKeyRecord[]> {
-    const rows = this.db
-      .prepare(
-        `SELECT id, user_id, name, key_prefix, created_at, last_used_at, revoked_at
-         FROM api_keys WHERE user_id = ? ORDER BY created_at DESC`
-      )
-      .all(userId) as Array<ApiKeyRow>;
-    return rows.map(rowToApiKey);
-  }
+	async listApiKeys(userId: string): Promise<ApiKeyRecord[]> {
+		const rows = this.db
+			.prepare(
+				`SELECT id, user_id, name, key_prefix, created_at, last_used_at, revoked_at
+         FROM api_keys WHERE user_id = ? ORDER BY created_at DESC`,
+			)
+			.all(userId) as Array<ApiKeyRow>;
+		return rows.map(rowToApiKey);
+	}
 
-  async revokeApiKey(params: { userId: string; keyId: string }): Promise<void> {
-    const now = new Date().toISOString();
-    this.db
-      .prepare(
-        `UPDATE api_keys SET revoked_at = ?
-         WHERE id = ? AND user_id = ? AND revoked_at IS NULL`
-      )
-      .run(now, params.keyId, params.userId);
-  }
+	async revokeApiKey(params: { userId: string; keyId: string }): Promise<void> {
+		const now = new Date().toISOString();
+		this.db
+			.prepare(
+				`UPDATE api_keys SET revoked_at = ?
+         WHERE id = ? AND user_id = ? AND revoked_at IS NULL`,
+			)
+			.run(now, params.keyId, params.userId);
+	}
 
-  async resolveApiKey(rawKey: string): Promise<{ userId: string; keyId: string } | null> {
-    const keyHash = createHash("sha256").update(rawKey).digest("hex");
-    const row = this.db
-      .prepare(
-        `SELECT id, user_id FROM api_keys
-         WHERE key_hash = ? AND revoked_at IS NULL`
-      )
-      .get(keyHash) as { id: string; user_id: string } | undefined;
-    if (!row) return null;
-    this.db
-      .prepare("UPDATE api_keys SET last_used_at = ? WHERE id = ?")
-      .run(new Date().toISOString(), row.id);
-    return { userId: row.user_id, keyId: row.id };
-  }
+	async resolveApiKey(
+		rawKey: string,
+	): Promise<{ userId: string; keyId: string } | null> {
+		const keyHash = createHash("sha256").update(rawKey).digest("hex");
+		const row = this.db
+			.prepare(
+				`SELECT id, user_id FROM api_keys
+         WHERE key_hash = ? AND revoked_at IS NULL`,
+			)
+			.get(keyHash) as { id: string; user_id: string } | undefined;
+		if (!row) return null;
+		this.db
+			.prepare("UPDATE api_keys SET last_used_at = ? WHERE id = ?")
+			.run(new Date().toISOString(), row.id);
+		return { userId: row.user_id, keyId: row.id };
+	}
 
-  // ═══ WebhookDeliveryStore ═══
+	// ═══ WebhookDeliveryStore ═══
 
-  async insert(
-    delivery: Omit<WebhookDelivery, "attempts" | "status" | "createdAt"> & {
-      payload: Record<string, unknown>;
-    },
-  ): Promise<string> {
-    const u = this.requireUser();
-    const now = new Date().toISOString();
-    this.db
-      .prepare(
-        `INSERT INTO webhook_deliveries (
+	async insert(
+		delivery: Omit<WebhookDelivery, "attempts" | "status" | "createdAt"> & {
+			payload: Record<string, unknown>;
+		},
+	): Promise<string> {
+		const u = this.requireUser();
+		const now = new Date().toISOString();
+		this.db
+			.prepare(
+				`INSERT INTO webhook_deliveries (
             id, user_id, run_id, callback_url, secret_name, payload,
             attempts, status, last_error, last_attempt_at, created_at
           ) VALUES (?, ?, ?, ?, ?, ?, 0, 'pending', NULL, NULL, ?)`,
-      )
-      .run(
-        delivery.id,
-        u,
-        delivery.runId,
-        delivery.callbackUrl,
-        delivery.secretName,
-        JSON.stringify(delivery.payload),
-        now,
-      );
-    return delivery.id;
-  }
+			)
+			.run(
+				delivery.id,
+				u,
+				delivery.runId,
+				delivery.callbackUrl,
+				delivery.secretName,
+				JSON.stringify(delivery.payload),
+				now,
+			);
+		return delivery.id;
+	}
 
-  async updateStatus(
-    id: string,
-    status: WebhookDelivery["status"],
-    lastError?: string,
-  ): Promise<void> {
-    const u = this.requireUser();
-    if (lastError !== undefined) {
-      this.db
-        .prepare(
-          `UPDATE webhook_deliveries SET status = ?, last_error = ?
+	async updateStatus(
+		id: string,
+		status: WebhookDelivery["status"],
+		lastError?: string,
+	): Promise<void> {
+		const u = this.requireUser();
+		if (lastError !== undefined) {
+			this.db
+				.prepare(
+					`UPDATE webhook_deliveries SET status = ?, last_error = ?
            WHERE user_id = ? AND id = ?`,
-        )
-        .run(status, lastError, u, id);
-    } else {
-      this.db
-        .prepare(
-          `UPDATE webhook_deliveries SET status = ?
+				)
+				.run(status, lastError, u, id);
+		} else {
+			this.db
+				.prepare(
+					`UPDATE webhook_deliveries SET status = ?
            WHERE user_id = ? AND id = ?`,
-        )
-        .run(status, u, id);
-    }
-  }
+				)
+				.run(status, u, id);
+		}
+	}
 
-  async incrementAttempt(id: string, lastError?: string): Promise<void> {
-    const u = this.requireUser();
-    const now = new Date().toISOString();
-    if (lastError !== undefined) {
-      this.db
-        .prepare(
-          `UPDATE webhook_deliveries
+	async incrementAttempt(id: string, lastError?: string): Promise<void> {
+		const u = this.requireUser();
+		const now = new Date().toISOString();
+		if (lastError !== undefined) {
+			this.db
+				.prepare(
+					`UPDATE webhook_deliveries
            SET attempts = attempts + 1, last_attempt_at = ?, last_error = ?
            WHERE user_id = ? AND id = ?`,
-        )
-        .run(now, lastError, u, id);
-    } else {
-      this.db
-        .prepare(
-          `UPDATE webhook_deliveries
+				)
+				.run(now, lastError, u, id);
+		} else {
+			this.db
+				.prepare(
+					`UPDATE webhook_deliveries
            SET attempts = attempts + 1, last_attempt_at = ?
            WHERE user_id = ? AND id = ?`,
-        )
-        .run(now, u, id);
-    }
-  }
+				)
+				.run(now, u, id);
+		}
+	}
 
-  async listPending(filter?: { olderThan?: string; limit?: number }): Promise<WebhookDelivery[]> {
-    const u = this.requireUser();
-    const clauses = ["user_id = ?", "status = 'pending'"];
-    const args: unknown[] = [u];
-    if (filter?.olderThan) {
-      clauses.push("created_at < ?");
-      args.push(filter.olderThan);
-    }
-    const limit = filter?.limit ?? 1000;
-    args.push(limit);
-    const rows = this.db
-      .prepare(
-        `SELECT id, user_id, run_id, callback_url, secret_name, payload,
+	async listPending(filter?: { olderThan?: string; limit?: number }): Promise<
+		WebhookDelivery[]
+	> {
+		const u = this.requireUser();
+		const clauses = ["user_id = ?", "status = 'pending'"];
+		const args: unknown[] = [u];
+		if (filter?.olderThan) {
+			clauses.push("created_at < ?");
+			args.push(filter.olderThan);
+		}
+		const limit = filter?.limit ?? 1000;
+		args.push(limit);
+		const rows = this.db
+			.prepare(
+				`SELECT id, user_id, run_id, callback_url, secret_name, payload,
                 attempts, last_attempt_at, status, last_error, created_at
          FROM webhook_deliveries
          WHERE ${clauses.join(" AND ")}
          ORDER BY created_at ASC
          LIMIT ?`,
-      )
-      .all(...args) as Array<WebhookDeliveryRow>;
-    return rows.map(rowToWebhookDelivery);
-  }
+			)
+			.all(...args) as Array<WebhookDeliveryRow>;
+		return rows.map(rowToWebhookDelivery);
+	}
 
-  // ═══ Lifecycle ═══
+	// ═══ Lifecycle ═══
 
-  close(): void {
-    if (this.ownsDb) {
-      this.db.close();
-    }
-  }
+	close(): void {
+		if (this.ownsDb) {
+			this.db.close();
+		}
+	}
 
-  get database(): DatabaseType {
-    return this.db;
-  }
+	get database(): DatabaseType {
+		return this.db;
+	}
 }
 
 interface LogRow {
-  id: string;
-  agent_id: string;
-  session_id: string | null;
-  input: string;
-  output: string;
-  tool_calls: string;
-  prompt_tokens: number;
-  completion_tokens: number;
-  total_tokens: number;
-  duration: number;
-  model: string;
-  error: string | null;
-  timestamp: string;
-  status: string | null;
+	id: string;
+	agent_id: string;
+	session_id: string | null;
+	input: string;
+	output: string;
+	tool_calls: string;
+	prompt_tokens: number;
+	completion_tokens: number;
+	total_tokens: number;
+	duration: number;
+	model: string;
+	error: string | null;
+	timestamp: string;
+	status: string | null;
 }
 
 interface ApiKeyRow {
-  id: string;
-  user_id: string;
-  name: string;
-  key_prefix: string;
-  created_at: string;
-  last_used_at: string | null;
-  revoked_at: string | null;
+	id: string;
+	user_id: string;
+	name: string;
+	key_prefix: string;
+	created_at: string;
+	last_used_at: string | null;
+	revoked_at: string | null;
 }
 
 interface RunRow {
-  id: string;
-  user_id: string;
-  root_id: string;
-  parent_id: string | null;
-  agent_id: string;
-  session_id: string | null;
-  spawn_tool_use_id: string | null;
-  status: string;
-  input: string;
-  output: string | null;
-  result_json: string | null;
-  error: string | null;
-  started_at: number;
-  ended_at: number | null;
-  depth: number;
+	id: string;
+	user_id: string;
+	root_id: string;
+	parent_id: string | null;
+	agent_id: string;
+	session_id: string | null;
+	spawn_tool_use_id: string | null;
+	status: string;
+	input: string;
+	output: string | null;
+	result_json: string | null;
+	error: string | null;
+	started_at: number;
+	ended_at: number | null;
+	depth: number;
 }
 
 interface SkillRow {
-  name: string;
-  description: string;
-  instructions: string;
-  tools: string | null;
-  metadata: string | null;
-  created_at: string;
-  updated_at: string;
+	name: string;
+	description: string;
+	instructions: string;
+	tools: string | null;
+	metadata: string | null;
+	created_at: string;
+	updated_at: string;
 }
 
 interface WebhookDeliveryRow {
-  id: string;
-  user_id: string;
-  run_id: string;
-  callback_url: string;
-  secret_name: string;
-  payload: string;
-  attempts: number;
-  last_attempt_at: string | null;
-  status: WebhookDelivery["status"];
-  last_error: string | null;
-  created_at: string;
+	id: string;
+	user_id: string;
+	run_id: string;
+	callback_url: string;
+	secret_name: string;
+	payload: string;
+	attempts: number;
+	last_attempt_at: string | null;
+	status: WebhookDelivery["status"];
+	last_error: string | null;
+	created_at: string;
 }
 
 function rowToWebhookDelivery(r: WebhookDeliveryRow): WebhookDelivery {
-  let payload: Record<string, unknown>;
-  try {
-    payload = JSON.parse(r.payload) as Record<string, unknown>;
-  } catch {
-    payload = {};
-  }
-  const d: WebhookDelivery = {
-    id: r.id,
-    runId: r.run_id,
-    callbackUrl: r.callback_url,
-    secretName: r.secret_name,
-    payload,
-    attempts: r.attempts,
-    status: r.status,
-    createdAt: r.created_at,
-  };
-  if (r.last_attempt_at) d.lastAttemptAt = r.last_attempt_at;
-  if (r.last_error) d.lastError = r.last_error;
-  return d;
+	let payload: Record<string, unknown>;
+	try {
+		payload = JSON.parse(r.payload) as Record<string, unknown>;
+	} catch {
+		payload = {};
+	}
+	const d: WebhookDelivery = {
+		id: r.id,
+		runId: r.run_id,
+		callbackUrl: r.callback_url,
+		secretName: r.secret_name,
+		payload,
+		attempts: r.attempts,
+		status: r.status,
+		createdAt: r.created_at,
+	};
+	if (r.last_attempt_at) d.lastAttemptAt = r.last_attempt_at;
+	if (r.last_error) d.lastError = r.last_error;
+	return d;
 }
 
 /**
@@ -1801,56 +1924,58 @@ function rowToWebhookDelivery(r: WebhookDeliveryRow): WebhookDelivery {
  * NULL to content_blocks so old rows look identical.
  */
 function serializeContent(content: string | ContentBlock[]): {
-  contentText: string;
-  contentBlocksJson: string | null;
+	contentText: string;
+	contentBlocksJson: string | null;
 } {
-  if (typeof content === "string") {
-    return { contentText: content, contentBlocksJson: null };
-  }
-  // Flatten for the text column — image blocks render as a `[image]`
-  // placeholder so logs/UIs that read content TEXT stay sensible.
-  const pieces: string[] = [];
-  for (const b of content) {
-    if (b.type === "text") pieces.push(b.text);
-    else pieces.push("[image]");
-  }
-  return {
-    contentText: pieces.join(" "),
-    contentBlocksJson: JSON.stringify(content),
-  };
+	if (typeof content === "string") {
+		return { contentText: content, contentBlocksJson: null };
+	}
+	// Flatten for the text column — image blocks render as a `[image]`
+	// placeholder so logs/UIs that read content TEXT stay sensible.
+	const pieces: string[] = [];
+	for (const b of content) {
+		if (b.type === "text") pieces.push(b.text);
+		else pieces.push("[image]");
+	}
+	return {
+		contentText: pieces.join(" "),
+		contentBlocksJson: JSON.stringify(content),
+	};
 }
 
 function rowToSkill(r: SkillRow): SkillDefinition {
-  const skill: SkillDefinition = {
-    name: r.name,
-    description: r.description,
-    instructions: r.instructions,
-    createdAt: r.created_at,
-    updatedAt: r.updated_at,
-  };
-  if (r.tools) skill.tools = JSON.parse(r.tools) as SkillDefinition["tools"];
-  if (r.metadata) skill.metadata = JSON.parse(r.metadata) as Record<string, unknown>;
-  return skill;
+	const skill: SkillDefinition = {
+		name: r.name,
+		description: r.description,
+		instructions: r.instructions,
+		createdAt: r.created_at,
+		updatedAt: r.updated_at,
+	};
+	if (r.tools) skill.tools = JSON.parse(r.tools) as SkillDefinition["tools"];
+	if (r.metadata)
+		skill.metadata = JSON.parse(r.metadata) as Record<string, unknown>;
+	return skill;
 }
 
 function rowToRun(r: RunRow): Run {
-  const run: Run = {
-    id: r.id,
-    rootId: r.root_id,
-    agentId: r.agent_id,
-    status: r.status as RunStatus,
-    input: r.input,
-    startedAt: r.started_at,
-    depth: r.depth,
-  };
-  if (r.user_id) run.userId = r.user_id;
-  if (r.parent_id !== null) run.parentId = r.parent_id;
-  if (r.session_id !== null) run.sessionId = r.session_id;
-  if (r.spawn_tool_use_id !== null) run.spawnToolUseId = r.spawn_tool_use_id;
-  if (r.error !== null) run.error = r.error;
-  if (r.ended_at !== null) run.endedAt = r.ended_at;
-  if (r.result_json !== null) run.result = JSON.parse(r.result_json) as InvokeResult;
-  return run;
+	const run: Run = {
+		id: r.id,
+		rootId: r.root_id,
+		agentId: r.agent_id,
+		status: r.status as RunStatus,
+		input: r.input,
+		startedAt: r.started_at,
+		depth: r.depth,
+	};
+	if (r.user_id) run.userId = r.user_id;
+	if (r.parent_id !== null) run.parentId = r.parent_id;
+	if (r.session_id !== null) run.sessionId = r.session_id;
+	if (r.spawn_tool_use_id !== null) run.spawnToolUseId = r.spawn_tool_use_id;
+	if (r.error !== null) run.error = r.error;
+	if (r.ended_at !== null) run.endedAt = r.ended_at;
+	if (r.result_json !== null)
+		run.result = JSON.parse(r.result_json) as InvokeResult;
+	return run;
 }
 
 /**
@@ -1861,126 +1986,134 @@ function rowToRun(r: RunRow): Run {
  */
 
 function rowToLog(r: LogRow): InvocationLog {
-  let input: string | ContentBlock[] = r.input;
-  if (typeof r.input === "string" && r.input.startsWith(BLOCKS_JSON_PREFIX)) {
-    try {
-      const parsed = JSON.parse(r.input.slice(BLOCKS_JSON_PREFIX.length));
-      if (Array.isArray(parsed)) input = parsed as ContentBlock[];
-    } catch {
-      // Malformed sentinel — leave the raw text in place.
-    }
-  }
-  const log: InvocationLog = {
-    id: r.id,
-    agentId: r.agent_id,
-    sessionId: r.session_id ?? undefined,
-    input,
-    output: r.output,
-    toolCalls: JSON.parse(r.tool_calls),
-    usage: {
-      promptTokens: r.prompt_tokens,
-      completionTokens: r.completion_tokens,
-      totalTokens: r.total_tokens,
-    },
-    duration: r.duration,
-    model: r.model,
-    error: r.error ?? undefined,
-    timestamp: r.timestamp,
-  };
-  if (r.status) log.status = r.status as InvocationLog["status"];
-  return log;
+	let input: string | ContentBlock[] = r.input;
+	if (typeof r.input === "string" && r.input.startsWith(BLOCKS_JSON_PREFIX)) {
+		try {
+			const parsed = JSON.parse(r.input.slice(BLOCKS_JSON_PREFIX.length));
+			if (Array.isArray(parsed)) input = parsed as ContentBlock[];
+		} catch {
+			// Malformed sentinel — leave the raw text in place.
+		}
+	}
+	const log: InvocationLog = {
+		id: r.id,
+		agentId: r.agent_id,
+		sessionId: r.session_id ?? undefined,
+		input,
+		output: r.output,
+		toolCalls: JSON.parse(r.tool_calls),
+		usage: {
+			promptTokens: r.prompt_tokens,
+			completionTokens: r.completion_tokens,
+			totalTokens: r.total_tokens,
+		},
+		duration: r.duration,
+		model: r.model,
+		error: r.error ?? undefined,
+		timestamp: r.timestamp,
+	};
+	if (r.status) log.status = r.status as InvocationLog["status"];
+	return log;
 }
 
 function sqliteRowToConnection(r: {
-  id: string;
-  kind: string;
-  display_name: string;
-  description: string | null;
-  config: string;
-  created_at: string;
-  updated_at: string;
+	id: string;
+	kind: string;
+	display_name: string;
+	description: string | null;
+	config: string;
+	created_at: string;
+	updated_at: string;
 }): Connection {
-  return {
-    id: r.id,
-    kind: r.kind as ConnectionKind,
-    displayName: r.display_name,
-    description: r.description ?? undefined,
-    config: JSON.parse(r.config) as ConnectionConfig,
-    createdAt: r.created_at,
-    updatedAt: r.updated_at,
-  };
+	return {
+		id: r.id,
+		kind: r.kind as ConnectionKind,
+		displayName: r.display_name,
+		description: r.description ?? undefined,
+		config: JSON.parse(r.config) as ConnectionConfig,
+		createdAt: r.created_at,
+		updatedAt: r.updated_at,
+	};
 }
 
 function rowToApiKey(r: ApiKeyRow): ApiKeyRecord {
-  return {
-    id: r.id,
-    userId: r.user_id,
-    name: r.name,
-    keyPrefix: r.key_prefix,
-    createdAt: r.created_at,
-    lastUsedAt: r.last_used_at,
-    revokedAt: r.revoked_at,
-  };
+	return {
+		id: r.id,
+		userId: r.user_id,
+		name: r.name,
+		keyPrefix: r.key_prefix,
+		createdAt: r.created_at,
+		lastUsedAt: r.last_used_at,
+		revokedAt: r.revoked_at,
+	};
 }
 
 function sqliteRowToSpan(r: Record<string, unknown>): Span {
-  return {
-    spanId: r.span_id as string,
-    traceId: r.trace_id as string,
-    parentId: (r.parent_id as string | null) ?? null,
-    ownerId: r.owner_id as string,
-    runId: (r.run_id as string | null) ?? null,
-    sessionId: (r.session_id as string | null) ?? null,
-    name: r.name as string,
-    kind: r.kind as Span["kind"],
-    startedAt: r.started_at as string,
-    endedAt: (r.ended_at as string | null) ?? null,
-    durationMs: (r.duration_ms as number | null) ?? null,
-    status: r.status as Span["status"],
-    error: (r.error as string | null) ?? null,
-    attributes: JSON.parse((r.attributes as string) ?? "{}"),
-    events: JSON.parse((r.events as string) ?? "[]"),
-    scores: JSON.parse((r.scores as string) ?? "{}"),
-    costUsd: (r.cost_usd as number | null) ?? null,
-  };
+	return {
+		spanId: r.span_id as string,
+		traceId: r.trace_id as string,
+		parentId: (r.parent_id as string | null) ?? null,
+		ownerId: r.owner_id as string,
+		runId: (r.run_id as string | null) ?? null,
+		sessionId: (r.session_id as string | null) ?? null,
+		name: r.name as string,
+		kind: r.kind as Span["kind"],
+		startedAt: r.started_at as string,
+		endedAt: (r.ended_at as string | null) ?? null,
+		durationMs: (r.duration_ms as number | null) ?? null,
+		status: r.status as Span["status"],
+		error: (r.error as string | null) ?? null,
+		attributes: JSON.parse((r.attributes as string) ?? "{}"),
+		events: JSON.parse((r.events as string) ?? "[]"),
+		scores: JSON.parse((r.scores as string) ?? "{}"),
+		costUsd: (r.cost_usd as number | null) ?? null,
+	};
 }
 
 function sqliteRowToSummary(r: Record<string, unknown>): TraceSummary {
-  return {
-    traceId: r.trace_id as string,
-    ownerId: r.owner_id as string,
-    rootName: r.root_name as string,
-    agentId: (r.agent_id as string | null) ?? null,
-    startedAt: r.started_at as string,
-    endedAt: (r.ended_at as string | null) ?? null,
-    durationMs: (r.duration_ms as number | null) ?? null,
-    spanCount: r.span_count as number,
-    status: r.status as TraceSummary["status"],
-    totalTokens: r.total_tokens as number,
-    totalCostUsd: (r.total_cost_usd as number | null) ?? null,
-  };
+	return {
+		traceId: r.trace_id as string,
+		ownerId: r.owner_id as string,
+		rootName: r.root_name as string,
+		agentId: (r.agent_id as string | null) ?? null,
+		startedAt: r.started_at as string,
+		endedAt: (r.ended_at as string | null) ?? null,
+		durationMs: (r.duration_ms as number | null) ?? null,
+		spanCount: r.span_count as number,
+		status: r.status as TraceSummary["status"],
+		totalTokens: r.total_tokens as number,
+		totalCostUsd: (r.total_cost_usd as number | null) ?? null,
+	};
 }
 
 function encodeRunCursor(c: { startedAt: number; id: string }): string {
-  return Buffer.from(JSON.stringify(c), "utf8").toString("base64url");
+	return Buffer.from(JSON.stringify(c), "utf8").toString("base64url");
 }
 
 function decodeRunCursor(s: string): { startedAt: number; id: string } | null {
-  try {
-    const c = JSON.parse(Buffer.from(s, "base64url").toString("utf8"));
-    if (typeof c.startedAt !== "number" || typeof c.id !== "string") return null;
-    return c;
-  } catch { return null; }
+	try {
+		const c = JSON.parse(Buffer.from(s, "base64url").toString("utf8"));
+		if (typeof c.startedAt !== "number" || typeof c.id !== "string")
+			return null;
+		return c;
+	} catch {
+		return null;
+	}
 }
 
-function encodeSqliteTraceCursor(c: { startedAt: string; traceId: string }): string {
-  return Buffer.from(JSON.stringify(c)).toString("base64url");
+function encodeSqliteTraceCursor(c: {
+	startedAt: string;
+	traceId: string;
+}): string {
+	return Buffer.from(JSON.stringify(c)).toString("base64url");
 }
 
-function decodeSqliteTraceCursor(s: string): { startedAt: string; traceId: string } | null {
-  try {
-    return JSON.parse(Buffer.from(s, "base64url").toString("utf8"));
-  } catch {
-    return null;
-  }
+function decodeSqliteTraceCursor(
+	s: string,
+): { startedAt: string; traceId: string } | null {
+	try {
+		return JSON.parse(Buffer.from(s, "base64url").toString("utf8"));
+	} catch {
+		return null;
+	}
 }

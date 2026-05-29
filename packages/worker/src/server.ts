@@ -9,10 +9,10 @@ const hostname = process.env.HOST ?? "0.0.0.0";
 
 const internalSecret = process.env.WORKER_INTERNAL_SECRET;
 if (!internalSecret) {
-  console.error(
-    "WORKER_INTERNAL_SECRET is required. The Next.js app uses this to authenticate to the worker."
-  );
-  process.exit(1);
+	console.error(
+		"WORKER_INTERNAL_SECRET is required. The Next.js app uses this to authenticate to the worker.",
+	);
+	process.exit(1);
 }
 
 const store = await getStore();
@@ -20,9 +20,9 @@ const store = await getStore();
 const app = createWorkerAPI({ store, internalSecret });
 
 serve({
-  fetch: app.fetch,
-  port,
-  hostname,
+	fetch: app.fetch,
+	port,
+	hostname,
 });
 
 console.log(`agntz worker listening on http://${hostname}:${port}`);

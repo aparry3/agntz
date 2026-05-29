@@ -43,9 +43,7 @@ class DirectiveReasoner:
 
 
 def test_namespace_grants_normalize_and_narrow() -> None:
-    assert normalize_namespace_grants(["app/user/u_123", "app/user/u_123"]) == [
-        "app/user/u_123"
-    ]
+    assert normalize_namespace_grants(["app/user/u_123", "app/user/u_123"]) == ["app/user/u_123"]
     assert namespace_ancestors("app/user/u_123") == ["app", "app/user", "app/user/u_123"]
     assert narrow_namespace_grants(["app/user/u_123"], ["app/user/u_123/session/s_1"]) == [
         "app/user/u_123/session/s_1"

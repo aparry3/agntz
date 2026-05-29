@@ -1,9 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { parseManifest } from "../src/parser.js";
 
 describe("parseManifest", () => {
-  it("parses a simple LLM agent", () => {
-    const yaml = `
+	it("parses a simple LLM agent", () => {
+		const yaml = `
 id: chatbot
 name: Simple Chatbot
 kind: llm
@@ -12,18 +12,18 @@ model:
   name: gpt-5.4
 instruction: "Answer the question: {{userQuery}}"
 `;
-    const manifest = parseManifest(yaml);
-    expect(manifest.kind).toBe("llm");
-    expect(manifest.id).toBe("chatbot");
-    if (manifest.kind === "llm") {
-      expect(manifest.model.provider).toBe("openai");
-      expect(manifest.model.name).toBe("gpt-5.4");
-      expect(manifest.instruction).toBe("Answer the question: {{userQuery}}");
-    }
-  });
+		const manifest = parseManifest(yaml);
+		expect(manifest.kind).toBe("llm");
+		expect(manifest.id).toBe("chatbot");
+		if (manifest.kind === "llm") {
+			expect(manifest.model.provider).toBe("openai");
+			expect(manifest.model.name).toBe("gpt-5.4");
+			expect(manifest.instruction).toBe("Answer the question: {{userQuery}}");
+		}
+	});
 
-  it("parses an LLM agent with tools", () => {
-    const yaml = `
+	it("parses an LLM agent with tools", () => {
+		const yaml = `
 id: researcher
 kind: llm
 model:
@@ -44,27 +44,27 @@ tools:
   - kind: agent
     agent: helper
 `;
-    const manifest = parseManifest(yaml);
-    if (manifest.kind === "llm") {
-      expect(manifest.tools).toHaveLength(3);
-      const mcp = manifest.tools![0];
-      expect(mcp.kind).toBe("mcp");
-      if (mcp.kind === "mcp") {
-        expect(mcp.tools).toHaveLength(2);
-        expect(mcp.tools![0]).toBe("toolA");
-        const wrapped = mcp.tools![1];
-        expect(typeof wrapped).toBe("object");
-        if (typeof wrapped === "object") {
-          expect(wrapped.tool).toBe("search");
-          expect(wrapped.name).toBe("search_user");
-          expect(wrapped.params).toEqual({ user_id: "{{userId}}" });
-        }
-      }
-    }
-  });
+		const manifest = parseManifest(yaml);
+		if (manifest.kind === "llm") {
+			expect(manifest.tools).toHaveLength(3);
+			const mcp = manifest.tools?.[0];
+			expect(mcp.kind).toBe("mcp");
+			if (mcp.kind === "mcp") {
+				expect(mcp.tools).toHaveLength(2);
+				expect(mcp.tools?.[0]).toBe("toolA");
+				const wrapped = mcp.tools?.[1];
+				expect(typeof wrapped).toBe("object");
+				if (typeof wrapped === "object") {
+					expect(wrapped.tool).toBe("search");
+					expect(wrapped.name).toBe("search_user");
+					expect(wrapped.params).toEqual({ user_id: "{{userId}}" });
+				}
+			}
+		}
+	});
 
-  it("parses an LLM agent with an HTTP tool entry", () => {
-    const yaml = `
+	it("parses an LLM agent with an HTTP tool entry", () => {
+		const yaml = `
 id: web-agent
 kind: llm
 model:
@@ -81,23 +81,27 @@ tools:
     headers:
       Authorization: "Bearer {{secrets.api_token}}"
 `;
-    const manifest = parseManifest(yaml);
-    if (manifest.kind === "llm") {
-      expect(manifest.tools).toHaveLength(1);
-      const http = manifest.tools![0];
-      expect(http.kind).toBe("http");
-      if (http.kind === "http") {
-        expect(http.name).toBe("get_user");
-        expect(http.url).toBe("https://api.example.com/users/{userId}?status={status?}");
-        expect(http.description).toBe("Fetch a user record.");
-        expect(http.params).toEqual({ userId: "{{userId}}" });
-        expect(http.headers).toEqual({ Authorization: "Bearer {{secrets.api_token}}" });
-      }
-    }
-  });
+		const manifest = parseManifest(yaml);
+		if (manifest.kind === "llm") {
+			expect(manifest.tools).toHaveLength(1);
+			const http = manifest.tools?.[0];
+			expect(http.kind).toBe("http");
+			if (http.kind === "http") {
+				expect(http.name).toBe("get_user");
+				expect(http.url).toBe(
+					"https://api.example.com/users/{userId}?status={status?}",
+				);
+				expect(http.description).toBe("Fetch a user record.");
+				expect(http.params).toEqual({ userId: "{{userId}}" });
+				expect(http.headers).toEqual({
+					Authorization: "Bearer {{secrets.api_token}}",
+				});
+			}
+		}
+	});
 
-  it("parses resources with inferred kind and provider config passthrough", () => {
-    const yaml = `
+	it("parses resources with inferred kind and provider config passthrough", () => {
+		const yaml = `
 id: support
 kind: llm
 model:
@@ -116,24 +120,24 @@ resources:
     mode: read
     namespace: gymtext/kb/product-docs
 `;
-    const manifest = parseManifest(yaml);
-    if (manifest.kind === "llm") {
-      expect(manifest.resources?.memory).toMatchObject({
-        kind: "memory",
-        mode: "read-write",
-        autoScan: true,
-        writePolicy: { descendants: true, ancestorPromotion: "none" },
-      });
-      expect(manifest.resources?.["product-docs"]).toMatchObject({
-        kind: "rag",
-        mode: "read",
-        namespace: "gymtext/kb/product-docs",
-      });
-    }
-  });
+		const manifest = parseManifest(yaml);
+		if (manifest.kind === "llm") {
+			expect(manifest.resources?.memory).toMatchObject({
+				kind: "memory",
+				mode: "read-write",
+				autoScan: true,
+				writePolicy: { descendants: true, ancestorPromotion: "none" },
+			});
+			expect(manifest.resources?.["product-docs"]).toMatchObject({
+				kind: "rag",
+				mode: "read",
+				namespace: "gymtext/kb/product-docs",
+			});
+		}
+	});
 
-  it("parses a tool agent", () => {
-    const yaml = `
+	it("parses a tool agent", () => {
+		const yaml = `
 id: send-email
 kind: tool
 tool:
@@ -143,16 +147,16 @@ tool:
   params:
     to: "{{recipient}}"
 `;
-    const manifest = parseManifest(yaml);
-    expect(manifest.kind).toBe("tool");
-    if (manifest.kind === "tool") {
-      expect(manifest.tool.name).toBe("send_email");
-      expect(manifest.tool.params).toEqual({ to: "{{recipient}}" });
-    }
-  });
+		const manifest = parseManifest(yaml);
+		expect(manifest.kind).toBe("tool");
+		if (manifest.kind === "tool") {
+			expect(manifest.tool.name).toBe("send_email");
+			expect(manifest.tool.params).toEqual({ to: "{{recipient}}" });
+		}
+	});
 
-  it("parses a sequential agent with ref steps", () => {
-    const yaml = `
+	it("parses a sequential agent with ref steps", () => {
+		const yaml = `
 id: pipeline
 kind: sequential
 steps:
@@ -166,18 +170,18 @@ steps:
 output:
   result: "{{final}}"
 `;
-    const manifest = parseManifest(yaml);
-    expect(manifest.kind).toBe("sequential");
-    if (manifest.kind === "sequential") {
-      expect(manifest.steps).toHaveLength(2);
-      expect(manifest.steps[0].ref).toBe("researcher");
-      expect(manifest.steps[1].stateKey).toBe("final");
-      expect(manifest.output).toEqual({ result: "{{final}}" });
-    }
-  });
+		const manifest = parseManifest(yaml);
+		expect(manifest.kind).toBe("sequential");
+		if (manifest.kind === "sequential") {
+			expect(manifest.steps).toHaveLength(2);
+			expect(manifest.steps[0].ref).toBe("researcher");
+			expect(manifest.steps[1].stateKey).toBe("final");
+			expect(manifest.output).toEqual({ result: "{{final}}" });
+		}
+	});
 
-  it("parses a sequential agent with until (loop)", () => {
-    const yaml = `
+	it("parses a sequential agent with until (loop)", () => {
+		const yaml = `
 id: review-loop
 kind: sequential
 until: "{{reviewer.approved}} == true"
@@ -186,15 +190,15 @@ steps:
   - ref: writer
   - ref: reviewer
 `;
-    const manifest = parseManifest(yaml);
-    if (manifest.kind === "sequential") {
-      expect(manifest.until).toBe("{{reviewer.approved}} == true");
-      expect(manifest.maxIterations).toBe(5);
-    }
-  });
+		const manifest = parseManifest(yaml);
+		if (manifest.kind === "sequential") {
+			expect(manifest.until).toBe("{{reviewer.approved}} == true");
+			expect(manifest.maxIterations).toBe(5);
+		}
+	});
 
-  it("parses a parallel agent with ref branches", () => {
-    const yaml = `
+	it("parses a parallel agent with ref branches", () => {
+		const yaml = `
 id: analyze
 kind: parallel
 branches:
@@ -205,17 +209,17 @@ branches:
     input:
       text: "{{text}}"
 `;
-    const manifest = parseManifest(yaml);
-    expect(manifest.kind).toBe("parallel");
-    if (manifest.kind === "parallel") {
-      expect(manifest.branches).toHaveLength(2);
-      expect(manifest.branches[0].ref).toBe("sentiment");
-      expect(manifest.branches[1].ref).toBe("entities");
-    }
-  });
+		const manifest = parseManifest(yaml);
+		expect(manifest.kind).toBe("parallel");
+		if (manifest.kind === "parallel") {
+			expect(manifest.branches).toHaveLength(2);
+			expect(manifest.branches[0].ref).toBe("sentiment");
+			expect(manifest.branches[1].ref).toBe("entities");
+		}
+	});
 
-  it("parses inline agent definitions in steps", () => {
-    const yaml = `
+	it("parses inline agent definitions in steps", () => {
+		const yaml = `
 id: pipeline
 kind: sequential
 steps:
@@ -228,37 +232,39 @@ steps:
       instruction: "Summarize: {{data}}"
       stateKey: summarizer
 `;
-    const manifest = parseManifest(yaml);
-    if (manifest.kind === "sequential") {
-      const step = manifest.steps[0];
-      expect(step.agent).toBeDefined();
-      expect(step.ref).toBeUndefined();
-      expect(step.agent!.kind).toBe("llm");
-      expect(step.agent!.id).toBe("inline-llm");
-    }
-  });
+		const manifest = parseManifest(yaml);
+		if (manifest.kind === "sequential") {
+			const step = manifest.steps[0];
+			expect(step.agent).toBeDefined();
+			expect(step.ref).toBeUndefined();
+			expect(step.agent?.kind).toBe("llm");
+			expect(step.agent?.id).toBe("inline-llm");
+		}
+	});
 
-  it("throws on missing kind", () => {
-    expect(() => parseManifest("id: test")).toThrow("kind");
-  });
+	it("throws on missing kind", () => {
+		expect(() => parseManifest("id: test")).toThrow("kind");
+	});
 
-  it("throws on unknown kind", () => {
-    expect(() => parseManifest("id: test\nkind: unknown")).toThrow("Unknown agent kind");
-  });
+	it("throws on unknown kind", () => {
+		expect(() => parseManifest("id: test\nkind: unknown")).toThrow(
+			"Unknown agent kind",
+		);
+	});
 
-  it("throws on step with neither ref nor agent", () => {
-    const yaml = `
+	it("throws on step with neither ref nor agent", () => {
+		const yaml = `
 id: pipeline
 kind: sequential
 steps:
   - input:
       x: "{{y}}"
 `;
-    expect(() => parseManifest(yaml)).toThrow("ref");
-  });
+		expect(() => parseManifest(yaml)).toThrow("ref");
+	});
 
-  it("parses spawnable with ref + inline entries", () => {
-    const yaml = `
+	it("parses spawnable with ref + inline entries", () => {
+		const yaml = `
 id: orchestrator
 kind: llm
 model:
@@ -277,22 +283,22 @@ spawnable:
         name: gpt-5.4-mini
       instruction: "Summarize the input."
 `;
-    const manifest = parseManifest(yaml);
-    if (manifest.kind === "llm") {
-      expect(manifest.spawnable).toHaveLength(2);
-      const [refEntry, inlineEntry] = manifest.spawnable!;
-      expect(refEntry.kind).toBe("ref");
-      if (refEntry.kind === "ref") expect(refEntry.agentId).toBe("researcher");
-      expect(inlineEntry.kind).toBe("inline");
-      if (inlineEntry.kind === "inline") {
-        expect(inlineEntry.definition.kind).toBe("llm");
-        expect(inlineEntry.definition.id).toBe("summarizer");
-      }
-    }
-  });
+		const manifest = parseManifest(yaml);
+		if (manifest.kind === "llm") {
+			expect(manifest.spawnable).toHaveLength(2);
+			const [refEntry, inlineEntry] = manifest.spawnable!;
+			expect(refEntry.kind).toBe("ref");
+			if (refEntry.kind === "ref") expect(refEntry.agentId).toBe("researcher");
+			expect(inlineEntry.kind).toBe("inline");
+			if (inlineEntry.kind === "inline") {
+				expect(inlineEntry.definition.kind).toBe("llm");
+				expect(inlineEntry.definition.id).toBe("summarizer");
+			}
+		}
+	});
 
-  it("throws on spawnable inline definition with non-llm kind", () => {
-    const yaml = `
+	it("throws on spawnable inline definition with non-llm kind", () => {
+		const yaml = `
 id: orchestrator
 kind: llm
 model:
@@ -307,11 +313,11 @@ spawnable:
       steps:
         - ref: x
 `;
-    expect(() => parseManifest(yaml)).toThrow("llm-kind");
-  });
+		expect(() => parseManifest(yaml)).toThrow("llm-kind");
+	});
 
-  it("throws on spawnable entry with unknown kind", () => {
-    const yaml = `
+	it("throws on spawnable entry with unknown kind", () => {
+		const yaml = `
 id: orchestrator
 kind: llm
 model:
@@ -322,11 +328,11 @@ spawnable:
   - kind: weird
     agentId: x
 `;
-    expect(() => parseManifest(yaml)).toThrow("must be 'ref' or 'inline'");
-  });
+		expect(() => parseManifest(yaml)).toThrow("must be 'ref' or 'inline'");
+	});
 
-  it("parses spawnable ref with version: latest and ISO timestamp", () => {
-    const yaml = `
+	it("parses spawnable ref with version: latest and ISO timestamp", () => {
+		const yaml = `
 id: orchestrator
 kind: llm
 model:
@@ -343,20 +349,19 @@ spawnable:
   - kind: ref
     agentId: c
 `;
-    const manifest = parseManifest(yaml);
-    if (manifest.kind === "llm") {
-      const [a, b, c] = manifest.spawnable!;
-      if (a.kind === "ref") expect(a.version).toBe("latest");
-      if (b.kind === "ref")
-        expect(b.version).toBe("2026-05-17T15:30:00.000Z");
-      if (c.kind === "ref") expect(c.version).toBeUndefined();
-    }
-  });
+		const manifest = parseManifest(yaml);
+		if (manifest.kind === "llm") {
+			const [a, b, c] = manifest.spawnable!;
+			if (a.kind === "ref") expect(a.version).toBe("latest");
+			if (b.kind === "ref") expect(b.version).toBe("2026-05-17T15:30:00.000Z");
+			if (c.kind === "ref") expect(c.version).toBeUndefined();
+		}
+	});
 
-  it("rejects spawnable ref with malformed version", () => {
-    // Aliases must start with an alphanumeric and contain only [A-Za-z0-9._-];
-    // a leading hyphen is rejected at parse time.
-    const yaml = `
+	it("rejects spawnable ref with malformed version", () => {
+		// Aliases must start with an alphanumeric and contain only [A-Za-z0-9._-];
+		// a leading hyphen is rejected at parse time.
+		const yaml = `
 id: orchestrator
 kind: llm
 model:
@@ -368,11 +373,11 @@ spawnable:
     agentId: a
     version: "-bad"
 `;
-    expect(() => parseManifest(yaml)).toThrow(/version/);
-  });
+		expect(() => parseManifest(yaml)).toThrow(/version/);
+	});
 
-  it("parses agent tool with @version suffix in agent field", () => {
-    const yaml = `
+	it("parses agent tool with @version suffix in agent field", () => {
+		const yaml = `
 id: orchestrator
 kind: llm
 model:
@@ -386,22 +391,22 @@ tools:
     agent: "other"
     version: "2026-05-17T15:30:00.000Z"
 `;
-    const manifest = parseManifest(yaml);
-    if (manifest.kind === "llm") {
-      const [a, b] = manifest.tools!;
-      if (a.kind === "agent") {
-        expect(a.agent).toBe("helper@latest");
-        expect(a.version).toBeUndefined();
-      }
-      if (b.kind === "agent") {
-        expect(b.agent).toBe("other");
-        expect(b.version).toBe("2026-05-17T15:30:00.000Z");
-      }
-    }
-  });
+		const manifest = parseManifest(yaml);
+		if (manifest.kind === "llm") {
+			const [a, b] = manifest.tools!;
+			if (a.kind === "agent") {
+				expect(a.agent).toBe("helper@latest");
+				expect(a.version).toBeUndefined();
+			}
+			if (b.kind === "agent") {
+				expect(b.agent).toBe("other");
+				expect(b.version).toBe("2026-05-17T15:30:00.000Z");
+			}
+		}
+	});
 
-  it("rejects agent tool combining @suffix and version field", () => {
-    const yaml = `
+	it("rejects agent tool combining @suffix and version field", () => {
+		const yaml = `
 id: orchestrator
 kind: llm
 model:
@@ -413,11 +418,11 @@ tools:
     agent: "helper@latest"
     version: latest
 `;
-    expect(() => parseManifest(yaml)).toThrow(/'@version'/);
-  });
+		expect(() => parseManifest(yaml)).toThrow(/'@version'/);
+	});
 
-  it("rejects agent tool with malformed @suffix", () => {
-    const yaml = `
+	it("rejects agent tool with malformed @suffix", () => {
+		const yaml = `
 id: orchestrator
 kind: llm
 model:
@@ -428,21 +433,21 @@ tools:
   - kind: agent
     agent: "helper@-bad"
 `;
-    expect(() => parseManifest(yaml)).toThrow(/agent is invalid/);
-  });
+		expect(() => parseManifest(yaml)).toThrow(/agent is invalid/);
+	});
 
-  it("parses step.ref with @latest", () => {
-    const yaml = `
+	it("parses step.ref with @latest", () => {
+		const yaml = `
 id: pipeline
 kind: sequential
 steps:
   - ref: "child@latest"
   - ref: "other@2026-05-17T15:30:00.000Z"
 `;
-    const manifest = parseManifest(yaml);
-    if (manifest.kind === "sequential") {
-      expect(manifest.steps[0].ref).toBe("child@latest");
-      expect(manifest.steps[1].ref).toBe("other@2026-05-17T15:30:00.000Z");
-    }
-  });
+		const manifest = parseManifest(yaml);
+		if (manifest.kind === "sequential") {
+			expect(manifest.steps[0].ref).toBe("child@latest");
+			expect(manifest.steps[1].ref).toBe("other@2026-05-17T15:30:00.000Z");
+		}
+	});
 });

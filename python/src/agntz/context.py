@@ -160,8 +160,7 @@ def _assert_protected_namespace_rule(
             return
         raise NamespaceGrantError(
             grant,
-            f"grant is above protected namespace '{boundary}'; "
-            "grant a narrower descendant instead",
+            f"grant is above protected namespace '{boundary}'; grant a narrower descendant instead",
         )
 
     if is_same_or_descendant_namespace(grant, boundary):
@@ -185,9 +184,7 @@ def _protected_namespace_rules(
     elif isinstance(policy, Mapping):
         raw_value = policy.get("protectedNamespaces", policy.get("protected_namespaces", ()))
         raw_rules = (
-            raw_value
-            if isinstance(raw_value, Sequence) and not isinstance(raw_value, str)
-            else ()
+            raw_value if isinstance(raw_value, Sequence) and not isinstance(raw_value, str) else ()
         )
     else:
         raw_rules = ()

@@ -1,40 +1,40 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import pg from "pg";
 import {
-  defineSkill,
-  encryptSecret,
-  decryptSecret,
-  getLastFour,
-  INVOCATION_LOG_BLOCKS_PREFIX,
+	INVOCATION_LOG_BLOCKS_PREFIX,
+	decryptSecret,
+	defineSkill,
+	encryptSecret,
+	getLastFour,
 } from "@agntz/core";
 import type {
-  AgentDefinition,
-  AgentVersionSummary,
-  ContentBlock,
-  ProviderConfig,
-  UnifiedStore,
-  ApiKeyRecord,
-  Connection,
-  ConnectionKind,
-  ConnectionConfig,
-  Message,
-  SessionSummary,
-  ContextEntry,
-  InvocationLog,
-  InvokeResult,
-  LogFilter,
-  Run,
-  RunStatus,
-  RunListFilters,
-  RunListResult,
-  SecretDefinition,
-  SecretMetadata,
-  SkillDefinition,
-  Span,
-  TraceSummary,
-  TraceFilter,
-  WebhookDelivery,
+	AgentDefinition,
+	AgentVersionSummary,
+	ApiKeyRecord,
+	Connection,
+	ConnectionConfig,
+	ConnectionKind,
+	ContentBlock,
+	ContextEntry,
+	InvocationLog,
+	InvokeResult,
+	LogFilter,
+	Message,
+	ProviderConfig,
+	Run,
+	RunListFilters,
+	RunListResult,
+	RunStatus,
+	SecretDefinition,
+	SecretMetadata,
+	SessionSummary,
+	SkillDefinition,
+	Span,
+	TraceFilter,
+	TraceSummary,
+	UnifiedStore,
+	WebhookDelivery,
 } from "@agntz/core";
+import pg from "pg";
 
 const { Pool } = pg;
 type PoolType = InstanceType<typeof pg.Pool>;
@@ -46,8 +46,8 @@ type PoolClientType = pg.PoolClient;
 // ═══════════════════════════════════════════════════════════════════════
 
 const MIGRATIONS: string[] = [
-  // v1: Initial schema
-  `
+	// v1: Initial schema
+	`
   CREATE TABLE IF NOT EXISTS ar_agents (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -110,8 +110,8 @@ const MIGRATIONS: string[] = [
   );
   INSERT INTO ar_schema_version (version) VALUES (1) ON CONFLICT DO NOTHING;
   `,
-  // v2: Provider configuration
-  `
+	// v2: Provider configuration
+	`
   CREATE TABLE IF NOT EXISTS ar_providers (
     id TEXT PRIMARY KEY,
     api_key TEXT NOT NULL,
@@ -121,8 +121,8 @@ const MIGRATIONS: string[] = [
   );
   UPDATE ar_schema_version SET version = 2;
   `,
-  // v3: Agent versioning — composite PK (agent_id, created_at)
-  `
+	// v3: Agent versioning — composite PK (agent_id, created_at)
+	`
   CREATE TABLE IF NOT EXISTS ar_agents_new (
     agent_id TEXT NOT NULL,
     name TEXT NOT NULL,
@@ -145,10 +145,10 @@ const MIGRATIONS: string[] = [
 
   UPDATE ar_schema_version SET version = 3;
   `,
-  // v4: Per-user scoping + API keys. Workspaces are not a first-class concept;
-  // every scoped row carries a user_id (Clerk user id as TEXT). Dev data is
-  // wiped — we can't guess ownership.
-  `
+	// v4: Per-user scoping + API keys. Workspaces are not a first-class concept;
+	// every scoped row carries a user_id (Clerk user id as TEXT). Dev data is
+	// wiped — we can't guess ownership.
+	`
   -- Previous in-dev attempts may have left ar_workspaces behind. Drop with
   -- CASCADE to clear any lingering FKs.
   DROP TABLE IF EXISTS ar_workspaces CASCADE;
@@ -188,8 +188,8 @@ const MIGRATIONS: string[] = [
 
   UPDATE ar_schema_version SET version = 4;
   `,
-  // v5: User-scoped connections (MCP servers today; more kinds later).
-  `
+	// v5: User-scoped connections (MCP servers today; more kinds later).
+	`
   CREATE TABLE IF NOT EXISTS ar_connections (
     user_id      TEXT NOT NULL,
     kind         TEXT NOT NULL,
@@ -205,10 +205,10 @@ const MIGRATIONS: string[] = [
 
   UPDATE ar_schema_version SET version = 5;
   `,
-  // v6: Runs — first-class agent invocations tracked by RunRegistry.
-  // Composite PK on (user_id, id) so Run ids are unique per user, mirroring
-  // the per-user scoping used by providers/connections.
-  `
+	// v6: Runs — first-class agent invocations tracked by RunRegistry.
+	// Composite PK on (user_id, id) so Run ids are unique per user, mirroring
+	// the per-user scoping used by providers/connections.
+	`
   CREATE TABLE IF NOT EXISTS ar_runs (
     user_id           TEXT NOT NULL,
     id                TEXT NOT NULL,
@@ -234,9 +234,9 @@ const MIGRATIONS: string[] = [
 
   UPDATE ar_schema_version SET version = 6;
   `,
-  // v7: Traces — span trees for observability. Two tables: spans (row per
-  // span, one trace = many rows) and trace_summaries (precomputed roll-up).
-  `
+	// v7: Traces — span trees for observability. Two tables: spans (row per
+	// span, one trace = many rows) and trace_summaries (precomputed roll-up).
+	`
   CREATE TABLE IF NOT EXISTS ar_spans (
     span_id      TEXT PRIMARY KEY,
     trace_id     TEXT NOT NULL,
@@ -286,9 +286,9 @@ const MIGRATIONS: string[] = [
 
   UPDATE ar_schema_version SET version = 7;
   `,
-  // v8: Skills — reusable (instruction + tools) bundles per user.
-  // Composite PK on (user_id, name); same skill name may exist for different users.
-  `
+	// v8: Skills — reusable (instruction + tools) bundles per user.
+	// Composite PK on (user_id, name); same skill name may exist for different users.
+	`
   CREATE TABLE IF NOT EXISTS ar_skills (
     user_id      TEXT NOT NULL,
     name         TEXT NOT NULL,
@@ -304,26 +304,26 @@ const MIGRATIONS: string[] = [
 
   UPDATE ar_schema_version SET version = 8;
   `,
-  // v9: GymText integration + HTTP tool + unified secrets.
-  // Four schema changes that ship together as one PR:
-  //   1. ar_invocation_logs.status — terminal state ("completed" |
-  //      "cancelled" | "failed") for billing/audit when a run is
-  //      superseded by cancel-and-replace.
-  //   2. ar_messages.content_blocks — multimodal payload (JSONB) alongside
-  //      the legacy TEXT `content` column. Writes are dual: `content`
-  //      always holds a flattened text view, `content_blocks` is non-null
-  //      only when the message was multimodal.
-  //   3. ar_secrets table — user-scoped encrypted credentials used for
-  //      both HTTP-tool auth tokens and webhook HMAC signing keys.
-  //      `value` is AES-256-GCM ciphertext
-  //      (`base64(iv):base64(tag):base64(ct)`), `last_four` is the last 4
-  //      chars of plaintext for masked-UI display. Rotation is in-place
-  //      via SecretStore.putSecret upsert on (user_id, name).
-  //   4. ar_webhook_deliveries outbox. `secret_name` references the
-  //      active HMAC signing key by name — the dispatcher resolves it at
-  //      each delivery attempt so an out-of-band rotation flows through
-  //      naturally.
-  `
+	// v9: GymText integration + HTTP tool + unified secrets.
+	// Four schema changes that ship together as one PR:
+	//   1. ar_invocation_logs.status — terminal state ("completed" |
+	//      "cancelled" | "failed") for billing/audit when a run is
+	//      superseded by cancel-and-replace.
+	//   2. ar_messages.content_blocks — multimodal payload (JSONB) alongside
+	//      the legacy TEXT `content` column. Writes are dual: `content`
+	//      always holds a flattened text view, `content_blocks` is non-null
+	//      only when the message was multimodal.
+	//   3. ar_secrets table — user-scoped encrypted credentials used for
+	//      both HTTP-tool auth tokens and webhook HMAC signing keys.
+	//      `value` is AES-256-GCM ciphertext
+	//      (`base64(iv):base64(tag):base64(ct)`), `last_four` is the last 4
+	//      chars of plaintext for masked-UI display. Rotation is in-place
+	//      via SecretStore.putSecret upsert on (user_id, name).
+	//   4. ar_webhook_deliveries outbox. `secret_name` references the
+	//      active HMAC signing key by name — the dispatcher resolves it at
+	//      each delivery attempt so an out-of-band rotation flows through
+	//      naturally.
+	`
   ALTER TABLE ar_invocation_logs ADD COLUMN IF NOT EXISTS status TEXT;
 
   ALTER TABLE ar_messages ADD COLUMN IF NOT EXISTS content_blocks JSONB;
@@ -362,10 +362,10 @@ const MIGRATIONS: string[] = [
 
   UPDATE ar_schema_version SET version = 9;
   `,
-  // v10: Per-version aliases (`stable`, `prod`, …).
-  // Scoped to (user_id, agent_id) so two agents can share alias names.
-  // Reassigning an existing alias is "last write wins" via ON CONFLICT.
-  `
+	// v10: Per-version aliases (`stable`, `prod`, …).
+	// Scoped to (user_id, agent_id) so two agents can share alias names.
+	// Reassigning an existing alias is "last write wins" via ON CONFLICT.
+	`
   CREATE TABLE IF NOT EXISTS ar_agent_aliases (
     user_id            TEXT NOT NULL,
     agent_id           TEXT NOT NULL,
@@ -382,691 +382,774 @@ const MIGRATIONS: string[] = [
 ];
 
 export interface PostgresStoreOptions {
-  connection: string | PoolType | PoolConfig;
-  tablePrefix?: string;
-  skipMigration?: boolean;
-  userId?: string;
+	connection: string | PoolType | PoolConfig;
+	tablePrefix?: string;
+	skipMigration?: boolean;
+	userId?: string;
 }
 
 export class PostgresStore implements UnifiedStore {
-  private pool: PoolType;
-  private ownsPool: boolean;
-  private prefix: string;
-  private migrated: boolean = false;
-  private migratePromise: Promise<void> | null = null;
-  private lastTs = 0;
-  readonly userId: string | null;
+	private pool: PoolType;
+	private ownsPool: boolean;
+	private prefix: string;
+	private migrated = false;
+	private migratePromise: Promise<void> | null = null;
+	private lastTs = 0;
+	readonly userId: string | null;
 
-  private nextTimestamp(): string {
-    const now = Date.now();
-    const next = now > this.lastTs ? now : this.lastTs + 1;
-    this.lastTs = next;
-    return new Date(next).toISOString();
-  }
+	private nextTimestamp(): string {
+		const now = Date.now();
+		const next = now > this.lastTs ? now : this.lastTs + 1;
+		this.lastTs = next;
+		return new Date(next).toISOString();
+	}
 
-  constructor(options: PostgresStoreOptions | string) {
-    const opts: PostgresStoreOptions =
-      typeof options === "string" ? { connection: options } : options;
+	constructor(options: PostgresStoreOptions | string) {
+		const opts: PostgresStoreOptions =
+			typeof options === "string" ? { connection: options } : options;
 
-    this.prefix = opts.tablePrefix ?? "ar_";
-    this.userId = opts.userId ?? null;
+		this.prefix = opts.tablePrefix ?? "ar_";
+		this.userId = opts.userId ?? null;
 
-    if (typeof opts.connection === "string") {
-      this.pool = new Pool({ connectionString: opts.connection });
-      this.ownsPool = true;
-    } else if (opts.connection instanceof Pool) {
-      this.pool = opts.connection;
-      this.ownsPool = false;
-    } else {
-      this.pool = new Pool(opts.connection);
-      this.ownsPool = true;
-    }
+		if (typeof opts.connection === "string") {
+			this.pool = new Pool({ connectionString: opts.connection });
+			this.ownsPool = true;
+		} else if (opts.connection instanceof Pool) {
+			this.pool = opts.connection;
+			this.ownsPool = false;
+		} else {
+			this.pool = new Pool(opts.connection);
+			this.ownsPool = true;
+		}
 
-    if (!opts.skipMigration) {
-      this.migratePromise = this.migrate();
-      // Mark the promise as handled so a migration failure doesn't crash the
-      // process as an unhandled rejection. ensureMigrated() awaits the same
-      // promise and will surface the error on the first real operation.
-      this.migratePromise.catch(() => {});
-    }
-  }
+		if (!opts.skipMigration) {
+			this.migratePromise = this.migrate();
+			// Mark the promise as handled so a migration failure doesn't crash the
+			// process as an unhandled rejection. ensureMigrated() awaits the same
+			// promise and will surface the error on the first real operation.
+			this.migratePromise.catch(() => {});
+		}
+	}
 
-  forUser(userId: string): PostgresStore {
-    const scoped = new PostgresStore({
-      connection: this.pool,
-      tablePrefix: this.prefix,
-      skipMigration: true,
-      userId,
-    });
-    // Share the parent's migration state so scoped calls await any in-flight
-    // migration kicked off by the admin's constructor rather than racing it.
-    scoped.migrated = this.migrated;
-    scoped.migratePromise = this.migratePromise;
-    return scoped;
-  }
+	forUser(userId: string): PostgresStore {
+		const scoped = new PostgresStore({
+			connection: this.pool,
+			tablePrefix: this.prefix,
+			skipMigration: true,
+			userId,
+		});
+		// Share the parent's migration state so scoped calls await any in-flight
+		// migration kicked off by the admin's constructor rather than racing it.
+		scoped.migrated = this.migrated;
+		scoped.migratePromise = this.migratePromise;
+		return scoped;
+	}
 
-  private requireUser(): string {
-    if (!this.userId) {
-      throw new Error("PostgresStore: user not set. Call forUser(id) first.");
-    }
-    return this.userId;
-  }
+	private requireUser(): string {
+		if (!this.userId) {
+			throw new Error("PostgresStore: user not set. Call forUser(id) first.");
+		}
+		return this.userId;
+	}
 
-  private t(name: string): string {
-    return `${this.prefix}${name}`;
-  }
+	private t(name: string): string {
+		return `${this.prefix}${name}`;
+	}
 
-  private async ensureMigrated(): Promise<void> {
-    if (this.migrated) return;
-    if (this.migratePromise) {
-      await this.migratePromise;
-      return;
-    }
-    this.migratePromise = this.migrate();
-    await this.migratePromise;
-  }
+	private async ensureMigrated(): Promise<void> {
+		if (this.migrated) return;
+		if (this.migratePromise) {
+			await this.migratePromise;
+			return;
+		}
+		this.migratePromise = this.migrate();
+		await this.migratePromise;
+	}
 
-  private async migrate(): Promise<void> {
-    // Hold a single connection so the advisory lock and migration queries
-    // run on the same session — pg_advisory_lock is session-scoped.
-    const client = await this.pool.connect();
-    try {
-      const lockKey = this.migrationLockKey();
-      // Serializes migrations across all processes sharing this database
-      // (e.g., app + worker booting concurrently on Railway).
-      await client.query("SELECT pg_advisory_lock($1)", [lockKey]);
-      try {
-        const currentVersion = await this.getSchemaVersion(client);
-        // Heal stale rows from prior failed/racing migrations: schema_version
-        // is meant to hold exactly one row, but if v1's INSERT ever ran twice
-        // (pre-fix code) the table can have multiple rows, which then breaks
-        // every "UPDATE ar_schema_version SET version = N" (PK conflict).
-        if (currentVersion > 0) {
-          await client.query(
-            `DELETE FROM ${this.t("schema_version")} WHERE version < $1`,
-            [currentVersion]
-          );
-        }
-        for (let i = currentVersion; i < MIGRATIONS.length; i++) {
-          const sql = MIGRATIONS[i].replace(/ar_/g, this.prefix);
-          await client.query(sql);
-        }
-        this.migrated = true;
-      } finally {
-        await client.query("SELECT pg_advisory_unlock($1)", [lockKey]);
-      }
-    } finally {
-      client.release();
-    }
-  }
+	private async migrate(): Promise<void> {
+		// Hold a single connection so the advisory lock and migration queries
+		// run on the same session — pg_advisory_lock is session-scoped.
+		const client = await this.pool.connect();
+		try {
+			const lockKey = this.migrationLockKey();
+			// Serializes migrations across all processes sharing this database
+			// (e.g., app + worker booting concurrently on Railway).
+			await client.query("SELECT pg_advisory_lock($1)", [lockKey]);
+			try {
+				const currentVersion = await this.getSchemaVersion(client);
+				// Heal stale rows from prior failed/racing migrations: schema_version
+				// is meant to hold exactly one row, but if v1's INSERT ever ran twice
+				// (pre-fix code) the table can have multiple rows, which then breaks
+				// every "UPDATE ar_schema_version SET version = N" (PK conflict).
+				if (currentVersion > 0) {
+					await client.query(
+						`DELETE FROM ${this.t("schema_version")} WHERE version < $1`,
+						[currentVersion],
+					);
+				}
+				for (let i = currentVersion; i < MIGRATIONS.length; i++) {
+					const sql = MIGRATIONS[i].replace(/ar_/g, this.prefix);
+					await client.query(sql);
+				}
+				this.migrated = true;
+			} finally {
+				await client.query("SELECT pg_advisory_unlock($1)", [lockKey]);
+			}
+		} finally {
+			client.release();
+		}
+	}
 
-  private migrationLockKey(): string {
-    const hash = createHash("sha256")
-      .update(`agntz-migration:${this.prefix}`)
-      .digest();
-    return hash.readBigInt64BE(0).toString();
-  }
+	private migrationLockKey(): string {
+		const hash = createHash("sha256")
+			.update(`agntz-migration:${this.prefix}`)
+			.digest();
+		return hash.readBigInt64BE(0).toString();
+	}
 
-  private async getSchemaVersion(
-    executor: PoolType | PoolClientType = this.pool
-  ): Promise<number> {
-    try {
-      const result = await executor.query(
-        `SELECT version FROM ${this.t("schema_version")} ORDER BY version DESC LIMIT 1`
-      );
-      return result.rows[0]?.version ?? 0;
-    } catch {
-      return 0;
-    }
-  }
+	private async getSchemaVersion(
+		executor: PoolType | PoolClientType = this.pool,
+	): Promise<number> {
+		try {
+			const result = await executor.query(
+				`SELECT version FROM ${this.t("schema_version")} ORDER BY version DESC LIMIT 1`,
+			);
+			return result.rows[0]?.version ?? 0;
+		} catch {
+			return 0;
+		}
+	}
 
-  // ═══ AgentStore ═══
+	// ═══ AgentStore ═══
 
-  async getAgent(id: string): Promise<AgentDefinition | null> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const result = await this.pool.query(
-      `SELECT definition FROM ${this.t("agents")}
+	async getAgent(id: string): Promise<AgentDefinition | null> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const result = await this.pool.query(
+			`SELECT definition FROM ${this.t("agents")}
        WHERE user_id = $1 AND agent_id = $2
        ORDER BY activated_at DESC NULLS LAST, created_at DESC
        LIMIT 1`,
-      [u, id]
-    );
-    if (result.rows.length === 0) return null;
-    const def = result.rows[0].definition;
-    return (typeof def === "string" ? JSON.parse(def) : def) as AgentDefinition;
-  }
+			[u, id],
+		);
+		if (result.rows.length === 0) return null;
+		const def = result.rows[0].definition;
+		return (typeof def === "string" ? JSON.parse(def) : def) as AgentDefinition;
+	}
 
-  async listAgents(): Promise<Array<{ id: string; name: string; description?: string }>> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const result = await this.pool.query(
-      `SELECT DISTINCT ON (agent_id) agent_id, name, description
+	async listAgents(): Promise<
+		Array<{ id: string; name: string; description?: string }>
+	> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const result = await this.pool.query(
+			`SELECT DISTINCT ON (agent_id) agent_id, name, description
        FROM ${this.t("agents")}
        WHERE user_id = $1
        ORDER BY agent_id, activated_at DESC NULLS LAST, created_at DESC`,
-      [u]
-    );
-    return result.rows
-      .map((r: { agent_id: string; name: string; description: string | null }) => ({
-        id: r.agent_id,
-        name: r.name,
-        description: r.description ?? undefined,
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }
+			[u],
+		);
+		return result.rows
+			.map(
+				(r: {
+					agent_id: string;
+					name: string;
+					description: string | null;
+				}) => ({
+					id: r.agent_id,
+					name: r.name,
+					description: r.description ?? undefined,
+				}),
+			)
+			.sort((a, b) => a.name.localeCompare(b.name));
+	}
 
-  async putAgent(agent: AgentDefinition): Promise<void> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const now = this.nextTimestamp();
-    const agentWithTimestamp = { ...agent, createdAt: now, updatedAt: now };
+	async putAgent(agent: AgentDefinition): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const now = this.nextTimestamp();
+		const agentWithTimestamp = { ...agent, createdAt: now, updatedAt: now };
 
-    await this.pool.query(
-      `INSERT INTO ${this.t("agents")} (user_id, agent_id, name, description, definition, created_at, activated_at)
+		await this.pool.query(
+			`INSERT INTO ${this.t("agents")} (user_id, agent_id, name, description, definition, created_at, activated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [u, agent.id, agent.name, agent.description ?? null, JSON.stringify(agentWithTimestamp), now, now]
-    );
-  }
+			[
+				u,
+				agent.id,
+				agent.name,
+				agent.description ?? null,
+				JSON.stringify(agentWithTimestamp),
+				now,
+				now,
+			],
+		);
+	}
 
-  async deleteAgent(id: string): Promise<void> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    await this.pool.query(
-      `DELETE FROM ${this.t("agents")} WHERE user_id = $1 AND agent_id = $2`,
-      [u, id]
-    );
-  }
+	async deleteAgent(id: string): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		await this.pool.query(
+			`DELETE FROM ${this.t("agents")} WHERE user_id = $1 AND agent_id = $2`,
+			[u, id],
+		);
+	}
 
-  async listAgentVersions(agentId: string): Promise<AgentVersionSummary[]> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const versions = await this.pool.query(
-      `SELECT created_at, activated_at FROM ${this.t("agents")}
+	async listAgentVersions(agentId: string): Promise<AgentVersionSummary[]> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const versions = await this.pool.query(
+			`SELECT created_at, activated_at FROM ${this.t("agents")}
        WHERE user_id = $1 AND agent_id = $2
        ORDER BY created_at DESC`,
-      [u, agentId]
-    );
-    const aliases = await this.pool.query(
-      `SELECT alias, version_created_at FROM ${this.t("agent_aliases")}
+			[u, agentId],
+		);
+		const aliases = await this.pool.query(
+			`SELECT alias, version_created_at FROM ${this.t("agent_aliases")}
        WHERE user_id = $1 AND agent_id = $2
        ORDER BY alias ASC`,
-      [u, agentId]
-    );
-    const aliasesByVersion = new Map<string, string[]>();
-    for (const row of aliases.rows as Array<{ alias: string; version_created_at: Date | string }>) {
-      const key = row.version_created_at instanceof Date
-        ? row.version_created_at.toISOString()
-        : String(row.version_created_at);
-      const list = aliasesByVersion.get(key) ?? [];
-      list.push(row.alias);
-      aliasesByVersion.set(key, list);
-    }
-    return versions.rows.map((r: { created_at: Date | string; activated_at: Date | string | null }) => {
-      const createdAt = r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at);
-      return {
-        createdAt,
-        activatedAt: r.activated_at == null
-          ? null
-          : (r.activated_at instanceof Date ? r.activated_at.toISOString() : String(r.activated_at)),
-        aliases: aliasesByVersion.get(createdAt) ?? [],
-      };
-    });
-  }
+			[u, agentId],
+		);
+		const aliasesByVersion = new Map<string, string[]>();
+		for (const row of aliases.rows as Array<{
+			alias: string;
+			version_created_at: Date | string;
+		}>) {
+			const key =
+				row.version_created_at instanceof Date
+					? row.version_created_at.toISOString()
+					: String(row.version_created_at);
+			const list = aliasesByVersion.get(key) ?? [];
+			list.push(row.alias);
+			aliasesByVersion.set(key, list);
+		}
+		return versions.rows.map(
+			(r: {
+				created_at: Date | string;
+				activated_at: Date | string | null;
+			}) => {
+				const createdAt =
+					r.created_at instanceof Date
+						? r.created_at.toISOString()
+						: String(r.created_at);
+				return {
+					createdAt,
+					activatedAt:
+						r.activated_at == null
+							? null
+							: r.activated_at instanceof Date
+								? r.activated_at.toISOString()
+								: String(r.activated_at),
+					aliases: aliasesByVersion.get(createdAt) ?? [],
+				};
+			},
+		);
+	}
 
-  async getAgentVersion(agentId: string, createdAt: string): Promise<AgentDefinition | null> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const result = await this.pool.query(
-      `SELECT definition FROM ${this.t("agents")}
+	async getAgentVersion(
+		agentId: string,
+		createdAt: string,
+	): Promise<AgentDefinition | null> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const result = await this.pool.query(
+			`SELECT definition FROM ${this.t("agents")}
        WHERE user_id = $1 AND agent_id = $2 AND created_at = $3`,
-      [u, agentId, createdAt]
-    );
-    if (result.rows.length === 0) return null;
-    const def = result.rows[0].definition;
-    return (typeof def === "string" ? JSON.parse(def) : def) as AgentDefinition;
-  }
+			[u, agentId, createdAt],
+		);
+		if (result.rows.length === 0) return null;
+		const def = result.rows[0].definition;
+		return (typeof def === "string" ? JSON.parse(def) : def) as AgentDefinition;
+	}
 
-  async activateAgentVersion(agentId: string, createdAt: string): Promise<void> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const now = this.nextTimestamp();
-    await this.pool.query(
-      `UPDATE ${this.t("agents")} SET activated_at = $1
+	async activateAgentVersion(
+		agentId: string,
+		createdAt: string,
+	): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const now = this.nextTimestamp();
+		await this.pool.query(
+			`UPDATE ${this.t("agents")} SET activated_at = $1
        WHERE user_id = $2 AND agent_id = $3 AND created_at = $4`,
-      [now, u, agentId, createdAt]
-    );
-  }
+			[now, u, agentId, createdAt],
+		);
+	}
 
-  async resolveAgentAlias(agentId: string, alias: string): Promise<string | null> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const result = await this.pool.query(
-      `SELECT version_created_at FROM ${this.t("agent_aliases")}
+	async resolveAgentAlias(
+		agentId: string,
+		alias: string,
+	): Promise<string | null> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const result = await this.pool.query(
+			`SELECT version_created_at FROM ${this.t("agent_aliases")}
        WHERE user_id = $1 AND agent_id = $2 AND alias = $3`,
-      [u, agentId, alias]
-    );
-    if (result.rows.length === 0) return null;
-    const ts = result.rows[0].version_created_at;
-    return ts instanceof Date ? ts.toISOString() : String(ts);
-  }
+			[u, agentId, alias],
+		);
+		if (result.rows.length === 0) return null;
+		const ts = result.rows[0].version_created_at;
+		return ts instanceof Date ? ts.toISOString() : String(ts);
+	}
 
-  async setAgentVersionAlias(agentId: string, createdAt: string, alias: string): Promise<void> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const exists = await this.pool.query(
-      `SELECT 1 FROM ${this.t("agents")}
+	async setAgentVersionAlias(
+		agentId: string,
+		createdAt: string,
+		alias: string,
+	): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const exists = await this.pool.query(
+			`SELECT 1 FROM ${this.t("agents")}
        WHERE user_id = $1 AND agent_id = $2 AND created_at = $3`,
-      [u, agentId, createdAt]
-    );
-    if (exists.rows.length === 0) {
-      throw new Error(`Agent version not found: ${agentId}@${createdAt}`);
-    }
-    await this.pool.query(
-      `INSERT INTO ${this.t("agent_aliases")} (user_id, agent_id, alias, version_created_at)
+			[u, agentId, createdAt],
+		);
+		if (exists.rows.length === 0) {
+			throw new Error(`Agent version not found: ${agentId}@${createdAt}`);
+		}
+		await this.pool.query(
+			`INSERT INTO ${this.t("agent_aliases")} (user_id, agent_id, alias, version_created_at)
        VALUES ($1, $2, $3, $4)
        ON CONFLICT (user_id, agent_id, alias)
        DO UPDATE SET version_created_at = EXCLUDED.version_created_at, created_at = NOW()`,
-      [u, agentId, alias, createdAt]
-    );
-  }
+			[u, agentId, alias, createdAt],
+		);
+	}
 
-  async removeAgentVersionAlias(agentId: string, alias: string): Promise<void> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    await this.pool.query(
-      `DELETE FROM ${this.t("agent_aliases")}
+	async removeAgentVersionAlias(agentId: string, alias: string): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		await this.pool.query(
+			`DELETE FROM ${this.t("agent_aliases")}
        WHERE user_id = $1 AND agent_id = $2 AND alias = $3`,
-      [u, agentId, alias]
-    );
-  }
+			[u, agentId, alias],
+		);
+	}
 
-  // ═══ SessionStore ═══
+	// ═══ SessionStore ═══
 
-  async getMessages(sessionId: string): Promise<Message[]> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const result = await this.pool.query(
-      `SELECT m.role, m.content, m.content_blocks, m.tool_calls, m.tool_call_id, m.timestamp
+	async getMessages(sessionId: string): Promise<Message[]> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const result = await this.pool.query(
+			`SELECT m.role, m.content, m.content_blocks, m.tool_calls, m.tool_call_id, m.timestamp
        FROM ${this.t("messages")} m
        INNER JOIN ${this.t("sessions")} s ON s.id = m.session_id
        WHERE s.user_id = $1 AND m.session_id = $2
        ORDER BY m.id`,
-      [u, sessionId]
-    );
+			[u, sessionId],
+		);
 
-    return result.rows.map((r: {
-      role: string;
-      content: string;
-      content_blocks: unknown;
-      tool_calls: unknown;
-      tool_call_id: string | null;
-      timestamp: Date;
-    }) => {
-      // pg returns JSONB as already-parsed JS values; tolerate a raw string
-      // too in case some driver path returns it unparsed.
-      let content: string | ContentBlock[] = r.content;
-      if (r.content_blocks != null) {
-        const raw =
-          typeof r.content_blocks === "string"
-            ? safeJsonParse(r.content_blocks)
-            : r.content_blocks;
-        if (Array.isArray(raw)) content = raw as ContentBlock[];
-      }
-      const msg: Message = {
-        role: r.role as Message["role"],
-        content,
-        timestamp: r.timestamp instanceof Date ? r.timestamp.toISOString() : String(r.timestamp),
-      };
-      if (r.tool_calls) msg.toolCalls = r.tool_calls as Message["toolCalls"];
-      if (r.tool_call_id) msg.toolCallId = r.tool_call_id;
-      return msg;
-    });
-  }
+		return result.rows.map(
+			(r: {
+				role: string;
+				content: string;
+				content_blocks: unknown;
+				tool_calls: unknown;
+				tool_call_id: string | null;
+				timestamp: Date;
+			}) => {
+				// pg returns JSONB as already-parsed JS values; tolerate a raw string
+				// too in case some driver path returns it unparsed.
+				let content: string | ContentBlock[] = r.content;
+				if (r.content_blocks != null) {
+					const raw =
+						typeof r.content_blocks === "string"
+							? safeJsonParse(r.content_blocks)
+							: r.content_blocks;
+					if (Array.isArray(raw)) content = raw as ContentBlock[];
+				}
+				const msg: Message = {
+					role: r.role as Message["role"],
+					content,
+					timestamp:
+						r.timestamp instanceof Date
+							? r.timestamp.toISOString()
+							: String(r.timestamp),
+				};
+				if (r.tool_calls) msg.toolCalls = r.tool_calls as Message["toolCalls"];
+				if (r.tool_call_id) msg.toolCallId = r.tool_call_id;
+				return msg;
+			},
+		);
+	}
 
-  async append(sessionId: string, messages: Message[]): Promise<void> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+	async append(sessionId: string, messages: Message[]): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const client = await this.pool.connect();
+		try {
+			await client.query("BEGIN");
 
-      const existing = await client.query(
-        `SELECT user_id FROM ${this.t("sessions")} WHERE id = $1`,
-        [sessionId]
-      );
-      if (existing.rows.length > 0 && existing.rows[0].user_id !== u) {
-        throw new Error(`Session ${sessionId} belongs to a different user`);
-      }
+			const existing = await client.query(
+				`SELECT user_id FROM ${this.t("sessions")} WHERE id = $1`,
+				[sessionId],
+			);
+			if (existing.rows.length > 0 && existing.rows[0].user_id !== u) {
+				throw new Error(`Session ${sessionId} belongs to a different user`);
+			}
 
-      const now = new Date().toISOString();
-      await client.query(
-        `INSERT INTO ${this.t("sessions")} (user_id, id, created_at, updated_at)
+			const now = new Date().toISOString();
+			await client.query(
+				`INSERT INTO ${this.t("sessions")} (user_id, id, created_at, updated_at)
          VALUES ($1, $2, $3, $3)
          ON CONFLICT(id) DO UPDATE SET updated_at = EXCLUDED.updated_at`,
-        [u, sessionId, now]
-      );
+				[u, sessionId, now],
+			);
 
-      for (const msg of messages) {
-        // Dual-write: legacy text column always populated (flattened view of
-        // any blocks), content_blocks only when input was multimodal.
-        const { contentText, contentBlocksJson } = serializeContent(msg.content);
-        await client.query(
-          `INSERT INTO ${this.t("messages")} (session_id, role, content, content_blocks, tool_calls, tool_call_id, timestamp)
+			for (const msg of messages) {
+				// Dual-write: legacy text column always populated (flattened view of
+				// any blocks), content_blocks only when input was multimodal.
+				const { contentText, contentBlocksJson } = serializeContent(
+					msg.content,
+				);
+				await client.query(
+					`INSERT INTO ${this.t("messages")} (session_id, role, content, content_blocks, tool_calls, tool_call_id, timestamp)
            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [
-            sessionId,
-            msg.role,
-            contentText,
-            contentBlocksJson,
-            msg.toolCalls ? JSON.stringify(msg.toolCalls) : null,
-            msg.toolCallId ?? null,
-            msg.timestamp,
-          ]
-        );
-      }
+					[
+						sessionId,
+						msg.role,
+						contentText,
+						contentBlocksJson,
+						msg.toolCalls ? JSON.stringify(msg.toolCalls) : null,
+						msg.toolCallId ?? null,
+						msg.timestamp,
+					],
+				);
+			}
 
-      await client.query("COMMIT");
-    } catch (err) {
-      await client.query("ROLLBACK");
-      throw err;
-    } finally {
-      client.release();
-    }
-  }
+			await client.query("COMMIT");
+		} catch (err) {
+			await client.query("ROLLBACK");
+			throw err;
+		} finally {
+			client.release();
+		}
+	}
 
-  async deleteSession(sessionId: string): Promise<void> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    await this.pool.query(
-      `DELETE FROM ${this.t("sessions")} WHERE user_id = $1 AND id = $2`,
-      [u, sessionId]
-    );
-  }
+	async deleteSession(sessionId: string): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		await this.pool.query(
+			`DELETE FROM ${this.t("sessions")} WHERE user_id = $1 AND id = $2`,
+			[u, sessionId],
+		);
+	}
 
-  async getOrCreateSession(sessionId: string): Promise<void> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    // Ownership check: avoid silently aliasing the id under a different user.
-    const existing = await this.pool.query(
-      `SELECT user_id FROM ${this.t("sessions")} WHERE id = $1`,
-      [sessionId]
-    );
-    if (existing.rows.length > 0 && existing.rows[0].user_id !== u) {
-      throw new Error(`Session ${sessionId} belongs to a different user`);
-    }
-    await this.pool.query(
-      `INSERT INTO ${this.t("sessions")} (id, user_id, created_at, updated_at)
+	async getOrCreateSession(sessionId: string): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		// Ownership check: avoid silently aliasing the id under a different user.
+		const existing = await this.pool.query(
+			`SELECT user_id FROM ${this.t("sessions")} WHERE id = $1`,
+			[sessionId],
+		);
+		if (existing.rows.length > 0 && existing.rows[0].user_id !== u) {
+			throw new Error(`Session ${sessionId} belongs to a different user`);
+		}
+		await this.pool.query(
+			`INSERT INTO ${this.t("sessions")} (id, user_id, created_at, updated_at)
        VALUES ($1, $2, NOW(), NOW())
        ON CONFLICT (id) DO NOTHING`,
-      [sessionId, u]
-    );
-  }
+			[sessionId, u],
+		);
+	}
 
-  async listSessions(agentId?: string): Promise<SessionSummary[]> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    let query = `
+	async listSessions(agentId?: string): Promise<SessionSummary[]> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		let query = `
       SELECT s.id, s.agent_id, s.created_at, s.updated_at,
              COUNT(m.id) as message_count
       FROM ${this.t("sessions")} s
       LEFT JOIN ${this.t("messages")} m ON m.session_id = s.id
       WHERE s.user_id = $1
     `;
-    const params: string[] = [u];
+		const params: string[] = [u];
 
-    if (agentId) {
-      query += ` AND s.agent_id = $${params.length + 1}`;
-      params.push(agentId);
-    }
+		if (agentId) {
+			query += ` AND s.agent_id = $${params.length + 1}`;
+			params.push(agentId);
+		}
 
-    query += " GROUP BY s.id ORDER BY s.updated_at DESC";
+		query += " GROUP BY s.id ORDER BY s.updated_at DESC";
 
-    const result = await this.pool.query(query, params);
+		const result = await this.pool.query(query, params);
 
-    return result.rows.map((r: {
-      id: string;
-      agent_id: string | null;
-      created_at: Date;
-      updated_at: Date;
-      message_count: string;
-    }) => ({
-      sessionId: r.id,
-      agentId: r.agent_id ?? undefined,
-      messageCount: parseInt(r.message_count, 10),
-      createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
-      updatedAt: r.updated_at instanceof Date ? r.updated_at.toISOString() : String(r.updated_at),
-    }));
-  }
+		return result.rows.map(
+			(r: {
+				id: string;
+				agent_id: string | null;
+				created_at: Date;
+				updated_at: Date;
+				message_count: string;
+			}) => ({
+				sessionId: r.id,
+				agentId: r.agent_id ?? undefined,
+				messageCount: Number.parseInt(r.message_count, 10),
+				createdAt:
+					r.created_at instanceof Date
+						? r.created_at.toISOString()
+						: String(r.created_at),
+				updatedAt:
+					r.updated_at instanceof Date
+						? r.updated_at.toISOString()
+						: String(r.updated_at),
+			}),
+		);
+	}
 
-  // ═══ ContextStore ═══
+	// ═══ ContextStore ═══
 
-  async getContext(contextId: string): Promise<ContextEntry[]> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const result = await this.pool.query(
-      `SELECT context_id, agent_id, invocation_id, content, created_at
+	async getContext(contextId: string): Promise<ContextEntry[]> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const result = await this.pool.query(
+			`SELECT context_id, agent_id, invocation_id, content, created_at
        FROM ${this.t("context_entries")}
        WHERE user_id = $1 AND context_id = $2
        ORDER BY id`,
-      [u, contextId]
-    );
+			[u, contextId],
+		);
 
-    return result.rows.map((r: {
-      context_id: string;
-      agent_id: string;
-      invocation_id: string;
-      content: string;
-      created_at: Date;
-    }) => ({
-      contextId: r.context_id,
-      agentId: r.agent_id,
-      invocationId: r.invocation_id,
-      content: r.content,
-      createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
-    }));
-  }
+		return result.rows.map(
+			(r: {
+				context_id: string;
+				agent_id: string;
+				invocation_id: string;
+				content: string;
+				created_at: Date;
+			}) => ({
+				contextId: r.context_id,
+				agentId: r.agent_id,
+				invocationId: r.invocation_id,
+				content: r.content,
+				createdAt:
+					r.created_at instanceof Date
+						? r.created_at.toISOString()
+						: String(r.created_at),
+			}),
+		);
+	}
 
-  async addContext(contextId: string, entry: ContextEntry): Promise<void> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    await this.pool.query(
-      `INSERT INTO ${this.t("context_entries")} (user_id, context_id, agent_id, invocation_id, content, created_at)
+	async addContext(contextId: string, entry: ContextEntry): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		await this.pool.query(
+			`INSERT INTO ${this.t("context_entries")} (user_id, context_id, agent_id, invocation_id, content, created_at)
        VALUES ($1, $2, $3, $4, $5, $6)`,
-      [u, contextId, entry.agentId, entry.invocationId, entry.content, entry.createdAt]
-    );
-  }
+			[
+				u,
+				contextId,
+				entry.agentId,
+				entry.invocationId,
+				entry.content,
+				entry.createdAt,
+			],
+		);
+	}
 
-  async clearContext(contextId: string): Promise<void> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    await this.pool.query(
-      `DELETE FROM ${this.t("context_entries")} WHERE user_id = $1 AND context_id = $2`,
-      [u, contextId]
-    );
-  }
+	async clearContext(contextId: string): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		await this.pool.query(
+			`DELETE FROM ${this.t("context_entries")} WHERE user_id = $1 AND context_id = $2`,
+			[u, contextId],
+		);
+	}
 
-  // ═══ LogStore ═══
+	// ═══ LogStore ═══
 
-  async log(entry: InvocationLog): Promise<void> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    // For multimodal input, serialize the blocks JSON into the existing
-    // `input` TEXT column with a sentinel prefix. Keeps the column shape
-    // backward-compatible: legacy readers see the prefix + JSON; the row
-    // helper detects the prefix and rehydrates the blocks.
-    const inputStored =
-      typeof entry.input === "string"
-        ? entry.input
-        : `${INVOCATION_LOG_BLOCKS_PREFIX}${JSON.stringify(entry.input)}`;
-    await this.pool.query(
-      `INSERT INTO ${this.t("invocation_logs")}
+	async log(entry: InvocationLog): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		// For multimodal input, serialize the blocks JSON into the existing
+		// `input` TEXT column with a sentinel prefix. Keeps the column shape
+		// backward-compatible: legacy readers see the prefix + JSON; the row
+		// helper detects the prefix and rehydrates the blocks.
+		const inputStored =
+			typeof entry.input === "string"
+				? entry.input
+				: `${INVOCATION_LOG_BLOCKS_PREFIX}${JSON.stringify(entry.input)}`;
+		await this.pool.query(
+			`INSERT INTO ${this.t("invocation_logs")}
        (user_id, id, agent_id, session_id, input, output, tool_calls,
         prompt_tokens, completion_tokens, total_tokens, duration, model, error, timestamp, status)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
-      [
-        u,
-        entry.id,
-        entry.agentId,
-        entry.sessionId ?? null,
-        inputStored,
-        entry.output,
-        JSON.stringify(entry.toolCalls),
-        entry.usage.promptTokens,
-        entry.usage.completionTokens,
-        entry.usage.totalTokens,
-        entry.duration,
-        entry.model,
-        entry.error ?? null,
-        entry.timestamp,
-        entry.status ?? null,
-      ]
-    );
-  }
+			[
+				u,
+				entry.id,
+				entry.agentId,
+				entry.sessionId ?? null,
+				inputStored,
+				entry.output,
+				JSON.stringify(entry.toolCalls),
+				entry.usage.promptTokens,
+				entry.usage.completionTokens,
+				entry.usage.totalTokens,
+				entry.duration,
+				entry.model,
+				entry.error ?? null,
+				entry.timestamp,
+				entry.status ?? null,
+			],
+		);
+	}
 
-  async getLogs(filter?: LogFilter): Promise<InvocationLog[]> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    let query = `SELECT * FROM ${this.t("invocation_logs")} WHERE user_id = $1`;
-    const params: unknown[] = [u];
-    let paramIdx = 2;
+	async getLogs(filter?: LogFilter): Promise<InvocationLog[]> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		let query = `SELECT * FROM ${this.t("invocation_logs")} WHERE user_id = $1`;
+		const params: unknown[] = [u];
+		let paramIdx = 2;
 
-    if (filter?.agentId) {
-      query += ` AND agent_id = $${paramIdx++}`;
-      params.push(filter.agentId);
-    }
-    if (filter?.sessionId) {
-      query += ` AND session_id = $${paramIdx++}`;
-      params.push(filter.sessionId);
-    }
-    if (filter?.since) {
-      query += ` AND timestamp >= $${paramIdx++}`;
-      params.push(filter.since);
-    }
+		if (filter?.agentId) {
+			query += ` AND agent_id = $${paramIdx++}`;
+			params.push(filter.agentId);
+		}
+		if (filter?.sessionId) {
+			query += ` AND session_id = $${paramIdx++}`;
+			params.push(filter.sessionId);
+		}
+		if (filter?.since) {
+			query += ` AND timestamp >= $${paramIdx++}`;
+			params.push(filter.since);
+		}
 
-    query += " ORDER BY timestamp DESC";
+		query += " ORDER BY timestamp DESC";
 
-    if (filter?.limit) {
-      query += ` LIMIT $${paramIdx++}`;
-      params.push(filter.limit);
-    }
-    if (filter?.offset) {
-      query += ` OFFSET $${paramIdx++}`;
-      params.push(filter.offset);
-    }
+		if (filter?.limit) {
+			query += ` LIMIT $${paramIdx++}`;
+			params.push(filter.limit);
+		}
+		if (filter?.offset) {
+			query += ` OFFSET $${paramIdx++}`;
+			params.push(filter.offset);
+		}
 
-    const result = await this.pool.query(query, params);
-    return result.rows.map(rowToInvocationLog);
-  }
+		const result = await this.pool.query(query, params);
+		return result.rows.map(rowToInvocationLog);
+	}
 
-  async getLog(id: string): Promise<InvocationLog | null> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const result = await this.pool.query(
-      `SELECT * FROM ${this.t("invocation_logs")} WHERE user_id = $1 AND id = $2`,
-      [u, id]
-    );
-    if (result.rows.length === 0) return null;
-    return rowToInvocationLog(result.rows[0]);
-  }
+	async getLog(id: string): Promise<InvocationLog | null> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const result = await this.pool.query(
+			`SELECT * FROM ${this.t("invocation_logs")} WHERE user_id = $1 AND id = $2`,
+			[u, id],
+		);
+		if (result.rows.length === 0) return null;
+		return rowToInvocationLog(result.rows[0]);
+	}
 
-  // ═══ ProviderStore ═══
+	// ═══ ProviderStore ═══
 
-  async getProvider(id: string): Promise<ProviderConfig | null> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const { rows } = await this.pool.query(
-      `SELECT id, api_key, base_url, config, updated_at FROM ${this.prefix}providers
+	async getProvider(id: string): Promise<ProviderConfig | null> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT id, api_key, base_url, config, updated_at FROM ${this.prefix}providers
        WHERE user_id = $1 AND id = $2`,
-      [u, id]
-    );
-    if (rows.length === 0) return null;
-    const r = rows[0];
-    return {
-      id: r.id,
-      apiKey: r.api_key,
-      baseUrl: r.base_url ?? undefined,
-      config: r.config ?? undefined,
-      updatedAt: r.updated_at instanceof Date ? r.updated_at.toISOString() : String(r.updated_at),
-    };
-  }
+			[u, id],
+		);
+		if (rows.length === 0) return null;
+		const r = rows[0];
+		return {
+			id: r.id,
+			apiKey: r.api_key,
+			baseUrl: r.base_url ?? undefined,
+			config: r.config ?? undefined,
+			updatedAt:
+				r.updated_at instanceof Date
+					? r.updated_at.toISOString()
+					: String(r.updated_at),
+		};
+	}
 
-  async listProviders(): Promise<Array<{ id: string; configured: boolean }>> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const { rows } = await this.pool.query(
-      `SELECT id, api_key FROM ${this.prefix}providers WHERE user_id = $1 ORDER BY id`,
-      [u]
-    );
-    return rows.map((r: { id: string; api_key: string }) => ({
-      id: r.id,
-      configured: !!r.api_key,
-    }));
-  }
+	async listProviders(): Promise<Array<{ id: string; configured: boolean }>> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT id, api_key FROM ${this.prefix}providers WHERE user_id = $1 ORDER BY id`,
+			[u],
+		);
+		return rows.map((r: { id: string; api_key: string }) => ({
+			id: r.id,
+			configured: !!r.api_key,
+		}));
+	}
 
-  async putProvider(provider: ProviderConfig): Promise<void> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    await this.pool.query(
-      `INSERT INTO ${this.prefix}providers (user_id, id, api_key, base_url, config, updated_at)
+	async putProvider(provider: ProviderConfig): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		await this.pool.query(
+			`INSERT INTO ${this.prefix}providers (user_id, id, api_key, base_url, config, updated_at)
        VALUES ($1, $2, $3, $4, $5, NOW())
        ON CONFLICT (user_id, id) DO UPDATE SET
          api_key = EXCLUDED.api_key,
          base_url = EXCLUDED.base_url,
          config = EXCLUDED.config,
          updated_at = NOW()`,
-      [u, provider.id, provider.apiKey, provider.baseUrl ?? null, provider.config ? JSON.stringify(provider.config) : null]
-    );
-  }
+			[
+				u,
+				provider.id,
+				provider.apiKey,
+				provider.baseUrl ?? null,
+				provider.config ? JSON.stringify(provider.config) : null,
+			],
+		);
+	}
 
-  async deleteProvider(id: string): Promise<void> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    await this.pool.query(
-      `DELETE FROM ${this.prefix}providers WHERE user_id = $1 AND id = $2`,
-      [u, id]
-    );
-  }
+	async deleteProvider(id: string): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		await this.pool.query(
+			`DELETE FROM ${this.prefix}providers WHERE user_id = $1 AND id = $2`,
+			[u, id],
+		);
+	}
 
-  // ═══ ConnectionStore ═══
+	// ═══ ConnectionStore ═══
 
-  async getConnection(kind: ConnectionKind, id: string): Promise<Connection | null> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const { rows } = await this.pool.query(
-      `SELECT id, kind, display_name, description, config, created_at, updated_at
+	async getConnection(
+		kind: ConnectionKind,
+		id: string,
+	): Promise<Connection | null> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT id, kind, display_name, description, config, created_at, updated_at
        FROM ${this.t("connections")}
        WHERE user_id = $1 AND kind = $2 AND id = $3`,
-      [u, kind, id]
-    );
-    if (rows.length === 0) return null;
-    return rowToConnection(rows[0]);
-  }
+			[u, kind, id],
+		);
+		if (rows.length === 0) return null;
+		return rowToConnection(rows[0]);
+	}
 
-  async listConnections(kind?: ConnectionKind): Promise<Connection[]> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const params: unknown[] = [u];
-    let where = "WHERE user_id = $1";
-    if (kind) {
-      params.push(kind);
-      where += " AND kind = $2";
-    }
-    const { rows } = await this.pool.query(
-      `SELECT id, kind, display_name, description, config, created_at, updated_at
+	async listConnections(kind?: ConnectionKind): Promise<Connection[]> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const params: unknown[] = [u];
+		let where = "WHERE user_id = $1";
+		if (kind) {
+			params.push(kind);
+			where += " AND kind = $2";
+		}
+		const { rows } = await this.pool.query(
+			`SELECT id, kind, display_name, description, config, created_at, updated_at
        FROM ${this.t("connections")}
        ${where}
        ORDER BY kind, id`,
-      params
-    );
-    return rows.map(rowToConnection);
-  }
+			params,
+		);
+		return rows.map(rowToConnection);
+	}
 
-  async putConnection(connection: Connection): Promise<void> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    await this.pool.query(
-      `INSERT INTO ${this.t("connections")}
+	async putConnection(connection: Connection): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		await this.pool.query(
+			`INSERT INTO ${this.t("connections")}
          (user_id, kind, id, display_name, description, config, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, NOW())
        ON CONFLICT (user_id, kind, id) DO UPDATE SET
@@ -1074,33 +1157,33 @@ export class PostgresStore implements UnifiedStore {
          description = EXCLUDED.description,
          config = EXCLUDED.config,
          updated_at = NOW()`,
-      [
-        u,
-        connection.kind,
-        connection.id,
-        connection.displayName,
-        connection.description ?? null,
-        JSON.stringify(connection.config),
-      ]
-    );
-  }
+			[
+				u,
+				connection.kind,
+				connection.id,
+				connection.displayName,
+				connection.description ?? null,
+				JSON.stringify(connection.config),
+			],
+		);
+	}
 
-  async deleteConnection(kind: ConnectionKind, id: string): Promise<void> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    await this.pool.query(
-      `DELETE FROM ${this.t("connections")} WHERE user_id = $1 AND kind = $2 AND id = $3`,
-      [u, kind, id]
-    );
-  }
+	async deleteConnection(kind: ConnectionKind, id: string): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		await this.pool.query(
+			`DELETE FROM ${this.t("connections")} WHERE user_id = $1 AND kind = $2 AND id = $3`,
+			[u, kind, id],
+		);
+	}
 
-  // ═══ RunStore ═══
+	// ═══ RunStore ═══
 
-  async putRun(run: Run): Promise<void> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    await this.pool.query(
-      `INSERT INTO ${this.t("runs")} (
+	async putRun(run: Run): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		await this.pool.query(
+			`INSERT INTO ${this.t("runs")} (
           user_id, id, root_id, parent_id, agent_id, session_id,
           spawn_tool_use_id, status, input, output, result_json, error,
           started_at, ended_at, depth
@@ -1119,63 +1202,63 @@ export class PostgresStore implements UnifiedStore {
          started_at = EXCLUDED.started_at,
          ended_at = EXCLUDED.ended_at,
          depth = EXCLUDED.depth`,
-      [
-        u,
-        run.id,
-        run.rootId,
-        run.parentId ?? null,
-        run.agentId,
-        run.sessionId ?? null,
-        run.spawnToolUseId ?? null,
-        run.status,
-        run.input,
-        run.result?.output ?? null,
-        run.result ? JSON.stringify(run.result) : null,
-        run.error ?? null,
-        run.startedAt,
-        run.endedAt ?? null,
-        run.depth,
-      ]
-    );
-  }
+			[
+				u,
+				run.id,
+				run.rootId,
+				run.parentId ?? null,
+				run.agentId,
+				run.sessionId ?? null,
+				run.spawnToolUseId ?? null,
+				run.status,
+				run.input,
+				run.result?.output ?? null,
+				run.result ? JSON.stringify(run.result) : null,
+				run.error ?? null,
+				run.startedAt,
+				run.endedAt ?? null,
+				run.depth,
+			],
+		);
+	}
 
-  async getRun(runId: string): Promise<Run | null> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const { rows } = await this.pool.query(
-      `SELECT id, user_id, root_id, parent_id, agent_id, session_id,
+	async getRun(runId: string): Promise<Run | null> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT id, user_id, root_id, parent_id, agent_id, session_id,
               spawn_tool_use_id, status, input, output, result_json, error,
               started_at, ended_at, depth
        FROM ${this.t("runs")}
        WHERE user_id = $1 AND id = $2`,
-      [u, runId]
-    );
-    if (rows.length === 0) return null;
-    return rowToRun(rows[0]);
-  }
+			[u, runId],
+		);
+		if (rows.length === 0) return null;
+		return rowToRun(rows[0]);
+	}
 
-  async listChildren(parentRunId: string): Promise<Run[]> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const { rows } = await this.pool.query(
-      `SELECT id, user_id, root_id, parent_id, agent_id, session_id,
+	async listChildren(parentRunId: string): Promise<Run[]> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT id, user_id, root_id, parent_id, agent_id, session_id,
               spawn_tool_use_id, status, input, output, result_json, error,
               started_at, ended_at, depth
        FROM ${this.t("runs")}
        WHERE user_id = $1 AND parent_id = $2
        ORDER BY started_at, id`,
-      [u, parentRunId]
-    );
-    return rows.map(rowToRun);
-  }
+			[u, parentRunId],
+		);
+		return rows.map(rowToRun);
+	}
 
-  async listSubtree(rootId: string): Promise<Run[]> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    // Recursive CTE walks the parent_id graph starting at rootId.
-    // Includes the root itself when present.
-    const { rows } = await this.pool.query(
-      `WITH RECURSIVE subtree(id) AS (
+	async listSubtree(rootId: string): Promise<Run[]> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		// Recursive CTE walks the parent_id graph starting at rootId.
+		// Includes the root itself when present.
+		const { rows } = await this.pool.query(
+			`WITH RECURSIVE subtree(id) AS (
           SELECT id FROM ${this.t("runs")}
           WHERE user_id = $1 AND id = $2
           UNION ALL
@@ -1190,68 +1273,85 @@ export class PostgresStore implements UnifiedStore {
        INNER JOIN subtree s ON s.id = r.id
        WHERE r.user_id = $1
        ORDER BY r.depth, r.started_at, r.id`,
-      [u, rootId]
-    );
-    return rows.map(rowToRun);
-  }
+			[u, rootId],
+		);
+		return rows.map(rowToRun);
+	}
 
-  async listRuns(filters: RunListFilters): Promise<RunListResult> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
+	async listRuns(filters: RunListFilters): Promise<RunListResult> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
 
-    const limit = Math.min(Math.max(filters.limit ?? 50, 1), 200);
-    const rootsOnly = filters.rootsOnly ?? true;
-    const clauses: string[] = ["user_id = $1"];
-    const args: unknown[] = [u];
-    let i = 2;
+		const limit = Math.min(Math.max(filters.limit ?? 50, 1), 200);
+		const rootsOnly = filters.rootsOnly ?? true;
+		const clauses: string[] = ["user_id = $1"];
+		const args: unknown[] = [u];
+		let i = 2;
 
-    if (rootsOnly) clauses.push("parent_id IS NULL");
-    if (filters.agentId) { clauses.push(`agent_id = $${i++}`); args.push(filters.agentId); }
-    if (filters.status) { clauses.push(`status = $${i++}`); args.push(filters.status); }
-    if (filters.startedAfter) {
-      const t = Date.parse(filters.startedAfter);
-      if (Number.isFinite(t)) { clauses.push(`started_at >= $${i++}`); args.push(t); }
-    }
-    if (filters.startedBefore) {
-      const t = Date.parse(filters.startedBefore);
-      if (Number.isFinite(t)) { clauses.push(`started_at <= $${i++}`); args.push(t); }
-    }
-    if (filters.cursor) {
-      const c = decodeRunCursor(filters.cursor);
-      if (c) {
-        clauses.push(`(started_at < $${i} OR (started_at = $${i} AND id < $${i + 1}))`);
-        args.push(c.startedAt, c.id);
-        i += 2;
-      }
-    }
+		if (rootsOnly) clauses.push("parent_id IS NULL");
+		if (filters.agentId) {
+			clauses.push(`agent_id = $${i++}`);
+			args.push(filters.agentId);
+		}
+		if (filters.status) {
+			clauses.push(`status = $${i++}`);
+			args.push(filters.status);
+		}
+		if (filters.startedAfter) {
+			const t = Date.parse(filters.startedAfter);
+			if (Number.isFinite(t)) {
+				clauses.push(`started_at >= $${i++}`);
+				args.push(t);
+			}
+		}
+		if (filters.startedBefore) {
+			const t = Date.parse(filters.startedBefore);
+			if (Number.isFinite(t)) {
+				clauses.push(`started_at <= $${i++}`);
+				args.push(t);
+			}
+		}
+		if (filters.cursor) {
+			const c = decodeRunCursor(filters.cursor);
+			if (c) {
+				clauses.push(
+					`(started_at < $${i} OR (started_at = $${i} AND id < $${i + 1}))`,
+				);
+				args.push(c.startedAt, c.id);
+				i += 2;
+			}
+		}
 
-    args.push(limit + 1);
-    const sql = `SELECT * FROM ${this.t("runs")}
+		args.push(limit + 1);
+		const sql = `SELECT * FROM ${this.t("runs")}
                  WHERE ${clauses.join(" AND ")}
                  ORDER BY started_at DESC, id DESC
                  LIMIT $${i}`;
-    const { rows: raw } = await this.pool.query<Record<string, unknown>>(sql, args);
-    const hasMore = raw.length > limit;
-    const page = hasMore ? raw.slice(0, limit) : raw;
-    const rows = page.map((r) => rowToRun(r as Parameters<typeof rowToRun>[0]));
+		const { rows: raw } = await this.pool.query<Record<string, unknown>>(
+			sql,
+			args,
+		);
+		const hasMore = raw.length > limit;
+		const page = hasMore ? raw.slice(0, limit) : raw;
+		const rows = page.map((r) => rowToRun(r as Parameters<typeof rowToRun>[0]));
 
-    return {
-      rows,
-      cursor: hasMore
-        ? encodeRunCursor({
-            startedAt: rows[rows.length - 1].startedAt,
-            id: rows[rows.length - 1].id,
-          })
-        : undefined,
-    };
-  }
+		return {
+			rows,
+			cursor: hasMore
+				? encodeRunCursor({
+						startedAt: rows[rows.length - 1].startedAt,
+						id: rows[rows.length - 1].id,
+					})
+				: undefined,
+		};
+	}
 
-  // ═══ TraceStore ═══
+	// ═══ TraceStore ═══
 
-  async insertSpan(span: Span): Promise<void> {
-    await this.ensureMigrated();
-    await this.pool.query(
-      `INSERT INTO ${this.t("spans")} (
+	async insertSpan(span: Span): Promise<void> {
+		await this.ensureMigrated();
+		await this.pool.query(
+			`INSERT INTO ${this.t("spans")} (
         span_id, trace_id, parent_id, owner_id, run_id, session_id,
         name, kind, started_at, ended_at, duration_ms, status, error,
         attributes, events, scores, cost_usd
@@ -1273,72 +1373,126 @@ export class PostgresStore implements UnifiedStore {
         events      = EXCLUDED.events,
         scores      = EXCLUDED.scores,
         cost_usd    = EXCLUDED.cost_usd`,
-      [
-        span.spanId, span.traceId, span.parentId ?? null, span.ownerId, span.runId ?? null, span.sessionId ?? null,
-        span.name, span.kind, span.startedAt, span.endedAt ?? null, span.durationMs ?? null, span.status, span.error ?? null,
-        JSON.stringify(span.attributes), JSON.stringify(span.events), JSON.stringify(span.scores),
-        span.costUsd ?? null,
-      ]
-    );
-  }
+			[
+				span.spanId,
+				span.traceId,
+				span.parentId ?? null,
+				span.ownerId,
+				span.runId ?? null,
+				span.sessionId ?? null,
+				span.name,
+				span.kind,
+				span.startedAt,
+				span.endedAt ?? null,
+				span.durationMs ?? null,
+				span.status,
+				span.error ?? null,
+				JSON.stringify(span.attributes),
+				JSON.stringify(span.events),
+				JSON.stringify(span.scores),
+				span.costUsd ?? null,
+			],
+		);
+	}
 
-  async insertSpansBatch(spans: Span[]): Promise<void> {
-    if (spans.length === 0) return;
-    await this.ensureMigrated();
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
-      for (const s of spans) {
-        await client.query(
-          `INSERT INTO ${this.t("spans")} (
+	async insertSpansBatch(spans: Span[]): Promise<void> {
+		if (spans.length === 0) return;
+		await this.ensureMigrated();
+		const client = await this.pool.connect();
+		try {
+			await client.query("BEGIN");
+			for (const s of spans) {
+				await client.query(
+					`INSERT INTO ${this.t("spans")} (
             span_id, trace_id, parent_id, owner_id, run_id, session_id,
             name, kind, started_at, ended_at, duration_ms, status, error,
             attributes, events, scores, cost_usd
           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
           ON CONFLICT (span_id) DO NOTHING`,
-          [
-            s.spanId, s.traceId, s.parentId ?? null, s.ownerId, s.runId ?? null, s.sessionId ?? null,
-            s.name, s.kind, s.startedAt, s.endedAt ?? null, s.durationMs ?? null, s.status, s.error ?? null,
-            JSON.stringify(s.attributes), JSON.stringify(s.events), JSON.stringify(s.scores),
-            s.costUsd ?? null,
-          ]
-        );
-      }
-      await client.query("COMMIT");
-    } catch (e) {
-      await client.query("ROLLBACK");
-      throw e;
-    } finally {
-      client.release();
-    }
-  }
+					[
+						s.spanId,
+						s.traceId,
+						s.parentId ?? null,
+						s.ownerId,
+						s.runId ?? null,
+						s.sessionId ?? null,
+						s.name,
+						s.kind,
+						s.startedAt,
+						s.endedAt ?? null,
+						s.durationMs ?? null,
+						s.status,
+						s.error ?? null,
+						JSON.stringify(s.attributes),
+						JSON.stringify(s.events),
+						JSON.stringify(s.scores),
+						s.costUsd ?? null,
+					],
+				);
+			}
+			await client.query("COMMIT");
+		} catch (e) {
+			await client.query("ROLLBACK");
+			throw e;
+		} finally {
+			client.release();
+		}
+	}
 
-  async updateSpan(spanId: string, ownerId: string, patch: Partial<Span>): Promise<void> {
-    await this.ensureMigrated();
-    const sets: string[] = [];
-    const args: unknown[] = [];
-    let i = 1;
-    if ("endedAt" in patch) { sets.push(`ended_at = $${i++}`); args.push(patch.endedAt ?? null); }
-    if ("durationMs" in patch) { sets.push(`duration_ms = $${i++}`); args.push(patch.durationMs ?? null); }
-    if ("status" in patch) { sets.push(`status = $${i++}`); args.push(patch.status); }
-    if ("error" in patch) { sets.push(`error = $${i++}`); args.push(patch.error ?? null); }
-    if ("attributes" in patch) { sets.push(`attributes = $${i++}`); args.push(JSON.stringify(patch.attributes)); }
-    if ("events" in patch) { sets.push(`events = $${i++}`); args.push(JSON.stringify(patch.events)); }
-    if ("scores" in patch) { sets.push(`scores = $${i++}`); args.push(JSON.stringify(patch.scores)); }
-    if ("costUsd" in patch) { sets.push(`cost_usd = $${i++}`); args.push(patch.costUsd ?? null); }
-    if (sets.length === 0) return;
-    args.push(spanId, ownerId);
-    await this.pool.query(
-      `UPDATE ${this.t("spans")} SET ${sets.join(", ")}
+	async updateSpan(
+		spanId: string,
+		ownerId: string,
+		patch: Partial<Span>,
+	): Promise<void> {
+		await this.ensureMigrated();
+		const sets: string[] = [];
+		const args: unknown[] = [];
+		let i = 1;
+		if ("endedAt" in patch) {
+			sets.push(`ended_at = $${i++}`);
+			args.push(patch.endedAt ?? null);
+		}
+		if ("durationMs" in patch) {
+			sets.push(`duration_ms = $${i++}`);
+			args.push(patch.durationMs ?? null);
+		}
+		if ("status" in patch) {
+			sets.push(`status = $${i++}`);
+			args.push(patch.status);
+		}
+		if ("error" in patch) {
+			sets.push(`error = $${i++}`);
+			args.push(patch.error ?? null);
+		}
+		if ("attributes" in patch) {
+			sets.push(`attributes = $${i++}`);
+			args.push(JSON.stringify(patch.attributes));
+		}
+		if ("events" in patch) {
+			sets.push(`events = $${i++}`);
+			args.push(JSON.stringify(patch.events));
+		}
+		if ("scores" in patch) {
+			sets.push(`scores = $${i++}`);
+			args.push(JSON.stringify(patch.scores));
+		}
+		if ("costUsd" in patch) {
+			sets.push(`cost_usd = $${i++}`);
+			args.push(patch.costUsd ?? null);
+		}
+		if (sets.length === 0) return;
+		args.push(spanId, ownerId);
+		await this.pool.query(
+			`UPDATE ${this.t("spans")} SET ${sets.join(", ")}
        WHERE span_id = $${i++} AND owner_id = $${i++}`,
-      args
-    );
-  }
+			args,
+		);
+	}
 
-  async upsertSummary(summary: TraceSummary): Promise<void> {
-    await this.ensureMigrated();
-    await this.pool.query(
-      `INSERT INTO ${this.t("trace_summaries")} (
+	async upsertSummary(summary: TraceSummary): Promise<void> {
+		await this.ensureMigrated();
+		await this.pool.query(
+			`INSERT INTO ${this.t("trace_summaries")} (
         trace_id, owner_id, root_name, agent_id, started_at, ended_at,
         duration_ms, span_count, status, total_tokens, total_cost_usd
       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
@@ -1353,174 +1507,203 @@ export class PostgresStore implements UnifiedStore {
         status         = EXCLUDED.status,
         total_tokens   = EXCLUDED.total_tokens,
         total_cost_usd = EXCLUDED.total_cost_usd`,
-      [
-        summary.traceId, summary.ownerId, summary.rootName, summary.agentId ?? null,
-        summary.startedAt, summary.endedAt ?? null, summary.durationMs ?? null, summary.spanCount,
-        summary.status, summary.totalTokens, summary.totalCostUsd ?? null,
-      ]
-    );
-  }
+			[
+				summary.traceId,
+				summary.ownerId,
+				summary.rootName,
+				summary.agentId ?? null,
+				summary.startedAt,
+				summary.endedAt ?? null,
+				summary.durationMs ?? null,
+				summary.spanCount,
+				summary.status,
+				summary.totalTokens,
+				summary.totalCostUsd ?? null,
+			],
+		);
+	}
 
-  async getTrace(traceId: string, ownerId: string): Promise<Span[]> {
-    await this.ensureMigrated();
-    const { rows } = await this.pool.query(
-      `SELECT * FROM ${this.t("spans")}
+	async getTrace(traceId: string, ownerId: string): Promise<Span[]> {
+		await this.ensureMigrated();
+		const { rows } = await this.pool.query(
+			`SELECT * FROM ${this.t("spans")}
        WHERE trace_id = $1 AND owner_id = $2
        ORDER BY started_at ASC, span_id ASC`,
-      [traceId, ownerId]
-    );
-    return rows.map(pgRowToSpan);
-  }
+			[traceId, ownerId],
+		);
+		return rows.map(pgRowToSpan);
+	}
 
-  async getSummary(traceId: string, ownerId: string): Promise<TraceSummary | null> {
-    await this.ensureMigrated();
-    const { rows } = await this.pool.query(
-      `SELECT * FROM ${this.t("trace_summaries")}
+	async getSummary(
+		traceId: string,
+		ownerId: string,
+	): Promise<TraceSummary | null> {
+		await this.ensureMigrated();
+		const { rows } = await this.pool.query(
+			`SELECT * FROM ${this.t("trace_summaries")}
        WHERE trace_id = $1 AND owner_id = $2`,
-      [traceId, ownerId]
-    );
-    return rows.length === 0 ? null : pgRowToSummary(rows[0]);
-  }
+			[traceId, ownerId],
+		);
+		return rows.length === 0 ? null : pgRowToSummary(rows[0]);
+	}
 
-  async listTraces(filter: TraceFilter): Promise<{ rows: TraceSummary[]; cursor?: string }> {
-    await this.ensureMigrated();
-    const limit = Math.min(Math.max(filter.limit ?? 50, 1), 200);
-    const clauses = [`owner_id = $1`];
-    const args: unknown[] = [filter.ownerId];
-    let i = 2;
-    if (filter.agentId) { clauses.push(`agent_id = $${i++}`); args.push(filter.agentId); }
-    if (filter.status) { clauses.push(`status = $${i++}`); args.push(filter.status); }
-    if (filter.startedAfter) { clauses.push(`started_at >= $${i++}`); args.push(filter.startedAfter); }
-    if (filter.startedBefore) { clauses.push(`started_at <= $${i++}`); args.push(filter.startedBefore); }
-    if (filter.cursor) {
-      try {
-        const decoded = JSON.parse(Buffer.from(filter.cursor, "base64url").toString("utf8")) as {
-          startedAt: string;
-          traceId: string;
-        };
-        clauses.push(
-          `(started_at < $${i} OR (started_at = $${i} AND trace_id < $${i + 1}))`
-        );
-        args.push(decoded.startedAt, decoded.traceId);
-        i += 2;
-      } catch {
-        // ignore bad cursor — silent restart from page 1
-      }
-    }
-    args.push(limit);
-    const { rows } = await this.pool.query(
-      `SELECT * FROM ${this.t("trace_summaries")}
+	async listTraces(
+		filter: TraceFilter,
+	): Promise<{ rows: TraceSummary[]; cursor?: string }> {
+		await this.ensureMigrated();
+		const limit = Math.min(Math.max(filter.limit ?? 50, 1), 200);
+		const clauses = ["owner_id = $1"];
+		const args: unknown[] = [filter.ownerId];
+		let i = 2;
+		if (filter.agentId) {
+			clauses.push(`agent_id = $${i++}`);
+			args.push(filter.agentId);
+		}
+		if (filter.status) {
+			clauses.push(`status = $${i++}`);
+			args.push(filter.status);
+		}
+		if (filter.startedAfter) {
+			clauses.push(`started_at >= $${i++}`);
+			args.push(filter.startedAfter);
+		}
+		if (filter.startedBefore) {
+			clauses.push(`started_at <= $${i++}`);
+			args.push(filter.startedBefore);
+		}
+		if (filter.cursor) {
+			try {
+				const decoded = JSON.parse(
+					Buffer.from(filter.cursor, "base64url").toString("utf8"),
+				) as {
+					startedAt: string;
+					traceId: string;
+				};
+				clauses.push(
+					`(started_at < $${i} OR (started_at = $${i} AND trace_id < $${i + 1}))`,
+				);
+				args.push(decoded.startedAt, decoded.traceId);
+				i += 2;
+			} catch {
+				// ignore bad cursor — silent restart from page 1
+			}
+		}
+		args.push(limit);
+		const { rows } = await this.pool.query(
+			`SELECT * FROM ${this.t("trace_summaries")}
        WHERE ${clauses.join(" AND ")}
        ORDER BY started_at DESC, trace_id DESC
        LIMIT $${i}`,
-      args
-    );
-    const summaries = rows.map(pgRowToSummary);
-    const cursor =
-      summaries.length === limit
-        ? Buffer.from(
-            JSON.stringify({
-              startedAt: summaries[summaries.length - 1].startedAt,
-              traceId: summaries[summaries.length - 1].traceId,
-            })
-          ).toString("base64url")
-        : undefined;
-    return { rows: summaries, cursor };
-  }
+			args,
+		);
+		const summaries = rows.map(pgRowToSummary);
+		const cursor =
+			summaries.length === limit
+				? Buffer.from(
+						JSON.stringify({
+							startedAt: summaries[summaries.length - 1].startedAt,
+							traceId: summaries[summaries.length - 1].traceId,
+						}),
+					).toString("base64url")
+				: undefined;
+		return { rows: summaries, cursor };
+	}
 
-  async deleteTrace(traceId: string, ownerId: string): Promise<void> {
-    await this.ensureMigrated();
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
-      await client.query(
-        `DELETE FROM ${this.t("spans")} WHERE trace_id = $1 AND owner_id = $2`,
-        [traceId, ownerId]
-      );
-      await client.query(
-        `DELETE FROM ${this.t("trace_summaries")} WHERE trace_id = $1 AND owner_id = $2`,
-        [traceId, ownerId]
-      );
-      await client.query("COMMIT");
-    } catch (e) {
-      await client.query("ROLLBACK");
-      throw e;
-    } finally {
-      client.release();
-    }
-  }
+	async deleteTrace(traceId: string, ownerId: string): Promise<void> {
+		await this.ensureMigrated();
+		const client = await this.pool.connect();
+		try {
+			await client.query("BEGIN");
+			await client.query(
+				`DELETE FROM ${this.t("spans")} WHERE trace_id = $1 AND owner_id = $2`,
+				[traceId, ownerId],
+			);
+			await client.query(
+				`DELETE FROM ${this.t("trace_summaries")} WHERE trace_id = $1 AND owner_id = $2`,
+				[traceId, ownerId],
+			);
+			await client.query("COMMIT");
+		} catch (e) {
+			await client.query("ROLLBACK");
+			throw e;
+		} finally {
+			client.release();
+		}
+	}
 
-  async deleteOlderThan(ownerId: string, before: Date): Promise<number> {
-    await this.ensureMigrated();
-    const beforeIso = before.toISOString();
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
-      const { rows: tids } = await client.query(
-        `SELECT trace_id FROM ${this.t("trace_summaries")}
+	async deleteOlderThan(ownerId: string, before: Date): Promise<number> {
+		await this.ensureMigrated();
+		const beforeIso = before.toISOString();
+		const client = await this.pool.connect();
+		try {
+			await client.query("BEGIN");
+			const { rows: tids } = await client.query(
+				`SELECT trace_id FROM ${this.t("trace_summaries")}
          WHERE owner_id = $1 AND started_at < $2`,
-        [ownerId, beforeIso]
-      );
-      const traceIds: string[] = tids.map((r: { trace_id: string }) => r.trace_id);
-      if (traceIds.length > 0) {
-        await client.query(
-          `DELETE FROM ${this.t("spans")}
+				[ownerId, beforeIso],
+			);
+			const traceIds: string[] = tids.map(
+				(r: { trace_id: string }) => r.trace_id,
+			);
+			if (traceIds.length > 0) {
+				await client.query(
+					`DELETE FROM ${this.t("spans")}
            WHERE owner_id = $1 AND trace_id = ANY($2::text[])`,
-          [ownerId, traceIds]
-        );
-        await client.query(
-          `DELETE FROM ${this.t("trace_summaries")}
+					[ownerId, traceIds],
+				);
+				await client.query(
+					`DELETE FROM ${this.t("trace_summaries")}
            WHERE owner_id = $1 AND trace_id = ANY($2::text[])`,
-          [ownerId, traceIds]
-        );
-      }
-      await client.query("COMMIT");
-      return traceIds.length;
-    } catch (e) {
-      await client.query("ROLLBACK");
-      throw e;
-    } finally {
-      client.release();
-    }
-  }
+					[ownerId, traceIds],
+				);
+			}
+			await client.query("COMMIT");
+			return traceIds.length;
+		} catch (e) {
+			await client.query("ROLLBACK");
+			throw e;
+		} finally {
+			client.release();
+		}
+	}
 
-  // ═══ SkillStore ═══
+	// ═══ SkillStore ═══
 
-  async getSkill(name: string): Promise<SkillDefinition | null> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const { rows } = await this.pool.query(
-      `SELECT name, description, instructions, tools, metadata, created_at, updated_at
+	async getSkill(name: string): Promise<SkillDefinition | null> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT name, description, instructions, tools, metadata, created_at, updated_at
        FROM ${this.t("skills")}
        WHERE user_id = $1 AND name = $2`,
-      [u, name]
-    );
-    return rows.length === 0 ? null : pgRowToSkill(rows[0]);
-  }
+			[u, name],
+		);
+		return rows.length === 0 ? null : pgRowToSkill(rows[0]);
+	}
 
-  async listSkills(): Promise<Array<{ name: string; description: string }>> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const { rows } = await this.pool.query(
-      `SELECT name, description FROM ${this.t("skills")}
+	async listSkills(): Promise<Array<{ name: string; description: string }>> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT name, description FROM ${this.t("skills")}
        WHERE user_id = $1 ORDER BY name`,
-      [u]
-    );
-    return rows.map((r: { name: string; description: string }) => ({
-      name: r.name,
-      description: r.description,
-    }));
-  }
+			[u],
+		);
+		return rows.map((r: { name: string; description: string }) => ({
+			name: r.name,
+			description: r.description,
+		}));
+	}
 
-  async putSkill(skill: SkillDefinition): Promise<void> {
-    // Structural validation before persisting; throws on malformed input.
-    const validated = defineSkill(skill);
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const now = this.nextTimestamp();
-    const createdAt = validated.createdAt ?? now;
-    await this.pool.query(
-      `INSERT INTO ${this.t("skills")}
+	async putSkill(skill: SkillDefinition): Promise<void> {
+		// Structural validation before persisting; throws on malformed input.
+		const validated = defineSkill(skill);
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const now = this.nextTimestamp();
+		const createdAt = validated.createdAt ?? now;
+		await this.pool.query(
+			`INSERT INTO ${this.t("skills")}
          (user_id, name, description, instructions, tools, metadata, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (user_id, name) DO UPDATE SET
@@ -1529,89 +1712,89 @@ export class PostgresStore implements UnifiedStore {
          tools = EXCLUDED.tools,
          metadata = EXCLUDED.metadata,
          updated_at = EXCLUDED.updated_at`,
-      [
-        u,
-        validated.name,
-        validated.description,
-        validated.instructions,
-        validated.tools ? JSON.stringify(validated.tools) : null,
-        validated.metadata ? JSON.stringify(validated.metadata) : null,
-        createdAt,
-        now,
-      ]
-    );
-  }
+			[
+				u,
+				validated.name,
+				validated.description,
+				validated.instructions,
+				validated.tools ? JSON.stringify(validated.tools) : null,
+				validated.metadata ? JSON.stringify(validated.metadata) : null,
+				createdAt,
+				now,
+			],
+		);
+	}
 
-  async deleteSkill(name: string): Promise<void> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    await this.pool.query(
-      `DELETE FROM ${this.t("skills")} WHERE user_id = $1 AND name = $2`,
-      [u, name]
-    );
-  }
+	async deleteSkill(name: string): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		await this.pool.query(
+			`DELETE FROM ${this.t("skills")} WHERE user_id = $1 AND name = $2`,
+			[u, name],
+		);
+	}
 
-  // ═══ SecretStore ═══
+	// ═══ SecretStore ═══
 
-  async listSecrets(): Promise<SecretMetadata[]> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const { rows } = await this.pool.query(
-      `SELECT name, last_four, description, created_at, updated_at
+	async listSecrets(): Promise<SecretMetadata[]> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT name, last_four, description, created_at, updated_at
        FROM ${this.t("secrets")}
        WHERE user_id = $1 ORDER BY name ASC`,
-      [u]
-    );
-    return rows.map(
-      (r: {
-        name: string;
-        last_four: string;
-        description: string | null;
-        created_at: Date | string;
-        updated_at: Date | string;
-      }) => pgRowToSecretMetadata(r)
-    );
-  }
+			[u],
+		);
+		return rows.map(
+			(r: {
+				name: string;
+				last_four: string;
+				description: string | null;
+				created_at: Date | string;
+				updated_at: Date | string;
+			}) => pgRowToSecretMetadata(r),
+		);
+	}
 
-  async getSecretMetadata(name: string): Promise<SecretMetadata | null> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const { rows } = await this.pool.query(
-      `SELECT name, last_four, description, created_at, updated_at
+	async getSecretMetadata(name: string): Promise<SecretMetadata | null> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT name, last_four, description, created_at, updated_at
        FROM ${this.t("secrets")}
        WHERE user_id = $1 AND name = $2`,
-      [u, name]
-    );
-    return rows.length === 0 ? null : pgRowToSecretMetadata(rows[0]);
-  }
+			[u, name],
+		);
+		return rows.length === 0 ? null : pgRowToSecretMetadata(rows[0]);
+	}
 
-  async getSecretValue(name: string): Promise<string | null> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const { rows } = await this.pool.query(
-      `SELECT value FROM ${this.t("secrets")}
+	async getSecretValue(name: string): Promise<string | null> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT value FROM ${this.t("secrets")}
        WHERE user_id = $1 AND name = $2`,
-      [u, name]
-    );
-    if (rows.length === 0) return null;
-    return decryptSecret(rows[0].value as string);
-  }
+			[u, name],
+		);
+		if (rows.length === 0) return null;
+		return decryptSecret(rows[0].value as string);
+	}
 
-  async putSecret(secret: SecretDefinition): Promise<void> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    if (!secret.name) {
-      throw new Error("putSecret: name is required");
-    }
-    if (secret.value === undefined || secret.value === null) {
-      throw new Error("putSecret: value is required");
-    }
-    const encrypted = encryptSecret(secret.value);
-    const lastFour = getLastFour(secret.value);
-    const now = this.nextTimestamp();
-    const createdAt = secret.createdAt ?? now;
-    await this.pool.query(
-      `INSERT INTO ${this.t("secrets")}
+	async putSecret(secret: SecretDefinition): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		if (!secret.name) {
+			throw new Error("putSecret: name is required");
+		}
+		if (secret.value === undefined || secret.value === null) {
+			throw new Error("putSecret: value is required");
+		}
+		const encrypted = encryptSecret(secret.value);
+		const lastFour = getLastFour(secret.value);
+		const now = this.nextTimestamp();
+		const createdAt = secret.createdAt ?? now;
+		await this.pool.query(
+			`INSERT INTO ${this.t("secrets")}
          (user_id, name, value, last_four, description, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (user_id, name) DO UPDATE SET
@@ -1619,198 +1802,205 @@ export class PostgresStore implements UnifiedStore {
          last_four = EXCLUDED.last_four,
          description = EXCLUDED.description,
          updated_at = EXCLUDED.updated_at`,
-      [
-        u,
-        secret.name,
-        encrypted,
-        lastFour,
-        secret.description ?? null,
-        createdAt,
-        now,
-      ]
-    );
-  }
+			[
+				u,
+				secret.name,
+				encrypted,
+				lastFour,
+				secret.description ?? null,
+				createdAt,
+				now,
+			],
+		);
+	}
 
-  async updateSecretDescription(
-    name: string,
-    description: string | undefined,
-  ): Promise<boolean> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const now = this.nextTimestamp();
-    const result = await this.pool.query(
-      `UPDATE ${this.t("secrets")}
+	async updateSecretDescription(
+		name: string,
+		description: string | undefined,
+	): Promise<boolean> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const now = this.nextTimestamp();
+		const result = await this.pool.query(
+			`UPDATE ${this.t("secrets")}
        SET description = $1, updated_at = $2
        WHERE user_id = $3 AND name = $4`,
-      [description ?? null, now, u, name],
-    );
-    return (result.rowCount ?? 0) > 0;
-  }
+			[description ?? null, now, u, name],
+		);
+		return (result.rowCount ?? 0) > 0;
+	}
 
-  async deleteSecret(name: string): Promise<void> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    await this.pool.query(
-      `DELETE FROM ${this.t("secrets")} WHERE user_id = $1 AND name = $2`,
-      [u, name]
-    );
-  }
+	async deleteSecret(name: string): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		await this.pool.query(
+			`DELETE FROM ${this.t("secrets")} WHERE user_id = $1 AND name = $2`,
+			[u, name],
+		);
+	}
 
-  // ═══ ApiKeyStore (unscoped admin) ═══
+	// ═══ ApiKeyStore (unscoped admin) ═══
 
-  async createApiKey(params: { userId: string; name: string }): Promise<{ record: ApiKeyRecord; rawKey: string }> {
-    await this.ensureMigrated();
-    const rawKey = `ar_live_${randomBytes(24).toString("base64url")}`;
-    const keyPrefix = rawKey.slice(0, 14);
-    const keyHash = createHash("sha256").update(rawKey).digest("hex");
-    const id = randomUUID();
-    const { rows } = await this.pool.query(
-      `INSERT INTO ${this.t("api_keys")} (id, user_id, name, key_prefix, key_hash)
+	async createApiKey(params: { userId: string; name: string }): Promise<{
+		record: ApiKeyRecord;
+		rawKey: string;
+	}> {
+		await this.ensureMigrated();
+		const rawKey = `ar_live_${randomBytes(24).toString("base64url")}`;
+		const keyPrefix = rawKey.slice(0, 14);
+		const keyHash = createHash("sha256").update(rawKey).digest("hex");
+		const id = randomUUID();
+		const { rows } = await this.pool.query(
+			`INSERT INTO ${this.t("api_keys")} (id, user_id, name, key_prefix, key_hash)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING id, user_id, name, key_prefix, created_at, last_used_at, revoked_at`,
-      [id, params.userId, params.name, keyPrefix, keyHash]
-    );
-    return { record: rowToApiKey(rows[0]), rawKey };
-  }
+			[id, params.userId, params.name, keyPrefix, keyHash],
+		);
+		return { record: rowToApiKey(rows[0]), rawKey };
+	}
 
-  async listApiKeys(userId: string): Promise<ApiKeyRecord[]> {
-    await this.ensureMigrated();
-    const { rows } = await this.pool.query(
-      `SELECT id, user_id, name, key_prefix, created_at, last_used_at, revoked_at
+	async listApiKeys(userId: string): Promise<ApiKeyRecord[]> {
+		await this.ensureMigrated();
+		const { rows } = await this.pool.query(
+			`SELECT id, user_id, name, key_prefix, created_at, last_used_at, revoked_at
        FROM ${this.t("api_keys")}
        WHERE user_id = $1
        ORDER BY created_at DESC`,
-      [userId]
-    );
-    return rows.map(rowToApiKey);
-  }
+			[userId],
+		);
+		return rows.map(rowToApiKey);
+	}
 
-  async revokeApiKey(params: { userId: string; keyId: string }): Promise<void> {
-    await this.ensureMigrated();
-    await this.pool.query(
-      `UPDATE ${this.t("api_keys")} SET revoked_at = NOW()
+	async revokeApiKey(params: { userId: string; keyId: string }): Promise<void> {
+		await this.ensureMigrated();
+		await this.pool.query(
+			`UPDATE ${this.t("api_keys")} SET revoked_at = NOW()
        WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL`,
-      [params.keyId, params.userId]
-    );
-  }
+			[params.keyId, params.userId],
+		);
+	}
 
-  async resolveApiKey(rawKey: string): Promise<{ userId: string; keyId: string } | null> {
-    await this.ensureMigrated();
-    const keyHash = createHash("sha256").update(rawKey).digest("hex");
-    const { rows } = await this.pool.query(
-      `UPDATE ${this.t("api_keys")} SET last_used_at = NOW()
+	async resolveApiKey(
+		rawKey: string,
+	): Promise<{ userId: string; keyId: string } | null> {
+		await this.ensureMigrated();
+		const keyHash = createHash("sha256").update(rawKey).digest("hex");
+		const { rows } = await this.pool.query(
+			`UPDATE ${this.t("api_keys")} SET last_used_at = NOW()
        WHERE key_hash = $1 AND revoked_at IS NULL
        RETURNING id, user_id`,
-      [keyHash]
-    );
-    if (rows.length === 0) return null;
-    return { userId: rows[0].user_id, keyId: rows[0].id };
-  }
+			[keyHash],
+		);
+		if (rows.length === 0) return null;
+		return { userId: rows[0].user_id, keyId: rows[0].id };
+	}
 
-  // ═══ WebhookDeliveryStore ═══
+	// ═══ WebhookDeliveryStore ═══
 
-  async insert(
-    delivery: Omit<WebhookDelivery, "attempts" | "status" | "createdAt"> & {
-      payload: Record<string, unknown>;
-    },
-  ): Promise<string> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const now = new Date().toISOString();
-    await this.pool.query(
-      `INSERT INTO ${this.t("webhook_deliveries")} (
+	async insert(
+		delivery: Omit<WebhookDelivery, "attempts" | "status" | "createdAt"> & {
+			payload: Record<string, unknown>;
+		},
+	): Promise<string> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const now = new Date().toISOString();
+		await this.pool.query(
+			`INSERT INTO ${this.t("webhook_deliveries")} (
           id, user_id, run_id, callback_url, secret_name, payload,
           attempts, status, created_at
         ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, 0, 'pending', $7)`,
-      [
-        delivery.id,
-        u,
-        delivery.runId,
-        delivery.callbackUrl,
-        delivery.secretName,
-        JSON.stringify(delivery.payload),
-        now,
-      ],
-    );
-    return delivery.id;
-  }
+			[
+				delivery.id,
+				u,
+				delivery.runId,
+				delivery.callbackUrl,
+				delivery.secretName,
+				JSON.stringify(delivery.payload),
+				now,
+			],
+		);
+		return delivery.id;
+	}
 
-  async updateStatus(
-    id: string,
-    status: WebhookDelivery["status"],
-    lastError?: string,
-  ): Promise<void> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    if (lastError !== undefined) {
-      await this.pool.query(
-        `UPDATE ${this.t("webhook_deliveries")} SET status = $1, last_error = $2
+	async updateStatus(
+		id: string,
+		status: WebhookDelivery["status"],
+		lastError?: string,
+	): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		if (lastError !== undefined) {
+			await this.pool.query(
+				`UPDATE ${this.t("webhook_deliveries")} SET status = $1, last_error = $2
          WHERE user_id = $3 AND id = $4`,
-        [status, lastError, u, id],
-      );
-    } else {
-      await this.pool.query(
-        `UPDATE ${this.t("webhook_deliveries")} SET status = $1
+				[status, lastError, u, id],
+			);
+		} else {
+			await this.pool.query(
+				`UPDATE ${this.t("webhook_deliveries")} SET status = $1
          WHERE user_id = $2 AND id = $3`,
-        [status, u, id],
-      );
-    }
-  }
+				[status, u, id],
+			);
+		}
+	}
 
-  async incrementAttempt(id: string, lastError?: string): Promise<void> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const now = new Date().toISOString();
-    if (lastError !== undefined) {
-      await this.pool.query(
-        `UPDATE ${this.t("webhook_deliveries")}
+	async incrementAttempt(id: string, lastError?: string): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const now = new Date().toISOString();
+		if (lastError !== undefined) {
+			await this.pool.query(
+				`UPDATE ${this.t("webhook_deliveries")}
          SET attempts = attempts + 1, last_attempt_at = $1, last_error = $2
          WHERE user_id = $3 AND id = $4`,
-        [now, lastError, u, id],
-      );
-    } else {
-      await this.pool.query(
-        `UPDATE ${this.t("webhook_deliveries")}
+				[now, lastError, u, id],
+			);
+		} else {
+			await this.pool.query(
+				`UPDATE ${this.t("webhook_deliveries")}
          SET attempts = attempts + 1, last_attempt_at = $1
          WHERE user_id = $2 AND id = $3`,
-        [now, u, id],
-      );
-    }
-  }
+				[now, u, id],
+			);
+		}
+	}
 
-  async listPending(filter?: { olderThan?: string; limit?: number }): Promise<WebhookDelivery[]> {
-    await this.ensureMigrated();
-    const u = this.requireUser();
-    const clauses = [`user_id = $1`, `status = 'pending'`];
-    const args: unknown[] = [u];
-    if (filter?.olderThan) {
-      args.push(filter.olderThan);
-      clauses.push(`created_at < $${args.length}`);
-    }
-    args.push(filter?.limit ?? 1000);
-    const result = await this.pool.query(
-      `SELECT id, user_id, run_id, callback_url, secret_name, payload,
+	async listPending(filter?: { olderThan?: string; limit?: number }): Promise<
+		WebhookDelivery[]
+	> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const clauses = ["user_id = $1", `status = 'pending'`];
+		const args: unknown[] = [u];
+		if (filter?.olderThan) {
+			args.push(filter.olderThan);
+			clauses.push(`created_at < $${args.length}`);
+		}
+		args.push(filter?.limit ?? 1000);
+		const result = await this.pool.query(
+			`SELECT id, user_id, run_id, callback_url, secret_name, payload,
               attempts, last_attempt_at, status, last_error, created_at
        FROM ${this.t("webhook_deliveries")}
        WHERE ${clauses.join(" AND ")}
        ORDER BY created_at ASC
        LIMIT $${args.length}`,
-      args,
-    );
-    return result.rows.map(pgRowToWebhookDelivery);
-  }
+			args,
+		);
+		return result.rows.map(pgRowToWebhookDelivery);
+	}
 
-  // ═══ Lifecycle ═══
+	// ═══ Lifecycle ═══
 
-  async close(): Promise<void> {
-    if (this.ownsPool) {
-      await this.pool.end();
-    }
-  }
+	async close(): Promise<void> {
+		if (this.ownsPool) {
+			await this.pool.end();
+		}
+	}
 
-  get pgPool(): PoolType {
-    return this.pool;
-  }
+	get pgPool(): PoolType {
+		return this.pool;
+	}
 }
 
 /**
@@ -1820,328 +2010,348 @@ export class PostgresStore implements UnifiedStore {
  * NULL to content_blocks.
  */
 function serializeContent(content: string | ContentBlock[]): {
-  contentText: string;
-  contentBlocksJson: string | null;
+	contentText: string;
+	contentBlocksJson: string | null;
 } {
-  if (typeof content === "string") {
-    return { contentText: content, contentBlocksJson: null };
-  }
-  const pieces: string[] = [];
-  for (const b of content) {
-    if (b.type === "text") pieces.push(b.text);
-    else pieces.push("[image]");
-  }
-  return {
-    contentText: pieces.join(" "),
-    contentBlocksJson: JSON.stringify(content),
-  };
+	if (typeof content === "string") {
+		return { contentText: content, contentBlocksJson: null };
+	}
+	const pieces: string[] = [];
+	for (const b of content) {
+		if (b.type === "text") pieces.push(b.text);
+		else pieces.push("[image]");
+	}
+	return {
+		contentText: pieces.join(" "),
+		contentBlocksJson: JSON.stringify(content),
+	};
 }
 
 function safeJsonParse(s: string): unknown {
-  try {
-    return JSON.parse(s);
-  } catch {
-    return null;
-  }
+	try {
+		return JSON.parse(s);
+	} catch {
+		return null;
+	}
 }
 
 function rowToInvocationLog(r: {
-  id: string;
-  agent_id: string;
-  session_id: string | null;
-  input: string;
-  output: string;
-  tool_calls: unknown;
-  prompt_tokens: number;
-  completion_tokens: number;
-  total_tokens: number;
-  duration: number;
-  model: string;
-  error: string | null;
-  timestamp: Date;
-  status?: string | null;
+	id: string;
+	agent_id: string;
+	session_id: string | null;
+	input: string;
+	output: string;
+	tool_calls: unknown;
+	prompt_tokens: number;
+	completion_tokens: number;
+	total_tokens: number;
+	duration: number;
+	model: string;
+	error: string | null;
+	timestamp: Date;
+	status?: string | null;
 }): InvocationLog {
-  let input: string | ContentBlock[] = r.input;
-  if (typeof r.input === "string" && r.input.startsWith(INVOCATION_LOG_BLOCKS_PREFIX)) {
-    const parsed = safeJsonParse(r.input.slice(INVOCATION_LOG_BLOCKS_PREFIX.length));
-    if (Array.isArray(parsed)) input = parsed as ContentBlock[];
-  }
-  const log: InvocationLog = {
-    id: r.id,
-    agentId: r.agent_id,
-    sessionId: r.session_id ?? undefined,
-    input,
-    output: r.output,
-    toolCalls: (typeof r.tool_calls === "string" ? JSON.parse(r.tool_calls) : r.tool_calls) as InvocationLog["toolCalls"],
-    usage: {
-      promptTokens: r.prompt_tokens,
-      completionTokens: r.completion_tokens,
-      totalTokens: r.total_tokens,
-    },
-    duration: r.duration,
-    model: r.model,
-    error: r.error ?? undefined,
-    timestamp: r.timestamp instanceof Date ? r.timestamp.toISOString() : String(r.timestamp),
-  };
-  if (r.status) log.status = r.status as InvocationLog["status"];
-  return log;
+	let input: string | ContentBlock[] = r.input;
+	if (
+		typeof r.input === "string" &&
+		r.input.startsWith(INVOCATION_LOG_BLOCKS_PREFIX)
+	) {
+		const parsed = safeJsonParse(
+			r.input.slice(INVOCATION_LOG_BLOCKS_PREFIX.length),
+		);
+		if (Array.isArray(parsed)) input = parsed as ContentBlock[];
+	}
+	const log: InvocationLog = {
+		id: r.id,
+		agentId: r.agent_id,
+		sessionId: r.session_id ?? undefined,
+		input,
+		output: r.output,
+		toolCalls: (typeof r.tool_calls === "string"
+			? JSON.parse(r.tool_calls)
+			: r.tool_calls) as InvocationLog["toolCalls"],
+		usage: {
+			promptTokens: r.prompt_tokens,
+			completionTokens: r.completion_tokens,
+			totalTokens: r.total_tokens,
+		},
+		duration: r.duration,
+		model: r.model,
+		error: r.error ?? undefined,
+		timestamp:
+			r.timestamp instanceof Date
+				? r.timestamp.toISOString()
+				: String(r.timestamp),
+	};
+	if (r.status) log.status = r.status as InvocationLog["status"];
+	return log;
 }
 
 function rowToConnection(r: {
-  id: string;
-  kind: string;
-  display_name: string;
-  description: string | null;
-  config: ConnectionConfig | string;
-  created_at: Date | string;
-  updated_at: Date | string;
+	id: string;
+	kind: string;
+	display_name: string;
+	description: string | null;
+	config: ConnectionConfig | string;
+	created_at: Date | string;
+	updated_at: Date | string;
 }): Connection {
-  const toIso = (v: Date | string) =>
-    v instanceof Date ? v.toISOString() : String(v);
-  // pg returns JSONB as already-parsed objects, but accept strings defensively.
-  const cfg = typeof r.config === "string" ? JSON.parse(r.config) : r.config;
-  return {
-    id: r.id,
-    kind: r.kind as ConnectionKind,
-    displayName: r.display_name,
-    description: r.description ?? undefined,
-    config: cfg,
-    createdAt: toIso(r.created_at),
-    updatedAt: toIso(r.updated_at),
-  };
+	const toIso = (v: Date | string) =>
+		v instanceof Date ? v.toISOString() : String(v);
+	// pg returns JSONB as already-parsed objects, but accept strings defensively.
+	const cfg = typeof r.config === "string" ? JSON.parse(r.config) : r.config;
+	return {
+		id: r.id,
+		kind: r.kind as ConnectionKind,
+		displayName: r.display_name,
+		description: r.description ?? undefined,
+		config: cfg,
+		createdAt: toIso(r.created_at),
+		updatedAt: toIso(r.updated_at),
+	};
 }
 
 function rowToRun(r: {
-  id: string;
-  user_id: string;
-  root_id: string;
-  parent_id: string | null;
-  agent_id: string;
-  session_id: string | null;
-  spawn_tool_use_id: string | null;
-  status: string;
-  input: string;
-  output: string | null;
-  result_json: InvokeResult | string | null;
-  error: string | null;
-  started_at: string | number;
-  ended_at: string | number | null;
-  depth: number;
+	id: string;
+	user_id: string;
+	root_id: string;
+	parent_id: string | null;
+	agent_id: string;
+	session_id: string | null;
+	spawn_tool_use_id: string | null;
+	status: string;
+	input: string;
+	output: string | null;
+	result_json: InvokeResult | string | null;
+	error: string | null;
+	started_at: string | number;
+	ended_at: string | number | null;
+	depth: number;
 }): Run {
-  const run: Run = {
-    id: r.id,
-    rootId: r.root_id,
-    agentId: r.agent_id,
-    status: r.status as RunStatus,
-    input: r.input,
-    // pg returns BIGINT as a string by default; normalize to number.
-    startedAt: typeof r.started_at === "string" ? Number(r.started_at) : r.started_at,
-    depth: r.depth,
-  };
-  if (r.user_id) run.userId = r.user_id;
-  if (r.parent_id !== null) run.parentId = r.parent_id;
-  if (r.session_id !== null) run.sessionId = r.session_id;
-  if (r.spawn_tool_use_id !== null) run.spawnToolUseId = r.spawn_tool_use_id;
-  if (r.error !== null) run.error = r.error;
-  if (r.ended_at !== null) {
-    run.endedAt = typeof r.ended_at === "string" ? Number(r.ended_at) : r.ended_at;
-  }
-  if (r.result_json !== null) {
-    // pg returns JSONB as a parsed object; accept strings defensively.
-    run.result = (typeof r.result_json === "string"
-      ? JSON.parse(r.result_json)
-      : r.result_json) as InvokeResult;
-  }
-  return run;
+	const run: Run = {
+		id: r.id,
+		rootId: r.root_id,
+		agentId: r.agent_id,
+		status: r.status as RunStatus,
+		input: r.input,
+		// pg returns BIGINT as a string by default; normalize to number.
+		startedAt:
+			typeof r.started_at === "string" ? Number(r.started_at) : r.started_at,
+		depth: r.depth,
+	};
+	if (r.user_id) run.userId = r.user_id;
+	if (r.parent_id !== null) run.parentId = r.parent_id;
+	if (r.session_id !== null) run.sessionId = r.session_id;
+	if (r.spawn_tool_use_id !== null) run.spawnToolUseId = r.spawn_tool_use_id;
+	if (r.error !== null) run.error = r.error;
+	if (r.ended_at !== null) {
+		run.endedAt =
+			typeof r.ended_at === "string" ? Number(r.ended_at) : r.ended_at;
+	}
+	if (r.result_json !== null) {
+		// pg returns JSONB as a parsed object; accept strings defensively.
+		run.result = (
+			typeof r.result_json === "string"
+				? JSON.parse(r.result_json)
+				: r.result_json
+		) as InvokeResult;
+	}
+	return run;
 }
 
 function pgRowToSpan(r: Record<string, unknown>): Span {
-  return {
-    spanId: r.span_id as string,
-    traceId: r.trace_id as string,
-    parentId: (r.parent_id as string | null) ?? null,
-    ownerId: r.owner_id as string,
-    runId: (r.run_id as string | null) ?? null,
-    sessionId: (r.session_id as string | null) ?? null,
-    name: r.name as string,
-    kind: r.kind as Span["kind"],
-    startedAt:
-      r.started_at instanceof Date
-        ? (r.started_at as Date).toISOString()
-        : (r.started_at as string),
-    endedAt:
-      r.ended_at == null
-        ? null
-        : r.ended_at instanceof Date
-          ? (r.ended_at as Date).toISOString()
-          : (r.ended_at as string),
-    durationMs: (r.duration_ms as number | null) ?? null,
-    status: r.status as Span["status"],
-    error: (r.error as string | null) ?? null,
-    attributes: (r.attributes as Record<string, unknown>) ?? {},
-    events: (r.events as Span["events"]) ?? [],
-    scores: (r.scores as Span["scores"]) ?? {},
-    costUsd: r.cost_usd == null ? null : Number(r.cost_usd),
-  };
+	return {
+		spanId: r.span_id as string,
+		traceId: r.trace_id as string,
+		parentId: (r.parent_id as string | null) ?? null,
+		ownerId: r.owner_id as string,
+		runId: (r.run_id as string | null) ?? null,
+		sessionId: (r.session_id as string | null) ?? null,
+		name: r.name as string,
+		kind: r.kind as Span["kind"],
+		startedAt:
+			r.started_at instanceof Date
+				? (r.started_at as Date).toISOString()
+				: (r.started_at as string),
+		endedAt:
+			r.ended_at == null
+				? null
+				: r.ended_at instanceof Date
+					? (r.ended_at as Date).toISOString()
+					: (r.ended_at as string),
+		durationMs: (r.duration_ms as number | null) ?? null,
+		status: r.status as Span["status"],
+		error: (r.error as string | null) ?? null,
+		attributes: (r.attributes as Record<string, unknown>) ?? {},
+		events: (r.events as Span["events"]) ?? [],
+		scores: (r.scores as Span["scores"]) ?? {},
+		costUsd: r.cost_usd == null ? null : Number(r.cost_usd),
+	};
 }
 
 function pgRowToSkill(r: {
-  name: string;
-  description: string;
-  instructions: string;
-  tools: unknown;
-  metadata: unknown;
-  created_at: Date | string;
-  updated_at: Date | string;
+	name: string;
+	description: string;
+	instructions: string;
+	tools: unknown;
+	metadata: unknown;
+	created_at: Date | string;
+	updated_at: Date | string;
 }): SkillDefinition {
-  const toIso = (v: Date | string) =>
-    v instanceof Date ? v.toISOString() : String(v);
-  const skill: SkillDefinition = {
-    name: r.name,
-    description: r.description,
-    instructions: r.instructions,
-    createdAt: toIso(r.created_at),
-    updatedAt: toIso(r.updated_at),
-  };
-  // pg returns JSONB pre-parsed; accept strings defensively.
-  if (r.tools != null) {
-    skill.tools = (typeof r.tools === "string"
-      ? JSON.parse(r.tools)
-      : r.tools) as SkillDefinition["tools"];
-  }
-  if (r.metadata != null) {
-    skill.metadata = (typeof r.metadata === "string"
-      ? JSON.parse(r.metadata)
-      : r.metadata) as Record<string, unknown>;
-  }
-  return skill;
+	const toIso = (v: Date | string) =>
+		v instanceof Date ? v.toISOString() : String(v);
+	const skill: SkillDefinition = {
+		name: r.name,
+		description: r.description,
+		instructions: r.instructions,
+		createdAt: toIso(r.created_at),
+		updatedAt: toIso(r.updated_at),
+	};
+	// pg returns JSONB pre-parsed; accept strings defensively.
+	if (r.tools != null) {
+		skill.tools = (
+			typeof r.tools === "string" ? JSON.parse(r.tools) : r.tools
+		) as SkillDefinition["tools"];
+	}
+	if (r.metadata != null) {
+		skill.metadata = (
+			typeof r.metadata === "string" ? JSON.parse(r.metadata) : r.metadata
+		) as Record<string, unknown>;
+	}
+	return skill;
 }
 
 function pgRowToSecretMetadata(r: {
-  name: string;
-  last_four: string;
-  description: string | null;
-  created_at: Date | string;
-  updated_at: Date | string;
+	name: string;
+	last_four: string;
+	description: string | null;
+	created_at: Date | string;
+	updated_at: Date | string;
 }): SecretMetadata {
-  const toIso = (v: Date | string) =>
-    v instanceof Date ? v.toISOString() : String(v);
-  return {
-    name: r.name,
-    lastFour: r.last_four,
-    description: r.description ?? undefined,
-    createdAt: toIso(r.created_at),
-    updatedAt: toIso(r.updated_at),
-  };
+	const toIso = (v: Date | string) =>
+		v instanceof Date ? v.toISOString() : String(v);
+	return {
+		name: r.name,
+		lastFour: r.last_four,
+		description: r.description ?? undefined,
+		createdAt: toIso(r.created_at),
+		updatedAt: toIso(r.updated_at),
+	};
 }
 
 function pgRowToSummary(r: Record<string, unknown>): TraceSummary {
-  return {
-    traceId: r.trace_id as string,
-    ownerId: r.owner_id as string,
-    rootName: r.root_name as string,
-    agentId: (r.agent_id as string | null) ?? null,
-    startedAt:
-      r.started_at instanceof Date
-        ? (r.started_at as Date).toISOString()
-        : (r.started_at as string),
-    endedAt:
-      r.ended_at == null
-        ? null
-        : r.ended_at instanceof Date
-          ? (r.ended_at as Date).toISOString()
-          : (r.ended_at as string),
-    durationMs: (r.duration_ms as number | null) ?? null,
-    spanCount: r.span_count as number,
-    status: r.status as TraceSummary["status"],
-    totalTokens: r.total_tokens as number,
-    totalCostUsd: r.total_cost_usd == null ? null : Number(r.total_cost_usd),
-  };
+	return {
+		traceId: r.trace_id as string,
+		ownerId: r.owner_id as string,
+		rootName: r.root_name as string,
+		agentId: (r.agent_id as string | null) ?? null,
+		startedAt:
+			r.started_at instanceof Date
+				? (r.started_at as Date).toISOString()
+				: (r.started_at as string),
+		endedAt:
+			r.ended_at == null
+				? null
+				: r.ended_at instanceof Date
+					? (r.ended_at as Date).toISOString()
+					: (r.ended_at as string),
+		durationMs: (r.duration_ms as number | null) ?? null,
+		spanCount: r.span_count as number,
+		status: r.status as TraceSummary["status"],
+		totalTokens: r.total_tokens as number,
+		totalCostUsd: r.total_cost_usd == null ? null : Number(r.total_cost_usd),
+	};
 }
 
 function encodeRunCursor(c: { startedAt: number; id: string }): string {
-  return Buffer.from(JSON.stringify(c), "utf8").toString("base64url");
+	return Buffer.from(JSON.stringify(c), "utf8").toString("base64url");
 }
 
 function decodeRunCursor(s: string): { startedAt: number; id: string } | null {
-  try {
-    const parsed = JSON.parse(Buffer.from(s, "base64url").toString("utf8")) as unknown;
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      "startedAt" in parsed &&
-      "id" in parsed &&
-      typeof (parsed as { startedAt: unknown }).startedAt === "number" &&
-      typeof (parsed as { id: unknown }).id === "string"
-    ) {
-      return parsed as { startedAt: number; id: string };
-    }
-    return null;
-  } catch {
-    return null;
-  }
+	try {
+		const parsed = JSON.parse(
+			Buffer.from(s, "base64url").toString("utf8"),
+		) as unknown;
+		if (
+			typeof parsed === "object" &&
+			parsed !== null &&
+			"startedAt" in parsed &&
+			"id" in parsed &&
+			typeof (parsed as { startedAt: unknown }).startedAt === "number" &&
+			typeof (parsed as { id: unknown }).id === "string"
+		) {
+			return parsed as { startedAt: number; id: string };
+		}
+		return null;
+	} catch {
+		return null;
+	}
 }
 
 function rowToApiKey(r: {
-  id: string;
-  user_id: string;
-  name: string;
-  key_prefix: string;
-  created_at: Date | string;
-  last_used_at: Date | string | null;
-  revoked_at: Date | string | null;
+	id: string;
+	user_id: string;
+	name: string;
+	key_prefix: string;
+	created_at: Date | string;
+	last_used_at: Date | string | null;
+	revoked_at: Date | string | null;
 }): ApiKeyRecord {
-  const toIso = (v: Date | string | null) =>
-    v == null ? null : v instanceof Date ? v.toISOString() : String(v);
-  return {
-    id: r.id,
-    userId: r.user_id,
-    name: r.name,
-    keyPrefix: r.key_prefix,
-    createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
-    lastUsedAt: toIso(r.last_used_at),
-    revokedAt: toIso(r.revoked_at),
-  };
+	const toIso = (v: Date | string | null) =>
+		v == null ? null : v instanceof Date ? v.toISOString() : String(v);
+	return {
+		id: r.id,
+		userId: r.user_id,
+		name: r.name,
+		keyPrefix: r.key_prefix,
+		createdAt:
+			r.created_at instanceof Date
+				? r.created_at.toISOString()
+				: String(r.created_at),
+		lastUsedAt: toIso(r.last_used_at),
+		revokedAt: toIso(r.revoked_at),
+	};
 }
 
 function pgRowToWebhookDelivery(r: {
-  id: string;
-  user_id: string;
-  run_id: string;
-  callback_url: string;
-  secret_name: string;
-  payload: unknown;
-  attempts: number;
-  last_attempt_at: Date | string | null;
-  status: WebhookDelivery["status"];
-  last_error: string | null;
-  created_at: Date | string;
+	id: string;
+	user_id: string;
+	run_id: string;
+	callback_url: string;
+	secret_name: string;
+	payload: unknown;
+	attempts: number;
+	last_attempt_at: Date | string | null;
+	status: WebhookDelivery["status"];
+	last_error: string | null;
+	created_at: Date | string;
 }): WebhookDelivery {
-  const toIso = (v: Date | string) => (v instanceof Date ? v.toISOString() : String(v));
-  // pg returns JSONB as already-parsed; tolerate raw strings too.
-  let payload: Record<string, unknown>;
-  if (typeof r.payload === "string") {
-    try {
-      payload = JSON.parse(r.payload) as Record<string, unknown>;
-    } catch {
-      payload = {};
-    }
-  } else if (r.payload && typeof r.payload === "object") {
-    payload = r.payload as Record<string, unknown>;
-  } else {
-    payload = {};
-  }
-  const d: WebhookDelivery = {
-    id: r.id,
-    runId: r.run_id,
-    callbackUrl: r.callback_url,
-    secretName: r.secret_name,
-    payload,
-    attempts: r.attempts,
-    status: r.status,
-    createdAt: toIso(r.created_at),
-  };
-  if (r.last_attempt_at) d.lastAttemptAt = toIso(r.last_attempt_at);
-  if (r.last_error) d.lastError = r.last_error;
-  return d;
+	const toIso = (v: Date | string) =>
+		v instanceof Date ? v.toISOString() : String(v);
+	// pg returns JSONB as already-parsed; tolerate raw strings too.
+	let payload: Record<string, unknown>;
+	if (typeof r.payload === "string") {
+		try {
+			payload = JSON.parse(r.payload) as Record<string, unknown>;
+		} catch {
+			payload = {};
+		}
+	} else if (r.payload && typeof r.payload === "object") {
+		payload = r.payload as Record<string, unknown>;
+	} else {
+		payload = {};
+	}
+	const d: WebhookDelivery = {
+		id: r.id,
+		runId: r.run_id,
+		callbackUrl: r.callback_url,
+		secretName: r.secret_name,
+		payload,
+		attempts: r.attempts,
+		status: r.status,
+		createdAt: toIso(r.created_at),
+	};
+	if (r.last_attempt_at) d.lastAttemptAt = toIso(r.last_attempt_at);
+	if (r.last_error) d.lastError = r.last_error;
+	return d;
 }

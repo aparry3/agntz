@@ -128,10 +128,7 @@ def test_local_sdk_runs_llm_and_records_run(tmp_path: Path) -> None:
     assert detail["summary"]["agentId"] == "support"
     assert detail["summary"]["spanCount"] == len(detail["spans"])
     assert detail["spans"][0]["runId"] == rows[0].id
-    assert any(
-        span["kind"] == "model" and span["name"] == "support"
-        for span in detail["spans"]
-    )
+    assert any(span["kind"] == "model" and span["name"] == "support" for span in detail["spans"])
     events = list(client.traces.stream(trace_id))
     assert [event.type for event in events] == ["snapshot"]
     assert events[0].summary is not None
@@ -418,9 +415,7 @@ def test_litellm_provider_model_slug_mapping() -> None:
     assert format_litellm_model("openai", "gpt-5.4") == "gpt-5.4"
     assert format_litellm_model("google", "gemini-3.5-flash") == "gemini/gemini-3.5-flash"
     assert format_litellm_model("openrouter", "openai/gpt-5.4") == "openrouter/openai/gpt-5.4"
-    assert format_litellm_model("anthropic", "claude-sonnet-4.5") == (
-        "anthropic/claude-sonnet-4.5"
-    )
+    assert format_litellm_model("anthropic", "claude-sonnet-4.5") == ("anthropic/claude-sonnet-4.5")
 
 
 def test_local_sdk_can_persist_runs_to_sqlite(tmp_path: Path) -> None:

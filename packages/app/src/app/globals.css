@@ -7,87 +7,104 @@
  * ──────────────────────────────────────────────────────────────────────── */
 
 :root {
-  color-scheme: light;
+	color-scheme: light;
 
-  /* Typography — Geist sans + Geist Mono are injected by next/font on <body>. */
-  --font-sans: var(--font-geist), "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: var(--font-geist-mono), "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+	/* Typography — Geist sans + Geist Mono are injected by next/font on <body>. */
+	--font-sans: var(--font-geist), "Geist", ui-sans-serif, system-ui,
+		-apple-system, "Segoe UI", sans-serif;
+	--font-mono: var(--font-geist-mono), "Geist Mono", ui-monospace, "SF Mono",
+		Menlo, monospace;
 
-  /* Palette */
-  --ag-bg: #F4F1E9;            /* page background — warm cream */
-  --ag-surface: #FBF9F4;       /* panels / rails */
-  --ag-surface-2: #FFFFFF;     /* cards / inputs */
-  --ag-surface-warm: #FAF7EE;  /* subtle highlight (selected row, expanded node) */
-  --ag-ink: #1A1916;           /* primary text + dark surfaces */
-  --ag-text-2: #52514D;        /* secondary text */
-  --ag-muted: #8C8A82;         /* tertiary / labels */
-  --ag-line: #E2DDD0;          /* hairline borders */
-  --ag-line-2: #EDE9DD;        /* subtle dividers */
+	/* Palette */
+	--ag-bg: #f4f1e9; /* page background — warm cream */
+	--ag-surface: #fbf9f4; /* panels / rails */
+	--ag-surface-2: #ffffff; /* cards / inputs */
+	--ag-surface-warm: #faf7ee; /* subtle highlight (selected row, expanded node) */
+	--ag-ink: #1a1916; /* primary text + dark surfaces */
+	--ag-text-2: #52514d; /* secondary text */
+	--ag-muted: #8c8a82; /* tertiary / labels */
+	--ag-line: #e2ddd0; /* hairline borders */
+	--ag-line-2: #ede9dd; /* subtle dividers */
 
-  --ag-ok: #1F7A4D;
-  --ag-ok-bg: #E2F0E5;
-  --ag-warn: #A05E15;
-  --ag-warn-bg: #F5E8D2;
-  --ag-blue: #2A4A75;
-  --ag-blue-bg: #E1E8F2;
-  --ag-purple: #4E3677;
-  --ag-purple-bg: #E9E3F0;
-  --ag-danger: #9A2A2A;
+	--ag-ok: #1f7a4d;
+	--ag-ok-bg: #e2f0e5;
+	--ag-warn: #a05e15;
+	--ag-warn-bg: #f5e8d2;
+	--ag-blue: #2a4a75;
+	--ag-blue-bg: #e1e8f2;
+	--ag-purple: #4e3677;
+	--ag-purple-bg: #e9e3f0;
+	--ag-danger: #9a2a2a;
 }
 
 /* Tailwind v4 theme bridge — lets us write classes like `bg-ag-bg text-ag-ink`. */
 @theme inline {
-  --color-ag-bg: var(--ag-bg);
-  --color-ag-surface: var(--ag-surface);
-  --color-ag-surface-2: var(--ag-surface-2);
-  --color-ag-surface-warm: var(--ag-surface-warm);
-  --color-ag-ink: var(--ag-ink);
-  --color-ag-text-2: var(--ag-text-2);
-  --color-ag-muted: var(--ag-muted);
-  --color-ag-line: var(--ag-line);
-  --color-ag-line-2: var(--ag-line-2);
-  --color-ag-ok: var(--ag-ok);
-  --color-ag-ok-bg: var(--ag-ok-bg);
-  --color-ag-warn: var(--ag-warn);
-  --color-ag-warn-bg: var(--ag-warn-bg);
-  --color-ag-blue: var(--ag-blue);
-  --color-ag-blue-bg: var(--ag-blue-bg);
-  --color-ag-purple: var(--ag-purple);
-  --color-ag-purple-bg: var(--ag-purple-bg);
-  --color-ag-danger: var(--ag-danger);
+	--color-ag-bg: var(--ag-bg);
+	--color-ag-surface: var(--ag-surface);
+	--color-ag-surface-2: var(--ag-surface-2);
+	--color-ag-surface-warm: var(--ag-surface-warm);
+	--color-ag-ink: var(--ag-ink);
+	--color-ag-text-2: var(--ag-text-2);
+	--color-ag-muted: var(--ag-muted);
+	--color-ag-line: var(--ag-line);
+	--color-ag-line-2: var(--ag-line-2);
+	--color-ag-ok: var(--ag-ok);
+	--color-ag-ok-bg: var(--ag-ok-bg);
+	--color-ag-warn: var(--ag-warn);
+	--color-ag-warn-bg: var(--ag-warn-bg);
+	--color-ag-blue: var(--ag-blue);
+	--color-ag-blue-bg: var(--ag-blue-bg);
+	--color-ag-purple: var(--ag-purple);
+	--color-ag-purple-bg: var(--ag-purple-bg);
+	--color-ag-danger: var(--ag-danger);
 
-  --font-sans: var(--font-sans);
-  --font-mono: var(--font-mono);
+	--font-sans: var(--font-sans);
+	--font-mono: var(--font-mono);
 }
 
 html {
-  background: var(--ag-bg);
+	background: var(--ag-bg);
 }
 
 body {
-  background: var(--ag-bg);
-  color: var(--ag-ink);
-  font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
+	background: var(--ag-bg);
+	color: var(--ag-ink);
+	font-family: var(--font-sans);
+	-webkit-font-smoothing: antialiased;
 }
 
 ::selection {
-  background: rgba(26, 25, 22, 0.16);
+	background: rgba(26, 25, 22, 0.16);
 }
 
 /* Shared keyframes used by the editor + generating screens. */
 @keyframes agntz-spin {
-  to { transform: rotate(360deg); }
+	to {
+		transform: rotate(360deg);
+	}
 }
 @keyframes agntz-shim {
-  0%   { background-position: 100% 0; }
-  100% { background-position: -100% 0; }
+	0% {
+		background-position: 100% 0;
+	}
+	100% {
+		background-position: -100% 0;
+	}
 }
 @keyframes agntz-bar {
-  0%   { left: -30%; }
-  100% { left: 100%; }
+	0% {
+		left: -30%;
+	}
+	100% {
+		left: 100%;
+	}
 }
 @keyframes agntz-pulse {
-  0%, 100% { opacity: 1; }
-  50%      { opacity: 0.45; }
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.45;
+	}
 }
