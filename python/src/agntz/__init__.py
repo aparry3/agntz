@@ -26,6 +26,7 @@ from .core import (
 )
 from .memrez import Memrez, MemrezScopeError, create_memrez
 from .memrez_provider import MemoryResourceProvider, create_memory_resource_provider
+from .memrez_reasoner import AgntzReasoner, agntz_reasoner, memrez_agents_path
 from .memrez_sqlite import SqliteMemoryStore, SqliteMemoryStoreOptions
 from .sdk import LocalClient, agntz
 from .stores import (
@@ -40,6 +41,7 @@ __all__ = [
     "__version__",
     "AgntzClient",
     "AgntzError",
+    "AgntzReasoner",
     "AsyncAgntzClient",
     "AuthenticationError",
     "GenerateTextResult",
@@ -69,8 +71,10 @@ __all__ = [
     "ToolDefinition",
     "ToolResult",
     "agntz",
+    "agntz_reasoner",
     "create_memory_resource_provider",
     "create_memrez",
+    "memrez_agents_path",
     "normalize_namespace_grant",
     "normalize_namespace_grants",
     "tool",
