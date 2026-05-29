@@ -8,6 +8,16 @@
       "sessionId": "sess_abc"
     }
   },
+  "contextRunRequest": {
+    "method": "POST",
+    "path": "/run",
+    "body": {
+      "agentId": "support",
+      "input": "hello",
+      "sessionId": "sess_abc",
+      "context": ["app/user/u_123"]
+    }
+  },
   "streamRequest": {
     "method": "POST",
     "path": "/run/stream",

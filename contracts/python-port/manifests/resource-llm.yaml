@@ -1,0 +1,18 @@
+id: memory-support
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: |
+  Use memory when it is relevant to the current request.
+resources:
+  memory:
+    kind: memory
+    mode: read-write
+    autoScan: true
+    writePolicy:
+      descendants: true
+      ancestorPromotion: none
+tools:
+  - kind: local
+    tools: [lookup_order]

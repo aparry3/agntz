@@ -12,6 +12,7 @@ from .types import (
     LLMAgentManifest,
     ModelConfig,
     ParallelAgentManifest,
+    ResourceManifestEntry,
     SequentialAgentManifest,
     StepRef,
     ToolAgentManifest,
@@ -84,6 +85,7 @@ def _normalize_llm(raw: dict[str, Any]) -> LLMAgentManifest:
         spawnable=raw.get("spawnable"),
         skills=raw.get("skills"),
         reply=_normalize_reply(raw.get("reply")) if "reply" in raw else None,
+        resources=_normalize_resources(raw.get("resources")) if "resources" in raw else None,
     )
 
 
@@ -188,3 +190,18 @@ def _normalize_reply(value: Any) -> bool | dict[str, Any] | None:
             raise ManifestParseError("'reply.maxPerRun' must be a positive number")
         return value
     raise ManifestParseError("'reply' must be a boolean or object")
+
+
+def _normalize_resources(value: Any) -> dict[str, ResourceManifestEntry]:
+    if not isinstance(value, dict):
+        raise ManifestParseError("'resources' must be an object keyed by resource name")
+    resources: dict[str, ResourceManifestEntry] = {}
+    for name, raw_entry in value.items():
+        if not isinstance(raw_entry, dict):
+            raise ManifestParseError(f"resources.{name} must be an object")
+        if "kind" in raw_entry and not isinstance(raw_entry["kind"], str):
+            raise ManifestParseError(f"resources.{name}.kind must be a string")
+        entry = dict(raw_entry)
+        entry["kind"] = entry.get("kind") or str(name)
+        resources[str(name)] = ResourceManifestEntry(**entry)
+    return resources

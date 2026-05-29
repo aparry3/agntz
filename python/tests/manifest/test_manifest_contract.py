@@ -18,6 +18,7 @@ from agntz.manifest import (
     load_manifest_file,
     render_template,
     resolve_path,
+    validate_manifest,
 )
 from agntz.manifest.types import AgentManifest, AgentState
 
@@ -63,6 +64,7 @@ def test_parse_contract_manifests_and_state_keys() -> None:
     calculator = load_manifest_file(MANIFESTS / "local-tool.yaml")
     sequential = load_manifest_file(MANIFESTS / "sequential.yaml")
     parallel = load_manifest_file(MANIFESTS / "parallel.yaml")
+    resource_llm = load_manifest_file(MANIFESTS / "resource-llm.yaml")
 
     assert support.kind == "llm"
     assert get_manifest_state_key(support) == "support"
@@ -71,6 +73,22 @@ def test_parse_contract_manifests_and_state_keys() -> None:
     assert [step.state_key for step in sequential.steps] == ["classify", "summarize"]
     assert parallel.kind == "parallel"
     assert [branch.state_key for branch in parallel.branches] == ["support", "tone"]
+    assert resource_llm.kind == "llm"
+    assert resource_llm.resources is not None
+    assert resource_llm.resources["memory"].kind == "memory"
+    assert resource_llm.resources["memory"].mode == "read-write"
+
+
+def test_resource_manifest_validation_reserves_generated_tool_names() -> None:
+    manifest = load_manifest_file(MANIFESTS / "resource-llm.yaml")
+    assert isinstance(manifest, LLMAgentManifest)
+    assert validate_manifest(manifest) == []
+
+    manifest.tools = [{"kind": "local", "tools": ["memory_write"]}]
+    assert validate_manifest(manifest) == [
+        "tools[0].tools[0]: Local tool 'memory_write' "
+        "conflicts with reserved resource tool prefix 'memory_'"
+    ]
 
 
 def test_state_template_and_condition_helpers_match_contract_expectations() -> None:
