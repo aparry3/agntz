@@ -1,15 +1,18 @@
+import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import { NextResponse } from "next/server";
-import { requireUserContext, AuthRequiredError } from "@/lib/user";
 
 export async function GET() {
-  try {
-    const { runner } = await requireUserContext();
-    const tools = runner.tools.list();
-    return NextResponse.json(tools);
-  } catch (error) {
-    if (error instanceof AuthRequiredError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
-    }
-    return NextResponse.json({ error: String(error) }, { status: 500 });
-  }
+	try {
+		const { runner } = await requireUserContext();
+		const tools = runner.tools.list();
+		return NextResponse.json(tools);
+	} catch (error) {
+		if (error instanceof AuthRequiredError) {
+			return NextResponse.json(
+				{ error: error.message },
+				{ status: error.status },
+			);
+		}
+		return NextResponse.json({ error: String(error) }, { status: 500 });
+	}
 }

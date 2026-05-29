@@ -1,340 +1,357 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { execute } from "../src/executor.js";
-import type { AgentManifest, ExecutionContext, LLMAgentManifest } from "../src/types.js";
+import type {
+	AgentManifest,
+	ExecutionContext,
+	LLMAgentManifest,
+} from "../src/types.js";
 
-function createMockCtx(overrides?: Partial<ExecutionContext>): ExecutionContext {
-  return {
-    resolveAgent: vi.fn(),
-    invokeLLM: vi.fn().mockResolvedValue("llm output"),
-    invokeTool: vi.fn().mockResolvedValue("tool output"),
-    ...overrides,
-  };
+function createMockCtx(
+	overrides?: Partial<ExecutionContext>,
+): ExecutionContext {
+	return {
+		resolveAgent: vi.fn(),
+		invokeLLM: vi.fn().mockResolvedValue("llm output"),
+		invokeTool: vi.fn().mockResolvedValue("tool output"),
+		...overrides,
+	};
 }
 
 describe("execute - LLM agent", () => {
-  it("executes an LLM agent with template rendering", async () => {
-    const manifest: LLMAgentManifest = {
-      id: "test",
-      kind: "llm",
-      model: { provider: "openai", name: "gpt-5.4" },
-      instruction: "Answer: {{userQuery}}",
-    };
+	it("executes an LLM agent with template rendering", async () => {
+		const manifest: LLMAgentManifest = {
+			id: "test",
+			kind: "llm",
+			model: { provider: "openai", name: "gpt-5.4" },
+			instruction: "Answer: {{userQuery}}",
+		};
 
-    const ctx = createMockCtx({
-      invokeLLM: vi.fn().mockResolvedValue("42"),
-    });
+		const ctx = createMockCtx({
+			invokeLLM: vi.fn().mockResolvedValue("42"),
+		});
 
-    const result = await execute(manifest, "What is 2+2?", ctx);
-    expect(result.output).toBe("42");
-    expect(ctx.invokeLLM).toHaveBeenCalledWith(
-      manifest,
-      "Answer: What is 2+2?",
-      undefined,
-      { userQuery: "What is 2+2?" }
-    );
-  });
+		const result = await execute(manifest, "What is 2+2?", ctx);
+		expect(result.output).toBe("42");
+		expect(ctx.invokeLLM).toHaveBeenCalledWith(
+			manifest,
+			"Answer: What is 2+2?",
+			undefined,
+			{ userQuery: "What is 2+2?" },
+		);
+	});
 
-  it("renders the optional prompt template with full state", async () => {
-    const manifest: LLMAgentManifest = {
-      id: "test",
-      kind: "llm",
-      model: { provider: "openai", name: "gpt-5.4" },
-      instruction: "You are a math tutor.",
-      prompt: "Solve carefully: {{userQuery}}",
-    };
+	it("renders the optional prompt template with full state", async () => {
+		const manifest: LLMAgentManifest = {
+			id: "test",
+			kind: "llm",
+			model: { provider: "openai", name: "gpt-5.4" },
+			instruction: "You are a math tutor.",
+			prompt: "Solve carefully: {{userQuery}}",
+		};
 
-    const ctx = createMockCtx({
-      invokeLLM: vi.fn().mockResolvedValue("46"),
-    });
+		const ctx = createMockCtx({
+			invokeLLM: vi.fn().mockResolvedValue("46"),
+		});
 
-    const result = await execute(manifest, "What is 23 * 2?", ctx);
-    expect(result.output).toBe("46");
-    expect(ctx.invokeLLM).toHaveBeenCalledWith(
-      manifest,
-      "You are a math tutor.",
-      "Solve carefully: What is 23 * 2?",
-      { userQuery: "What is 23 * 2?" }
-    );
-  });
+		const result = await execute(manifest, "What is 23 * 2?", ctx);
+		expect(result.output).toBe("46");
+		expect(ctx.invokeLLM).toHaveBeenCalledWith(
+			manifest,
+			"You are a math tutor.",
+			"Solve carefully: What is 23 * 2?",
+			{ userQuery: "What is 23 * 2?" },
+		);
+	});
 
-  it("passes undefined for prompt when not set on the manifest", async () => {
-    const manifest: LLMAgentManifest = {
-      id: "test",
-      kind: "llm",
-      model: { provider: "openai", name: "gpt-5.4" },
-      instruction: "You are helpful.",
-    };
+	it("passes undefined for prompt when not set on the manifest", async () => {
+		const manifest: LLMAgentManifest = {
+			id: "test",
+			kind: "llm",
+			model: { provider: "openai", name: "gpt-5.4" },
+			instruction: "You are helpful.",
+		};
 
-    const ctx = createMockCtx({
-      invokeLLM: vi.fn().mockResolvedValue("ok"),
-    });
+		const ctx = createMockCtx({
+			invokeLLM: vi.fn().mockResolvedValue("ok"),
+		});
 
-    await execute(manifest, "hi", ctx);
-    const call = (ctx.invokeLLM as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(call[2]).toBeUndefined();
-  });
+		await execute(manifest, "hi", ctx);
+		const call = (ctx.invokeLLM as ReturnType<typeof vi.fn>).mock.calls[0];
+		expect(call[2]).toBeUndefined();
+	});
 });
 
 describe("execute - Tool agent", () => {
-  it("executes a tool agent with param interpolation", async () => {
-    const manifest: AgentManifest = {
-      id: "send",
-      kind: "tool",
-      inputSchema: { to: "string", body: "string" },
-      tool: {
-        kind: "local",
-        name: "send_email",
-        params: { to: "{{to}}", body: "{{body}}" },
-      },
-    };
+	it("executes a tool agent with param interpolation", async () => {
+		const manifest: AgentManifest = {
+			id: "send",
+			kind: "tool",
+			inputSchema: { to: "string", body: "string" },
+			tool: {
+				kind: "local",
+				name: "send_email",
+				params: { to: "{{to}}", body: "{{body}}" },
+			},
+		};
 
-    const ctx = createMockCtx({
-      invokeTool: vi.fn().mockResolvedValue({ sent: true }),
-    });
+		const ctx = createMockCtx({
+			invokeTool: vi.fn().mockResolvedValue({ sent: true }),
+		});
 
-    const result = await execute(manifest, { to: "a@b.com", body: "hello" }, ctx);
-    expect(result.output).toEqual({ sent: true });
-    expect(ctx.invokeTool).toHaveBeenCalledWith(
-      { kind: "local", name: "send_email", params: { to: "a@b.com", body: "hello" } },
-      { to: "a@b.com", body: "hello" }
-    );
-  });
+		const result = await execute(
+			manifest,
+			{ to: "a@b.com", body: "hello" },
+			ctx,
+		);
+		expect(result.output).toEqual({ sent: true });
+		expect(ctx.invokeTool).toHaveBeenCalledWith(
+			{
+				kind: "local",
+				name: "send_email",
+				params: { to: "a@b.com", body: "hello" },
+			},
+			{ to: "a@b.com", body: "hello" },
+		);
+	});
 });
 
 describe("execute - Sequential agent", () => {
-  it("runs steps in order with state flow", async () => {
-    const agentA: LLMAgentManifest = {
-      id: "agent-a",
-      kind: "llm",
-      model: { provider: "openai", name: "gpt-5.4" },
-      instruction: "Do A",
-    };
-    const agentB: LLMAgentManifest = {
-      id: "agent-b",
-      kind: "llm",
-      model: { provider: "openai", name: "gpt-5.4" },
-      instruction: "Do B with {{data}}",
-    };
+	it("runs steps in order with state flow", async () => {
+		const agentA: LLMAgentManifest = {
+			id: "agent-a",
+			kind: "llm",
+			model: { provider: "openai", name: "gpt-5.4" },
+			instruction: "Do A",
+		};
+		const agentB: LLMAgentManifest = {
+			id: "agent-b",
+			kind: "llm",
+			model: { provider: "openai", name: "gpt-5.4" },
+			instruction: "Do B with {{data}}",
+		};
 
-    const manifest: AgentManifest = {
-      id: "pipeline",
-      kind: "sequential",
-      steps: [
-        { ref: "agent-a" },
-        {
-          ref: "agent-b",
-          input: { data: "{{agentA}}" },
-        },
-      ],
-    };
+		const manifest: AgentManifest = {
+			id: "pipeline",
+			kind: "sequential",
+			steps: [
+				{ ref: "agent-a" },
+				{
+					ref: "agent-b",
+					input: { data: "{{agentA}}" },
+				},
+			],
+		};
 
-    const ctx = createMockCtx({
-      resolveAgent: vi.fn().mockImplementation((id: string) => {
-        if (id === "agent-a") return Promise.resolve(agentA);
-        if (id === "agent-b") return Promise.resolve(agentB);
-        throw new Error(`Unknown agent: ${id}`);
-      }),
-      invokeLLM: vi
-        .fn()
-        .mockResolvedValueOnce("result-a")
-        .mockResolvedValueOnce("result-b"),
-    });
+		const ctx = createMockCtx({
+			resolveAgent: vi.fn().mockImplementation((id: string) => {
+				if (id === "agent-a") return Promise.resolve(agentA);
+				if (id === "agent-b") return Promise.resolve(agentB);
+				throw new Error(`Unknown agent: ${id}`);
+			}),
+			invokeLLM: vi
+				.fn()
+				.mockResolvedValueOnce("result-a")
+				.mockResolvedValueOnce("result-b"),
+		});
 
-    const result = await execute(manifest, "go", ctx);
-    expect(result.output).toBe("result-b");
-    expect(result.state.agentA).toBe("result-a");
-    expect(result.state.agentB).toBe("result-b");
-  });
+		const result = await execute(manifest, "go", ctx);
+		expect(result.output).toBe("result-b");
+		expect(result.state.agentA).toBe("result-a");
+		expect(result.state.agentB).toBe("result-b");
+	});
 
-  it("skips steps with false when condition", async () => {
-    const agentA: LLMAgentManifest = {
-      id: "agent-a",
-      kind: "llm",
-      model: { provider: "openai", name: "gpt-5.4" },
-      instruction: "Do A",
-    };
+	it("skips steps with false when condition", async () => {
+		const agentA: LLMAgentManifest = {
+			id: "agent-a",
+			kind: "llm",
+			model: { provider: "openai", name: "gpt-5.4" },
+			instruction: "Do A",
+		};
 
-    const manifest: AgentManifest = {
-      id: "pipeline",
-      kind: "sequential",
-      steps: [
-        {
-          ref: "agent-a",
-          when: "{{shouldRun}}",
-        },
-      ],
-    };
+		const manifest: AgentManifest = {
+			id: "pipeline",
+			kind: "sequential",
+			steps: [
+				{
+					ref: "agent-a",
+					when: "{{shouldRun}}",
+				},
+			],
+		};
 
-    const ctx = createMockCtx({
-      resolveAgent: vi.fn().mockResolvedValue(agentA),
-    });
+		const ctx = createMockCtx({
+			resolveAgent: vi.fn().mockResolvedValue(agentA),
+		});
 
-    const result = await execute(manifest, "go", ctx);
-    expect(result.state.agentA).toBeNull();
-    expect(ctx.invokeLLM).not.toHaveBeenCalled();
-  });
+		const result = await execute(manifest, "go", ctx);
+		expect(result.state.agentA).toBeNull();
+		expect(ctx.invokeLLM).not.toHaveBeenCalled();
+	});
 
-  it("applies output mapping", async () => {
-    const agentA: LLMAgentManifest = {
-      id: "agent-a",
-      kind: "llm",
-      model: { provider: "openai", name: "gpt-5.4" },
-      instruction: "Do A",
-    };
+	it("applies output mapping", async () => {
+		const agentA: LLMAgentManifest = {
+			id: "agent-a",
+			kind: "llm",
+			model: { provider: "openai", name: "gpt-5.4" },
+			instruction: "Do A",
+		};
 
-    const manifest: AgentManifest = {
-      id: "pipeline",
-      kind: "sequential",
-      steps: [{ ref: "agent-a" }],
-      output: { final: "{{agentA}}" },
-    };
+		const manifest: AgentManifest = {
+			id: "pipeline",
+			kind: "sequential",
+			steps: [{ ref: "agent-a" }],
+			output: { final: "{{agentA}}" },
+		};
 
-    const ctx = createMockCtx({
-      resolveAgent: vi.fn().mockResolvedValue(agentA),
-      invokeLLM: vi.fn().mockResolvedValue("done"),
-    });
+		const ctx = createMockCtx({
+			resolveAgent: vi.fn().mockResolvedValue(agentA),
+			invokeLLM: vi.fn().mockResolvedValue("done"),
+		});
 
-    const result = await execute(manifest, "go", ctx);
-    expect(result.output).toEqual({ final: "done" });
-  });
+		const result = await execute(manifest, "go", ctx);
+		expect(result.output).toEqual({ final: "done" });
+	});
 });
 
 describe("execute - Sequential with loop", () => {
-  it("loops until condition is met", async () => {
-    let iteration = 0;
-    const writer: LLMAgentManifest = {
-      id: "writer",
-      kind: "llm",
-      model: { provider: "openai", name: "gpt-5.4" },
-      instruction: "Write",
-    };
-    const reviewer: LLMAgentManifest = {
-      id: "reviewer",
-      kind: "llm",
-      model: { provider: "openai", name: "gpt-5.4" },
-      instruction: "Review",
-      outputSchema: { approved: "boolean", feedback: "string" },
-    };
+	it("loops until condition is met", async () => {
+		let iteration = 0;
+		const writer: LLMAgentManifest = {
+			id: "writer",
+			kind: "llm",
+			model: { provider: "openai", name: "gpt-5.4" },
+			instruction: "Write",
+		};
+		const reviewer: LLMAgentManifest = {
+			id: "reviewer",
+			kind: "llm",
+			model: { provider: "openai", name: "gpt-5.4" },
+			instruction: "Review",
+			outputSchema: { approved: "boolean", feedback: "string" },
+		};
 
-    const manifest: AgentManifest = {
-      id: "loop",
-      kind: "sequential",
-      until: "{{reviewer.approved}} == true",
-      maxIterations: 10,
-      steps: [
-        { ref: "writer" },
-        { ref: "reviewer" },
-      ],
-    };
+		const manifest: AgentManifest = {
+			id: "loop",
+			kind: "sequential",
+			until: "{{reviewer.approved}} == true",
+			maxIterations: 10,
+			steps: [{ ref: "writer" }, { ref: "reviewer" }],
+		};
 
-    const ctx = createMockCtx({
-      resolveAgent: vi.fn().mockImplementation((id: string) => {
-        if (id === "writer") return Promise.resolve(writer);
-        if (id === "reviewer") return Promise.resolve(reviewer);
-        throw new Error(`Unknown: ${id}`);
-      }),
-      invokeLLM: vi.fn().mockImplementation(() => {
-        iteration++;
-        if (iteration % 2 === 1) return Promise.resolve("draft");
-        return Promise.resolve({ approved: iteration >= 4, feedback: "try again" });
-      }),
-    });
+		const ctx = createMockCtx({
+			resolveAgent: vi.fn().mockImplementation((id: string) => {
+				if (id === "writer") return Promise.resolve(writer);
+				if (id === "reviewer") return Promise.resolve(reviewer);
+				throw new Error(`Unknown: ${id}`);
+			}),
+			invokeLLM: vi.fn().mockImplementation(() => {
+				iteration++;
+				if (iteration % 2 === 1) return Promise.resolve("draft");
+				return Promise.resolve({
+					approved: iteration >= 4,
+					feedback: "try again",
+				});
+			}),
+		});
 
-    const result = await execute(manifest, "topic", ctx);
-    expect(iteration).toBe(4);
-    expect(result.state.reviewer).toEqual({ approved: true, feedback: "try again" });
-  });
+		const result = await execute(manifest, "topic", ctx);
+		expect(iteration).toBe(4);
+		expect(result.state.reviewer).toEqual({
+			approved: true,
+			feedback: "try again",
+		});
+	});
 
-  it("respects maxIterations", async () => {
-    const agent: LLMAgentManifest = {
-      id: "agent",
-      kind: "llm",
-      model: { provider: "openai", name: "gpt-5.4" },
-      instruction: "Do",
-    };
+	it("respects maxIterations", async () => {
+		const agent: LLMAgentManifest = {
+			id: "agent",
+			kind: "llm",
+			model: { provider: "openai", name: "gpt-5.4" },
+			instruction: "Do",
+		};
 
-    const manifest: AgentManifest = {
-      id: "loop",
-      kind: "sequential",
-      until: "{{never}} == true",
-      maxIterations: 3,
-      steps: [{ ref: "agent" }],
-    };
+		const manifest: AgentManifest = {
+			id: "loop",
+			kind: "sequential",
+			until: "{{never}} == true",
+			maxIterations: 3,
+			steps: [{ ref: "agent" }],
+		};
 
-    const ctx = createMockCtx({
-      resolveAgent: vi.fn().mockResolvedValue(agent),
-      invokeLLM: vi.fn().mockResolvedValue("result"),
-    });
+		const ctx = createMockCtx({
+			resolveAgent: vi.fn().mockResolvedValue(agent),
+			invokeLLM: vi.fn().mockResolvedValue("result"),
+		});
 
-    await execute(manifest, "go", ctx);
-    expect(ctx.invokeLLM).toHaveBeenCalledTimes(3);
-  });
+		await execute(manifest, "go", ctx);
+		expect(ctx.invokeLLM).toHaveBeenCalledTimes(3);
+	});
 });
 
 describe("execute - Parallel agent", () => {
-  it("runs branches concurrently", async () => {
-    const agentA: LLMAgentManifest = {
-      id: "agent-a",
-      kind: "llm",
-      model: { provider: "openai", name: "gpt-5.4" },
-      instruction: "A",
-    };
-    const agentB: LLMAgentManifest = {
-      id: "agent-b",
-      kind: "llm",
-      model: { provider: "openai", name: "gpt-5.4" },
-      instruction: "B",
-    };
+	it("runs branches concurrently", async () => {
+		const agentA: LLMAgentManifest = {
+			id: "agent-a",
+			kind: "llm",
+			model: { provider: "openai", name: "gpt-5.4" },
+			instruction: "A",
+		};
+		const agentB: LLMAgentManifest = {
+			id: "agent-b",
+			kind: "llm",
+			model: { provider: "openai", name: "gpt-5.4" },
+			instruction: "B",
+		};
 
-    const manifest: AgentManifest = {
-      id: "parallel",
-      kind: "parallel",
-      branches: [
-        { ref: "agent-a", input: { text: "{{userQuery}}" } },
-        { ref: "agent-b", input: { text: "{{userQuery}}" } },
-      ],
-    };
+		const manifest: AgentManifest = {
+			id: "parallel",
+			kind: "parallel",
+			branches: [
+				{ ref: "agent-a", input: { text: "{{userQuery}}" } },
+				{ ref: "agent-b", input: { text: "{{userQuery}}" } },
+			],
+		};
 
-    const ctx = createMockCtx({
-      resolveAgent: vi.fn().mockImplementation((id: string) => {
-        if (id === "agent-a") return Promise.resolve(agentA);
-        if (id === "agent-b") return Promise.resolve(agentB);
-        throw new Error(`Unknown: ${id}`);
-      }),
-      invokeLLM: vi
-        .fn()
-        .mockResolvedValueOnce("result-a")
-        .mockResolvedValueOnce("result-b"),
-    });
+		const ctx = createMockCtx({
+			resolveAgent: vi.fn().mockImplementation((id: string) => {
+				if (id === "agent-a") return Promise.resolve(agentA);
+				if (id === "agent-b") return Promise.resolve(agentB);
+				throw new Error(`Unknown: ${id}`);
+			}),
+			invokeLLM: vi
+				.fn()
+				.mockResolvedValueOnce("result-a")
+				.mockResolvedValueOnce("result-b"),
+		});
 
-    const result = await execute(manifest, "input", ctx);
-    expect(result.output).toEqual({
-      agentA: "result-a",
-      agentB: "result-b",
-    });
-  });
+		const result = await execute(manifest, "input", ctx);
+		expect(result.output).toEqual({
+			agentA: "result-a",
+			agentB: "result-b",
+		});
+	});
 
-  it("applies output mapping", async () => {
-    const agentA: LLMAgentManifest = {
-      id: "agent-a",
-      kind: "llm",
-      model: { provider: "openai", name: "gpt-5.4" },
-      instruction: "A",
-    };
+	it("applies output mapping", async () => {
+		const agentA: LLMAgentManifest = {
+			id: "agent-a",
+			kind: "llm",
+			model: { provider: "openai", name: "gpt-5.4" },
+			instruction: "A",
+		};
 
-    const manifest: AgentManifest = {
-      id: "parallel",
-      kind: "parallel",
-      branches: [{ ref: "agent-a" }],
-      output: { result: "{{agentA}}" },
-    };
+		const manifest: AgentManifest = {
+			id: "parallel",
+			kind: "parallel",
+			branches: [{ ref: "agent-a" }],
+			output: { result: "{{agentA}}" },
+		};
 
-    const ctx = createMockCtx({
-      resolveAgent: vi.fn().mockResolvedValue(agentA),
-      invokeLLM: vi.fn().mockResolvedValue("done"),
-    });
+		const ctx = createMockCtx({
+			resolveAgent: vi.fn().mockResolvedValue(agentA),
+			invokeLLM: vi.fn().mockResolvedValue("done"),
+		});
 
-    const result = await execute(manifest, "go", ctx);
-    expect(result.output).toEqual({ result: "done" });
-  });
+		const result = await execute(manifest, "go", ctx);
+		expect(result.output).toEqual({ result: "done" });
+	});
 });

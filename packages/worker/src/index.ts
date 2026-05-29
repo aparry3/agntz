@@ -5,9 +5,9 @@ export { readFileTool } from "./tools/read-file.js";
 export { validateManifestTool } from "./tools/validate-manifest.js";
 export { LOCAL_TOOL_NAMES } from "./tools/registry.js";
 export {
-  isSystemAgentId,
-  loadSystemAgent,
-  listSystemAgents,
-  getSystemAgent,
+	isSystemAgentId,
+	loadSystemAgent,
+	listSystemAgents,
+	getSystemAgent,
 } from "./system-agents.js";
 export type { SystemAgentInfo } from "./system-agents.js";

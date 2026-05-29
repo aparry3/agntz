@@ -24,9 +24,7 @@ class PostgresMemoryStoreOptions:
 class PostgresMemoryStore:
     def __init__(self, options: str | PostgresMemoryStoreOptions) -> None:
         opts = (
-            PostgresMemoryStoreOptions(connection=options)
-            if isinstance(options, str)
-            else options
+            PostgresMemoryStoreOptions(connection=options) if isinstance(options, str) else options
         )
         self.prefix = _normalize_table_prefix(opts.table_prefix)
         self._psycopg = _load_psycopg()
@@ -300,9 +298,7 @@ class PostgresMemoryStore:
             type=_entry_type(str(row["type"])),
             source=_parse_source(row["source"]),
             status=_entry_status(str(row["status"])),
-            superseded_by=(
-                str(row["superseded_by"]) if row["superseded_by"] is not None else None
-            ),
+            superseded_by=(str(row["superseded_by"]) if row["superseded_by"] is not None else None),
             created_at=str(row["created_at"]),
             updated_at=str(row["updated_at"]),
         )

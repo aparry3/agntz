@@ -1,180 +1,182 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { createRunner } from "../src/runner.js";
+import { beforeEach, describe, expect, it } from "vitest";
 import { defineAgent } from "../src/agent.js";
-import { MemoryStore } from "../src/stores/memory.js";
 import {
-  AgentNotFoundError,
-  AgentVersionNotFoundError,
-  InvalidAgentRefError,
+	AgentNotFoundError,
+	AgentVersionNotFoundError,
+	InvalidAgentRefError,
 } from "../src/errors.js";
+import { createRunner } from "../src/runner.js";
+import { MemoryStore } from "../src/stores/memory.js";
 import type {
-  AgentDefinition,
-  GenerateTextOptions,
-  GenerateTextResult,
-  ModelProvider,
-  Span,
-  TraceSink,
+	AgentDefinition,
+	GenerateTextOptions,
+	GenerateTextResult,
+	ModelProvider,
+	Span,
+	TraceSink,
 } from "../src/types.js";
 
 class StubProvider implements ModelProvider {
-  async generateText(_opts: GenerateTextOptions): Promise<GenerateTextResult> {
-    return {
-      text: "ok",
-      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
-      finishReason: "stop",
-    };
-  }
+	async generateText(_opts: GenerateTextOptions): Promise<GenerateTextResult> {
+		return {
+			text: "ok",
+			usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+			finishReason: "stop",
+		};
+	}
 }
 
 function makeAgent(name: string): AgentDefinition {
-  return defineAgent({
-    id: "reviewer",
-    name,
-    systemPrompt: `prompt-${name}`,
-    model: { provider: "openai", name: "gpt-5.4-mini" },
-  });
+	return defineAgent({
+		id: "reviewer",
+		name,
+		systemPrompt: `prompt-${name}`,
+		model: { provider: "openai", name: "gpt-5.4-mini" },
+	});
 }
 
 async function putAndCapture(
-  store: MemoryStore,
-  agent: AgentDefinition,
+	store: MemoryStore,
+	agent: AgentDefinition,
 ): Promise<string> {
-  await store.putAgent(agent);
-  const versions = await store.listAgentVersions(agent.id);
-  return versions[0].createdAt;
+	await store.putAgent(agent);
+	const versions = await store.listAgentVersions(agent.id);
+	return versions[0].createdAt;
 }
 
 describe("Runner reference syntax", () => {
-  let store: MemoryStore;
-  let runner: ReturnType<typeof createRunner>;
+	let store: MemoryStore;
+	let runner: ReturnType<typeof createRunner>;
 
-  beforeEach(() => {
-    store = new MemoryStore();
-    runner = createRunner({
-      modelProvider: new StubProvider(),
-      agentStore: store,
-    });
-  });
+	beforeEach(() => {
+		store = new MemoryStore();
+		runner = createRunner({
+			modelProvider: new StubProvider(),
+			agentStore: store,
+		});
+	});
 
-  it("resolves bare id to the activated version", async () => {
-    const v1Ts = await putAndCapture(store, makeAgent("v1"));
-    // tiny delay so v2 has a strictly later timestamp
-    await new Promise((r) => setTimeout(r, 5));
-    await putAndCapture(store, makeAgent("v2"));
+	it("resolves bare id to the activated version", async () => {
+		const v1Ts = await putAndCapture(store, makeAgent("v1"));
+		// tiny delay so v2 has a strictly later timestamp
+		await new Promise((r) => setTimeout(r, 5));
+		await putAndCapture(store, makeAgent("v2"));
 
-    // putAgent auto-activates, so the activated version is v2 (newest).
-    const r1 = await runner.invoke("reviewer", "hello");
-    expect(r1.output).toBe("ok");
+		// putAgent auto-activates, so the activated version is v2 (newest).
+		const r1 = await runner.invoke("reviewer", "hello");
+		expect(r1.output).toBe("ok");
 
-    // Re-pin to v1 — bare id should now resolve to v1.
-    await store.activateAgentVersion("reviewer", v1Ts);
-    const agent = await store.getAgent("reviewer");
-    expect(agent?.name).toBe("v1");
-  });
+		// Re-pin to v1 — bare id should now resolve to v1.
+		await store.activateAgentVersion("reviewer", v1Ts);
+		const agent = await store.getAgent("reviewer");
+		expect(agent?.name).toBe("v1");
+	});
 
-  it("@latest ignores activation and returns the newest by created_at", async () => {
-    const v1Ts = await putAndCapture(store, makeAgent("v1"));
-    await new Promise((r) => setTimeout(r, 5));
-    await putAndCapture(store, makeAgent("v2"));
+	it("@latest ignores activation and returns the newest by created_at", async () => {
+		const v1Ts = await putAndCapture(store, makeAgent("v1"));
+		await new Promise((r) => setTimeout(r, 5));
+		await putAndCapture(store, makeAgent("v2"));
 
-    // Pin to v1 — bare id resolves to v1, @latest still resolves to v2.
-    await store.activateAgentVersion("reviewer", v1Ts);
+		// Pin to v1 — bare id resolves to v1, @latest still resolves to v2.
+		await store.activateAgentVersion("reviewer", v1Ts);
 
-    expect((await store.getAgent("reviewer"))?.name).toBe("v1");
+		expect((await store.getAgent("reviewer"))?.name).toBe("v1");
 
-    // resolveAgentRef is the public helper that lets us assert resolution
-    // without driving a full invoke.
-    const latest = await runner.resolveAgentRef("reviewer@latest");
-    expect(latest?.name).toBe("v2");
-  });
+		// resolveAgentRef is the public helper that lets us assert resolution
+		// without driving a full invoke.
+		const latest = await runner.resolveAgentRef("reviewer@latest");
+		expect(latest?.name).toBe("v2");
+	});
 
-  it("@<iso> pins to a specific version", async () => {
-    const v1Ts = await putAndCapture(store, makeAgent("v1"));
-    await new Promise((r) => setTimeout(r, 5));
-    await putAndCapture(store, makeAgent("v2"));
+	it("@<iso> pins to a specific version", async () => {
+		const v1Ts = await putAndCapture(store, makeAgent("v1"));
+		await new Promise((r) => setTimeout(r, 5));
+		await putAndCapture(store, makeAgent("v2"));
 
-    const pinned = await runner.resolveAgentRef(`reviewer@${v1Ts}`);
-    expect(pinned?.name).toBe("v1");
-  });
+		const pinned = await runner.resolveAgentRef(`reviewer@${v1Ts}`);
+		expect(pinned?.name).toBe("v1");
+	});
 
-  it("throws AgentVersionNotFoundError for an unknown @<iso>", async () => {
-    await putAndCapture(store, makeAgent("v1"));
+	it("throws AgentVersionNotFoundError for an unknown @<iso>", async () => {
+		await putAndCapture(store, makeAgent("v1"));
 
-    await expect(
-      runner.invoke("reviewer@2030-01-01T00:00:00.000Z", "hi"),
-    ).rejects.toBeInstanceOf(AgentVersionNotFoundError);
-  });
+		await expect(
+			runner.invoke("reviewer@2030-01-01T00:00:00.000Z", "hi"),
+		).rejects.toBeInstanceOf(AgentVersionNotFoundError);
+	});
 
-  it("throws InvalidAgentRefError for malformed @suffix", async () => {
-    await putAndCapture(store, makeAgent("v1"));
+	it("throws InvalidAgentRefError for malformed @suffix", async () => {
+		await putAndCapture(store, makeAgent("v1"));
 
-    // `-bad` is rejected at parse time (aliases must start with alphanumeric).
-    await expect(runner.invoke("reviewer@-bad", "hi")).rejects.toBeInstanceOf(
-      InvalidAgentRefError,
-    );
-  });
+		// `-bad` is rejected at parse time (aliases must start with alphanumeric).
+		await expect(runner.invoke("reviewer@-bad", "hi")).rejects.toBeInstanceOf(
+			InvalidAgentRefError,
+		);
+	});
 
-  it("throws AgentNotFoundError for nonexistent id (bare or @latest)", async () => {
-    await expect(runner.invoke("ghost", "hi")).rejects.toBeInstanceOf(
-      AgentNotFoundError,
-    );
-    await expect(runner.invoke("ghost@latest", "hi")).rejects.toBeInstanceOf(
-      AgentNotFoundError,
-    );
-  });
+	it("throws AgentNotFoundError for nonexistent id (bare or @latest)", async () => {
+		await expect(runner.invoke("ghost", "hi")).rejects.toBeInstanceOf(
+			AgentNotFoundError,
+		);
+		await expect(runner.invoke("ghost@latest", "hi")).rejects.toBeInstanceOf(
+			AgentNotFoundError,
+		);
+	});
 
-  it("rejects @version on in-memory registered agents", async () => {
-    runner.registerAgent(makeAgent("adhoc"));
+	it("rejects @version on in-memory registered agents", async () => {
+		runner.registerAgent(makeAgent("adhoc"));
 
-    // Bare id works (no version asked).
-    const bare = await runner.resolveAgentRef("reviewer");
-    expect(bare?.name).toBe("adhoc");
+		// Bare id works (no version asked).
+		const bare = await runner.resolveAgentRef("reviewer");
+		expect(bare?.name).toBe("adhoc");
 
-    await expect(
-      runner.invoke("reviewer@latest", "hi"),
-    ).rejects.toBeInstanceOf(InvalidAgentRefError);
-  });
+		await expect(runner.invoke("reviewer@latest", "hi")).rejects.toBeInstanceOf(
+			InvalidAgentRefError,
+		);
+	});
 
-  it("resolveAgentRef swallows errors and returns null", async () => {
-    expect(await runner.resolveAgentRef("ghost")).toBeNull();
-    expect(await runner.resolveAgentRef("ghost@latest")).toBeNull();
-    expect(await runner.resolveAgentRef("foo@bogus")).toBeNull();
-  });
+	it("resolveAgentRef swallows errors and returns null", async () => {
+		expect(await runner.resolveAgentRef("ghost")).toBeNull();
+		expect(await runner.resolveAgentRef("ghost@latest")).toBeNull();
+		expect(await runner.resolveAgentRef("foo@bogus")).toBeNull();
+	});
 
-  it("stamps version attrs on the invoke span", async () => {
-    const v1Ts = await putAndCapture(store, makeAgent("v1"));
-    await new Promise((r) => setTimeout(r, 5));
-    await putAndCapture(store, makeAgent("v2"));
+	it("stamps version attrs on the invoke span", async () => {
+		const v1Ts = await putAndCapture(store, makeAgent("v1"));
+		await new Promise((r) => setTimeout(r, 5));
+		await putAndCapture(store, makeAgent("v2"));
 
-    const spans: Span[] = [];
-    const sink: TraceSink = (event) => {
-      if (event.type === "span-start") spans.push(event.span);
-    };
-    const tracedRunner = createRunner({
-      modelProvider: new StubProvider(),
-      agentStore: store,
-      telemetry: { traceSink: sink },
-    });
+		const spans: Span[] = [];
+		const sink: TraceSink = (event) => {
+			if (event.type === "span-start") spans.push(event.span);
+		};
+		const tracedRunner = createRunner({
+			modelProvider: new StubProvider(),
+			agentStore: store,
+			telemetry: { traceSink: sink },
+		});
 
-    await tracedRunner.invoke("reviewer@latest", "hi");
-    const invokeSpan = spans.find((s) => s.kind === "invoke");
-    expect(invokeSpan).toBeDefined();
-    expect(invokeSpan!.attributes["agent.id"]).toBe("reviewer");
-    expect(invokeSpan!.attributes["agent.requested_version"]).toBe("latest");
-    expect(invokeSpan!.attributes["agent.resolved_version"]).toBeTypeOf("string");
-    expect(invokeSpan!.attributes["agent.resolved_via"]).toBe("latest");
+		await tracedRunner.invoke("reviewer@latest", "hi");
+		const invokeSpan = spans.find((s) => s.kind === "invoke");
+		expect(invokeSpan).toBeDefined();
+		expect(invokeSpan?.attributes["agent.id"]).toBe("reviewer");
+		expect(invokeSpan?.attributes["agent.requested_version"]).toBe("latest");
+		expect(invokeSpan?.attributes["agent.resolved_version"]).toBeTypeOf(
+			"string",
+		);
+		expect(invokeSpan?.attributes["agent.resolved_via"]).toBe("latest");
 
-    spans.length = 0;
-    await tracedRunner.invoke(`reviewer@${v1Ts}`, "hi");
-    const pinnedSpan = spans.find((s) => s.kind === "invoke");
-    expect(pinnedSpan!.attributes["agent.requested_version"]).toBe(v1Ts);
-    expect(pinnedSpan!.attributes["agent.resolved_version"]).toBe(v1Ts);
-    expect(pinnedSpan!.attributes["agent.resolved_via"]).toBe("exact");
+		spans.length = 0;
+		await tracedRunner.invoke(`reviewer@${v1Ts}`, "hi");
+		const pinnedSpan = spans.find((s) => s.kind === "invoke");
+		expect(pinnedSpan?.attributes["agent.requested_version"]).toBe(v1Ts);
+		expect(pinnedSpan?.attributes["agent.resolved_version"]).toBe(v1Ts);
+		expect(pinnedSpan?.attributes["agent.resolved_via"]).toBe("exact");
 
-    spans.length = 0;
-    await tracedRunner.invoke("reviewer", "hi");
-    const bareSpan = spans.find((s) => s.kind === "invoke");
-    expect(bareSpan!.attributes["agent.requested_version"]).toBeUndefined();
-    expect(bareSpan!.attributes["agent.resolved_via"]).toBe("activated");
-  });
+		spans.length = 0;
+		await tracedRunner.invoke("reviewer", "hi");
+		const bareSpan = spans.find((s) => s.kind === "invoke");
+		expect(bareSpan?.attributes["agent.requested_version"]).toBeUndefined();
+		expect(bareSpan?.attributes["agent.resolved_via"]).toBe("activated");
+	});
 });

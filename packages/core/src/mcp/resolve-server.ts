@@ -1,9 +1,9 @@
 import type { ConnectionStore, MCPConnectionConfig } from "../types.js";
 
 export interface ResolvedMCPServer {
-  url: string;
-  headers?: Record<string, string>;
-  source: "registered" | "url";
+	url: string;
+	headers?: Record<string, string>;
+	source: "registered" | "url";
 }
 
 /**
@@ -17,23 +17,23 @@ export interface ResolvedMCPServer {
  * while still falling back to registered defaults.
  */
 export async function resolveMCPServer(
-  ref: string,
-  store: ConnectionStore,
-  entryHeaders?: Record<string, string>,
+	ref: string,
+	store: ConnectionStore,
+	entryHeaders?: Record<string, string>,
 ): Promise<ResolvedMCPServer> {
-  const registered = await store.getConnection("mcp", ref);
-  if (registered) {
-    const cfg = registered.config as MCPConnectionConfig;
-    const mergedHeaders = mergeHeaders(cfg.headers, entryHeaders);
-    return { url: cfg.url, headers: mergedHeaders, source: "registered" };
-  }
-  return { url: ref, headers: entryHeaders, source: "url" };
+	const registered = await store.getConnection("mcp", ref);
+	if (registered) {
+		const cfg = registered.config as MCPConnectionConfig;
+		const mergedHeaders = mergeHeaders(cfg.headers, entryHeaders);
+		return { url: cfg.url, headers: mergedHeaders, source: "registered" };
+	}
+	return { url: ref, headers: entryHeaders, source: "url" };
 }
 
 function mergeHeaders(
-  base?: Record<string, string>,
-  override?: Record<string, string>,
+	base?: Record<string, string>,
+	override?: Record<string, string>,
 ): Record<string, string> | undefined {
-  if (!base && !override) return undefined;
-  return { ...(base ?? {}), ...(override ?? {}) };
+	if (!base && !override) return undefined;
+	return { ...(base ?? {}), ...(override ?? {}) };
 }

@@ -340,9 +340,7 @@ class Memrez:
         include_descendants: bool = False,
     ) -> dict[str, int]:
         normalized = _normalize_grants(grants, self.namespace_policy)
-        scope_paths = (
-            list(normalized) if include_descendants else visible_scopes(normalized, True)
-        )
+        scope_paths = list(normalized) if include_descendants else visible_scopes(normalized, True)
         entries = self.store.list_scope_slice(scope_paths, topics=topics)
         curate = getattr(self.reasoner, "curate", None)
         raw_ops = (
@@ -411,11 +409,7 @@ class Memrez:
     def _find_exact_duplicate(self, scope: str, content: str) -> MemoryEntry | None:
         entries = self.store.list_scope_slice([scope])
         return next(
-            (
-                entry
-                for entry in entries
-                if entry.content == content and entry.status == "active"
-            ),
+            (entry for entry in entries if entry.content == content and entry.status == "active"),
             None,
         )
 

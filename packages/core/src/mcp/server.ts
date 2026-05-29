@@ -1,15 +1,17 @@
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { CallToolRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { Runner } from "../runner.js";
 
 /**
  * Options for creating an MCP server from a runner.
  */
 export interface MCPServerOptions {
-  /** Server name (default: "agntz") */
-  name?: string;
-  /** Server version (default: "0.1.0") */
-  version?: string;
-  /** Only expose specific agent IDs. If omitted, all agents are exposed. */
-  agentIds?: string[];
+	/** Server name (default: "agntz") */
+	name?: string;
+	/** Server version (default: "0.1.0") */
+	version?: string;
+	/** Only expose specific agent IDs. If omitted, all agents are exposed. */
+	agentIds?: string[];
 }
 
 /**
@@ -32,106 +34,113 @@ export interface MCPServerOptions {
  *
  * Note: This requires the @modelcontextprotocol/sdk package.
  */
-export async function createMCPServer(runner: Runner, options: MCPServerOptions = {}) {
-  const { Server } = await import("@modelcontextprotocol/sdk/server/index.js");
+export async function createMCPServer(
+	runner: Runner,
+	options: MCPServerOptions = {},
+) {
+	const { Server } = await import("@modelcontextprotocol/sdk/server/index.js");
+	const { CallToolRequestSchema, ListToolsRequestSchema } = await import(
+		"@modelcontextprotocol/sdk/types.js"
+	);
 
-  const serverName = options.name ?? "agntz";
-  const serverVersion = options.version ?? "0.1.0";
+	const serverName = options.name ?? "agntz";
+	const serverVersion = options.version ?? "0.1.0";
 
-  const server = new Server(
-    { name: serverName, version: serverVersion },
-    {
-      capabilities: {
-        tools: {},
-      },
-    },
-  );
+	const server = new Server(
+		{ name: serverName, version: serverVersion },
+		{
+			capabilities: {
+				tools: {},
+			},
+		},
+	);
 
-  // List tools handler — expose agents as invocable tools
-  server.setRequestHandler(
-    { method: "tools/list" } as any,
-    async () => {
-      const agents = await runner.agents.listAgents();
-      const filtered = options.agentIds
-        ? agents.filter((a) => options.agentIds!.includes(a.id))
-        : agents;
+	// List tools handler — expose agents as invocable tools
+	server.setRequestHandler(ListToolsRequestSchema, async () => {
+		const agents = await runner.agents.listAgents();
+		const filtered = options.agentIds
+			? agents.filter((a) => options.agentIds?.includes(a.id))
+			: agents;
 
-      return {
-        tools: filtered.map((agent) => ({
-          name: `invoke_${agent.id}`,
-          description: agent.description ?? `Invoke the "${agent.name}" agent`,
-          inputSchema: {
-            type: "object",
-            properties: {
-              input: {
-                type: "string",
-                description: "The input/question to send to the agent",
-              },
-              sessionId: {
-                type: "string",
-                description: "Optional session ID for conversational continuity",
-              },
-            },
-            required: ["input"],
-          },
-        })),
-      };
-    },
-  );
+		return {
+			tools: filtered.map((agent) => ({
+				name: `invoke_${agent.id}`,
+				description: agent.description ?? `Invoke the "${agent.name}" agent`,
+				inputSchema: {
+					type: "object",
+					properties: {
+						input: {
+							type: "string",
+							description: "The input/question to send to the agent",
+						},
+						sessionId: {
+							type: "string",
+							description: "Optional session ID for conversational continuity",
+						},
+					},
+					required: ["input"],
+				},
+			})),
+		};
+	});
 
-  // Call tool handler — invoke the agent
-  server.setRequestHandler(
-    { method: "tools/call" } as any,
-    async (request: any) => {
-      const { name, arguments: args } = request.params;
+	// Call tool handler — invoke the agent
+	server.setRequestHandler(
+		CallToolRequestSchema,
+		async (request: CallToolRequest) => {
+			const { name } = request.params;
+			const args = request.params.arguments as
+				| Record<string, unknown>
+				| undefined;
 
-      // Extract agent ID from tool name
-      const agentId = name.replace(/^invoke_/, "");
-      const input = args?.input ?? "";
-      const sessionId = args?.sessionId;
+			// Extract agent ID from tool name
+			const agentId = name.replace(/^invoke_/, "");
+			const input = typeof args?.input === "string" ? args.input : "";
+			const sessionId =
+				typeof args?.sessionId === "string" ? args.sessionId : undefined;
 
-      try {
-        const result = await runner.invoke(agentId, input, { sessionId });
-        return {
-          content: [
-            {
-              type: "text",
-              text: result.output,
-            },
-          ],
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error: ${error instanceof Error ? error.message : String(error)}`,
-            },
-          ],
-          isError: true,
-        };
-      }
-    },
-  );
+			try {
+				const result = await runner.invoke(agentId, input, { sessionId });
+				return {
+					content: [
+						{
+							type: "text",
+							text: result.output,
+						},
+					],
+				};
+			} catch (error) {
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+						},
+					],
+					isError: true,
+				};
+			}
+		},
+	);
 
-  return {
-    /** The underlying MCP Server instance */
-    server,
+	return {
+		/** The underlying MCP Server instance */
+		server,
 
-    /**
-     * Connect to a transport (e.g., HTTP/SSE).
-     * Stdio transport is not supported — use an HTTP-based transport for web compatibility.
-     */
-    async connect(transport: any) {
-      await server.connect(transport);
-      return server;
-    },
+		/**
+		 * Connect to a transport (e.g., HTTP/SSE).
+		 * Stdio transport is not supported — use an HTTP-based transport for web compatibility.
+		 */
+		async connect(transport: Transport) {
+			await server.connect(transport);
+			return server;
+		},
 
-    /**
-     * Shut down the server.
-     */
-    async close() {
-      await server.close();
-    },
-  };
+		/**
+		 * Shut down the server.
+		 */
+		async close() {
+			await server.close();
+		},
+	};
 }

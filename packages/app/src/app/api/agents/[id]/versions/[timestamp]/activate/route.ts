@@ -1,30 +1,37 @@
-import { NextRequest, NextResponse } from "next/server";
-import { requireUserContext, AuthRequiredError } from "@/lib/user";
+import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import { activateVersion, getVersion } from "@/lib/versions";
+import { type NextRequest, NextResponse } from "next/server";
 
 export async function POST(
-  _req: NextRequest,
-  { params }: { params: Promise<{ id: string; timestamp: string }> }
+	_req: NextRequest,
+	{ params }: { params: Promise<{ id: string; timestamp: string }> },
 ) {
-  try {
-    const { id, timestamp } = await params;
-    const decodedTimestamp = decodeURIComponent(timestamp);
-    const { store } = await requireUserContext();
+	try {
+		const { id, timestamp } = await params;
+		const decodedTimestamp = decodeURIComponent(timestamp);
+		const { store } = await requireUserContext();
 
-    const agent = await getVersion(store, id, decodedTimestamp);
-    if (!agent) {
-      return NextResponse.json(
-        { error: `Version not found for agent "${id}" at ${decodedTimestamp}` },
-        { status: 404 }
-      );
-    }
+		const agent = await getVersion(store, id, decodedTimestamp);
+		if (!agent) {
+			return NextResponse.json(
+				{ error: `Version not found for agent "${id}" at ${decodedTimestamp}` },
+				{ status: 404 },
+			);
+		}
 
-    await activateVersion(store, id, decodedTimestamp);
-    return NextResponse.json({ activated: true, agentId: id, timestamp: decodedTimestamp });
-  } catch (error) {
-    if (error instanceof AuthRequiredError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
-    }
-    return NextResponse.json({ error: String(error) }, { status: 500 });
-  }
+		await activateVersion(store, id, decodedTimestamp);
+		return NextResponse.json({
+			activated: true,
+			agentId: id,
+			timestamp: decodedTimestamp,
+		});
+	} catch (error) {
+		if (error instanceof AuthRequiredError) {
+			return NextResponse.json(
+				{ error: error.message },
+				{ status: error.status },
+			);
+		}
+		return NextResponse.json({ error: String(error) }, { status: 500 });
+	}
 }

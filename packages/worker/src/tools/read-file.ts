@@ -16,18 +16,21 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REFS_DIR = resolve(__dirname, "defaults/agents/agent-builder");
 
 export const readFileTool = defineTool({
-  name: "read_file",
-  description: "Read a bundled reference file and return its contents as a string",
-  input: z.object({
-    path: z.string().describe("File path relative to the bundled references directory"),
-  }),
-  async execute(input: { path: string }) {
-    const filePath = resolve(REFS_DIR, input.path);
+	name: "read_file",
+	description:
+		"Read a bundled reference file and return its contents as a string",
+	input: z.object({
+		path: z
+			.string()
+			.describe("File path relative to the bundled references directory"),
+	}),
+	async execute(input: { path: string }) {
+		const filePath = resolve(REFS_DIR, input.path);
 
-    if (!filePath.startsWith(REFS_DIR)) {
-      throw new Error(`Access denied: path must be within ${REFS_DIR}`);
-    }
+		if (!filePath.startsWith(REFS_DIR)) {
+			throw new Error(`Access denied: path must be within ${REFS_DIR}`);
+		}
 
-    return readFile(filePath, "utf-8");
-  },
+		return readFile(filePath, "utf-8");
+	},
 });

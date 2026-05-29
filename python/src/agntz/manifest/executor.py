@@ -155,4 +155,3 @@ async def _resolve_step_agent(
     if ref:
         return await ctx.resolve_agent(ref)
     raise ValueError("Step must have either 'ref' or inline 'agent'")
-

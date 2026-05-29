@@ -1,5 +1,5 @@
-import type { ZodSchema, infer as ZodInfer } from "zod";
-import type { ToolDefinition, ToolContext } from "@agntz/core";
+import type { ToolContext, ToolDefinition } from "@agntz/core";
+import type { infer as ZodInfer, ZodSchema } from "zod";
 
 /**
  * Define a local tool with a Zod input schema. The schema both validates
@@ -11,17 +11,20 @@ import type { ToolDefinition, ToolContext } from "@agntz/core";
  * `@agntz/core` for inline local tools.
  */
 export function tool<TSchema extends ZodSchema>(definition: {
-  name: string;
-  description: string;
-  input: TSchema;
-  execute: (args: ZodInfer<TSchema>, ctx: ToolContext) => Promise<unknown> | unknown;
+	name: string;
+	description: string;
+	input: TSchema;
+	execute: (
+		args: ZodInfer<TSchema>,
+		ctx: ToolContext,
+	) => Promise<unknown> | unknown;
 }): ToolDefinition<ZodInfer<TSchema>> {
-  return {
-    name: definition.name,
-    description: definition.description,
-    input: definition.input,
-    async execute(args, ctx) {
-      return definition.execute(args as ZodInfer<TSchema>, ctx);
-    },
-  };
+	return {
+		name: definition.name,
+		description: definition.description,
+		input: definition.input,
+		async execute(args, ctx) {
+			return definition.execute(args as ZodInfer<TSchema>, ctx);
+		},
+	};
 }

@@ -84,9 +84,7 @@ def apply_output_mapping(mapping: OutputMapping, state: AgentState) -> dict[str,
         if isinstance(value, str):
             match = _SIMPLE_TEMPLATE_RE.match(value)
             result[key] = (
-                resolve_path(state, match.group(1).strip())
-                if match
-                else interpolate(value, state)
+                resolve_path(state, match.group(1).strip()) if match else interpolate(value, state)
             )
         elif isinstance(value, dict):
             result[key] = apply_output_mapping(value, state)

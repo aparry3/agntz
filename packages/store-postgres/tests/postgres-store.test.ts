@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { PostgresStore } from "../src/postgres-store.js";
 import type { AgentDefinition } from "@agntz/core";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { PostgresStore } from "../src/postgres-store.js";
 
 /**
  * Integration tests for PostgresStore. Runs against a real Postgres instance
@@ -16,43 +16,49 @@ const url = process.env.DATABASE_URL;
 const hasDb = !!url;
 
 describe.skipIf(!hasDb)("PostgresStore (integration)", () => {
-  let admin: PostgresStore;
-  const userId = `user_test_${Date.now()}`;
+	let admin: PostgresStore;
+	const userId = `user_test_${Date.now()}`;
 
-  beforeAll(async () => {
-    admin = new PostgresStore({ connection: url!, tablePrefix: `art_${Date.now()}_` });
-  });
+	beforeAll(async () => {
+		admin = new PostgresStore({
+			connection: url!,
+			tablePrefix: `art_${Date.now()}_`,
+		});
+	});
 
-  afterAll(async () => {
-    await admin.close();
-  });
+	afterAll(async () => {
+		await admin.close();
+	});
 
-  it("scopes agents to the user", async () => {
-    const store = admin.forUser(userId);
-    const agent: AgentDefinition = {
-      id: "test",
-      name: "Test",
-      systemPrompt: "",
-      model: { provider: "openai", name: "gpt-5.4" },
-    };
-    await store.putAgent(agent);
-    expect((await store.getAgent("test"))?.name).toBe("Test");
+	it("scopes agents to the user", async () => {
+		const store = admin.forUser(userId);
+		const agent: AgentDefinition = {
+			id: "test",
+			name: "Test",
+			systemPrompt: "",
+			model: { provider: "openai", name: "gpt-5.4" },
+		};
+		await store.putAgent(agent);
+		expect((await store.getAgent("test"))?.name).toBe("Test");
 
-    const storeB = admin.forUser(`user_b_${Date.now()}`);
-    expect(await storeB.getAgent("test")).toBeNull();
-  });
+		const storeB = admin.forUser(`user_b_${Date.now()}`);
+		expect(await storeB.getAgent("test")).toBeNull();
+	});
 
-  it("creates, resolves, and revokes API keys", async () => {
-    const { record, rawKey } = await admin.createApiKey({ userId, name: "k" });
-    expect(rawKey).toMatch(/^ar_live_/);
+	it("creates, resolves, and revokes API keys", async () => {
+		const { record, rawKey } = await admin.createApiKey({ userId, name: "k" });
+		expect(rawKey).toMatch(/^ar_live_/);
 
-    expect(await admin.resolveApiKey(rawKey)).toEqual({ userId, keyId: record.id });
+		expect(await admin.resolveApiKey(rawKey)).toEqual({
+			userId,
+			keyId: record.id,
+		});
 
-    await admin.revokeApiKey({ userId, keyId: record.id });
-    expect(await admin.resolveApiKey(rawKey)).toBeNull();
-  });
+		await admin.revokeApiKey({ userId, keyId: record.id });
+		expect(await admin.resolveApiKey(rawKey)).toBeNull();
+	});
 
-  it("throws on scoped methods when unscoped", async () => {
-    await expect(admin.getAgent("x")).rejects.toThrow(/user not set/);
-  });
+	it("throws on scoped methods when unscoped", async () => {
+		await expect(admin.getAgent("x")).rejects.toThrow(/user not set/);
+	});
 });

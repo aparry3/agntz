@@ -41,9 +41,7 @@ def load_manifests_from_dir(path: str | Path) -> dict[str, AgentManifest]:
     root = Path(path)
     manifests: dict[str, AgentManifest] = {}
     for manifest_path in sorted(
-        candidate
-        for candidate in root.rglob("*")
-        if candidate.suffix.lower() in {".yaml", ".yml"}
+        candidate for candidate in root.rglob("*") if candidate.suffix.lower() in {".yaml", ".yml"}
     ):
         manifest = load_manifest_file(manifest_path)
         if manifest.id in manifests:
