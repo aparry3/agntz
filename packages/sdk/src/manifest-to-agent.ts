@@ -66,6 +66,7 @@ function llmManifestToAgentDefinition(
       ? convertSpawnable(manifest, manifest.spawnable, localToolNames)
       : undefined,
     reply: manifest.reply,
+    resources: manifest.resources,
   };
 }
 

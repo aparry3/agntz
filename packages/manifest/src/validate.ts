@@ -19,9 +19,11 @@ import type {
   OutputSchema,
   OutputMapping,
   ManifestToolEntry,
+  ResourceManifestEntry,
 } from "./types.js";
 
 const HTTP_TOOL_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+const RESOURCE_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 const SECRET_REF_RE = /\{\{\s*secrets\.([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g;
 const ENV_REF_RE = /\{\{\s*env\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
 
@@ -238,8 +240,12 @@ function validateLLMStructural(
     validatePropertySchema(manifest.outputSchema, p(path, "outputSchema"), errors);
   }
 
+  if (manifest.resources) {
+    validateResources(manifest.resources, p(path, "resources"), errors);
+  }
+
   if (manifest.tools) {
-    validateToolEntries(manifest.tools, p(path, "tools"), errors);
+    validateToolEntries(manifest.tools, p(path, "tools"), errors, manifest.resources);
   }
 
   if (manifest.spawnable) {
@@ -515,8 +521,10 @@ function validateSkillsStructural(
 export function validateToolEntries(
   tools: ManifestToolEntry[],
   path: string,
-  errors: ValidationError[]
+  errors: ValidationError[],
+  resources?: Record<string, ResourceManifestEntry>,
 ): void {
+  const reservedResourcePrefixes = resourceToolPrefixes(resources);
   for (let i = 0; i < tools.length; i++) {
     const entry = tools[i];
     const epath = `${path}[${i}]`;
@@ -565,6 +573,23 @@ export function validateToolEntries(
     if (entry.kind === "local") {
       if (!entry.tools || entry.tools.length === 0) {
         errors.push({ level: "structural", path: epath, message: "Local tool entry must list at least one tool" });
+      } else {
+        for (let j = 0; j < entry.tools.length; j++) {
+          const name = entry.tools[j];
+          if (typeof name !== "string") {
+            errors.push({ level: "structural", path: `${epath}.tools[${j}]`, message: "Local tool name must be a string" });
+            continue;
+          }
+          for (const prefix of reservedResourcePrefixes) {
+            if (name.startsWith(prefix)) {
+              errors.push({
+                level: "structural",
+                path: `${epath}.tools[${j}]`,
+                message: `Local tool '${name}' conflicts with reserved resource tool prefix '${prefix}'`,
+              });
+            }
+          }
+        }
       }
     }
 
@@ -710,6 +735,61 @@ export function validateToolEntries(
       }
     }
   }
+}
+
+function validateResources(
+  resources: Record<string, ResourceManifestEntry>,
+  path: string,
+  errors: ValidationError[],
+): void {
+  for (const [name, entry] of Object.entries(resources)) {
+    const epath = p(path, name);
+    if (!RESOURCE_NAME_RE.test(name)) {
+      errors.push({
+        level: "structural",
+        path: epath,
+        message: `Resource name '${name}' must match ${RESOURCE_NAME_RE.source}`,
+      });
+    }
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      errors.push({ level: "structural", path: epath, message: "Resource entry must be an object" });
+      continue;
+    }
+    if (!entry.kind || typeof entry.kind !== "string") {
+      errors.push({ level: "structural", path: p(epath, "kind"), message: "Resource kind must be a string" });
+    } else if (!RESOURCE_NAME_RE.test(entry.kind)) {
+      errors.push({
+        level: "structural",
+        path: p(epath, "kind"),
+        message: `Resource kind '${entry.kind}' must match ${RESOURCE_NAME_RE.source}`,
+      });
+    }
+    if (entry.mode !== undefined && entry.mode !== "read" && entry.mode !== "read-write") {
+      errors.push({ level: "structural", path: p(epath, "mode"), message: "Resource mode must be 'read' or 'read-write'" });
+    }
+    if (entry.namespace !== undefined) {
+      const namespace = entry.namespace;
+      if (typeof namespace === "string") {
+        // ok
+      } else if (Array.isArray(namespace) && namespace.every((v) => typeof v === "string")) {
+        // ok
+      } else {
+        errors.push({
+          level: "structural",
+          path: p(epath, "namespace"),
+          message: "Resource namespace must be a string or array of strings",
+        });
+      }
+    }
+  }
+}
+
+function resourceToolPrefixes(resources: Record<string, ResourceManifestEntry> | undefined): string[] {
+  return Object.keys(resources ?? {}).map((name) => `${resourceToolPrefix(name)}_`);
+}
+
+function resourceToolPrefix(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_]/g, "_");
 }
 
 // ─── HTTP body / auth helpers ────────────────────────────────────────

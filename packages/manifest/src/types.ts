@@ -95,6 +95,11 @@ export interface LLMAgentManifest extends AgentManifestBase {
    * an object to override `maxPerRun`.
    */
   reply?: boolean | { maxPerRun?: number };
+  /**
+   * Resource declarations this agent may use. Runtime providers interpret
+   * config; the manifest layer only validates generic shape.
+   */
+  resources?: Record<string, ResourceManifestEntry>;
 }
 
 /**
@@ -113,6 +118,21 @@ export interface ModelConfig {
   temperature?: number;
   maxTokens?: number;
   topP?: number;
+}
+
+export type ResourceMode = "read" | "read-write";
+
+export interface ResourceManifestEntry {
+  /** Provider kind. Defaults to the resource map key when omitted. */
+  kind: string;
+  /** Per-agent access mode. Providers may define kind-specific defaults. */
+  mode?: ResourceMode;
+  /** Optional static provider input, not an automatic runtime grant. */
+  namespace?: string | string[];
+  /** Provider-specific config passthrough. */
+  config?: unknown;
+  /** Additional provider-specific fields. */
+  [key: string]: unknown;
 }
 
 export interface Example {

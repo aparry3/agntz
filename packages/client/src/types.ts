@@ -42,6 +42,8 @@ export interface RunInput {
   input?: unknown | string | ContentBlock[];
   /** Forward-compat: worker accepts but ignores today. */
   sessionId?: string;
+  /** Runtime namespace capability grants passed through to resource providers. */
+  context?: string[];
   signal?: AbortSignal;
 }
 
@@ -169,6 +171,8 @@ export interface RunsStartInput {
   /** See `RunInput.input` for the accepted shapes. */
   input?: unknown | string | ContentBlock[];
   sessionId?: string;
+  /** Runtime namespace capability grants passed through to resource providers. */
+  context?: string[];
   signal?: AbortSignal;
   /**
    * Per-invocation webhook callback URL. When set, the worker will POST

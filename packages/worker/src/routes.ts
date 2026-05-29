@@ -293,6 +293,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
         agentId?: string;
         input?: unknown;
         sessionId?: string;
+        context?: string[];
       };
       const { agentId, input } = body;
       agentIdForLog = agentId;
@@ -333,6 +334,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
         ownerId: userId,
         userId,
         sessionId,
+        context: body.context,
         replyCollector,
       });
       const result = await execute(manifest, input ?? "", ctx);
@@ -360,6 +362,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
         agentId?: string;
         input?: unknown;
         sessionId?: string;
+        context?: string[];
       };
       const { agentId, input } = body;
 
@@ -442,6 +445,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
         ownerId: userId,
         userId,
         sessionId,
+        context: body.context,
         replyCollector,
       });
 
@@ -563,6 +567,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
         agentId?: string;
         input?: unknown;
         sessionId?: string;
+        context?: string[];
         callbackUrl?: string;
         webhookSecretName?: string;
       };
@@ -666,6 +671,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
           parentRunId: run.id,
           userId,
           sessionId,
+          context: body.context,
           replyCollector,
         });
         const result = await execute(manifest, input ?? "", ctx);

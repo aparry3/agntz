@@ -42,6 +42,13 @@ export interface AgentDefinition {
   skills?: string[];
 
   /**
+   * Resource declarations this agent may use. The core runner wires these
+   * through registered ResourceProviders; resource-specific behavior lives in
+   * the provider, not on the agent.
+   */
+  resources?: Record<string, ResourceDefinition>;
+
+  /**
    * When set, the runner registers a per-invocation `reply` tool the model
    * can call to deliver intermediate messages to the user. Each call is
    * persisted to the session immediately, surfaced on `InvokeResult.replies`,
@@ -100,6 +107,62 @@ export interface ModelConfig {
   options?: Record<string, unknown>;
 }
 
+export type ResourceMode = "read" | "read-write";
+
+export interface ResourceDefinition {
+  /** Provider kind. Defaults to the manifest resource name when omitted. */
+  kind: string;
+  /** Per-agent access mode. Providers may define kind-specific defaults. */
+  mode?: ResourceMode;
+  /** Optional static provider input. It is not an automatic grant. */
+  namespace?: string | string[];
+  /** Provider-specific config passthrough. */
+  config?: unknown;
+  /** Additional provider-specific fields from manifest YAML. */
+  [key: string]: unknown;
+}
+
+export interface ResourceRegistrationContext {
+  resourceName: string;
+  kind: string;
+  mode: ResourceMode;
+  config: ResourceDefinition;
+}
+
+export interface ResourceToolContext {
+  resourceName: string;
+  kind: string;
+  mode: ResourceMode;
+  config: ResourceDefinition;
+  grants: string[];
+  run: {
+    runId?: string;
+    sessionId?: string;
+    agentId?: string;
+    invocationId?: string;
+  };
+}
+
+export interface ResourceProviderToolDefinition<TInput = unknown> {
+  /** Provider-local name. The runner exposes it as <resourceName>_<name>. */
+  name: string;
+  description: string;
+  input: ZodSchema<TInput>;
+  /** Defaults to "read"; read-write tools are omitted in read mode. */
+  mode?: ResourceMode;
+  execute(input: TInput, ctx: ResourceToolContext): Promise<unknown>;
+}
+
+export interface ResourceProvider {
+  /**
+   * Default mode when an agent omits resource.mode. Resource-specific
+   * providers may choose read-write (memory) or read (RAG/files).
+   */
+  defaultMode?: ResourceMode;
+  tools?(ctx: ResourceRegistrationContext): ResourceProviderToolDefinition[];
+  getContext?(ctx: ResourceToolContext): Promise<string | undefined>;
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Tool System
 // ═══════════════════════════════════════════════════════════════════════
@@ -132,6 +195,12 @@ export interface ToolContext {
   agentId: string;
   /** Session ID (if conversational) */
   sessionId?: string;
+  /**
+   * Normalized namespace capability grants for this invocation. These are
+   * minted by trusted application code via InvokeOptions.context and are
+   * propagated to child invocations narrow-only.
+   */
+  context?: string[];
   /** Active context bucket IDs */
   contextIds?: string[];
   /** Unique ID for the current invocation */
@@ -177,6 +246,12 @@ export interface ToolInfo {
 export interface InvokeOptions {
   /** Enables conversational continuity */
   sessionId?: string;
+  /**
+   * Runtime namespace capability grants. These are generic resource grants,
+   * not message context buckets. Child invocations inherit this grant set
+   * unless they explicitly request a narrowed subset.
+   */
+  context?: string[];
   /** Named context buckets to inject */
   contextIds?: string[];
   /** Ad-hoc context string injected into messages */
@@ -209,6 +284,8 @@ export interface InvokeOptions {
   timeoutMs?: number;
   /** @internal Recursion depth tracker for agent-as-tool chains */
   _recursionDepth?: number;
+  /** @internal Effective parent resource modes by resource kind. */
+  _resourceModes?: Record<string, ResourceMode>;
   /**
    * Run registry for non-blocking child agent spawning. When set, the runner
    * registers `spawn_agent` and `check_agents` tools (if the agent declares
@@ -534,6 +611,9 @@ export interface RunnerConfig {
     maxTokens?: number;
     strategy?: "latest" | "summary" | "all";
   };
+
+  /** Resource providers keyed by resource kind. */
+  resources?: Record<string, ResourceProvider>;
 
   /** Custom model provider (bypasses ai package) */
   modelProvider?: ModelProvider;

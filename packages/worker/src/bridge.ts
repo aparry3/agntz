@@ -41,6 +41,8 @@ export interface CreateExecutionContextOptions {
   userId?: string;
   /** Optional sessionId for ToolContext + Run scoping. */
   sessionId?: string;
+  /** Runtime namespace capability grants for resource providers. */
+  context?: string[];
   /**
    * Per-request reply accumulator. Each `runner.invoke()` call inside
    * `invokeLLM` appends its `result.replies` here so the worker route can
@@ -60,7 +62,7 @@ export function createExecutionContext(
   runner: Runner,
   options: CreateExecutionContextOptions = {},
 ): ExecutionContext {
-  const { runRegistry, spanEmitter, ownerId, parentRunId, userId, sessionId, replyCollector } = options;
+  const { runRegistry, spanEmitter, ownerId, parentRunId, userId, sessionId, replyCollector, context } = options;
   return {
     spanEmitter,
     ownerId,
@@ -126,6 +128,7 @@ export function createExecutionContext(
           ...(runRegistry ? { runRegistry, parentRunId } : {}),
           ...(userId ? { userId } : {}),
           ...(sessionId ? { sessionId } : {}),
+          ...(context ? { context } : {}),
           ...(spanEmitter ? { spanEmitter } : {}),
           ...(ownerId ? { ownerId } : {}),
         });

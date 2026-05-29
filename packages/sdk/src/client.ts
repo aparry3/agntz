@@ -8,6 +8,7 @@ import type {
   ToolDefinition,
   UnifiedStore,
   Reply,
+  ResourceProvider,
 } from "@agntz/core";
 import { execute, type AgentManifest } from "@agntz/manifest";
 import { renderTemplate, createInitialState } from "@agntz/manifest";
@@ -46,6 +47,7 @@ export interface AgntzLocalOptions {
   tools?: ToolDefinition[];
   envProvider?: (name: string) => string | undefined;
   modelProvider?: ModelProvider;
+  resources?: Record<string, ResourceProvider>;
   runsCapacity?: number;
   tracesCapacity?: number;
   onEvent?: (event: CoreStreamEvent) => void;
@@ -93,6 +95,7 @@ export async function agntz(opts: AgntzLocalOptions): Promise<LocalClient> {
     tools: toolDefs,
     envProvider,
     modelProvider: opts.modelProvider,
+    resources: opts.resources,
     store: opts.store,
     tokenCache: opts.tokenCache,
   });
@@ -187,6 +190,7 @@ class AgentsResourceImpl implements LocalAgentsResource {
       const ctx = createExecutionContext(this.runner, this.manifests, this.localToolNames, {
         spanEmitter,
         sessionId,
+        context: input.context,
         signal: input.signal,
         localTools: this.localTools,
         replyCollector: replies,
@@ -295,6 +299,7 @@ class AgentsResourceImpl implements LocalAgentsResource {
             : "";
       const iter = this.runner.stream(tempId, userInput, {
         sessionId: input.sessionId,
+        context: input.context,
         signal: input.signal,
         spanEmitter,
       });

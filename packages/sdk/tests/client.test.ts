@@ -5,6 +5,7 @@ import type {
   ModelProvider,
   GenerateTextOptions,
   GenerateTextResult,
+  ToolContext,
 } from "@agntz/core";
 import { agntz, tool, z } from "../src/index.js";
 
@@ -61,7 +62,11 @@ describe("agntz() — embedded client", () => {
   });
 
   it("calls a registered local tool when the YAML references it", async () => {
-    const addHandler = vi.fn(async ({ a, b }: { a: number; b: number }) => a + b);
+    const seenContexts: Array<string[] | undefined> = [];
+    const addHandler = vi.fn(async ({ a, b }: { a: number; b: number }, ctx: ToolContext) => {
+      seenContexts.push(ctx.context);
+      return a + b;
+    });
     const provider = new MockModelProvider([
       {
         text: "",
@@ -84,9 +89,14 @@ describe("agntz() — embedded client", () => {
       modelProvider: provider,
     });
 
-    const result = await client.agents.run({ agentId: "calc-agent", input: "what's 2 + 3?" });
+    const result = await client.agents.run({
+      agentId: "calc-agent",
+      input: "what's 2 + 3?",
+      context: ["app/user/u_123"],
+    });
     expect(addHandler).toHaveBeenCalledOnce();
     expect(addHandler.mock.calls[0][0]).toEqual({ a: 2, b: 3 });
+    expect(seenContexts[0]).toEqual(["app/user/u_123"]);
     expect(result.output).toBe("The answer is 5.");
   });
 

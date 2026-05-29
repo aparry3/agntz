@@ -69,6 +69,7 @@ export class AgntzClient {
     const body: Record<string, unknown> = { agentId: input.agentId };
     if (input.input !== undefined) body.input = input.input;
     if (input.sessionId !== undefined) body.sessionId = input.sessionId;
+    if (input.context !== undefined) body.context = input.context;
     return sendRequest({
       baseUrl: this.baseUrl,
       path: stream ? "/run/stream" : "/run",
@@ -109,6 +110,7 @@ export class RunsResource {
     const body: Record<string, unknown> = { agentId: input.agentId };
     if (input.input !== undefined) body.input = input.input;
     if (input.sessionId !== undefined) body.sessionId = input.sessionId;
+    if (input.context !== undefined) body.context = input.context;
     if (input.callbackUrl !== undefined) body.callbackUrl = input.callbackUrl;
     if (input.webhookSecretName !== undefined) body.webhookSecretName = input.webhookSecretName;
     const res = await sendRequest({

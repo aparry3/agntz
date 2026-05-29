@@ -100,6 +100,66 @@ instruction: "{{#if x}}hello"
     expect(result.errors.some(e => e.message.includes("Unbalanced conditional"))).toBe(true);
   });
 
+  it("validates the generic resources block", () => {
+    const result = validateManifest(`
+id: support
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Use resources."
+resources:
+  memory:
+    mode: read-write
+    autoScan: true
+  product-docs:
+    kind: rag
+    mode: read
+    namespace:
+      - gymtext/kb/product-docs
+`);
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("rejects invalid resource modes and namespace shapes", () => {
+    const result = validateManifest(`
+id: support
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Use resources."
+resources:
+  memory:
+    mode: admin
+    namespace:
+      nested: bad
+`);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.path.includes("resources.memory.mode"))).toBe(true);
+    expect(result.errors.some((e) => e.path.includes("resources.memory.namespace"))).toBe(true);
+  });
+
+  it("rejects local tools that collide with resource system tool prefixes", () => {
+    const result = validateManifest(`
+id: support
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: "Use resources."
+resources:
+  memory:
+    mode: read-write
+tools:
+  - kind: local
+    tools: [memory_read]
+`);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.message.includes("reserved resource tool prefix"))).toBe(true);
+  });
+
   it("fails on invalid inputSchema type", () => {
     const result = validateManifest(`
 id: test

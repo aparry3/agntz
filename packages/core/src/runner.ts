@@ -24,6 +24,10 @@ import type {
   SkillStore,
   SecretStore,
   ModelProvider,
+  ResourceDefinition,
+  ResourceMode,
+  ResourceProvider,
+  ResourceToolContext,
   PendingChildResult,
   Reply,
   RunRegistry,
@@ -76,6 +80,8 @@ import type { RetryConfig } from "./utils/retry.js";
 import { Telemetry } from "./telemetry.js";
 import type { InvokeSpan } from "./telemetry.js";
 import { computeCost } from "./model-pricing.js";
+import { normalizeNamespaceGrants, narrowNamespaceGrants } from "./namespace.js";
+import { makeResourceToolName } from "./resource.js";
 
 /**
  * Outcome of resolving an agent reference. The `resolved*` fields are used
@@ -91,6 +97,13 @@ export interface ResolvedAgent {
   /** The ISO timestamp of the row that ran (null for in-memory registered agents). */
   resolvedVersion: string | null;
   resolvedVia: "registered" | "activated" | "latest" | "exact" | "alias";
+}
+
+interface ResolvedResource {
+  name: string;
+  definition: ResourceDefinition;
+  provider: ResourceProvider;
+  mode: ResourceMode;
 }
 
 /**
@@ -169,6 +182,16 @@ function collectEnvReferences(agent: AgentDefinition): Set<string> {
   return collectTemplateReferences(agent, ENV_REF_RE);
 }
 
+function clampResourceMode(declared: ResourceMode, parent: ResourceMode | undefined): ResourceMode {
+  if (parent === "read" || declared === "read") return "read";
+  return "read-write";
+}
+
+function mergeExtraContext(...parts: Array<string | undefined>): string | undefined {
+  const present = parts.filter((part): part is string => Boolean(part && part.trim()));
+  return present.length > 0 ? present.join("\n\n") : undefined;
+}
+
 function collectTemplateReferences(agent: AgentDefinition, re: RegExp): Set<string> {
   const names = new Set<string>();
   const scan = (val: unknown) => {
@@ -221,6 +244,7 @@ export class Runner {
   private _tokenCache: TokenCache;
   private _tokenResolver: TokenResolver;
   private modelProvider: ModelProvider;
+  private resourceProviders: Map<string, ResourceProvider>;
   private toolRegistry: ToolRegistry;
   private mcpManager: MCPClientManager | null = null;
   private mcpInitPromise: Promise<void> | null = null;
@@ -270,6 +294,7 @@ export class Runner {
     this.modelProvider = config.modelProvider ?? new AISDKModelProvider({
       providerStore: this._providerStore,
     });
+    this.resourceProviders = new Map(Object.entries(config.resources ?? {}));
 
     // Tool registry
     this.toolRegistry = new ToolRegistry();
@@ -339,7 +364,75 @@ export class Runner {
    * For persisted agents, use the agent store directly.
    */
   registerAgent(agent: AgentDefinition): void {
+    this.assertResourceProviders(agent);
     this.registeredAgents.set(agent.id, agent);
+  }
+
+  private assertResourceProviders(agent: AgentDefinition): void {
+    for (const [name, resource] of Object.entries(agent.resources ?? {})) {
+      if (!this.resourceProviders.has(resource.kind)) {
+        throw new Error(
+          `Agent '${agent.id}' declares resource '${name}' of kind '${resource.kind}' but no ResourceProvider is wired for that kind.`,
+        );
+      }
+    }
+  }
+
+  private resolveResourcesForAgent(
+    agent: AgentDefinition,
+    parentModes: Record<string, ResourceMode> | undefined,
+  ): { resources: ResolvedResource[]; modesByKind: Record<string, ResourceMode> } {
+    this.assertResourceProviders(agent);
+    const resources: ResolvedResource[] = [];
+    const modesByKind: Record<string, ResourceMode> = {};
+
+    for (const [name, definition] of Object.entries(agent.resources ?? {})) {
+      const provider = this.resourceProviders.get(definition.kind);
+      if (!provider) continue;
+      const declaredMode = definition.mode ?? provider.defaultMode ?? "read";
+      const mode = clampResourceMode(declaredMode, parentModes?.[definition.kind]);
+      resources.push({ name, definition, provider, mode });
+
+      const existing = modesByKind[definition.kind];
+      modesByKind[definition.kind] = existing
+        ? clampResourceMode(existing, mode)
+        : mode;
+    }
+
+    return { resources, modesByKind };
+  }
+
+  private makeResourceToolContext(
+    resource: ResolvedResource,
+    grants: string[],
+    run: ResourceToolContext["run"],
+  ): ResourceToolContext {
+    return {
+      resourceName: resource.name,
+      kind: resource.definition.kind,
+      mode: resource.mode,
+      config: resource.definition,
+      grants,
+      run,
+    };
+  }
+
+  private async collectResourceExtraContext(
+    resources: ResolvedResource[],
+    grants: string[],
+    run: ResourceToolContext["run"],
+  ): Promise<string | undefined> {
+    const parts: string[] = [];
+    for (const resource of resources) {
+      if (!resource.provider.getContext) continue;
+      const text = await resource.provider.getContext(
+        this.makeResourceToolContext(resource, grants, run),
+      );
+      if (text?.trim()) {
+        parts.push(`## Resource: ${resource.name}\n${text}`);
+      }
+    }
+    return parts.length > 0 ? parts.join("\n\n") : undefined;
   }
 
   /**
@@ -611,6 +704,7 @@ export class Runner {
     input: string | ContentBlock[],
     options: Omit<InvokeOptions, "stream"> = {},
   ): InvokeStream {
+    options = { ...options, context: normalizeNamespaceGrants(options.context) };
     const self = this;
     let resolveResult: (r: InvokeResult) => void;
     let rejectResult: (e: unknown) => void;
@@ -634,6 +728,8 @@ export class Runner {
       const invocationId = generateInvocationId();
       const resolved = await self.resolveAgent(agentId);
       const agent = resolved.agent;
+      const resolvedResources = self.resolveResourcesForAgent(agent, options._resourceModes);
+      options = { ...options, _resourceModes: resolvedResources.modesByKind };
 
       // Always work with a concrete sessionId — symmetric with invoke().
       const effectiveSessionId = options.sessionId ?? generateSessionId();
@@ -838,6 +934,16 @@ export class Runner {
             }
           }
         }
+        const resourceExtraContext = await self.collectResourceExtraContext(
+          resolvedResources.resources,
+          options.context ?? [],
+          {
+            agentId: resolved.agentId,
+            invocationId,
+            runId,
+            sessionId: effectiveSessionId,
+          },
+        );
 
         // For multimodal input, fetch URLs → base64 BEFORE building the
         // model messages so the AI SDK sees ready-to-send image parts. The
@@ -854,7 +960,7 @@ export class Runner {
           input: normalizedInput,
           sessionHistory,
           contextEntries,
-          extraContext: options.extraContext,
+          extraContext: mergeExtraContext(options.extraContext, resourceExtraContext),
         });
 
         // Append "Available skills" section to the system prompt. Missing skills
@@ -871,6 +977,9 @@ export class Runner {
           onReplyAccepted,
           state,
           ownerId: options.ownerId ?? options.userId,
+          resources: resolvedResources.resources,
+          grants: options.context ?? [],
+          invocationId,
         });
 
         // See invoke() for the rationale. Persist the user turn up-front when
@@ -1168,6 +1277,9 @@ export class Runner {
               onReplyAccepted,
               state,
               ownerId: options.ownerId ?? options.userId,
+              resources: resolvedResources.resources,
+              grants: options.context ?? [],
+              invocationId,
             });
             const seen = new Set(base.map((t) => t.name));
             availableTools = base.concat(
@@ -1323,6 +1435,7 @@ export class Runner {
     input: string | ContentBlock[],
     options: InvokeOptions = {},
   ): Promise<InvokeResult> {
+    options = { ...options, context: normalizeNamespaceGrants(options.context) };
     // Check recursion depth for agent-as-tool chains
     const currentDepth = options._recursionDepth ?? 0;
     const maxDepth = this.config.maxRecursionDepth ?? DEFAULT_MAX_RECURSION_DEPTH;
@@ -1337,6 +1450,8 @@ export class Runner {
     const invocationId = generateInvocationId();
     const resolved = await this.resolveAgent(agentId);
     const agent = resolved.agent;
+    const resolvedResources = this.resolveResourcesForAgent(agent, options._resourceModes);
+    options = { ...options, _resourceModes: resolvedResources.modesByKind };
 
     // Always work with a concrete sessionId — auto-allocate if the caller
     // didn't pass one. The session row is ensured below so the id has a
@@ -1565,6 +1680,16 @@ export class Runner {
           }
         }
       }
+      const resourceExtraContext = await this.collectResourceExtraContext(
+        resolvedResources.resources,
+        options.context ?? [],
+        {
+          agentId: resolved.agentId,
+          invocationId,
+          runId,
+          sessionId: effectiveSessionId,
+        },
+      );
 
       // For multimodal input, fetch URLs → base64 BEFORE building the model
       // messages so the AI SDK sees ready-to-send image parts. The normalized
@@ -1582,7 +1707,7 @@ export class Runner {
         input: normalizedInput,
         sessionHistory,
         contextEntries,
-        extraContext: options.extraContext,
+        extraContext: mergeExtraContext(options.extraContext, resourceExtraContext),
       });
 
       // Append "Available skills" section to the system prompt. Missing skills
@@ -1603,6 +1728,9 @@ export class Runner {
         rootId: effectiveRootId,
         state,
         ownerId: options.ownerId ?? options.userId,
+        resources: resolvedResources.resources,
+        grants: options.context ?? [],
+        invocationId,
       });
 
       // When the agent can reply mid-run, persist the user input *before* the
@@ -1876,6 +2004,9 @@ export class Runner {
             rootId: effectiveRootId,
             state,
             ownerId: options.ownerId ?? options.userId,
+            resources: resolvedResources.resources,
+            grants: options.context ?? [],
+            invocationId,
           });
           const seen = new Set(base.map((t) => t.name));
           availableTools = base.concat(
@@ -2118,6 +2249,7 @@ export class Runner {
     const toolCtx: ToolContext = {
       agentId,
       sessionId: sessionId ?? options.sessionId,
+      context: options.context,
       contextIds: options.contextIds,
       invocationId,
       runId,
@@ -2142,6 +2274,8 @@ export class Runner {
       invoke: (innerAgentId: string, innerInput: string, innerOpts?: InvokeOptions) =>
         this.invoke(innerAgentId, innerInput, {
           ...innerOpts,
+          context: narrowNamespaceGrants(options.context ?? [], innerOpts?.context),
+          _resourceModes: options._resourceModes,
           _recursionDepth: (innerOpts?._recursionDepth ?? currentDepth) + 1,
         }),
       ...(options.toolContext ?? {}),
@@ -2224,6 +2358,12 @@ export class Runner {
        * two users sharing the same OAuth app don't share a token.
        */
       ownerId?: string;
+      /** Effective resource registrations for this invocation. */
+      resources?: ResolvedResource[];
+      /** Normalized runtime namespace grants. */
+      grants?: string[];
+      /** Invocation id for ResourceToolContext.run. */
+      invocationId?: string;
     },
   ): Promise<Array<{
     name: string;
@@ -2240,7 +2380,8 @@ export class Runner {
       Boolean(opts?.replyCollector) &&
       Boolean(opts?.effectiveSessionId) &&
       Boolean(opts?.runId);
-    if (!agent.tools?.length && !hasSpawnable && !hasSkills && !hasReply) return [];
+    const hasResources = Boolean(opts?.resources?.length) && Boolean(opts?.ephemeralTools);
+    if (!agent.tools?.length && !hasSpawnable && !hasSkills && !hasReply && !hasResources) return [];
 
     // Ensure every referenced MCP server is connected (resolving registered
     // connection names to urls/headers) before we ask for its tools. Headers
@@ -2304,6 +2445,56 @@ export class Runner {
           description: httpTool.description,
           parameters: zodToJsonSchema(httpTool.input),
         });
+      }
+    }
+
+    if (hasResources) {
+      const addedResourceToolNames = new Set<string>();
+      for (const resource of opts!.resources!) {
+        const providerTools = resource.provider.tools?.({
+          resourceName: resource.name,
+          kind: resource.definition.kind,
+          mode: resource.mode,
+          config: resource.definition,
+        }) ?? [];
+        for (const providerTool of providerTools) {
+          if (resource.mode === "read" && providerTool.mode === "read-write") {
+            continue;
+          }
+          const toolName = makeResourceToolName(resource.name, providerTool.name);
+          if (addedResourceToolNames.has(toolName) || this.toolRegistry.has(toolName)) {
+            throw new Error(
+              `Resource tool '${toolName}' conflicts with an existing tool. Rename the resource or tool.`,
+            );
+          }
+          addedResourceToolNames.add(toolName);
+          const tool: ToolDefinition = {
+            name: toolName,
+            description: providerTool.description,
+            input: providerTool.input,
+            execute: async (input: unknown) => {
+              return providerTool.execute(
+                input,
+                this.makeResourceToolContext(
+                  resource,
+                  opts!.grants ?? [],
+                  {
+                    agentId: agent.id,
+                    invocationId: opts!.invocationId,
+                    runId: opts!.runId,
+                    sessionId: opts!.effectiveSessionId,
+                  },
+                ),
+              );
+            },
+          };
+          opts!.ephemeralTools!.set(toolName, tool);
+          resolved.push({
+            name: toolName,
+            description: providerTool.description,
+            parameters: zodToJsonSchema(providerTool.input),
+          });
+        }
       }
     }
 
