@@ -25,7 +25,8 @@ export async function executeSequential(
 	ctx: ExecutionContext,
 	parentInput: unknown,
 ): Promise<ExecutionResult> {
-	const isLoop = !!manifest.until;
+	const until = manifest.until;
+	const isLoop = !!until;
 	const maxIterations = manifest.maxIterations ?? 100;
 	let iteration = 0;
 
@@ -88,7 +89,7 @@ export async function executeSequential(
 		iteration++;
 
 		// Check loop exit condition
-		if (isLoop && evaluateCondition(manifest.until!, state)) {
+		if (until && evaluateCondition(until, state)) {
 			break;
 		}
 	} while (isLoop && iteration < maxIterations);

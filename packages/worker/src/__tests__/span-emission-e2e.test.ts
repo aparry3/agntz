@@ -1,5 +1,5 @@
 import { MemoryStore, SpanEmitter, createRunner } from "@agntz/core";
-import type { Span, TraceStore } from "@agntz/core";
+import type { ModelProvider, Span, TraceStore } from "@agntz/core";
 import { execute } from "@agntz/manifest";
 import type { SequentialAgentManifest } from "@agntz/manifest";
 /**
@@ -18,7 +18,7 @@ import { InMemoryTraceRegistry } from "../trace-registry.js";
 // ---------------------------------------------------------------------------
 
 /** Minimal stub model provider that never calls a real API. */
-function makeStubModelProvider() {
+function makeStubModelProvider(): ModelProvider {
 	return {
 		generateText: async () => ({
 			text: "ok",
@@ -26,7 +26,7 @@ function makeStubModelProvider() {
 			usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
 			finishReason: "stop",
 		}),
-	} as any;
+	};
 }
 
 interface TestHarness {
@@ -156,7 +156,9 @@ describe("span emission end-to-end", () => {
 
 		const byKind = seenSpans.reduce(
 			(acc, s) => {
-				(acc[s.kind] ??= []).push(s);
+				const spans = acc[s.kind] ?? [];
+				spans.push(s);
+				acc[s.kind] = spans;
 				return acc;
 			},
 			{} as Record<string, Span[]>,
@@ -181,7 +183,7 @@ describe("span emission end-to-end", () => {
 		expect(seqManifestSpan).toBeDefined();
 
 		// Step spans are direct children of the sequential manifest
-		for (const stepSpan of byKind.step!) {
+		for (const stepSpan of byKind.step ?? []) {
 			expect(stepSpan.parentId).toBe(seqManifestSpan?.spanId);
 		}
 
@@ -196,13 +198,13 @@ describe("span emission end-to-end", () => {
 
 		// Invoke spans are children of an llm manifest span
 		const llmManifestIds = new Set(llmManifestSpans.map((s) => s.spanId));
-		for (const invokeSpan of byKind.invoke!) {
+		for (const invokeSpan of byKind.invoke ?? []) {
 			expect(llmManifestIds.has(invokeSpan.parentId ?? "")).toBe(true);
 		}
 
 		// Model spans are children of invoke spans
-		const invokeIds = new Set(byKind.invoke?.map((s) => s.spanId));
-		for (const modelSpan of byKind.model!) {
+		const invokeIds = new Set((byKind.invoke ?? []).map((s) => s.spanId));
+		for (const modelSpan of byKind.model ?? []) {
 			expect(invokeIds.has(modelSpan.parentId ?? "")).toBe(true);
 		}
 

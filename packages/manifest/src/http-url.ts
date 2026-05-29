@@ -34,14 +34,15 @@ export function parseUrlPlaceholders(url: string): Placeholder[] {
 	// Reset regex global state (defensive — `matchAll` would do it for us but
 	// we're using `exec` to get accurate match indices on each iteration).
 	PLACEHOLDER_RE.lastIndex = 0;
-	let match: RegExpExecArray | null;
-	while ((match = PLACEHOLDER_RE.exec(url)) !== null) {
+	let match = PLACEHOLDER_RE.exec(url);
+	while (match !== null) {
 		const position: "path" | "query" = match.index < splitAt ? "path" : "query";
 		result.push({
 			name: match[1],
 			optional: match[2] === "?",
 			position,
 		});
+		match = PLACEHOLDER_RE.exec(url);
 	}
 	return result;
 }
@@ -111,13 +112,14 @@ export function buildHttpUrl(
 			// template-style substitution: walk the placeholders and substitute.
 			const placeholdersInVal: Placeholder[] = [];
 			PLACEHOLDER_RE.lastIndex = 0;
-			let m: RegExpExecArray | null;
-			while ((m = PLACEHOLDER_RE.exec(rawVal)) !== null) {
+			let m = PLACEHOLDER_RE.exec(rawVal);
+			while (m !== null) {
 				placeholdersInVal.push({
 					name: m[1],
 					optional: m[2] === "?",
 					position: "query",
 				});
+				m = PLACEHOLDER_RE.exec(rawVal);
 			}
 
 			if (placeholdersInVal.length === 0) {

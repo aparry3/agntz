@@ -1448,9 +1448,10 @@ function collectHttpTemplateRefs(
 	const scan = (val: unknown) => {
 		if (typeof val === "string") {
 			re.lastIndex = 0;
-			let m: RegExpExecArray | null;
-			while ((m = re.exec(val)) !== null) {
+			let m = re.exec(val);
+			while (m !== null) {
 				names.add(m[1]);
+				m = re.exec(val);
 			}
 			return;
 		}
@@ -2145,7 +2146,9 @@ async function validateToolCallExternal(
 ): Promise<void> {
 	if (manifest.tool.kind === "mcp") {
 		try {
-			const available = await ctx.resolveTools(manifest.tool.server!);
+			const server = manifest.tool.server;
+			if (!server) return;
+			const available = await ctx.resolveTools(server);
 			if (!available.includes(manifest.tool.name)) {
 				errors.push({
 					level: "external",

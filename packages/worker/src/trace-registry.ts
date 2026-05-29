@@ -169,7 +169,10 @@ export class InMemoryTraceRegistry implements TraceRegistry {
 				return {
 					next(): Promise<IteratorResult<TraceLiveEvent>> {
 						if (queue.length > 0) {
-							return Promise.resolve({ value: queue.shift()!, done: false });
+							const value = queue.shift();
+							if (value !== undefined) {
+								return Promise.resolve({ value, done: false });
+							}
 						}
 						if (closed) {
 							return Promise.resolve({

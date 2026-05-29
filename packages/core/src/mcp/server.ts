@@ -1,3 +1,5 @@
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { CallToolRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { Runner } from "../runner.js";
 
 /**
@@ -37,6 +39,9 @@ export async function createMCPServer(
 	options: MCPServerOptions = {},
 ) {
 	const { Server } = await import("@modelcontextprotocol/sdk/server/index.js");
+	const { CallToolRequestSchema, ListToolsRequestSchema } = await import(
+		"@modelcontextprotocol/sdk/types.js"
+	);
 
 	const serverName = options.name ?? "agntz";
 	const serverVersion = options.version ?? "0.1.0";
@@ -51,7 +56,7 @@ export async function createMCPServer(
 	);
 
 	// List tools handler — expose agents as invocable tools
-	server.setRequestHandler({ method: "tools/list" } as any, async () => {
+	server.setRequestHandler(ListToolsRequestSchema, async () => {
 		const agents = await runner.agents.listAgents();
 		const filtered = options.agentIds
 			? agents.filter((a) => options.agentIds?.includes(a.id))
@@ -81,14 +86,18 @@ export async function createMCPServer(
 
 	// Call tool handler — invoke the agent
 	server.setRequestHandler(
-		{ method: "tools/call" } as any,
-		async (request: any) => {
-			const { name, arguments: args } = request.params;
+		CallToolRequestSchema,
+		async (request: CallToolRequest) => {
+			const { name } = request.params;
+			const args = request.params.arguments as
+				| Record<string, unknown>
+				| undefined;
 
 			// Extract agent ID from tool name
 			const agentId = name.replace(/^invoke_/, "");
-			const input = args?.input ?? "";
-			const sessionId = args?.sessionId;
+			const input = typeof args?.input === "string" ? args.input : "";
+			const sessionId =
+				typeof args?.sessionId === "string" ? args.sessionId : undefined;
 
 			try {
 				const result = await runner.invoke(agentId, input, { sessionId });
@@ -122,7 +131,7 @@ export async function createMCPServer(
 		 * Connect to a transport (e.g., HTTP/SSE).
 		 * Stdio transport is not supported — use an HTTP-based transport for web compatibility.
 		 */
-		async connect(transport: any) {
+		async connect(transport: Transport) {
 			await server.connect(transport);
 			return server;
 		},

@@ -1,3 +1,6 @@
+import type { Client as MCPClient } from "@modelcontextprotocol/sdk/client/index.js";
+import type { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { Tool as MCPToolDefinition } from "@modelcontextprotocol/sdk/types.js";
 import type { MCPServerConfig, ToolInfo } from "../types.js";
 import {
 	type OutboundUrlPolicyOptions,
@@ -31,9 +34,9 @@ interface MCPConnection {
 	connected: boolean;
 	error?: string;
 	/** The underlying MCP client (from @modelcontextprotocol/sdk) */
-	client: any;
+	client: MCPClient | null;
 	/** Transport handle for cleanup */
-	transport: any;
+	transport: StreamableHTTPClientTransport | null;
 }
 
 export interface MCPClientManagerOptions {
@@ -133,7 +136,7 @@ export class MCPClientManager {
 			version: "0.1.0",
 		});
 
-		let transport: any;
+		let transport: StreamableHTTPClientTransport;
 
 		if (config.url) {
 			const url = await assertOutboundUrlAllowed(
@@ -157,29 +160,31 @@ export class MCPClientManager {
 
 		// Discover tools
 		const toolsResult = await client.listTools();
-		const tools: MCPTool[] = (toolsResult.tools ?? []).map((t: any) => ({
-			name: t.name,
-			description: t.description ?? "",
-			inputSchema: t.inputSchema ?? { type: "object", properties: {} },
-			serverName: name,
-			execute: async (input: unknown) => {
-				const result = await client.callTool({
-					name: t.name,
-					arguments: input as Record<string, unknown>,
-				});
-				// MCP tools return content array — extract text
-				if (Array.isArray(result.content)) {
-					const textParts = result.content
-						.filter((c: any) => c.type === "text")
-						.map((c: any) => c.text);
-					if (textParts.length === 1) return textParts[0];
-					if (textParts.length > 1) return textParts.join("\n");
-					// If no text parts, return the raw content
+		const tools: MCPTool[] = (toolsResult.tools ?? []).map(
+			(t: MCPToolDefinition) => ({
+				name: t.name,
+				description: t.description ?? "",
+				inputSchema: t.inputSchema ?? { type: "object", properties: {} },
+				serverName: name,
+				execute: async (input: unknown) => {
+					const result = await client.callTool({
+						name: t.name,
+						arguments: input as Record<string, unknown>,
+					});
+					// MCP tools return content array — extract text
+					if (Array.isArray(result.content)) {
+						const textParts = result.content.flatMap((content) =>
+							content.type === "text" ? [content.text] : [],
+						);
+						if (textParts.length === 1) return textParts[0];
+						if (textParts.length > 1) return textParts.join("\n");
+						// If no text parts, return the raw content
+						return result.content;
+					}
 					return result.content;
-				}
-				return result.content;
-			},
-		}));
+				},
+			}),
+		);
 
 		this.connections.set(name, {
 			serverName: name,

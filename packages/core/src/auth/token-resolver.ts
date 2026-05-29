@@ -390,8 +390,8 @@ function jsonPathGet(node: unknown, path: string): unknown {
 	const segments: Array<string | number> = [];
 	const re = /\.([A-Za-z_][A-Za-z0-9_]*)|\[(\d+)\]/g;
 	let cursor = 0;
-	let m: RegExpExecArray | null;
-	while ((m = re.exec(rest)) !== null) {
+	let m = re.exec(rest);
+	while (m !== null) {
 		if (m.index !== cursor) {
 			throw new AuthError(
 				`Unsupported JSONPath syntax near '${rest.slice(cursor)}'`,
@@ -399,6 +399,7 @@ function jsonPathGet(node: unknown, path: string): unknown {
 		}
 		segments.push(m[1] ?? Number.parseInt(m[2], 10));
 		cursor = re.lastIndex;
+		m = re.exec(rest);
 	}
 	if (cursor !== rest.length) {
 		throw new AuthError(

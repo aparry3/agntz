@@ -1,9 +1,9 @@
 import type { ZodSchema } from "zod";
 import type { HTTPToolEntry } from "./http-tool.js";
 import type { NamespaceGrantPolicy } from "./namespace.js";
-import type { OutboundUrlPolicyOptions } from "./utils/outbound-url.js";
 import type { TelemetryConfig } from "./telemetry.js";
 import type { SpanEmitter } from "./telemetry.js";
+import type { OutboundUrlPolicyOptions } from "./utils/outbound-url.js";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Agent Definition — the core portable data structure

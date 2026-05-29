@@ -401,8 +401,8 @@ export class MemoryStore implements UnifiedStore {
 			result = result.filter((l) => l.agentId === filter.agentId);
 		if (filter?.sessionId)
 			result = result.filter((l) => l.sessionId === filter.sessionId);
-		if (filter?.since)
-			result = result.filter((l) => l.timestamp >= filter.since!);
+		const since = filter?.since;
+		if (since) result = result.filter((l) => l.timestamp >= since);
 
 		result.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 
@@ -703,7 +703,8 @@ export class MemoryStore implements UnifiedStore {
 		const visited = new Set<string>();
 		const queue = [rootId];
 		while (queue.length > 0) {
-			const id = queue.shift()!;
+			const id = queue.shift();
+			if (id === undefined) continue;
 			if (visited.has(id)) continue;
 			visited.add(id);
 			const run = this.backend.runs.get(this.runKey(u, id));

@@ -1,3 +1,4 @@
+import type { JSONValue, LanguageModel, ModelMessage, ToolSet } from "ai";
 import type {
 	GenerateTextOptions,
 	GenerateTextResult,
@@ -8,6 +9,14 @@ import type {
 	ProviderStore,
 	TokenUsage,
 } from "./types.js";
+
+type AiOutput = typeof import("ai").Output;
+type AiJsonSchema = typeof import("ai").jsonSchema;
+type AiGenerateTextOptions = Parameters<typeof import("ai").generateText>[0];
+type AiStructuredOutputConfig = Pick<
+	AiGenerateTextOptions,
+	"experimental_output" | "providerOptions"
+>;
 
 /**
  * Default model provider using the Vercel AI SDK (`ai` package).
@@ -28,11 +37,10 @@ export class AISDKModelProvider implements ModelProvider {
 		const messages = options.messages.map((m) => ({
 			role: m.role as "system" | "user" | "assistant" | "tool",
 			content: m.content,
-		}));
+		})) as ModelMessage[];
 
 		// Build tools map for the AI SDK
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const tools: Record<string, any> = {};
+		const tools: ToolSet = {};
 		if (options.tools?.length) {
 			const { tool: aiTool } = await import("ai");
 			const { z } = await import("zod");
@@ -45,19 +53,17 @@ export class AISDKModelProvider implements ModelProvider {
 			}
 		}
 
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		const { experimental_output, providerOptions } = buildStructuredOutput(
 			options,
 			Output,
 			jsonSchema,
-		) as any;
+		);
 
 		let result: Awaited<ReturnType<typeof generateText>>;
 		try {
 			result = await generateText({
 				model,
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				messages: messages as any,
+				messages,
 				tools: Object.keys(tools).length > 0 ? tools : undefined,
 				experimental_output,
 				providerOptions,
@@ -98,11 +104,10 @@ export class AISDKModelProvider implements ModelProvider {
 		const messages = options.messages.map((m) => ({
 			role: m.role as "system" | "user" | "assistant" | "tool",
 			content: m.content,
-		}));
+		})) as ModelMessage[];
 
 		// Build tools map
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const tools: Record<string, any> = {};
+		const tools: ToolSet = {};
 		if (options.tools?.length) {
 			const { tool: aiTool } = await import("ai");
 			const { z } = await import("zod");
@@ -115,19 +120,17 @@ export class AISDKModelProvider implements ModelProvider {
 			}
 		}
 
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		const { experimental_output, providerOptions } = buildStructuredOutput(
 			options,
 			Output,
 			jsonSchema,
-		) as any;
+		);
 
 		let result: ReturnType<typeof streamText>;
 		try {
 			result = streamText({
 				model,
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				messages: messages as any,
+				messages,
 				tools: Object.keys(tools).length > 0 ? tools : undefined,
 				experimental_output,
 				providerOptions,
@@ -191,8 +194,7 @@ export class AISDKModelProvider implements ModelProvider {
 		};
 	}
 
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	private async resolveModel(config: ModelConfig): Promise<any> {
+	private async resolveModel(config: ModelConfig): Promise<LanguageModel> {
 		const { provider, name } = config;
 
 		// Look up provider config from store (API key, base URL)
@@ -327,12 +329,11 @@ export class AISDKModelProvider implements ModelProvider {
 // reached directly or via OpenRouter. Each transport's *native* structured-output
 // mechanism is reliable, so route google and openrouter through providerOptions;
 // every other provider keeps experimental_output, which works for them.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function buildStructuredOutput(
 	options: GenerateTextOptions,
-	Output: any,
-	jsonSchema: any,
-): { experimental_output: unknown; providerOptions: unknown } {
+	Output: AiOutput,
+	jsonSchema: AiJsonSchema,
+): AiStructuredOutputConfig {
 	if (!options.outputSchema)
 		return { experimental_output: undefined, providerOptions: undefined };
 	if (options.model.provider === "google") {
@@ -341,7 +342,7 @@ function buildStructuredOutput(
 			providerOptions: {
 				google: {
 					responseMimeType: "application/json",
-					responseSchema: options.outputSchema.schema,
+					responseSchema: options.outputSchema.schema as JSONValue,
 				},
 			},
 		};
@@ -356,7 +357,7 @@ function buildStructuredOutput(
 						json_schema: {
 							name: options.outputSchema.name,
 							strict: true,
-							schema: options.outputSchema.schema,
+							schema: options.outputSchema.schema as JSONValue,
 						},
 					},
 				},
@@ -498,8 +499,7 @@ function logLlmCallFailure(
 	site: string,
 	model: ModelConfig,
 	messages: Array<{ role: string; content: unknown }>,
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	tools: Record<string, any>,
+	tools: ToolSet,
 	err: unknown,
 ): void {
 	const e = err as Error & { cause?: unknown };

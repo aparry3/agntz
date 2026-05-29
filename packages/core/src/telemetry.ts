@@ -30,12 +30,18 @@ export interface OTelSpanOptions {
 	attributes?: Record<string, string | number | boolean>;
 }
 
-let otelApi: any = null;
-function getOTelApi(): any {
+interface OTelApiModule {
+	trace: {
+		getTracer(name: string): OTelTracer;
+	};
+}
+
+let otelApi: OTelApiModule | null | undefined = null;
+function getOTelApi(): OTelApiModule | null {
 	if (otelApi === undefined) return null;
 	if (otelApi !== null) return otelApi;
 	try {
-		otelApi = require("@opentelemetry/api");
+		otelApi = require("@opentelemetry/api") as OTelApiModule;
 		return otelApi;
 	} catch {
 		otelApi = undefined;

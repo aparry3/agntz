@@ -512,7 +512,8 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 				const forwarder = (async () => {
 					while (true) {
 						while (pendingReplies.length > 0) {
-							const ev = pendingReplies.shift()!;
+							const ev = pendingReplies.shift();
+							if (!ev) continue;
 							await stream.writeSSE({
 								event: "reply",
 								data: JSON.stringify({

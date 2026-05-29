@@ -174,7 +174,8 @@ describe("InMemoryTraceRegistry", () => {
 		);
 		const got = registry.getInProgress("tr_ip", "u1");
 		expect(got).not.toBeNull();
-		expect(got!).toHaveLength(2);
+		if (!got) throw new Error("expected in-progress spans");
+		expect(got).toHaveLength(2);
 	});
 
 	it("getInProgress returns null for unknown trace", () => {
@@ -185,7 +186,8 @@ describe("InMemoryTraceRegistry", () => {
 		registry.register("tr_reg", "u1");
 		const got = registry.getInProgress("tr_reg", "u1");
 		expect(got).not.toBeNull();
-		expect(got!).toHaveLength(0);
+		if (!got) throw new Error("expected registered in-progress trace");
+		expect(got).toHaveLength(0);
 	});
 
 	it("register is owner-scoped — other owners still see null", () => {
@@ -200,7 +202,8 @@ describe("InMemoryTraceRegistry", () => {
 		);
 		const got = registry.getInProgress("tr_reg2", "u1");
 		expect(got).not.toBeNull();
-		expect(got!).toHaveLength(1);
+		if (!got) throw new Error("expected registered span");
+		expect(got).toHaveLength(1);
 		expect(got?.[0].spanId).toBe("sp_post_reg");
 	});
 

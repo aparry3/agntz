@@ -201,6 +201,18 @@ function mergeExtraContext(
 	return present.length > 0 ? present.join("\n\n") : undefined;
 }
 
+interface ClosableStore {
+	close(): void | Promise<void>;
+}
+
+function isClosableStore(store: unknown): store is ClosableStore {
+	return (
+		typeof store === "object" &&
+		store !== null &&
+		typeof (store as { close?: unknown }).close === "function"
+	);
+}
+
 function collectTemplateReferences(
 	agent: AgentDefinition,
 	re: RegExp,
@@ -209,9 +221,10 @@ function collectTemplateReferences(
 	const scan = (val: unknown) => {
 		if (typeof val === "string") {
 			re.lastIndex = 0;
-			let m: RegExpExecArray | null;
-			while ((m = re.exec(val)) !== null) {
+			let m = re.exec(val);
+			while (m !== null) {
 				names.add(m[1]);
+				m = re.exec(val);
 			}
 			return;
 		}
@@ -694,8 +707,8 @@ export class Runner {
 			this.contextStore,
 			this.logStore,
 		]) {
-			if (store && typeof (store as any).close === "function") {
-				cleanups.push(Promise.resolve((store as any).close()).catch(() => {}));
+			if (isClosableStore(store)) {
+				cleanups.push(Promise.resolve(store.close()).catch(() => {}));
 			}
 		}
 
@@ -754,12 +767,12 @@ export class Runner {
 	stream(
 		agentId: string,
 		input: string | ContentBlock[],
-		options: Omit<InvokeOptions, "stream"> = {},
+		rawOptions: Omit<InvokeOptions, "stream"> = {},
 	): InvokeStream {
-		options = {
-			...options,
+		let options: Omit<InvokeOptions, "stream"> = {
+			...rawOptions,
 			context: normalizeNamespaceGrants(
-				options.context,
+				rawOptions.context,
 				this.config.namespacePolicy,
 			),
 		};
@@ -1073,11 +1086,12 @@ export class Runner {
 				let finalOutput = "";
 				let step = 0;
 
-				const baseMaxSteps = resolveCallerTightensLimit(
-					agent.maxSteps,
-					options.maxSteps,
-					DEFAULT_MAX_STEPS,
-				)!;
+				const baseMaxSteps =
+					resolveCallerTightensLimit(
+						agent.maxSteps,
+						options.maxSteps,
+						DEFAULT_MAX_STEPS,
+					) ?? DEFAULT_MAX_STEPS;
 				const tokenBudget = resolveCallerTightensLimit(
 					agent.tokenBudget,
 					options.tokenBudget,
@@ -1311,7 +1325,8 @@ export class Runner {
 						// chronologically attached to the tool call that produced them
 						// and ahead of the next tool's tool-call-start.
 						while (pendingStreamReplies.length > 0) {
-							const r = pendingStreamReplies.shift()!;
+							const r = pendingStreamReplies.shift();
+							if (!r) continue;
 							yield {
 								type: "reply" as const,
 								text: r.text,
@@ -1560,12 +1575,12 @@ export class Runner {
 	async invoke(
 		agentId: string,
 		input: string | ContentBlock[],
-		options: InvokeOptions = {},
+		rawOptions: InvokeOptions = {},
 	): Promise<InvokeResult> {
-		options = {
-			...options,
+		let options: InvokeOptions = {
+			...rawOptions,
 			context: normalizeNamespaceGrants(
-				options.context,
+				rawOptions.context,
 				this.config.namespacePolicy,
 			),
 		};
@@ -1901,11 +1916,12 @@ export class Runner {
 			let finalOutput = "";
 			let step = 0;
 
-			const baseMaxSteps = resolveCallerTightensLimit(
-				agent.maxSteps,
-				options.maxSteps,
-				DEFAULT_MAX_STEPS,
-			)!;
+			const baseMaxSteps =
+				resolveCallerTightensLimit(
+					agent.maxSteps,
+					options.maxSteps,
+					DEFAULT_MAX_STEPS,
+				) ?? DEFAULT_MAX_STEPS;
 			const tokenBudget = resolveCallerTightensLimit(
 				agent.tokenBudget,
 				options.tokenBudget,
@@ -1952,7 +1968,7 @@ export class Runner {
 				// Start model call span
 				const modelSpan = span.modelCall({ model: modelStr, step });
 
-				let result;
+				let result: Awaited<ReturnType<ModelProvider["generateText"]>>;
 				try {
 					// Call the model (with retry). effectiveSignal aborts on either
 					// caller cancel or registry-driven cancel-and-replace.
@@ -2594,22 +2610,27 @@ export class Runner {
 			parameters: Record<string, unknown>;
 		}>
 	> {
+		const spawnable = agent.spawnable ?? [];
+		const skills = agent.skills ?? [];
+		const resources = opts?.resources ?? [];
+		const replyCollector = opts?.replyCollector;
+		const effectiveSessionId = opts?.effectiveSessionId;
+		const runId = opts?.runId;
 		const hasSpawnable =
-			Boolean(agent.spawnable?.length) &&
+			spawnable.length > 0 &&
 			Boolean(opts?.runRegistry) &&
 			Boolean(opts?.ephemeralTools);
 		const hasSkills =
-			Boolean(agent.skills?.length) &&
+			skills.length > 0 &&
 			Boolean(this._skillStore) &&
 			Boolean(opts?.ephemeralTools);
 		const hasReply =
 			Boolean(agent.reply) &&
 			Boolean(opts?.ephemeralTools) &&
-			Boolean(opts?.replyCollector) &&
-			Boolean(opts?.effectiveSessionId) &&
-			Boolean(opts?.runId);
-		const hasResources =
-			Boolean(opts?.resources?.length) && Boolean(opts?.ephemeralTools);
+			Boolean(replyCollector) &&
+			Boolean(effectiveSessionId) &&
+			Boolean(runId);
+		const hasResources = resources.length > 0 && Boolean(opts?.ephemeralTools);
 		if (
 			!agent.tools?.length &&
 			!hasSpawnable &&
@@ -2686,7 +2707,7 @@ export class Runner {
 
 		if (hasResources) {
 			const addedResourceToolNames = new Set<string>();
-			for (const resource of opts?.resources!) {
+			for (const resource of resources) {
 				const providerTools =
 					resource.provider.tools?.({
 						resourceName: resource.name,
@@ -2742,13 +2763,10 @@ export class Runner {
 		// allowed agent ids) are specific to this agent and would collide if the
 		// same Runner were used for multiple agents with different spawnable lists.
 		if (hasSpawnable) {
-			const entries: SpawnableEntry[] = await resolveSpawnable(
-				agent.spawnable!,
-				{
-					resolveStored: (id: string) => this.resolveAgentRef(id),
-					registerInline: (def: AgentDefinition) => this.registerAgent(def),
-				},
-			);
+			const entries: SpawnableEntry[] = await resolveSpawnable(spawnable, {
+				resolveStored: (id: string) => this.resolveAgentRef(id),
+				registerInline: (def: AgentDefinition) => this.registerAgent(def),
+			});
 
 			const spawn = createSpawnAgentTool(entries, DEFAULT_SPAWN_LIMITS);
 			if (spawn) {
@@ -2773,7 +2791,7 @@ export class Runner {
 		// Synthesize use_skill per-invocation. The enum of allowed skill names is
 		// specific to this agent, so this tool lives in the ephemeral map.
 		if (hasSkills) {
-			const useSkill = createUseSkillTool(agent.skills!);
+			const useSkill = createUseSkillTool(skills);
 			if (useSkill) {
 				opts?.ephemeralTools?.set(useSkill.name, useSkill);
 				resolved.push({
@@ -2787,15 +2805,15 @@ export class Runner {
 		// Synthesize the per-invocation `reply` tool. Lives in the ephemeral map
 		// because it closes over this invocation's `collector`, `sessionId`, and
 		// `runId`. Registering it globally would leak state across runs.
-		if (hasReply) {
+		if (hasReply && replyCollector && effectiveSessionId && runId) {
 			const maxPerRun =
 				typeof agent.reply === "object"
 					? (agent.reply.maxPerRun ?? DEFAULT_REPLY_MAX_PER_RUN)
 					: DEFAULT_REPLY_MAX_PER_RUN;
 			const replyTool = createReplyTool({
-				collector: opts?.replyCollector!,
-				sessionId: opts?.effectiveSessionId!,
-				runId: opts?.runId!,
+				collector: replyCollector,
+				sessionId: effectiveSessionId,
+				runId,
 				rootId: opts?.rootId,
 				sessionStore: this.sessionStore,
 				runRegistry: opts?.runRegistry,
@@ -2949,7 +2967,9 @@ export class Runner {
 			}),
 			async execute(input: { input: string }, ctx: ToolContext) {
 				// Pass recursion depth through to prevent infinite agent chains
-				const parentDepth = (ctx as any)._recursionDepth ?? 0;
+				const parentDepth =
+					(ctx as ToolContext & { _recursionDepth?: number })._recursionDepth ??
+					0;
 				const result = await ctx.invoke(agentRef, input.input, {
 					_recursionDepth: parentDepth + 1,
 				});

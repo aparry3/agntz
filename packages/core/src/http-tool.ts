@@ -78,13 +78,14 @@ function parseUrlPlaceholders(url: string): Placeholder[] {
 	const splitAt = queryStart === -1 ? url.length : queryStart;
 	const result: Placeholder[] = [];
 	PLACEHOLDER_RE.lastIndex = 0;
-	let match: RegExpExecArray | null;
-	while ((match = PLACEHOLDER_RE.exec(url)) !== null) {
+	let match = PLACEHOLDER_RE.exec(url);
+	while (match !== null) {
 		result.push({
 			name: match[1],
 			optional: match[2] === "?",
 			position: match.index < splitAt ? "path" : "query",
 		});
+		match = PLACEHOLDER_RE.exec(url);
 	}
 	return result;
 }
@@ -125,13 +126,14 @@ function buildHttpUrl(
 			const valMatch = PLACEHOLDER_RE.exec(rawVal);
 			const placeholdersInVal: Placeholder[] = [];
 			PLACEHOLDER_RE.lastIndex = 0;
-			let m: RegExpExecArray | null;
-			while ((m = PLACEHOLDER_RE.exec(rawVal)) !== null) {
+			let m = PLACEHOLDER_RE.exec(rawVal);
+			while (m !== null) {
 				placeholdersInVal.push({
 					name: m[1],
 					optional: m[2] === "?",
 					position: "query",
 				});
+				m = PLACEHOLDER_RE.exec(rawVal);
 			}
 
 			if (placeholdersInVal.length === 0) {

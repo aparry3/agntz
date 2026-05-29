@@ -444,7 +444,8 @@ export class JsonFileStore implements UnifiedStore {
 			logs = logs.filter((l) => l.agentId === filter.agentId);
 		if (filter?.sessionId)
 			logs = logs.filter((l) => l.sessionId === filter.sessionId);
-		if (filter?.since) logs = logs.filter((l) => l.timestamp >= filter.since!);
+		const since = filter?.since;
+		if (since) logs = logs.filter((l) => l.timestamp >= since);
 
 		logs.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 
@@ -775,7 +776,8 @@ export class JsonFileStore implements UnifiedStore {
 		const visited = new Set<string>();
 		const queue = [rootId];
 		while (queue.length > 0) {
-			const id = queue.shift()!;
+			const id = queue.shift();
+			if (id === undefined) continue;
 			if (visited.has(id)) continue;
 			visited.add(id);
 			const run = byId.get(id);

@@ -128,12 +128,12 @@ export class ToolRegistry {
 			throw new Error(`Tool "${name}" not found in registry`);
 		}
 
-		// Validate input with Zod if available (inline tools)
-		if (entry.info.source === "inline" && entry.definition.input?.parse) {
-			input = entry.definition.input.parse(input);
-		}
+		const validatedInput =
+			entry.info.source === "inline" && entry.definition.input?.parse
+				? entry.definition.input.parse(input)
+				: input;
 
-		return entry.definition.execute(input, ctx);
+		return entry.definition.execute(validatedInput, ctx);
 	}
 
 	/**

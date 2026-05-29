@@ -28,7 +28,11 @@ const DEFAULT_RETRY: Required<RetryConfig> = {
 function isRetryable(error: unknown, retryableStatuses: number[]): boolean {
 	if (error instanceof Error) {
 		// Check for status code in error (common pattern in HTTP libs)
-		const statusCode = (error as any).status ?? (error as any).statusCode;
+		const errorWithStatus = error as Error & {
+			status?: unknown;
+			statusCode?: unknown;
+		};
+		const statusCode = errorWithStatus.status ?? errorWithStatus.statusCode;
 		if (typeof statusCode === "number") {
 			return retryableStatuses.includes(statusCode);
 		}
