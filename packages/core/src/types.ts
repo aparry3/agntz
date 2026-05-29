@@ -1,7 +1,8 @@
 import type { ZodSchema } from "zod";
+import type { HTTPToolEntry } from "./http-tool.js";
+import type { NamespaceGrantPolicy } from "./namespace.js";
 import type { TelemetryConfig } from "./telemetry.js";
 import type { SpanEmitter } from "./telemetry.js";
-import type { HTTPToolEntry } from "./http-tool.js";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Agent Definition — the core portable data structure
@@ -614,6 +615,12 @@ export interface RunnerConfig {
 
   /** Resource providers keyed by resource kind. */
   resources?: Record<string, ResourceProvider>;
+
+  /**
+   * Optional guardrail for runtime namespace grants. Use this to mark
+   * sensitive namespace branches that must never receive broad grants.
+   */
+  namespacePolicy?: NamespaceGrantPolicy;
 
   /** Custom model provider (bypasses ai package) */
   modelProvider?: ModelProvider;

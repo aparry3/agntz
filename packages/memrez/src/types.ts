@@ -1,3 +1,5 @@
+import type { NamespaceGrantPolicy } from "@agntz/core";
+
 export type NamespaceGrant = string;
 
 export type EntryType = "fact" | "preference" | "event" | "summary";
@@ -124,4 +126,5 @@ export interface MemoryStore {
 export interface MemrezOptions {
   store?: MemoryStore;
   reasoner?: MemrezReasoner;
+  namespacePolicy?: NamespaceGrantPolicy;
 }

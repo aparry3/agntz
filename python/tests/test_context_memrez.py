@@ -4,7 +4,13 @@ from typing import TypedDict, cast
 
 import pytest
 
-from agntz import NamespaceGrantError, normalize_namespace_grant, normalize_namespace_grants
+from agntz import (
+    NamespaceGrantError,
+    NamespaceGrantPolicy,
+    ProtectedNamespaceRule,
+    normalize_namespace_grant,
+    normalize_namespace_grants,
+)
 from agntz.context import (
     namespace_ancestors,
     narrow_namespace_grants,
@@ -51,6 +57,35 @@ def test_namespace_grants_normalize_and_narrow() -> None:
         narrow_namespace_grants(["app/user/u_123"], ["app/user/u_456"])
 
 
+def test_namespace_security_policy_rejects_broad_protected_grants() -> None:
+    policy = NamespaceGrantPolicy(
+        protected_namespaces=[ProtectedNamespaceRule(namespace="gymtext/private/users")]
+    )
+
+    with pytest.raises(NamespaceGrantError):
+        normalize_namespace_grants(["gymtext"], policy)
+    with pytest.raises(NamespaceGrantError):
+        normalize_namespace_grants(["gymtext/private/users"], policy)
+
+    assert normalize_namespace_grants(["gymtext/private/users/u_123"], policy) == [
+        "gymtext/private/users/u_123"
+    ]
+    assert normalize_namespace_grants(["gymtext/public/general"], policy) == [
+        "gymtext/public/general"
+    ]
+    assert normalize_namespace_grants(
+        ["gymtext/private/users"],
+        {
+            "protectedNamespaces": [
+                {
+                    "namespace": "gymtext/private/users",
+                    "allowBoundaryGrant": True,
+                }
+            ]
+        },
+    ) == ["gymtext/private/users"]
+
+
 def test_memrez_reads_ancestors_without_sibling_leakage() -> None:
     memrez = create_memrez(reasoner=DirectiveReasoner())
 
@@ -83,6 +118,26 @@ def test_memrez_write_scope_validation_matches_typescript_rules() -> None:
         write_policy={"ancestorPromotion": "ancestors"},
     )
     assert promoted["entry"].scope == "sales/org/acme"
+
+
+def test_memrez_rejects_broad_protected_namespace_grants() -> None:
+    memrez = create_memrez(
+        reasoner=DirectiveReasoner(),
+        namespace_policy={
+            "protectedNamespaces": [{"namespace": "gymtext/private/users"}],
+        },
+    )
+
+    with pytest.raises(NamespaceGrantError):
+        memrez.write(["gymtext"], "topic:prefs|Bad broad root.")
+    with pytest.raises(NamespaceGrantError):
+        memrez.write(["gymtext/private/users"], "topic:prefs|Bad all-users grant.")
+
+    result = memrez.write(
+        ["gymtext/private/users/u_123"],
+        "topic:prefs|User-specific memory.",
+    )
+    assert result["entry"].scope == "gymtext/private/users/u_123"
 
 
 def _parse_directive(raw: str) -> Directive:

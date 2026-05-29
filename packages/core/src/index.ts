@@ -115,8 +115,13 @@ export {
   isSameOrDescendantNamespace,
   isGrantNarrowedBy,
   narrowNamespaceGrants,
+  validateNamespaceGrantPolicy,
 } from "./namespace.js";
-export type { NamespaceGrant } from "./namespace.js";
+export type {
+  NamespaceGrant,
+  NamespaceGrantPolicy,
+  ProtectedNamespaceRule,
+} from "./namespace.js";
 export { makeResourceToolName, resourceToolPrefix } from "./resource.js";
 
 // Eval

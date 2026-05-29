@@ -15,7 +15,7 @@ import httpx
 from pydantic import BaseModel
 
 from agntz.client.models import Event, RunResult
-from agntz.context import normalize_namespace_grants
+from agntz.context import NamespaceGrantPolicyLike, normalize_namespace_grants
 from agntz.core import (
     GenerateTextResult,
     MissingModelProvider,
@@ -66,12 +66,14 @@ class LocalClient:
         tools: dict[str, ToolDefinition],
         model_provider: ModelProvider | None,
         resources: Mapping[str, ResourceProvider] | None = None,
+        namespace_policy: NamespaceGrantPolicyLike = None,
         store: RunStore | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self.manifests = manifests
         self.tools = tools
         self.resource_providers = dict(resources or {})
+        self.namespace_policy = namespace_policy
         self.model_provider = model_provider or MissingModelProvider()
         self.store = store or MemoryStore()
         self.http_client = http_client
@@ -90,7 +92,7 @@ class LocalClient:
     ) -> RunResult:
         manifest = self.manifests[agent_id]
         resolved_session_id = session_id or new_session_id()
-        normalized_context = normalize_namespace_grants(context)
+        normalized_context = normalize_namespace_grants(context, self.namespace_policy)
         local_run_id = new_run_id()
         local_trace_id = new_trace_id()
         started_at = time.time()
@@ -899,6 +901,7 @@ def agntz(
     agents: str,
     tools: Iterable[ToolDefinition] | None = None,
     resources: Mapping[str, ResourceProvider] | None = None,
+    namespace_policy: NamespaceGrantPolicyLike = None,
     model_provider: ModelProvider | None = None,
     store: RunStore | None = None,
     http_client: httpx.AsyncClient | None = None,
@@ -909,6 +912,7 @@ def agntz(
         manifests=manifests,
         tools=tool_map,
         resources=resources,
+        namespace_policy=namespace_policy,
         model_provider=model_provider,
         store=store,
         http_client=http_client,

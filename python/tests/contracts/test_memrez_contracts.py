@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from agntz import NamespaceGrantError, normalize_namespace_grants
 from agntz.memrez import (
     MemrezScopeError,
     assert_writable_scope,
@@ -41,6 +42,21 @@ def test_memrez_grant_semantics_contract() -> None:
     for scope in semantics["notWritableScopes"]:
         with pytest.raises(MemrezScopeError):
             assert_writable_scope([grant], scope, normalize_write_policy(None))
+
+
+def test_memrez_namespace_security_contract() -> None:
+    security = _contract()["namespaceSecurity"]
+    for rule in security["protectedNamespaces"]:
+        policy = {"protectedNamespaces": [{"namespace": rule["namespace"]}]}
+        for grant in rule["rejectedGrants"]:
+            with pytest.raises(NamespaceGrantError):
+                normalize_namespace_grants([grant], policy)
+        assert normalize_namespace_grants([rule["allowedGrant"]], policy) == [
+            rule["allowedGrant"]
+        ]
+        assert normalize_namespace_grants([rule["unaffectedGrant"]], policy) == [
+            rule["unaffectedGrant"]
+        ]
 
 
 def test_memrez_contract_scenarios() -> None:

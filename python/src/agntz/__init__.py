@@ -8,7 +8,14 @@ from .client import (
     NotFoundError,
     StreamError,
 )
-from .context import NamespaceGrantError, normalize_namespace_grant, normalize_namespace_grants
+from .context import (
+    NamespaceGrantError,
+    NamespaceGrantPolicy,
+    ProtectedNamespaceRule,
+    normalize_namespace_grant,
+    normalize_namespace_grants,
+    validate_namespace_grant_policy,
+)
 from .core import (
     GenerateTextResult,
     LiteLLMModelProvider,
@@ -59,9 +66,11 @@ __all__ = [
     "Memrez",
     "MemrezScopeError",
     "NamespaceGrantError",
+    "NamespaceGrantPolicy",
     "NotFoundError",
     "PostgresMemoryStore",
     "PostgresMemoryStoreOptions",
+    "ProtectedNamespaceRule",
     "ResourceProvider",
     "ResourceProviderToolDefinition",
     "ResourceRegistrationContext",
@@ -80,6 +89,7 @@ __all__ = [
     "memrez_agents_path",
     "normalize_namespace_grant",
     "normalize_namespace_grants",
+    "validate_namespace_grant_policy",
     "tool",
 ]
 

@@ -704,7 +704,10 @@ export class Runner {
     input: string | ContentBlock[],
     options: Omit<InvokeOptions, "stream"> = {},
   ): InvokeStream {
-    options = { ...options, context: normalizeNamespaceGrants(options.context) };
+    options = {
+      ...options,
+      context: normalizeNamespaceGrants(options.context, this.config.namespacePolicy),
+    };
     const self = this;
     let resolveResult: (r: InvokeResult) => void;
     let rejectResult: (e: unknown) => void;
@@ -1435,7 +1438,10 @@ export class Runner {
     input: string | ContentBlock[],
     options: InvokeOptions = {},
   ): Promise<InvokeResult> {
-    options = { ...options, context: normalizeNamespaceGrants(options.context) };
+    options = {
+      ...options,
+      context: normalizeNamespaceGrants(options.context, this.config.namespacePolicy),
+    };
     // Check recursion depth for agent-as-tool chains
     const currentDepth = options._recursionDepth ?? 0;
     const maxDepth = this.config.maxRecursionDepth ?? DEFAULT_MAX_RECURSION_DEPTH;
@@ -2274,7 +2280,11 @@ export class Runner {
       invoke: (innerAgentId: string, innerInput: string, innerOpts?: InvokeOptions) =>
         this.invoke(innerAgentId, innerInput, {
           ...innerOpts,
-          context: narrowNamespaceGrants(options.context ?? [], innerOpts?.context),
+          context: narrowNamespaceGrants(
+            options.context ?? [],
+            innerOpts?.context,
+            this.config.namespacePolicy,
+          ),
           _resourceModes: options._resourceModes,
           _recursionDepth: (innerOpts?._recursionDepth ?? currentDepth) + 1,
         }),

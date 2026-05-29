@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from .context import (
     NamespaceGrant,
+    NamespaceGrantPolicyLike,
     is_same_or_descendant_namespace,
     namespace_ancestors,
     normalize_namespace_grants,
@@ -244,9 +245,11 @@ class Memrez:
         *,
         store: MemoryStore | None = None,
         reasoner: MemrezReasoner | None = None,
+        namespace_policy: NamespaceGrantPolicyLike = None,
     ) -> None:
         self.store = store or InMemoryMemoryStore()
         self.reasoner = reasoner or DeterministicReasoner()
+        self.namespace_policy = namespace_policy
 
     def provider(self):
         from .memrez_provider import create_memory_resource_provider
@@ -260,7 +263,7 @@ class Memrez:
         include_ancestors: bool = True,
         topic_limit: int | None = None,
     ) -> dict[str, Any]:
-        normalized = _normalize_grants(grants)
+        normalized = _normalize_grants(grants, self.namespace_policy)
         scopes = visible_scopes(normalized, include_ancestors=include_ancestors)
         topics = self.store.list_topics(scopes)
         return {
@@ -276,7 +279,7 @@ class Memrez:
         include_ancestors: bool = True,
         limit: int | None = None,
     ) -> list[MemoryEntry]:
-        normalized = _normalize_grants(grants)
+        normalized = _normalize_grants(grants, self.namespace_policy)
         scopes = visible_scopes(normalized, include_ancestors=include_ancestors)
         return self.store.get_by_topic(scopes, topic, limit)
 
@@ -290,7 +293,7 @@ class Memrez:
         source: Source | None = None,
         write_policy: WritePolicy | Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
-        normalized = _normalize_grants(grants)
+        normalized = _normalize_grants(grants, self.namespace_policy)
         policy = normalize_write_policy(write_policy)
         existing_topics = [topic.topic for topic in self.scan(normalized)["topics"]]
         tag = self.reasoner.tag(
@@ -336,7 +339,7 @@ class Memrez:
         topics: Sequence[str] | None = None,
         include_descendants: bool = False,
     ) -> dict[str, int]:
-        normalized = _normalize_grants(grants)
+        normalized = _normalize_grants(grants, self.namespace_policy)
         scope_paths = (
             list(normalized) if include_descendants else visible_scopes(normalized, True)
         )
@@ -431,8 +434,9 @@ def create_memrez(
     *,
     store: MemoryStore | None = None,
     reasoner: MemrezReasoner | None = None,
+    namespace_policy: NamespaceGrantPolicyLike = None,
 ) -> Memrez:
-    return Memrez(store=store, reasoner=reasoner)
+    return Memrez(store=store, reasoner=reasoner, namespace_policy=namespace_policy)
 
 
 def normalize_write_policy(policy: WritePolicy | Mapping[str, Any] | None) -> WritePolicy:
@@ -498,8 +502,11 @@ def _is_allowed_ancestor_promotion(
     return promotion == "parent" and ancestors.index(target) == len(ancestors) - 2
 
 
-def _normalize_grants(grants: Sequence[NamespaceGrant]) -> list[NamespaceGrant]:
-    normalized = normalize_namespace_grants(grants)
+def _normalize_grants(
+    grants: Sequence[NamespaceGrant],
+    namespace_policy: NamespaceGrantPolicyLike = None,
+) -> list[NamespaceGrant]:
+    normalized = normalize_namespace_grants(grants, namespace_policy)
     if not normalized:
         raise MemrezScopeError("memrez operations require at least one namespace grant")
     return normalized

@@ -4,6 +4,7 @@ import {
   normalizeNamespaceGrant,
   normalizeNamespaceGrants,
 } from "@agntz/core";
+import type { NamespaceGrantPolicy } from "@agntz/core";
 import type { NamespaceGrant, WritePolicy } from "./types.js";
 
 export class MemrezScopeError extends Error {
@@ -25,8 +26,11 @@ export function normalizeWritePolicy(policy: WritePolicy | undefined): Required<
   };
 }
 
-export function normalizeGrants(grants: readonly unknown[]): NamespaceGrant[] {
-  const normalized = normalizeNamespaceGrants(grants);
+export function normalizeGrants(
+  grants: readonly unknown[],
+  policy?: NamespaceGrantPolicy,
+): NamespaceGrant[] {
+  const normalized = normalizeNamespaceGrants(grants, policy);
   if (normalized.length === 0) {
     throw new MemrezScopeError("memrez operations require at least one namespace grant");
   }
