@@ -1146,8 +1146,11 @@ getTopicMeta / setTopicMeta(scope, topic, blurb, lastCuratedAt)
 listScopeSlice(scope, opts) → entries              // for curate</code></pre>
       <p>
         Tables: <code>entries</code>, <code>topic_meta</code> (scope, topic,
-        blurb, lastCuratedAt). v1 adapters: in-memory + sqlite. Postgres + a
-        <code>vector</code> column arrive with the embeddings phase.
+        blurb, lastCuratedAt). TypeScript v1 adapters are in-memory + sqlite.
+        Python currently has the in-memory memrez store only; sqlite is the first
+        Python parity gap. Postgres + a <code>vector</code> column arrive with the
+        embeddings phase and should be implemented for both runtimes when that
+        phase starts.
       </p>
       <div class="note">
         <p>
@@ -1179,6 +1182,70 @@ listScopeSlice(scope, opts) → entries              // for curate</code></pre>
           <strong>evals</strong> on the two manifests.
         </p>
       </div>
+      <div class="note">
+        <p>
+          <strong>Python parity status.</strong> Python has namespace grant helpers,
+          hosted/local <code>context</code> passthrough, manifest parsing for
+          <code>resources:</code>, and an in-memory memrez core. It does not yet
+          mirror the full TypeScript memrez stack.
+        </p>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Area</th>
+            <th>TypeScript status</th>
+            <th>Python gap</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Context grants</td>
+            <td>Runner + SDK normalize, thread, and narrow grants.</td>
+            <td>Mostly complete: hosted and local Python clients pass and validate runtime <code>context</code>.</td>
+          </tr>
+          <tr>
+            <td>Resource runtime</td>
+            <td>Core registers provider tools, injects resource context, clamps modes, and fail-fast checks providers.</td>
+            <td>Python parses <code>resources:</code>, but does not yet synthesize resource tools or run provider hooks.</td>
+          </tr>
+          <tr>
+            <td>Memory resource provider</td>
+            <td><code>createMemoryResourceProvider()</code> registers <code>memory_read</code>, <code>memory_write</code>, and auto-scan context.</td>
+            <td>No Python equivalent yet. Add a provider interface and memory provider before claiming resource parity.</td>
+          </tr>
+          <tr>
+            <td>memrez core</td>
+            <td>scan/read/write/curate, grant validation, dedup, source metadata, fake reasoner tests.</td>
+            <td>Python has the core shape and in-memory store, but needs broader contract coverage against <code>contracts/memrez/</code>.</td>
+          </tr>
+          <tr>
+            <td>SQLite memrez store</td>
+            <td><code>SqliteMemoryStore</code> persists entries, topic index, source JSON, supersede state, and topic metadata.</td>
+            <td>Missing. This is the first concrete Python storage adapter to add.</td>
+          </tr>
+          <tr>
+            <td>Postgres memrez store</td>
+            <td>Planned later; not implemented for memrez yet.</td>
+            <td>Also missing. Implement after sqlite parity, ideally alongside the TypeScript Postgres memrez adapter.</td>
+          </tr>
+          <tr>
+            <td>agntz-backed reasoner</td>
+            <td><code>agntzReasoner()</code> runs <code>memrez-tagger.yaml</code> and <code>memrez-curator.yaml</code>.</td>
+            <td>Missing. Python should load the same manifests or package copies and run them through the Python SDK.</td>
+          </tr>
+          <tr>
+            <td>Runtime Postgres store</td>
+            <td><code>@agntz/store-postgres</code> exists for agents, sessions, runs, traces, skills, and secrets.</td>
+            <td>No Python Postgres runtime store yet. Not required for memrez v1, but it is a deployment parity gap.</td>
+          </tr>
+          <tr>
+            <td>Verification</td>
+            <td>TypeScript memrez tests, typecheck, and build run in the workspace.</td>
+            <td>Python test execution needs a Python &gt;=3.11 environment with project deps installed.</td>
+          </tr>
+        </tbody>
+      </table>
     </section>
 
     <section id="phases">
@@ -1310,12 +1377,23 @@ listScopeSlice(scope, opts) → entries              // for curate</code></pre>
         <article class="phase">
           <div class="phase-number">Phase 6</div>
           <div>
-            <h3>Python port</h3>
+            <h3>Python parity catch-up</h3>
             <p>
-              Mirror core + adapters; load the <em>same</em> manifests via the
-              Python agntz SDK; wire <code>contracts/memrez/</code> into both test
-              suites. Parity lock.
+              Status: partial. Python already mirrors namespace grants,
+              <code>context</code> passthrough, resource manifest parsing, and the
+              in-memory memrez core. Finish parity by adding the missing runtime
+              and storage pieces below, then wire <code>contracts/memrez/</code>
+              into both test suites.
             </p>
+            <ul>
+              <li>Add the Python generic resource provider runtime: provider lookup, mode clamping, resource context injection, provider tool registration, and provider-missing failures.</li>
+              <li>Add the Python memory resource provider: <code>memory_read</code>, <code>memory_write</code>, auto-scan context injection, read-only omission of write tools, and source metadata.</li>
+              <li>Add <code>SqliteMemoryStore</code> for Python memrez with the same entry, topic index, supersede, source JSON, and topic metadata behavior as TypeScript.</li>
+              <li>Add a Python agntz-backed memrez reasoner that runs the same <code>memrez-tagger.yaml</code> and <code>memrez-curator.yaml</code> manifests, or packaged copies of them.</li>
+              <li>Expand <code>contracts/memrez/</code> so Python and TypeScript share fixtures for grant semantics, read visibility, write validation, dedup, curate operations, and scan TOC shape.</li>
+              <li>Run Python verification in a Python &gt;=3.11 environment with project dependencies installed; keep the TypeScript memrez suite green in parallel.</li>
+              <li>Track Python Postgres runtime storage as a deployment parity gap, separate from memrez v1. Add memrez Postgres stores for both runtimes after sqlite parity.</li>
+            </ul>
           </div>
         </article>
         <article class="phase">
