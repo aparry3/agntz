@@ -1,6 +1,6 @@
 {
   "name": "@agntz/memrez",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Durable tagged memory layer for agntz agents",
   "type": "module",
   "main": "./dist/index.js",
