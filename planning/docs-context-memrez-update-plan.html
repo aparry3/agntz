@@ -1,0 +1,933 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agntz Docs Update Plan - Context, Resources, and Memrez</title>
+  <style>
+    :root {
+      --bg: #f6f2ea;
+      --paper: #fffdf8;
+      --ink: #171321;
+      --muted: #5f5a6d;
+      --soft: #817989;
+      --line: #d8cbb8;
+      --accent: #315f78;
+      --accent-2: #9f4f2d;
+      --accent-3: #507243;
+      --warn: #9a6a18;
+      --danger: #8f3428;
+      --code: #211d2a;
+      --code-text: #f6eddf;
+      --radius: 8px;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      --serif: Georgia, "Times New Roman", serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(135deg, rgba(49, 95, 120, 0.08), transparent 35%),
+        linear-gradient(220deg, rgba(159, 79, 45, 0.08), transparent 42%),
+        var(--bg);
+      font-family: var(--sans);
+      line-height: 1.56;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+      border-bottom: 1px solid rgba(49, 95, 120, 0.35);
+    }
+
+    a:hover {
+      border-bottom-color: var(--accent);
+    }
+
+    .shell {
+      width: min(1180px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 22px 0;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .brand {
+      color: var(--ink);
+    }
+
+    .hero {
+      padding: clamp(48px, 8vw, 96px) 0 42px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 320px;
+      gap: clamp(28px, 5vw, 64px);
+      align-items: start;
+    }
+
+    .eyebrow {
+      margin-bottom: 16px;
+      color: var(--accent-2);
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0;
+      letter-spacing: 0;
+      line-height: 1.08;
+    }
+
+    h1 {
+      max-width: 820px;
+      font-family: var(--serif);
+      font-size: clamp(42px, 6vw, 76px);
+      font-weight: 500;
+    }
+
+    h2 {
+      margin-bottom: 18px;
+      font-family: var(--serif);
+      font-size: clamp(30px, 4vw, 48px);
+      font-weight: 500;
+    }
+
+    h3 {
+      margin-bottom: 10px;
+      font-size: 18px;
+      font-weight: 760;
+    }
+
+    .lede {
+      max-width: 760px;
+      margin: 24px 0 0;
+      color: var(--muted);
+      font-size: clamp(18px, 2.1vw, 21px);
+    }
+
+    .summary,
+    .panel,
+    .phase,
+    .callout {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255, 253, 248, 0.9);
+    }
+
+    .summary {
+      position: sticky;
+      top: 18px;
+      padding: 20px;
+      box-shadow: 0 16px 45px rgba(32, 27, 14, 0.10);
+    }
+
+    .summary h2 {
+      margin-bottom: 14px;
+      font-family: var(--sans);
+      font-size: 13px;
+      font-weight: 850;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .summary dl {
+      display: grid;
+      gap: 14px;
+      margin: 0;
+    }
+
+    .summary dt {
+      color: var(--soft);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .summary dd {
+      margin: 4px 0 0;
+      font-weight: 650;
+    }
+
+    .toc {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 0 0 42px;
+    }
+
+    .toc a,
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 34px;
+      padding: 8px 11px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255, 253, 248, 0.78);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    section {
+      padding: 48px 0;
+      border-top: 1px solid rgba(216, 203, 184, 0.82);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .panel {
+      padding: 22px;
+    }
+
+    .panel p,
+    .phase p,
+    .callout p,
+    li {
+      color: var(--muted);
+    }
+
+    .panel p,
+    .phase p,
+    .callout p {
+      margin: 0;
+    }
+
+    .stack {
+      display: grid;
+      gap: 16px;
+    }
+
+    .phase {
+      display: grid;
+      grid-template-columns: 120px minmax(0, 1fr);
+      gap: 20px;
+      padding: 22px;
+    }
+
+    .phase-number {
+      color: var(--accent-2);
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 850;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .callout {
+      padding: 18px 20px;
+      border-left: 5px solid var(--accent);
+    }
+
+    .callout.warn {
+      border-left-color: var(--warn);
+    }
+
+    .callout.danger {
+      border-left-color: var(--danger);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+    }
+
+    th,
+    td {
+      padding: 13px 14px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--accent);
+      background: rgba(49, 95, 120, 0.08);
+      font-size: 12px;
+      font-weight: 850;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    ul,
+    ol {
+      margin: 12px 0 0;
+      padding-left: 20px;
+    }
+
+    li + li {
+      margin-top: 7px;
+    }
+
+    code {
+      padding: 2px 5px;
+      border-radius: 5px;
+      background: rgba(49, 95, 120, 0.10);
+      color: var(--code);
+      font-family: var(--mono);
+      font-size: 0.92em;
+    }
+
+    pre {
+      margin: 16px 0 0;
+      padding: 16px;
+      overflow: auto;
+      border-radius: var(--radius);
+      background: var(--code);
+      color: var(--code-text);
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.5;
+      tab-size: 2;
+    }
+
+    .status {
+      display: inline-flex;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: rgba(80, 114, 67, 0.12);
+      color: var(--accent-3);
+      font-size: 11px;
+      font-weight: 850;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .priority {
+      color: var(--accent-2);
+      font-weight: 850;
+    }
+
+    .footer {
+      padding: 42px 0 56px;
+      color: var(--soft);
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+
+    @media (max-width: 900px) {
+      .hero,
+      .grid,
+      .phase {
+        grid-template-columns: 1fr;
+      }
+
+      .summary {
+        position: static;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">agntz documentation audit</div>
+      <div>Context, resources, memrez</div>
+    </header>
+
+    <main>
+      <section class="hero" id="top">
+        <div>
+          <div class="eyebrow">Plan for /docs and /llms.txt</div>
+          <h1>Update the docs around namespace context, resource providers, and memrez before they drift.</h1>
+          <p class="lede">
+            The repo now has a generic resource system, runtime namespace grants, and a first memory provider.
+            The rendered docs are still mostly agent/schema/SDK oriented, so both human readers and LLM ingestion
+            are missing the current mental model.
+          </p>
+        </div>
+
+        <aside class="summary">
+          <h2>Audit Result</h2>
+          <dl>
+            <div>
+              <dt>Primary docs source</dt>
+              <dd><code>packages/site/src/components/docs/manifest.ts</code></dd>
+            </div>
+            <div>
+              <dt>LLM source</dt>
+              <dd><code>/llms.txt</code> concatenates the same site manifest</dd>
+            </div>
+            <div>
+              <dt>Highest risk</dt>
+              <dd><code>context</code> now means namespace grants, while old docs still emphasize scratchpad context</dd>
+            </div>
+            <div>
+              <dt>Plan owner</dt>
+              <dd>Docs plus small API-doc examples, not runtime rewrites</dd>
+            </div>
+          </dl>
+        </aside>
+      </section>
+
+      <nav class="toc" aria-label="Plan sections">
+        <a href="#findings">Findings</a>
+        <a href="#source-map">Source Map</a>
+        <a href="#target-nav">Target Nav</a>
+        <a href="#phases">Phases</a>
+        <a href="#page-outlines">Page Outlines</a>
+        <a href="#llm">LLM Docs</a>
+        <a href="#verification">Verification</a>
+        <a href="#open-questions">Open Questions</a>
+      </nav>
+
+      <section id="findings">
+        <h2>Confirmed Gaps</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Priority</th>
+              <th>Gap</th>
+              <th>Why it matters</th>
+              <th>Evidence</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="priority">P0</td>
+              <td>No rendered site page explains <code>context</code> as namespace grants.</td>
+              <td>Users will confuse runtime resource grants with legacy <code>contextIds</code> scratchpad buckets.</td>
+              <td><code>docs/guide/07-context.md</code> has the distinction, but <code>packages/site/src/components/docs/pages</code> does not.</td>
+            </tr>
+            <tr>
+              <td class="priority">P0</td>
+              <td>The site schema docs omit the <code>resources:</code> manifest block.</td>
+              <td>Agents can declare resources today, and resource tools are generated as <code>&lt;resource&gt;_&lt;tool&gt;</code>.</td>
+              <td><code>docs/schema.md</code> documents resources; the site schema section only covers common fields, state, templates, pipeline steps, skills, spawnable, and reply.</td>
+            </tr>
+            <tr>
+              <td class="priority">P0</td>
+              <td>No user-facing page documents <code>@agntz/memrez</code> or the Python memrez provider.</td>
+              <td>Memrez is now the first concrete resource provider, with TS and Python APIs, SQLite/Postgres stores, auto-scan, and read/write tools.</td>
+              <td><code>packages/memrez</code> has code and a changelog, but no <code>README.md</code>; the site docs contain no <code>memrez</code> matches.</td>
+            </tr>
+            <tr>
+              <td class="priority">P1</td>
+              <td>Hosted client and HTTP API docs do not show the <code>context</code> request field.</td>
+              <td>Workers and clients accept <code>context?: string[]</code>, but readers have no example for passing resource grants.</td>
+              <td><code>packages/client/src/types.ts</code> and <code>packages/worker/src/routes.ts</code> accept <code>context</code>; <code>/docs/deploy/http-api</code> request JSON omits it.</td>
+            </tr>
+            <tr>
+              <td class="priority">P1</td>
+              <td>The compatibility matrix does not track resources, namespace grants, or memrez parity.</td>
+              <td>Python parity changed: the local SDK now has resource provider runtime and memory provider wiring, but docs understate it.</td>
+              <td><code>python/README.md</code> says "in-memory memrez core" while code exports SQLite/Postgres memory stores and <code>create_memory_resource_provider</code>.</td>
+            </tr>
+            <tr>
+              <td class="priority">P1</td>
+              <td>There are two docs trees with different freshness levels.</td>
+              <td><code>packages/site</code> feeds the public docs and LLM output. The older VitePress <code>docs/</code> tree contains useful newer context content but is not what <code>/llms.txt</code> serves.</td>
+              <td>Root scripts still include <code>docs:dev</code> and <code>docs:build</code>; site docs use <code>DOCS_GROUPS</code>.</td>
+            </tr>
+            <tr>
+              <td class="priority">P2</td>
+              <td>Package READMEs lag the new naming model.</td>
+              <td>Root and package docs still talk about "context" primarily as scratchpad state, so search results can contradict the site.</td>
+              <td><code>README.md</code> and <code>packages/core/README.md</code> emphasize <code>contextIds</code> and context-store config without a namespace-grant warning.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="source-map">
+        <h2>Docs Source Map</h2>
+        <div class="grid">
+          <div class="panel">
+            <h3>Rendered docs and LLM corpus</h3>
+            <p>
+              The source of truth for <code>/docs</code>, sidebar navigation, per-page markdown, and
+              <code>/llms.txt</code> is <code>packages/site/src/components/docs/manifest.ts</code>.
+              Any new human page must be added there or the LLM corpus will miss it.
+            </p>
+            <ul>
+              <li><code>packages/site/src/app/docs/[[...slug]]/page.tsx</code> renders pages.</li>
+              <li><code>packages/site/src/app/llms.txt/route.ts</code> concatenates all docs pages.</li>
+              <li><code>packages/site/src/middleware.ts</code> rewrites <code>/docs/*.md</code> to raw markdown.</li>
+            </ul>
+          </div>
+          <div class="panel">
+            <h3>Legacy markdown docs</h3>
+            <p>
+              The root <code>docs/</code> tree contains useful material, especially <code>docs/guide/07-context.md</code>
+              and <code>docs/schema.md</code>, but it is a separate VitePress surface. Treat it as a source to port
+              or explicitly mark it legacy.
+            </p>
+            <ul>
+              <li><code>docs/guide/07-context.md</code> has the current <code>context</code> vs <code>contextIds</code> distinction.</li>
+              <li><code>docs/schema.md</code> already has a resource block reference to reuse.</li>
+            </ul>
+          </div>
+          <div class="panel">
+            <h3>Runtime implementation</h3>
+            <p>
+              The core runner validates namespace grants, resolves resources, injects provider context, and registers
+              generated resource tools. Documentation should follow the runtime rather than older planning notes.
+            </p>
+            <ul>
+              <li><code>packages/core/src/namespace.ts</code> defines grant normalization and protected namespace policy.</li>
+              <li><code>packages/core/src/types.ts</code> defines <code>ResourceProvider</code> and <code>ResourceToolContext</code>.</li>
+              <li><code>packages/core/src/runner.ts</code> clamps modes and registers resource tools.</li>
+            </ul>
+          </div>
+          <div class="panel">
+            <h3>Memrez implementation</h3>
+            <p>
+              Both TS and Python now expose memrez primitives and resource provider wiring. Some older planning text is stale;
+              do not copy claims that Python lacks provider tools.
+            </p>
+            <ul>
+              <li><code>packages/memrez/src/provider.ts</code> exposes <code>read</code>, <code>write</code>, and auto-scan.</li>
+              <li><code>python/src/agntz/memrez_provider.py</code> mirrors the memory resource provider.</li>
+              <li><code>python/src/agntz/sdk/local.py</code> resolves resource providers and executes generated tools.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section id="target-nav">
+        <h2>Target Docs Navigation</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Group</th>
+              <th>Change</th>
+              <th>Slug</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Concepts</td>
+              <td>Add "Context and resources"</td>
+              <td><code>/docs/concepts/context-and-resources</code></td>
+              <td>Human mental model: sessions vs state vs <code>context</code> grants vs <code>contextIds</code>.</td>
+            </tr>
+            <tr>
+              <td>Schema</td>
+              <td>Add "Resources"</td>
+              <td><code>/docs/schema/resources</code></td>
+              <td>Field reference for <code>resources:</code>, <code>kind</code>, <code>mode</code>, <code>namespace</code>, config passthrough, and tool names.</td>
+            </tr>
+            <tr>
+              <td>Tools</td>
+              <td>Add "Memory with memrez"</td>
+              <td><code>/docs/tools/memory-memrez</code></td>
+              <td>Concrete setup for TS and Python, stores, grants, modes, auto-scan, and write policy.</td>
+            </tr>
+            <tr>
+              <td>SDK &amp; CLI</td>
+              <td>Update SDK and hosted client pages</td>
+              <td><code>/docs/sdk-cli/sdk</code>, <code>/docs/sdk-cli/client</code></td>
+              <td>Add <code>resources</code>, <code>context</code>, and memrez run examples. Avoid documenting TS <code>namespacePolicy</code> on <code>@agntz/sdk</code> until the wrapper exposes it.</td>
+            </tr>
+            <tr>
+              <td>Deploy</td>
+              <td>Update HTTP API</td>
+              <td><code>/docs/deploy/http-api</code></td>
+              <td>Show <code>context</code> in run bodies and describe auth-bound grant minting.</td>
+            </tr>
+            <tr>
+              <td>Reference</td>
+              <td>Update compatibility matrix</td>
+              <td><code>/docs/compatibility</code></td>
+              <td>Add rows for namespace grants, resources, memory provider, memrez stores, protected namespace policy, and local/hosted differences.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="phases">
+        <h2>Execution Phases</h2>
+        <div class="stack">
+          <div class="phase">
+            <div class="phase-number">Phase 0</div>
+            <div>
+              <h3>Lock the source-of-truth decision</h3>
+              <p>
+                Decide whether <code>docs/</code> remains a maintained VitePress surface or becomes legacy/internal.
+                The practical default should be: <code>packages/site</code> is public and LLM canonical, root
+                <code>docs/</code> is porting source until cleaned up.
+              </p>
+              <ul>
+                <li>Add a short maintainer note to <code>docs/index.md</code> or repo docs explaining canonical public docs.</li>
+                <li>Do not add new docs only under root <code>docs/</code> unless they are also added to <code>DOCS_GROUPS</code>.</li>
+                <li>Capture a follow-up to remove or sync stale VitePress links such as old Studio pages.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="phase">
+            <div class="phase-number">Phase 1</div>
+            <div>
+              <h3>Add the context and resources mental model</h3>
+              <p>
+                Create a concept page before adding memrez details. It should be clear that <code>context</code>
+                is a trusted namespace capability array, not a prompt scratchpad, and that <code>contextIds</code>
+                remains the legacy scratchpad API.
+              </p>
+              <ul>
+                <li>Port and tighten <code>docs/guide/07-context.md</code> into <code>packages/site/src/components/docs/pages/concepts/context-and-resources.ts</code>.</li>
+                <li>Explain grant validation rules: no slashes at edges, no empty segments, no traversal, no wildcards, no whitespace.</li>
+                <li>Explain child invocation inheritance and narrow-only behavior.</li>
+                <li>Explain resource provider responsibilities: receive grants, inject extra context, register tools, validate operations.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="phase">
+            <div class="phase-number">Phase 2</div>
+            <div>
+              <h3>Add schema coverage for <code>resources:</code></h3>
+              <p>
+                Move the existing resource schema reference from root docs into the site schema section, then link it
+                from common fields, agent kinds, and memrez.
+              </p>
+              <ul>
+                <li>Document <code>kind</code> defaulting to the resource name.</li>
+                <li>Use <code>mode: read</code> and <code>mode: read-write</code>. Do not use stale "read-only" wording.</li>
+                <li>Clarify that <code>namespace</code> is provider config, not an automatic runtime grant.</li>
+                <li>Show generated tool names and collision behavior, including hyphen-to-underscore prefixes.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="phase">
+            <div class="phase-number">Phase 3</div>
+            <div>
+              <h3>Add memrez as the first resource provider</h3>
+              <p>
+                Create a dedicated page and package README that show the same end-to-end flow in TypeScript and Python:
+                install, create a memrez instance, register the memory provider, declare a memory resource in YAML,
+                pass a trusted <code>context</code> grant at run time, and read/write memories.
+              </p>
+              <ul>
+                <li>Add <code>packages/site/src/components/docs/pages/tools/memory-memrez.ts</code>.</li>
+                <li>Add <code>packages/memrez/README.md</code> for npm users.</li>
+                <li>Update <code>python/README.md</code> parity and examples to include provider + SQLite/Postgres memory stores.</li>
+                <li>Add short examples under <code>examples/agents</code> only if the current example set lacks a memory resource manifest.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="phase">
+            <div class="phase-number">Phase 4</div>
+            <div>
+              <h3>Update run surfaces and compatibility docs</h3>
+              <p>
+                Once the concepts page exists, update every API surface that accepts <code>context</code> so users can
+                find the field where they need it.
+              </p>
+              <ul>
+                <li>Update <code>/docs/sdk-cli/sdk</code> option table with <code>resources</code> and run examples with <code>context</code>.</li>
+                <li>Update <code>/docs/sdk-cli/client</code> with hosted <code>context</code> examples for TS and Python.</li>
+                <li>Update <code>/docs/deploy/http-api</code> request JSON to include <code>context</code>.</li>
+                <li>Update <code>/docs/compatibility</code> with rows for resources, namespace grants, memory provider, memrez stores, and Python parity.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="phase">
+            <div class="phase-number">Phase 5</div>
+            <div>
+              <h3>Make LLM docs complete and hard to stale</h3>
+              <p>
+                Because <code>/llms.txt</code> comes from the same manifest, adding pages to <code>DOCS_GROUPS</code>
+                should be enough. Still verify raw docs, anchors, and copied markdown for each new page.
+              </p>
+              <ul>
+                <li>Confirm <code>/llms.txt</code> includes the new context, resources, and memrez pages in navigation order.</li>
+                <li>Confirm each new page works as raw markdown at <code>/docs/&lt;slug&gt;.md</code>.</li>
+                <li>Use explicit first paragraphs and tables; LLMs should not have to infer the difference between <code>context</code> and <code>contextIds</code>.</li>
+                <li>Add a lightweight docs coverage checklist or test that checks required topic strings in <code>DOCS_GROUPS</code>.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="page-outlines">
+        <h2>Page Outlines</h2>
+        <div class="grid">
+          <div class="panel">
+            <h3><code>/docs/concepts/context-and-resources</code></h3>
+            <ul>
+              <li>Start with a table: session, state, <code>context</code>, <code>contextIds</code>, run, trace.</li>
+              <li>Show trusted app code minting <code>context: ["app/user/u_123"]</code>.</li>
+              <li>Explain narrow-only child calls and why models never receive namespace arguments.</li>
+              <li>Include protected namespace policy as an advanced guardrail, linked to security notes.</li>
+              <li>End with links to resources schema and memrez.</li>
+            </ul>
+          </div>
+
+          <div class="panel">
+            <h3><code>/docs/schema/resources</code></h3>
+            <ul>
+              <li>Define <code>resources</code> as LLM-agent only for current schema docs.</li>
+              <li>Document <code>kind</code>, <code>mode</code>, <code>namespace</code>, <code>config</code>, and provider-specific passthrough fields.</li>
+              <li>Show generated tool names: <code>memory_read</code>, <code>memory_write</code>, <code>product_docs_search</code>.</li>
+              <li>Explain mode clamping for child agents: a read parent keeps children read-only.</li>
+              <li>Warn that a resource declaration does not grant access by itself; run-time <code>context</code> does.</li>
+            </ul>
+          </div>
+
+          <div class="panel">
+            <h3><code>/docs/tools/memory-memrez</code></h3>
+            <ul>
+              <li>Define memrez as durable tagged memory, not chat history and not the old scratchpad.</li>
+              <li>Show TypeScript and Python setup with local in-memory, SQLite, and Postgres storage options.</li>
+              <li>Document auto-scan: visible topics are injected into model context before tool calls.</li>
+              <li>Document read/write tools and read mode omission of write tools.</li>
+              <li>Explain write policy and ancestor promotion without making it the default path.</li>
+            </ul>
+          </div>
+
+          <div class="panel">
+            <h3>README updates</h3>
+            <ul>
+              <li><code>packages/memrez/README.md</code>: package install, API surface, provider wiring, stores, examples.</li>
+              <li><code>python/README.md</code>: replace "in-memory memrez core" with current parity, including providers and memory stores.</li>
+              <li><code>README.md</code> and <code>packages/core/README.md</code>: add a short warning that <code>context</code> and <code>contextIds</code> are different.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="callout warn" style="margin-top: 18px;">
+          <p>
+            Avoid copying older planning claims blindly. <code>planning/memrez-plan.html</code> says Python lacked resource tools
+            at one point; the current code has <code>python/src/agntz/memrez_provider.py</code> and resource provider execution in
+            <code>python/src/agntz/sdk/local.py</code>.
+          </p>
+        </div>
+      </section>
+
+      <section id="snippets">
+        <h2>Canonical Snippet Shape</h2>
+        <div class="grid">
+          <div class="panel">
+            <h3>YAML resource declaration</h3>
+            <pre><code>id: support-with-memory
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: |
+  Help the user. Use memory when it is relevant.
+resources:
+  memory:
+    mode: read-write
+    autoScan: true</code></pre>
+          </div>
+
+          <div class="panel">
+            <h3>TypeScript embedded setup</h3>
+            <pre><code>import { agntz } from "@agntz/sdk";
+import { createMemrez, SqliteMemoryStore } from "@agntz/memrez";
+
+const memrez = createMemrez({
+  store: new SqliteMemoryStore("./memory.db"),
+});
+
+const client = await agntz({
+  agents: "./agents",
+  resources: { memory: memrez.provider() },
+});
+
+await client.agents.run({
+  agentId: "support-with-memory",
+  input: "Remember that I prefer metric units.",
+  context: [`app/user/${userId}`],
+});</code></pre>
+          </div>
+
+          <div class="panel">
+            <h3>Python embedded setup</h3>
+            <pre><code>from agntz import LiteLLMModelProvider, agntz
+from agntz.memrez import create_memrez
+from agntz.memrez_sqlite import SqliteMemoryStore
+
+memrez = create_memrez(store=SqliteMemoryStore("./memory.db"))
+
+client = agntz(
+    agents="./agents",
+    resources={"memory": memrez.provider()},
+    model_provider=LiteLLMModelProvider(),
+)
+
+client.agents.run(
+    agent_id="support-with-memory",
+    input="Remember that I prefer metric units.",
+    context=[f"app/user/{user_id}"],
+)</code></pre>
+          </div>
+
+          <div class="panel">
+            <h3>Hosted HTTP request shape</h3>
+            <pre><code>{
+  "userId": "user_abc",
+  "agentId": "support-with-memory",
+  "input": "What do you remember about me?",
+  "sessionId": "optional-session-id",
+  "context": ["app/user/u_123"]
+}</code></pre>
+          </div>
+        </div>
+      </section>
+
+      <section id="llm">
+        <h2>LLM Docs Requirements</h2>
+        <div class="stack">
+          <div class="callout">
+            <p>
+              Every new page must be imported into <code>DOCS_GROUPS</code>. That one step updates the sidebar,
+              static routes, per-page raw markdown, and <code>/llms.txt</code>.
+            </p>
+          </div>
+          <div class="grid">
+            <div class="panel">
+              <h3>Writing constraints</h3>
+              <ul>
+                <li>Open each new page with a direct definition and when-to-use guidance.</li>
+                <li>Use the exact field names <code>context</code>, <code>contextIds</code>, <code>resources</code>, <code>mode</code>, and <code>namespace</code>.</li>
+                <li>Prefer tables for contrasts, especially context vs contextIds and local vs hosted.</li>
+                <li>Keep code snippets complete enough to paste into a repo.</li>
+              </ul>
+            </div>
+            <div class="panel">
+              <h3>Raw markdown checks</h3>
+              <ul>
+                <li><code>/docs/concepts/context-and-resources.md</code> returns the same page content.</li>
+                <li><code>/docs/schema/resources.md</code> includes all resource field references.</li>
+                <li><code>/docs/tools/memory-memrez.md</code> includes both TS and Python examples.</li>
+                <li><code>/llms.txt</code> includes the new pages in a sensible order, not only links to them.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="verification">
+        <h2>Verification Checklist</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Check</th>
+              <th>Command or action</th>
+              <th>Expected result</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Site build</td>
+              <td><code>pnpm --filter @agntz/site build</code></td>
+              <td>New docs pages compile and static params include new slugs.</td>
+            </tr>
+            <tr>
+              <td>LLM corpus coverage</td>
+              <td><code>rg "Context and resources|Memory with memrez|resources:" packages/site/src/components/docs/pages</code></td>
+              <td>New pages and cross-links are present in the site docs source.</td>
+            </tr>
+            <tr>
+              <td>Raw route smoke</td>
+              <td>Run site dev and open <code>/llms.txt</code> plus each <code>.md</code> route.</td>
+              <td>Raw markdown includes full page bodies and code fences.</td>
+            </tr>
+            <tr>
+              <td>Package docs consistency</td>
+              <td><code>rg "contextIds|context:|memrez|resources" README.md packages/*/README.md python/README.md</code></td>
+              <td>No package README contradicts the new public docs.</td>
+            </tr>
+            <tr>
+              <td>Example correctness</td>
+              <td><code>pnpm --filter @agntz/memrez test</code> and <code>.venv/bin/python -m pytest python/tests/test_memrez_*.py</code></td>
+              <td>Snippets align with APIs that already have test coverage.</td>
+            </tr>
+            <tr>
+              <td>Legacy docs decision</td>
+              <td><code>pnpm docs:build</code> only if root <code>docs/</code> remains maintained.</td>
+              <td>Either legacy docs still build, or README/scripts clearly point to the site docs as canonical.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="open-questions">
+        <h2>Open Questions</h2>
+        <div class="grid">
+          <div class="panel">
+            <h3>Do we expose TS <code>namespacePolicy</code> through <code>@agntz/sdk</code>?</h3>
+            <p>
+              Core supports <code>namespacePolicy</code>, and Python local <code>agntz()</code> exposes <code>namespace_policy</code>.
+              The TS embedded wrapper currently exposes <code>resources</code> but not <code>namespacePolicy</code>. Docs should either
+              avoid TS SDK examples for protected namespace policy or add the option first.
+            </p>
+          </div>
+          <div class="panel">
+            <h3>Where should memrez live in navigation?</h3>
+            <p>
+              It can live under Tools because it creates model-visible tools, or under a new Resources group.
+              The smaller change is Tools now, with a future Resources group if RAG/files become public.
+            </p>
+          </div>
+          <div class="panel">
+            <h3>Is root <code>docs/</code> still published?</h3>
+            <p>
+              If yes, it needs the same updates or a sync process. If no, scripts and maintainer notes should stop
+              implying it is the public docs source.
+            </p>
+          </div>
+          <div class="panel">
+            <h3>Should the hosted worker mint grants automatically?</h3>
+            <p>
+              Current docs should say trusted application/server code passes <code>context</code>. If hosted worker policies
+              later mint workspace/user grants from auth, document that as a separate deployment feature.
+            </p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      Plan file: <code>planning/docs-context-memrez-update-plan.html</code>
+    </footer>
+  </div>
+</body>
+</html>

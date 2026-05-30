@@ -44,6 +44,7 @@ See [The four agent kinds](/docs/concepts/agent-kinds) for examples.
 
 - **[Input, state, and output](/docs/schema/input-state-output)** — how data flows in and out.
 - **[Templates and conditions](/docs/schema/templates-conditions)** — the \`{{}}\` mini-language used in nearly every field.
+- **[Resources](/docs/schema/resources)** — provider-backed runtime capabilities such as memory.
 - **[Pipeline steps and looping](/docs/schema/pipeline-steps)** — fields specific to \`sequential\` and \`parallel\` kinds.
 - **[Skills, spawnable, reply](/docs/schema/skills-spawnable-reply)** — extra fields for \`llm\` kind.
 `;

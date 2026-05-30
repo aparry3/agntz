@@ -196,13 +196,32 @@ restarts.
 
 ## Memrez
 
-The Python package includes the same namespace-grant and memrez core primitives
-as the TypeScript package.
+The Python package includes namespace grants, the memrez core, memory resource
+provider wiring, and SQLite/Postgres memory stores.
 
 ```python
+from agntz import LiteLLMModelProvider, agntz
 from agntz.memrez import create_memrez
+from agntz.memrez_sqlite import SqliteMemoryStore
 
-memrez = create_memrez()
+memrez = create_memrez(store=SqliteMemoryStore("./memory.db"))
+
+client = agntz(
+    agents="./agents",
+    resources={"memory": memrez.provider()},
+    model_provider=LiteLLMModelProvider(),
+)
+
+client.agents.run(
+    agent_id="support-with-memory",
+    input="Remember that I prefer metric units.",
+    context=["app/user/u_123"],
+)
+```
+
+You can also use memrez directly:
+
+```python
 memrez.write(["app/user/u_123"], "Prefers metric units.", topics_hint=["prefs"])
 entries = memrez.read(["app/user/u_123"], "prefs")
 ```
@@ -221,7 +240,8 @@ Implemented in this package:
 - Hosted sync and async clients for run, run stream, runs, and traces.
 - Local YAML execution for `llm`, `tool`, `sequential`, and `parallel` agents.
 - Local Python tools, HTTP tools, MCP JSON-RPC tools, and agent-as-tool calls.
-- Runtime namespace grants and the in-memory memrez core.
+- Runtime namespace grants, resource providers, and the memrez memory provider.
+- Memrez in-memory, SQLite, and Postgres memory stores.
 - LiteLLM-backed model execution with tool-call loop support.
 - Memory and SQLite stores for runs, trace spans, sessions, and messages.
 - Contract fixtures shared with the TypeScript manifest package.

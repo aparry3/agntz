@@ -11,12 +11,14 @@ import quickstart from "./pages/quickstart";
 
 import conceptsAgentKinds from "./pages/concepts/agent-kinds";
 import conceptsAgents from "./pages/concepts/agents";
+import conceptsContextAndResources from "./pages/concepts/context-and-resources";
 import conceptsRunsAndTraces from "./pages/concepts/runs-and-traces";
 import conceptsSessions from "./pages/concepts/sessions";
 
 import schemaCommonFields from "./pages/schema/common-fields";
 import schemaInputStateOutput from "./pages/schema/input-state-output";
 import schemaPipelineSteps from "./pages/schema/pipeline-steps";
+import schemaResources from "./pages/schema/resources";
 import schemaSkillsSpawnableReply from "./pages/schema/skills-spawnable-reply";
 import schemaTemplatesConditions from "./pages/schema/templates-conditions";
 
@@ -24,6 +26,7 @@ import toolsAgentAsTool from "./pages/tools/agent-as-tool";
 import toolsHttp from "./pages/tools/http";
 import toolsLocal from "./pages/tools/local";
 import toolsMcp from "./pages/tools/mcp";
+import toolsMemoryMemrez from "./pages/tools/memory-memrez";
 
 import sdkCliCli from "./pages/sdk-cli/cli";
 import sdkCliClient from "./pages/sdk-cli/client";
@@ -99,6 +102,13 @@ export const DOCS_GROUPS: DocsGroup[] = [
 				markdown: conceptsSessions,
 			},
 			{
+				slug: "concepts/context-and-resources",
+				title: "Context and resources",
+				description:
+					"Namespace grants, resource providers, and the legacy contextIds scratchpad.",
+				markdown: conceptsContextAndResources,
+			},
+			{
 				slug: "concepts/runs-and-traces",
 				title: "Runs and traces",
 				description:
@@ -129,6 +139,13 @@ export const DOCS_GROUPS: DocsGroup[] = [
 				description:
 					"{{}} interpolation, {{#if}} blocks, and the condition mini-language.",
 				markdown: schemaTemplatesConditions,
+			},
+			{
+				slug: "schema/resources",
+				title: "Resources",
+				description:
+					"The resources block, provider kinds, modes, runtime grants, and generated tools.",
+				markdown: schemaResources,
 			},
 			{
 				slug: "schema/pipeline-steps",
@@ -167,6 +184,13 @@ export const DOCS_GROUPS: DocsGroup[] = [
 				title: "MCP tools",
 				description: "Discoverable tool servers; wrap, rename, and pin params.",
 				markdown: toolsMcp,
+			},
+			{
+				slug: "tools/memory-memrez",
+				title: "Memory with memrez",
+				description:
+					"Durable tagged memory as a resource provider for TypeScript and Python agents.",
+				markdown: toolsMemoryMemrez,
 			},
 			{
 				slug: "tools/agent-as-tool",

@@ -11,6 +11,11 @@ What runs where, today. Embedded means in-process SDK execution: \`@agntz/sdk\` 
 | HTTP tools — OAuth2 / token exchange | ✓ | partial | ✓ |
 | MCP tools (raw URL + headers) | ✓ | ✓ (HTTP JSON-RPC) | ✓ |
 | Agent-as-tool | ✓ | ✓ | ✓ |
+| Runtime \`context\` namespace grants | ✓ | ✓ | ✓ |
+| \`resources:\` manifest declarations | ✓ | ✓ | ✓ if provider wired |
+| Generic resource provider runtime | ✓ | ✓ | self-host configurable |
+| memrez memory resource provider | ✓ | ✓ | self-host configurable |
+| memrez SQLite / Postgres memory stores | ✓ | ✓ | deployment-owned |
 | Spawnable subagents | ✓ | not yet | ✓ |
 | Skills (\`use_skill\` tool) | ✓ | not yet | ✓ |
 | Reply tool (intermediate messages) | ✓ | persisted messages only | ✓ |
@@ -35,6 +40,7 @@ Most of the way is a constructor change (see [Embedded SDK → Switching to host
 
 - **Local tools** — promote to HTTP endpoints or MCP servers. The YAML \`tools:\` block is the only place the change is visible.
 - **\`{{env.X}}\` → \`{{secrets.X}}\`** — multi-tenant workers do not share an environment with your code. Use \`{{secrets.X}}\` and configure values in **Settings → Secrets**.
+- **Resources** — make sure the hosted worker has the same provider kinds wired server-side. Runtime \`context\` grants still come from trusted application code.
 
 ### TypeScript embedded → Python embedded
 
@@ -57,6 +63,8 @@ client.agents.run(
 \`\`\`
 
 The Python SDK follows Python naming conventions, so wire names become \`agent_id\` and \`session_id\` while YAML fields remain unchanged.
+
+Resource and memory APIs use the same pattern: TypeScript passes \`resources: { memory: memrez.provider() }\`; Python passes \`resources={"memory": memrez.provider()}\`.
 
 ### Hosted → self-hosted
 

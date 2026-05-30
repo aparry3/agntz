@@ -57,11 +57,16 @@ Don't expose this secret to clients — it's app-to-worker only.
   "userId": "user_abc...",        // required with internal auth; ignored with Bearer
   "agentId": "my-agent",
   "input": { "message": "Hello" },
-  "sessionId": "optional-session-id"
+  "sessionId": "optional-session-id",
+  "context": ["app/user/u_123"]
 }
 \`\`\`
 
 \`input\` accepts either a plain string (when the agent has no \`inputSchema\`) or an object matching the agent's schema.
+
+\`context\` is optional. When present, it is a namespace grant array passed to resource providers such as memory. Mint it from trusted server-side state, such as the authenticated user or workspace. Do not ask the model or a browser client to choose grants.
+
+\`/run\`, \`/run/stream\`, and \`/runs\` all accept the same \`agentId\`, \`input\`, \`sessionId\`, and \`context\` fields. \`/runs\` also accepts webhook fields such as \`callbackUrl\` and \`webhookSecretName\`.
 
 ## Stream format (SSE)
 

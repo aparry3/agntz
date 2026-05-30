@@ -101,6 +101,30 @@ Run an agent to completion. Returns \`{ output, state, sessionId, replies }\` in
 
 Streams SSE events. Always yields a terminal \`complete\` or \`error\` event.
 
+### Runtime context grants
+
+Pass \`context\` when a hosted run needs access to a resource such as memory. These are namespace grants minted by trusted server-side code; the model never receives a namespace parameter.
+
+\`\`\`ts {group=client-context}
+const result = await client.agents.run({
+  agentId: "support-with-memory",
+  input: "What do you remember about me?",
+  sessionId: "user-42",
+  context: ["app/user/u_123"],
+});
+\`\`\`
+
+\`\`\`python {group=client-context}
+result = client.agents.run(
+    agent_id="support-with-memory",
+    input="What do you remember about me?",
+    session_id="user-42",
+    context=["app/user/u_123"],
+)
+\`\`\`
+
+The worker must be configured with matching resource providers. See [Context and resources](/docs/concepts/context-and-resources) and [Memory with memrez](/docs/tools/memory-memrez).
+
 ### \`client.runs.*\`
 
 \`\`\`ts {group=client-runs}

@@ -81,6 +81,7 @@ Returns an initialized local client. Validation errors throw at startup, so misc
 |---|---|---|
 | \`agents\` | \`agents\` | Path to a directory of \`.yaml\` files |
 | \`tools\` | \`tools\` | Local tool definitions |
+| \`resources\` | \`resources\` | Resource providers keyed by kind, such as \`memory\` |
 | \`store\` | \`store\` | Optional persistence |
 | \`defaultModel\` | \`model_provider\` | Python passes a concrete provider; TypeScript can default model config |
 | \`onEvent\` | N/A | TypeScript event hook for full local event stream |
@@ -107,6 +108,52 @@ output = result.output
 state = result.state
 session_id = result.session_id
 \`\`\`
+
+### Run with resource grants
+
+Pass \`context\` when the run needs access to a resource such as memory. This is a namespace grant array, not the legacy \`contextIds\` scratchpad.
+
+\`\`\`ts {group=sdk-context}
+const { output } = await client.agents.run({
+  agentId: "support-with-memory",
+  input: "What do you remember about my preferences?",
+  context: ["app/user/" + userId],
+});
+\`\`\`
+
+\`\`\`python {group=sdk-context}
+result = client.agents.run(
+    agent_id="support-with-memory",
+    input="What do you remember about my preferences?",
+    context=[f"app/user/{user_id}"],
+)
+output = result.output
+\`\`\`
+
+Agents that declare \`resources:\` also need matching providers at construction time:
+
+\`\`\`ts {group=sdk-resources}
+import { createMemrez } from "@agntz/memrez";
+
+const memrez = createMemrez();
+const client = await agntz({
+  agents: "./agents",
+  resources: { memory: memrez.provider() },
+});
+\`\`\`
+
+\`\`\`python {group=sdk-resources}
+from agntz.memrez import create_memrez
+
+memrez = create_memrez()
+client = agntz(
+    agents="./agents",
+    resources={"memory": memrez.provider()},
+    model_provider=LiteLLMModelProvider(),
+)
+\`\`\`
+
+See [Context and resources](/docs/concepts/context-and-resources), [Resources schema](/docs/schema/resources), and [Memory with memrez](/docs/tools/memory-memrez).
 
 ### Stream or inspect
 

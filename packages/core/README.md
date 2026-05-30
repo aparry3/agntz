@@ -169,6 +169,9 @@ const result = await runner.invoke("writer", "Write about MCP");
 
 Context lets agents share state without tight coupling:
 
+> Note: this section uses legacy `contextIds` scratchpad buckets. Runtime
+> resource access uses `context` namespace grants instead.
+
 ```typescript
 // Researcher writes findings to context
 await runner.invoke("researcher", "Find info about MCP", {
