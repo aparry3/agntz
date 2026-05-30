@@ -1,6 +1,6 @@
 {
   "name": "@agntz/sdk",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "description": "Official agntz SDK. Run YAML agent manifests in-process with a five-line code path, or call the hosted agntz API. The library you build agntz apps with.",
   "type": "module",
   "main": "./dist/index.js",

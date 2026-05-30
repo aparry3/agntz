@@ -1,5 +1,12 @@
 # @agntz/sdk
 
+## 3.0.2
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @agntz/client@1.0.1
+
 ## 3.0.1
 
 ### Patch Changes
