@@ -19,7 +19,7 @@ export const TOKENS = {
 	danger: "#9A2A2A",
 } as const;
 
-export type AccentName = "blue" | "purple" | "amber" | "green";
+export type AccentName = "blue" | "purple" | "amber" | "green" | "terracotta";
 
 export const ACCENTS: Record<
 	AccentName,
@@ -29,4 +29,5 @@ export const ACCENTS: Record<
 	purple: { fg: "#4E3677", bg: "#E9E3F0", line: "#CEC0E1" },
 	amber: { fg: "#A05E15", bg: "#F5E8D2", line: "#E5C994" },
 	green: { fg: "#1F7A4D", bg: "#E2F0E5", line: "#A8CFB8" },
+	terracotta: { fg: "#B24A24", bg: "#F4E2D6", line: "#E0B89A" },
 };
