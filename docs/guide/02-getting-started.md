@@ -115,18 +115,16 @@ const result = await runner.invoke("assistant", "What's my name?", {
 // → "Your name is Aaron!"
 ```
 
-## Launch the Studio
+## Try the CLI
 
 ```bash
-npx agntz studio
+npx @agntz/sdk create "Answer support questions in a concise tone" -o ./agents/support.yaml
+npx @agntz/sdk run ./agents/support.yaml --input "Hello"
 ```
 
-Opens a visual development UI at `http://localhost:4000` where you can:
-- Create and edit agents
-- Browse available tools
-- Test agents in a playground
-- Run eval suites
-- Browse sessions and logs
+The CLI is the quickest way to generate a YAML manifest and smoke-test it
+locally. Use SDK code when the agent needs local tool handlers, resources, or
+application-specific runtime context.
 
 ## Next Steps
 
@@ -134,4 +132,3 @@ Opens a visual development UI at `http://localhost:4000` where you can:
 - [Tools](/guide/tools) — Inline tools, MCP tools, and agent-as-tool
 - [Context](/guide/context) — Shared state across agents
 - [Evals](/guide/evals) — Test your agents
-- [Studio](/studio/overview) — Visual development experience

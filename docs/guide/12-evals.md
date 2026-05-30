@@ -1,6 +1,8 @@
 # Evals & Testing
 
-agntz includes a built-in evaluation system for testing agent behavior. Define test cases, run them from code/CLI/Studio, and track results over time.
+agntz includes a built-in evaluation system for testing agent behavior. Define
+test cases and run them from code; the current public CLI does not expose eval
+execution.
 
 ## Defining Test Cases
 
@@ -85,20 +87,11 @@ console.log(result.summary);
 // → { total: 2, passed: 2, failed: 0, score: 1.0 }
 ```
 
-### CLI
+### Current CLI support
 
-```bash
-npx agntz eval classifier
-npx agntz eval --all        # Run all agents' evals
-```
-
-### Studio
-
-The Evals Dashboard in the Studio lets you:
-- Run eval suites with a single click
-- View results over time
-- Add/edit test cases visually
-- Inspect individual assertion results
+The current public CLI focuses on creating YAML, running agents, and hosted run
+management. Run evals programmatically in this package until eval execution is
+exposed through the CLI again.
 
 ## Custom Assertion Plugins
 

@@ -72,9 +72,9 @@ export const DOCS_GROUPS: DocsGroup[] = [
 			},
 			{
 				slug: "cli-quickstart",
-				title: "CLI quickstart",
+				title: "CLI getting started",
 				description:
-					"Scaffold and run agents from your terminal with the agntz CLI.",
+					"Create, edit, run, and call agents locally with the agntz CLI.",
 				markdown: cliQuickstart,
 			},
 		],

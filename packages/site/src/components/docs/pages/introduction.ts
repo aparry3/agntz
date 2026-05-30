@@ -24,7 +24,7 @@ Three things stay the same as you scale from your laptop to production:
 | If you want to… | Use | Read |
 |---|---|---|
 | Run an agent on your laptop in 60 seconds | \`@agntz/sdk\` or \`agntz\` | [Quickstart](/docs/quickstart) |
-| Build agents from the terminal | \`agntz\` CLI | [CLI quickstart](/docs/cli-quickstart) |
+| Build agents from the terminal | \`agntz\` CLI | [CLI getting started](/docs/cli-quickstart) |
 | Author and run agents in a hosted UI | agntz.co | [Hosted cloud](/docs/deploy/hosted-cloud) |
 | Call hosted agents from your backend | \`@agntz/client\` or \`AgntzClient\` | [Hosted client](/docs/sdk-cli/client) |
 | Deploy your own hosted stack | Docker / Vercel + Railway | [Self-host](/docs/deploy/self-host-production) |
@@ -69,7 +69,7 @@ agntz calls providers directly with your key — no proxy, no data routing. **Op
 ## Where to go next
 
 - **New here?** Start with the [Quickstart](/docs/quickstart).
-- **Prefer the terminal?** Jump to the [CLI quickstart](/docs/cli-quickstart).
+- **Prefer the terminal?** Jump to [CLI getting started](/docs/cli-quickstart).
 - **Want the big picture?** Read [Defining agents](/docs/concepts/agents) and [The four agent kinds](/docs/concepts/agent-kinds).
 - **Looking for a specific field?** The [Schema](/docs/schema/common-fields) section is the complete reference.
 `;

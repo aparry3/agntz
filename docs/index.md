@@ -26,11 +26,11 @@ features:
     title: MCP Native
     details: First-class Model Context Protocol support. Connect to MCP servers for tool discovery, or expose your agents as MCP tools.
   - icon: 🎨
-    title: Built-in Studio
-    details: "npx agntz studio — a visual dev UI for creating agents, testing in the playground, browsing tools, and running evals."
+    title: CLI-first Authoring
+    details: "Use @agntz/sdk's agntz executable to create YAML agents and run them locally before moving to hosted execution."
   - icon: ✅
     title: Evals Built In
-    details: Define test cases with assertions (contains, regex, JSON schema, LLM-as-judge, semantic similarity) and run them from code, CLI, or Studio.
+    details: Define test cases with assertions (contains, regex, JSON schema, LLM-as-judge, semantic similarity) and run them from code.
   - icon: ⚡
     title: Five-Line Hello World
     details: createRunner → defineAgent → invoke → output. Zero config to start, infinite extensibility when you need it.

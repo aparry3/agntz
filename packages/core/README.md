@@ -465,18 +465,20 @@ runner.registerAgent(defineAgent({
 ## CLI
 
 ```bash
-# Scaffold a new project
-npx agntz init
+# Generate a YAML manifest
+npx @agntz/sdk create "Answer support questions in a concise tone" -o ./agents/support.yaml
 
-# Invoke an agent
-npx agntz invoke greeter "Hello!"
+# Run it locally
+npx @agntz/sdk run ./agents/support.yaml --input "Hello!"
 
-# Run evals
-npx agntz eval classifier
-
-# Interactive playground (REPL with session support)
-npx agntz playground greeter
+# Show all current commands
+npx @agntz/sdk --help
 ```
+
+The current CLI is distributed through `@agntz/sdk`; the executable name is
+`agntz` when installed globally. It supports `create`, `run`, hosted auth,
+hosted runs, and hosted traces. Use the SDK directly for local tools, resource
+providers, and app-specific runtime wiring.
 
 ## Model Providers
 

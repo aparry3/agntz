@@ -228,10 +228,17 @@ entries = memrez.read(["app/user/u_123"], "prefs")
 
 ## CLI
 
+The terminal CLI is distributed through the Node package `@agntz/sdk`, while
+Python service code uses the `agntz` Python package.
+
 ```bash
-agntz validate ./agents
-agntz run ./agents support --input '{"userQuery":"hello"}'
+npx @agntz/sdk create "Answer support questions in a concise tone" -o ./agents/support.yaml
+npx @agntz/sdk run ./agents/support.yaml --input '{"userQuery":"hello"}'
+npx @agntz/sdk --help
 ```
+
+Use Python code when the agent needs Python local tools, a Python resource
+provider, or a Python store. The same YAML file can be loaded by both runtimes.
 
 ## Current parity
 

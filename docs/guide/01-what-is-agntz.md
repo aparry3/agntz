@@ -80,15 +80,17 @@ const runner = createRunner({
 });
 ```
 
-### SDK with a Studio
+### CLI and SDK workflow
 
-Like Prisma Studio for databases, agntz includes a visual development UI:
+Start with the CLI to create and smoke-test portable YAML, then use the SDK
+when your agent needs local tools, resources, or app-specific context:
 
 ```bash
-npx agntz studio
+npx @agntz/sdk create "Answer support questions" -o ./agents/support.yaml
+npx @agntz/sdk run ./agents/support.yaml --input "Hello"
 ```
 
-The Studio reads from the same stores as your code — create an agent in the UI, and it's immediately available to `runner.invoke()`.
+The same YAML can be loaded by service code through `@agntz/sdk`.
 
 ## Comparison
 

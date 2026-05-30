@@ -1,38 +1,13 @@
 # CI Eval Runs
 
-agntz includes a GitHub Action and CLI flags for running agent evals in continuous integration. Catch regressions in agent behavior before they ship.
+This page describes planned CI eval workflows. The current public CLI focuses on
+creating YAML, running agents, and hosted run/trace management; eval execution is
+not exposed through the CLI in the current package.
 
-## CLI Flags
+## Current Recommendation
 
-### JSON Output
-
-Use `--json` for machine-readable output (one JSON line per agent):
-
-```bash
-agntz eval support --json
-```
-
-Output:
-```json
-{"agentId":"support","testCases":[...],"summary":{"total":3,"passed":3,"failed":0,"score":0.95},"duration":1234}
-```
-
-### Threshold Override
-
-Override the agent's `passThreshold` from the command line:
-
-```bash
-agntz eval support --threshold 0.9
-```
-
-### Eval All Agents
-
-Run evals for every agent that has `eval.testCases` defined:
-
-```bash
-agntz eval --all
-agntz eval --all --json --threshold 0.8
-```
+Run evals from code or from a project-specific script until a supported CLI eval
+command is available.
 
 ## GitHub Action
 

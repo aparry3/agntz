@@ -485,27 +485,28 @@ process.on("SIGTERM", async () => {
 });
 ```
 
-## CLI Playground
+## CLI
 
-Test agents interactively in your terminal — conversational REPL with session support:
+The CLI is published by `@agntz/sdk` and installs the `agntz` executable. Use it to generate YAML agents, run them locally, and manage hosted runs/traces.
 
 ```bash
-npx agntz playground greeter
+# Run without installing
+npx @agntz/sdk --help
+
+# Or install globally
+npm i -g @agntz/sdk
+agntz --help
 ```
 
-```
-  ⚡ agntz playground
-  Agent: greeter
-  Session: playground_1741506000000
-  Type .exit or Ctrl+C to quit
+Local-first workflow:
 
-you › Hello!
-
-greeter › Hey there! Welcome — great to have you here.
-  42 tokens · 312ms
+```bash
+agntz create "Answer support questions in a concise tone" -o ./agents/support.yaml
+agntz run ./agents/support.yaml --input "How do I reset my password?"
+agntz run ./agents/support.yaml --input "Walk me through it" --stream
 ```
 
-Commands: `.new` (new session), `.session` (show ID), `.exit` (quit). Sessions persist across turns for multi-turn testing.
+When an agent needs local tools, resource providers, or app-specific runtime context, run it from service code with `@agntz/sdk` and pass those handlers to `agntz({ tools, resources })`.
 
 ## Web UI (`packages/app`)
 
@@ -592,19 +593,6 @@ const runner = createRunner({
   - `agent.tool.execute` — each tool execution (tool name, duration, errors)
 
 Zero overhead when telemetry is not configured — all span operations become no-ops.
-
-## CLI
-
-```bash
-# Scaffold a new project
-npx agntz init
-
-# Invoke an agent
-npx agntz invoke greeter "Hello!"
-
-# Run evals
-npx agntz eval classifier
-```
 
 ## Packages
 

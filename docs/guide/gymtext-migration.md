@@ -181,7 +181,7 @@ That's it. **5 files, clean separation, testable agents.**
 | Context sharing | Custom global state / DB queries | Named context buckets, auto-injection |
 | Model switching | Rewrite tool schemas + API calls | Change one string (`model.provider`) |
 | Testing | Mock everything manually | `runner.eval()` with assertions |
-| Dev UI | None | `npx agntz studio` |
+| CLI workflow | None | Generate YAML and run agents locally with `npx @agntz/sdk` |
 | Observability | Custom logging | Built-in logs + optional OpenTelemetry |
 
 ## Switching Stores
@@ -204,21 +204,17 @@ const store = new PostgresStore(pool);
 
 Just change one line — same runner, same agents, same tools.
 
-## Adding the Studio
+## Trying the CLI
 
-During development, add the Studio for a visual UI:
+During development, use the CLI to create a YAML agent and smoke-test it locally:
 
 ```bash
-pnpm add -D @agntz/studio
-npx agntz studio
+npx @agntz/sdk create "Handle GymText member chat questions" -o ./agents/chat.yaml
+npx @agntz/sdk run ./agents/chat.yaml --input "Can I reschedule today's class?"
 ```
 
-This gives you:
-- **Agent Editor** — edit system prompts, model config, tool assignments
-- **Playground** — test agents with different inputs, sessions, and context
-- **Tool Catalog** — browse all available tools with their schemas
-- **Logs** — inspect every invocation with full input/output
-- **Evals** — run test suites and track pass rates
+Use service code when the agent needs GymText-specific local tools or resource
+providers.
 
 ## Adding Evals
 
@@ -251,12 +247,8 @@ const chatAgent = defineAgent({
 });
 ```
 
-Run evals:
-```bash
-npx agntz eval chat
-# Or in CI:
-npx agntz eval --all --json --threshold 0.8
-```
+Run evals from code or a project-specific script until CLI eval execution is
+available again.
 
 ## Key Differences from Custom Code
 

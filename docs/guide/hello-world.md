@@ -71,14 +71,11 @@ runner.registerAgent(defineAgent({
 ## 4. Use the CLI
 
 ```bash
-# Initialize a project with config file
-npx agntz init
+# Generate a YAML agent
+npx @agntz/sdk create "Write haikus. Only respond with haikus." -o ./agents/poet.yaml
 
-# Invoke an agent
-npx agntz invoke poet "Write about coffee"
-
-# Launch the Studio
-npx agntz studio
+# Run the YAML locally
+npx @agntz/sdk run ./agents/poet.yaml --input "Write about coffee"
 ```
 
 ## What's Next?

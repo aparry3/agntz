@@ -37,38 +37,37 @@ interface CliConfig {
 	apiUrl?: string;
 }
 
-const HELP = `agntz — run, build, and manage agntz agents from the terminal
+const HELP = `agntz — create, run, and inspect agntz agents from the terminal
 
 Usage:
   agntz <command> [args] [options]
 
-Local (no auth required):
-  create "<description>" [-o <path>] [--stdout]
-      Generate a YAML manifest from a description via the hosted agent-builder.
-      Default output: ./agents/<id>.yaml
+Getting started locally:
+  agntz create "Summarize customer emails" -o ./agents/email.yaml
+  agntz run ./agents/email.yaml --input "..."
+  agntz run ./agents/email.yaml --input "..." --stream
 
-  run <path-or-id> [--input <text>] [--session <id>] [--stream]
-      Execute an agent. If <path-or-id> ends in .yaml/.yml or is a directory,
-      runs locally. Bare ids require login and run against the hosted API.
-      Reads stdin if --input is omitted and stdin is piped.
+Commands:
+  create   Generate a YAML manifest from a description (no auth required)
+  run      Execute a local YAML/dir or hosted agent id
+  login    Save hosted API credentials
+  logout   Remove saved hosted API credentials
+  whoami   Show resolved API URL and credential source
+  runs     List, inspect, stream, or cancel hosted runs
+  traces   List, inspect, or delete hosted traces
 
-Hosted (requires login):
-  runs list [--agent <id>] [--status <s>] [--limit <n>]
-  runs get <runId>
-  runs stream <runId> [--since <seq>]
-  runs cancel <runId>
+Help:
+  agntz <command> --help
+  agntz runs --help
+  agntz traces --help
 
-  traces list [--agent <id>] [--status <s>] [--limit <n>]
-  traces get <traceId>
-  traces delete <traceId>
+Local vs hosted:
+  Paths like ./agents/support.yaml run locally with @agntz/sdk.
+  Bare ids like support require login and run against the hosted API.
 
 Auth:
-  login --key <apiKey> [--url <apiUrl>]
-      Save credentials to ~/.agntz/config.json (0600 perms).
-  logout
-      Remove ~/.agntz/config.json.
-  whoami
-      Show the configured API URL and whether a key is set.
+  Hosted commands read AGNTZ_API_KEY first, then ~/.agntz/config.json.
+  Local runs use provider keys from your shell, such as OPENAI_API_KEY.
 
 Environment:
   AGNTZ_API_KEY     Overrides the saved key.
@@ -77,6 +76,155 @@ Environment:
 Options:
   -h, --help        Show help
   -v, --version     Show version
+`;
+
+const CREATE_HELP = `agntz create — generate an agent YAML manifest
+
+Usage:
+  agntz create "<description>" [options]
+
+Description:
+  Calls the hosted agent-builder and writes a portable YAML manifest.
+  This command does not require login.
+
+Options:
+  -o, --output <path>          Write YAML to a specific path
+                              Default: ./agents/<generated-id>.yaml
+      --stdout                Print YAML to stdout instead of writing a file
+      --current-manifest <p>  Ask the builder to revise an existing manifest
+      --url <apiUrl>          Override the builder API URL for this call
+  -h, --help                  Show this help
+
+Examples:
+  agntz create "Answer support questions in a concise tone" -o ./agents/support.yaml
+  agntz create "Add order-status lookup over HTTP" --current-manifest ./agents/support.yaml -o ./agents/support.yaml
+  agntz create "Classify incoming leads" --stdout > ./agents/lead-classifier.yaml
+
+Next:
+  agntz run ./agents/support.yaml --input "How do I reset my password?"
+`;
+
+const RUN_HELP = `agntz run — execute a local or hosted agent
+
+Usage:
+  agntz run <path-or-id> [options] [input...]
+
+Target resolution:
+  ./agents/support.yaml      local YAML file
+  ./agents/                  local directory, only if it contains one manifest
+  support                    hosted agent id, requires login
+
+Options:
+      --input <text>         Input string. Use --input - to read stdin
+      --session <id>         Reuse a session id across calls
+      --stream               Stream events instead of waiting for final output
+      --local                Force local execution
+      --remote               Force hosted execution
+  -h, --help                 Show this help
+
+Input precedence:
+  --input value > trailing positional input > piped stdin > empty string
+
+Examples:
+  agntz run ./agents/support.yaml --input "How do I reset my password?"
+  echo "Summarize this" | agntz run ./agents/summarizer.yaml
+  agntz run ./agents/support.yaml --session user-42 --input "follow-up" --stream
+  agntz run support --input "hello" --remote
+
+Local runtime note:
+  The CLI can load YAML from disk, but it cannot register arbitrary in-repo
+  local tool handlers. For agents that need local tools or resource providers,
+  call @agntz/sdk from your service code and pass tools/resources there.
+`;
+
+const LOGIN_HELP = `agntz login — save hosted API credentials
+
+Usage:
+  agntz login --key <apiKey> [--url <apiUrl>]
+
+Options:
+      --key <apiKey>    API key from agntz.co or your self-hosted dashboard
+      --url <apiUrl>    Hosted API base URL. Default: ${DEFAULT_API_URL}
+  -h, --help            Show this help
+
+Examples:
+  agntz login --key ar_live_...
+  agntz login --key ar_live_... --url https://agntz-worker.example.com
+
+Credentials are written to ~/.agntz/config.json with owner-only permissions.
+AGNTZ_API_KEY and AGNTZ_API_URL override saved config for a single command.
+`;
+
+const LOGOUT_HELP = `agntz logout — remove saved hosted API credentials
+
+Usage:
+  agntz logout
+
+Description:
+  Deletes ~/.agntz/config.json if it exists. Environment variables are not
+  modified.
+
+Options:
+  -h, --help            Show this help
+
+Example:
+  agntz logout
+`;
+
+const WHOAMI_HELP = `agntz whoami — show resolved hosted API configuration
+
+Usage:
+  agntz whoami
+
+Description:
+  Prints the resolved API URL and whether an API key is available. The key is
+  masked and may come from AGNTZ_API_KEY or ~/.agntz/config.json.
+
+Options:
+  -h, --help            Show this help
+
+Example:
+  AGNTZ_API_KEY=ar_live_... agntz whoami
+`;
+
+const RUNS_HELP = `agntz runs — manage hosted runs
+
+Usage:
+  agntz runs list   [--agent <id>] [--status <s>] [--limit <n>] [--cursor <c>]
+  agntz runs get    <runId>
+  agntz runs stream <runId> [--since <seq>]
+  agntz runs cancel <runId>
+
+Auth:
+  Requires AGNTZ_API_KEY or agntz login.
+
+Examples:
+  agntz runs list --agent support --limit 20
+  agntz runs get run_123
+  agntz runs stream run_123 --since 10
+  agntz runs cancel run_123
+
+Output:
+  JSON, suitable for piping to jq.
+`;
+
+const TRACES_HELP = `agntz traces — manage hosted traces
+
+Usage:
+  agntz traces list   [--agent <id>] [--status <s>] [--limit <n>] [--cursor <c>]
+  agntz traces get    <traceId>
+  agntz traces delete <traceId>
+
+Auth:
+  Requires AGNTZ_API_KEY or agntz login.
+
+Examples:
+  agntz traces list --agent support --status failed --limit 10
+  agntz traces get trace_123
+  agntz traces delete trace_123
+
+Output:
+  list/get print JSON. delete prints a confirmation message.
 `;
 
 async function main(): Promise<void> {
@@ -103,10 +251,10 @@ async function main(): Promise<void> {
 			await cmdLogin(rest);
 			return;
 		case "logout":
-			await cmdLogout();
+			await cmdLogout(rest);
 			return;
 		case "whoami":
-			await cmdWhoami();
+			await cmdWhoami(rest);
 			return;
 		case "runs":
 			await cmdRuns(rest);
@@ -138,6 +286,11 @@ async function loadCliVersion(): Promise<string> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function cmdCreate(args: string[]): Promise<void> {
+	if (wantsHelp(args)) {
+		process.stdout.write(CREATE_HELP);
+		return;
+	}
+
 	const { values, positionals } = parseArgs({
 		args,
 		options: {
@@ -247,6 +400,11 @@ async function callBuildAgent(opts: {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function cmdRun(args: string[]): Promise<void> {
+	if (wantsHelp(args)) {
+		process.stdout.write(RUN_HELP);
+		return;
+	}
+
 	const { values, positionals } = parseArgs({
 		args,
 		options: {
@@ -421,7 +579,10 @@ function printStreamEvent(event: StreamEvent): void {
 
 async function cmdRuns(args: string[]): Promise<void> {
 	const [sub, ...rest] = args;
-	if (!sub) fail("Usage: agntz runs <list|get|stream|cancel> [args]");
+	if (!sub || wantsHelp(args)) {
+		process.stdout.write(RUNS_HELP);
+		return;
+	}
 
 	switch (sub) {
 		case "list":
@@ -507,7 +668,10 @@ async function runsCancel(args: string[]): Promise<void> {
 
 async function cmdTraces(args: string[]): Promise<void> {
 	const [sub, ...rest] = args;
-	if (!sub) fail("Usage: agntz traces <list|get|delete> [args]");
+	if (!sub || wantsHelp(args)) {
+		process.stdout.write(TRACES_HELP);
+		return;
+	}
 
 	switch (sub) {
 		case "list":
@@ -567,6 +731,11 @@ async function tracesDelete(args: string[]): Promise<void> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function cmdLogin(args: string[]): Promise<void> {
+	if (wantsHelp(args)) {
+		process.stdout.write(LOGIN_HELP);
+		return;
+	}
+
 	const { values } = parseArgs({
 		args,
 		options: {
@@ -591,7 +760,16 @@ async function cmdLogin(args: string[]): Promise<void> {
 	log(`  API URL: ${config.apiUrl ?? DEFAULT_API_URL}`);
 }
 
-async function cmdLogout(): Promise<void> {
+async function cmdLogout(args: string[]): Promise<void> {
+	if (wantsHelp(args)) {
+		process.stdout.write(LOGOUT_HELP);
+		return;
+	}
+
+	if (args.length > 0) {
+		fail("Usage: agntz logout");
+	}
+
 	if (!existsSync(CONFIG_PATH)) {
 		log("Not logged in.");
 		return;
@@ -600,7 +778,16 @@ async function cmdLogout(): Promise<void> {
 	log(`✓ Removed ${CONFIG_PATH}`);
 }
 
-async function cmdWhoami(): Promise<void> {
+async function cmdWhoami(args: string[]): Promise<void> {
+	if (wantsHelp(args)) {
+		process.stdout.write(WHOAMI_HELP);
+		return;
+	}
+
+	if (args.length > 0) {
+		fail("Usage: agntz whoami");
+	}
+
 	const config = await loadConfig();
 	const envKey = process.env.AGNTZ_API_KEY;
 	const apiUrl = resolveApiUrl(undefined, config);
@@ -693,6 +880,10 @@ function formatJson(value: unknown): string {
 function maskKey(key: string): string {
 	if (key.length <= 8) return "***";
 	return `${key.slice(0, 6)}…${key.slice(-4)}`;
+}
+
+function wantsHelp(args: string[]): boolean {
+	return args.includes("-h") || args.includes("--help");
 }
 
 function formatError(err: unknown): string {
