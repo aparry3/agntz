@@ -1,5 +1,11 @@
 # @agntz/client
 
+## 1.0.1
+
+### Patch Changes
+
+- Pass runtime namespace context grants through hosted client run and stream calls.
+
 > Renamed from `@agntz/sdk` (the prior `@agntz/sdk` v1.x is the same code, now deprecated on npm).
 
 ## 1.0.0
