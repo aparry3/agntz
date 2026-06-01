@@ -10,6 +10,7 @@ WORKDIR /app
 # ═══════════════════════════════════════════════════════════════
 FROM base AS deps
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json tsconfig.base.json turbo.json ./
+COPY scripts/install-hooks.mjs scripts/install-hooks.mjs
 COPY packages/core/package.json packages/core/
 COPY packages/manifest/package.json packages/manifest/
 COPY packages/sdk/package.json packages/sdk/

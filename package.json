@@ -9,7 +9,7 @@
     "test": "turbo test",
     "lint": "turbo lint",
     "format": "biome check --write packages/*/src packages/*/tests apps/provider-harness/src --no-errors-on-unmatched",
-    "prepare": "lefthook install",
+    "prepare": "node scripts/install-hooks.mjs",
     "dev": "turbo dev",
     "dev:app": "pnpm --filter @agntz/app dev",
     "dev:site": "pnpm --filter @agntz/site dev",
