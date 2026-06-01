@@ -1,5 +1,11 @@
 # @agntz/sdk
 
+## 3.0.3
+
+### Patch Changes
+
+- [#70](https://github.com/aparry3/agntz/pull/70) [`7c554c0`](https://github.com/aparry3/agntz/commit/7c554c0e45d00425ecbd56cf0b5000ccc3802630) Thanks [@aparry3](https://github.com/aparry3)! - Improve CLI help output and document the local-first create, edit, and run workflow.
+
 ## 3.0.2
 
 ### Patch Changes
