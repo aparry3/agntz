@@ -134,6 +134,54 @@ class ResponseReplayProvider:
         return GenerateTextResult(output={"answer": tool_results[0].output["result"]})
 
 
+class CrossProviderSessionProvider:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, list[ModelMessage]]] = []
+
+    async def generate_text(
+        self,
+        *,
+        manifest: LLMAgentManifest,
+        instruction: str,
+        prompt: str | None,
+        state: AgentState,
+        messages: list[ModelMessage] | None = None,
+        tools: list[ModelTool] | None = None,
+        tool_results: list[ToolResult] | None = None,
+    ) -> GenerateTextResult:
+        self.calls.append((manifest.id, manifest.model.provider, list(messages or [])))
+        if manifest.id == "gemini-tool-user" and not tool_results:
+            return GenerateTextResult(
+                output="",
+                tool_calls=[ToolCall(id="call_1", name="add", input={"a": 2, "b": 3})],
+                response_messages=[
+                    ModelMessage(
+                        role="assistant",
+                        content=[
+                            {
+                                "type": "reasoning",
+                                "providerOptions": {
+                                    "google": {"thoughtSignature": "sig-google-123"}
+                                },
+                            },
+                            {
+                                "type": "tool-call",
+                                "toolCallId": "call_1",
+                                "toolName": "add",
+                                "input": {"a": 2, "b": 3},
+                                "providerOptions": {
+                                    "google": {"thoughtSignature": "sig-google-123"}
+                                },
+                            },
+                        ],
+                    )
+                ],
+            )
+        if manifest.id == "gemini-tool-user":
+            return GenerateTextResult(output="Gemini answered with 5.")
+        return GenerateTextResult(output="GPT answered the follow-up.")
+
+
 class SessionAwareProvider:
     def __init__(self) -> None:
         self.messages: list[list[ModelMessage]] = []
@@ -381,6 +429,90 @@ tools:
     ]
     assert provider.messages[1][2].role == "tool"
     assert provider.messages[1][2].tool_call_id == "call_1"
+
+
+def test_local_sdk_keeps_shared_session_history_portable_across_providers(
+    tmp_path: Path,
+) -> None:
+    agents_dir = _copy_agents(tmp_path)
+    (agents_dir / "gemini-tool-user.yaml").write_text(
+        """
+id: gemini-tool-user
+kind: llm
+model:
+  provider: google
+  name: gemini-3.5-flash
+instruction: Use the add tool.
+tools:
+  - kind: local
+    tools: [add]
+""",
+        encoding="utf-8",
+    )
+    (agents_dir / "gpt-followup.yaml").write_text(
+        """
+id: gpt-followup
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.5
+instruction: Answer follow-up questions.
+""",
+        encoding="utf-8",
+    )
+
+    def add(args: AddInput) -> dict[str, Any]:
+        return {"result": args.a + args.b}
+
+    provider = CrossProviderSessionProvider()
+    client = agntz(
+        agents=str(agents_dir),
+        tools=[
+            tool(
+                name="add",
+                description="Add two numbers",
+                input_schema=AddInput,
+                execute=add,
+            )
+        ],
+        model_provider=provider,
+    )
+
+    first = client.agents.run(
+        agent_id="gemini-tool-user",
+        input="add two numbers",
+        session_id="shared-session",
+    )
+    second = client.agents.run(
+        agent_id="gpt-followup",
+        input="What did the last agent say?",
+        session_id=first.session_id,
+    )
+
+    assert second.session_id == "shared-session"
+    assert second.output == "GPT answered the follow-up."
+    assert [(agent_id, provider_name) for agent_id, provider_name, _ in provider.calls] == [
+        ("gemini-tool-user", "google"),
+        ("gemini-tool-user", "google"),
+        ("gpt-followup", "openai"),
+    ]
+    openai_messages = provider.calls[2][2]
+    assert [(message.role, message.content) for message in openai_messages] == [
+        ("user", "add two numbers"),
+        ("assistant", "Gemini answered with 5."),
+        ("user", "What did the last agent say?"),
+    ]
+    assert all(not isinstance(message.content, list) for message in openai_messages)
+    assert all(message.tool_calls is None for message in openai_messages)
+    assert all(message.tool_call_id is None for message in openai_messages)
+
+    stored = client.sessions.get_messages("shared-session")
+    assert [(message.role, message.content) for message in stored] == [
+        ("user", "add two numbers"),
+        ("assistant", "Gemini answered with 5."),
+        ("user", "What did the last agent say?"),
+        ("assistant", "GPT answered the follow-up."),
+    ]
 
 
 def test_local_sdk_runs_pipeline_and_streams_terminal_events(tmp_path: Path) -> None:
