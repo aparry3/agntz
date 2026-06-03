@@ -271,8 +271,22 @@ const PRIOR_GENERATION: readonly ProviderModelEntry[] = [
 			"toolChoice",
 			"cancellation",
 		),
+		sdkCapabilities: {
+			python: caps(
+				"text",
+				"multiTurn",
+				"systemPrompt",
+				"streaming",
+				"tools",
+				"parallelTools",
+				"streamingTools",
+				"toolChoice",
+				"structuredOutput",
+				"cancellation",
+			),
+		},
 		notes:
-			"Prior gen on Groq (Llama 3.3 70B). Text-only (no image) and no json_schema structured-output — both confirmed by harness run 2026-05-24.",
+			"Prior gen on Groq (Llama 3.3 70B). Text-only; TS json_schema structured-output is unsupported, Python/LiteLLM fallback succeeds (runtime harness 2026-06-03).",
 	},
 	{
 		provider: "cohere",

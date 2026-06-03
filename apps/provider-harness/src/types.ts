@@ -28,6 +28,7 @@ export interface ProviderModelEntry {
 	provider: Provider;
 	model: string;
 	capabilities: ReadonlySet<Capability>;
+	sdkCapabilities?: Partial<Record<HarnessSdk, ReadonlySet<Capability>>>;
 	notes?: string;
 }
 
