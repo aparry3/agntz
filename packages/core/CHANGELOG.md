@@ -1,5 +1,11 @@
 # @agntz/core
 
+## 1.2.2
+
+### Patch Changes
+
+- [#72](https://github.com/aparry3/agntz/pull/72) [`8b11015`](https://github.com/aparry3/agntz/commit/8b1101595af7c7b1277707a6a377c4c62a7559e6) Thanks [@aparry3](https://github.com/aparry3)! - Preserve provider-normalized assistant response messages across tool-loop turns so reasoning items, thought signatures, and other provider-specific tool-call metadata are replayed correctly after tool execution.
+
 ## 1.2.1
 
 ### Patch Changes
