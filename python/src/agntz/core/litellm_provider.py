@@ -65,10 +65,27 @@ class LiteLLMModelProvider:
                 }
                 for tool in tools
             ]
+        if manifest.output_schema:
+            request["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": f"{manifest.id}_output",
+                    "schema": manifest.output_schema,
+                },
+            }
 
-        response = await litellm.acompletion(
-            **request,
-        )
+        try:
+            response = await litellm.acompletion(
+                **request,
+            )
+        except Exception as exc:
+            if "response_format" not in request or not _is_unsupported_response_format(exc):
+                raise
+            retry_request = dict(request)
+            retry_request.pop("response_format", None)
+            response = await litellm.acompletion(
+                **retry_request,
+            )
         choice = response.choices[0]
         text = choice.message.content or ""
         tool_calls = [
@@ -130,12 +147,54 @@ def _parse_tool_arguments(value: Any) -> dict[str, Any]:
 
 
 def _to_litellm_message(message: ModelMessage) -> dict[str, Any]:
-    row: dict[str, Any] = {"role": message.role, "content": message.content}
+    row: dict[str, Any] = {
+        "role": message.role,
+        "content": _to_litellm_content(message.content),
+    }
     if message.tool_calls:
         row["tool_calls"] = message.tool_calls
     if message.tool_call_id:
         row["tool_call_id"] = message.tool_call_id
     return row
+
+
+def _to_litellm_content(value: Any) -> Any:
+    if not isinstance(value, list):
+        return value
+    parts: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            parts.append({"type": "text", "text": str(item)})
+            continue
+        if item.get("type") == "image":
+            url = item.get("url")
+            if isinstance(url, str):
+                parts.append({"type": "image_url", "image_url": {"url": url}})
+                continue
+            base64_body = item.get("base64")
+            media_type = item.get("mediaType") or item.get("media_type")
+            if isinstance(base64_body, str) and isinstance(media_type, str):
+                parts.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{media_type};base64,{base64_body}"},
+                    }
+                )
+                continue
+        if item.get("type") == "image_url":
+            parts.append(dict(item))
+            continue
+        parts.append(dict(item))
+    return parts
+
+
+def _is_unsupported_response_format(exc: Exception) -> bool:
+    text = f"{exc.__class__.__name__}: {exc}"
+    return "response_format" in text and (
+        "UnsupportedParamsError" in text
+        or "does not support parameters" in text
+        or "unsupported" in text.lower()
+    )
 
 
 def _to_litellm_tool_call(call: Any) -> dict[str, Any]:
