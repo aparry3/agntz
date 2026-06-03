@@ -81,6 +81,7 @@ export class AISDKModelProvider implements ModelProvider {
 
 		return {
 			text: finalizeText(result.text ?? "", options),
+			responseMessages: result.response.messages,
 			toolCalls: result.toolCalls?.map((tc) => ({
 				id: tc.toolCallId,
 				name: tc.toolName,
@@ -178,18 +179,23 @@ export class AISDKModelProvider implements ModelProvider {
 		const finishReasonPromise = Promise.resolve(
 			result.finishReason,
 		) as Promise<string>;
+		const responseMessagesPromise = Promise.resolve(result.response).then(
+			(response) => response.messages,
+		);
 
 		return {
 			textStream: result.textStream,
 			toolCalls: toolCallsPromise,
 			usage: usagePromise,
 			finishReason: finishReasonPromise,
+			responseMessages: responseMessagesPromise,
 			async toResult(): Promise<GenerateTextResult> {
 				const text = await result.text;
 				const toolCalls = await toolCallsPromise;
 				const usage = await usagePromise;
 				const finishReason = await finishReasonPromise;
-				return { text, toolCalls, usage, finishReason };
+				const responseMessages = await responseMessagesPromise;
+				return { text, responseMessages, toolCalls, usage, finishReason };
 			},
 		};
 	}

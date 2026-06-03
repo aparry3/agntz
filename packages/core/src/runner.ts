@@ -201,6 +201,50 @@ function mergeExtraContext(
 	return present.length > 0 ? present.join("\n\n") : undefined;
 }
 
+type NormalizedModelToolCall = {
+	id: string;
+	name: string;
+	args: unknown;
+	providerMetadata?: unknown;
+};
+
+function appendModelResponseMessages(
+	messages: AiSdkMessage[],
+	responseMessages: Array<{ role: string; content: unknown }> | undefined,
+	fallbackText: string,
+	toolCalls?: NormalizedModelToolCall[],
+): void {
+	if (responseMessages?.length) {
+		for (const msg of responseMessages) {
+			messages.push({
+				role: msg.role,
+				content: msg.content as AiSdkMessage["content"],
+			});
+		}
+		return;
+	}
+
+	if (fallbackText) {
+		messages.push({ role: "assistant", content: fallbackText });
+	}
+	if (toolCalls?.length) {
+		messages.push({
+			role: "assistant",
+			content: toolCalls.map((tc) => ({
+				type: "tool-call" as const,
+				toolCallId: tc.id,
+				toolName: tc.name,
+				input: tc.args,
+				// Echo provider metadata (e.g. Gemini thought_signature) back as
+				// providerOptions so the next turn is accepted. No-op when absent.
+				...(tc.providerMetadata != null
+					? { providerOptions: tc.providerMetadata }
+					: {}),
+			})),
+		});
+	}
+}
+
 interface ClosableStore {
 	close(): void | Promise<void>;
 }
@@ -1136,6 +1180,9 @@ export class Runner {
 						args: unknown;
 						providerMetadata?: unknown;
 					}>;
+					let resultResponseMessages:
+						| Array<{ role: string; content: unknown }>
+						| undefined;
 					let stepFinishReason: string;
 					let stepUsage: TokenUsage;
 
@@ -1175,6 +1222,9 @@ export class Runner {
 						resultToolCalls = (await streamResult.toolCalls) ?? [];
 						stepUsage = await streamResult.usage;
 						stepFinishReason = await streamResult.finishReason;
+						resultResponseMessages = streamResult.responseMessages
+							? await streamResult.responseMessages
+							: undefined;
 					} else {
 						// Fallback for providers without streaming
 						const result = await self.modelProvider.generateText({
@@ -1191,6 +1241,7 @@ export class Runner {
 
 						resultText = result.text;
 						resultToolCalls = result.toolCalls ?? [];
+						resultResponseMessages = result.responseMessages;
 						stepUsage = result.usage;
 						stepFinishReason = result.finishReason;
 
@@ -1222,9 +1273,11 @@ export class Runner {
 								runRegistry.outstandingChildrenCount(runId) > 0;
 							const late = runRegistry.consumePending(runId);
 							if (late.length > 0 || hasOutstanding) {
-								if (resultText) {
-									messages.push({ role: "assistant", content: resultText });
-								}
+								appendModelResponseMessages(
+									messages,
+									resultResponseMessages,
+									resultText,
+								);
 								for (const p of late) {
 									messages.push({
 										role: "user",
@@ -1354,23 +1407,12 @@ export class Runner {
 
 					// Push tool-call assistant + tool-result messages so the next
 					// model iteration can see them.
-					if (resultText) {
-						messages.push({ role: "assistant", content: resultText });
-					}
-					messages.push({
-						role: "assistant",
-						content: resultToolCalls.map((tc) => ({
-							type: "tool-call" as const,
-							toolCallId: tc.id,
-							toolName: tc.name,
-							input: tc.args,
-							// Echo provider metadata (e.g. Gemini thought_signature) back as
-							// providerOptions so the next turn is accepted. No-op when absent.
-							...(tc.providerMetadata != null
-								? { providerOptions: tc.providerMetadata }
-								: {}),
-						})),
-					});
+					appendModelResponseMessages(
+						messages,
+						resultResponseMessages,
+						resultText,
+						resultToolCalls,
+					);
 					for (const r of stepToolCalls) {
 						messages.push({
 							role: "tool",
@@ -2026,9 +2068,11 @@ export class Runner {
 							runRegistry.outstandingChildrenCount(runId) > 0;
 						const late = runRegistry.consumePending(runId);
 						if (late.length > 0 || hasOutstanding) {
-							if (result.text) {
-								messages.push({ role: "assistant", content: result.text });
-							}
+							appendModelResponseMessages(
+								messages,
+								result.responseMessages,
+								result.text,
+							);
 							for (const p of late) {
 								messages.push({
 									role: "user",
@@ -2155,27 +2199,17 @@ export class Runner {
 					});
 				}
 
-				// Add assistant message with tool calls to the conversation
-				if (result.text) {
-					messages.push({ role: "assistant", content: result.text });
-				}
-
-				// Add tool call request as assistant message. AI SDK v6 requires
-				// structured `tool-call` parts here, not a formatted string.
-				messages.push({
-					role: "assistant",
-					content: result.toolCalls.map((tc) => ({
-						type: "tool-call" as const,
-						toolCallId: tc.id,
-						toolName: tc.name,
-						input: tc.args,
-						// Echo provider metadata (e.g. Gemini thought_signature) back as
-						// providerOptions so the next turn is accepted. No-op when absent.
-						...(tc.providerMetadata != null
-							? { providerOptions: tc.providerMetadata }
-							: {}),
-					})),
-				});
+				// Add assistant response messages to the conversation. Prefer the AI
+				// SDK's canonical response messages when available so provider-specific
+				// parts (reasoning item refs, thought signatures, etc.) survive the
+				// next turn; fall back to reconstructed tool-call parts for custom
+				// providers and tests.
+				appendModelResponseMessages(
+					messages,
+					result.responseMessages,
+					result.text,
+					result.toolCalls,
+				);
 
 				// Add tool results as structured `tool-result` parts.
 				for (const tr of toolResults) {

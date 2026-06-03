@@ -45,6 +45,7 @@ class GenerateTextResult:
     usage: dict[str, int] = field(default_factory=dict)
     model: str | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)
+    response_messages: list[ModelMessage] = field(default_factory=list)
 
 
 class ModelProvider(Protocol):

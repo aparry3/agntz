@@ -24,6 +24,10 @@
       "role": "assistant",
       "content": [
         {
+          "type": "text",
+          "text": "<string>"
+        },
+        {
           "type": "tool-call",
           "toolCallId": "<id>",
           "toolName": "get_weather",

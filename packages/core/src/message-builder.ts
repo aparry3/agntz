@@ -17,14 +17,23 @@ import { isContentBlockArray } from "./types.js";
  * produces base64 first, so we standardize on string.
  */
 export type AiMessagePart =
-	| { type: "text"; text: string }
+	| { type: "text"; text: string; providerOptions?: unknown }
 	| { type: "image"; image: string; mediaType?: string }
+	| {
+			type: "file";
+			data: string;
+			mediaType: string;
+			filename?: string;
+			providerOptions?: unknown;
+	  }
+	| { type: "reasoning"; text: string; providerOptions?: unknown }
 	| {
 			type: "tool-call";
 			toolCallId: string;
 			toolName: string;
 			input: unknown;
 			providerOptions?: unknown;
+			providerExecuted?: boolean;
 	  }
 	| {
 			type: "tool-result";
@@ -33,6 +42,12 @@ export type AiMessagePart =
 			output:
 				| { type: "text"; value: string }
 				| { type: "json"; value: unknown };
+			providerOptions?: unknown;
+	  }
+	| {
+			type: "tool-approval-request";
+			approvalId: string;
+			toolCallId: string;
 	  };
 
 /**

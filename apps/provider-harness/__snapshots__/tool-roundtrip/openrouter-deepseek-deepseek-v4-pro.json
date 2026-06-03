@@ -29,6 +29,22 @@
       "role": "assistant",
       "content": [
         {
+          "type": "reasoning",
+          "text": "<string>",
+          "providerOptions": {
+            "openrouter": {
+              "reasoning_details": [
+                {
+                  "type": "reasoning.text",
+                  "text": "<string>",
+                  "format": "<string>",
+                  "index": 0
+                }
+              ]
+            }
+          }
+        },
+        {
           "type": "tool-call",
           "toolCallId": "<id>",
           "toolName": "get_weather",

@@ -37,7 +37,8 @@ class LiteLLMModelProvider:
             request_messages.append(
                 {"role": "user", "content": prompt or state.get("userQuery", "")}
             )
-        if tool_results:
+        has_tool_messages = any(message.role == "tool" for message in messages or [])
+        if tool_results and not has_tool_messages:
             request_messages.append(
                 {
                     "role": "user",
@@ -78,6 +79,10 @@ class LiteLLMModelProvider:
             )
             for call in getattr(choice.message, "tool_calls", []) or []
         ]
+        raw_tool_calls = [
+            _to_litellm_tool_call(call)
+            for call in getattr(choice.message, "tool_calls", []) or []
+        ]
         usage = getattr(response, "usage", None)
         return GenerateTextResult(
             output=text,
@@ -89,6 +94,13 @@ class LiteLLMModelProvider:
             },
             model=manifest.model.name,
             tool_calls=tool_calls,
+            response_messages=[
+                ModelMessage(
+                    role="assistant",
+                    content=text,
+                    tool_calls=raw_tool_calls or None,
+                )
+            ],
         )
 
 
@@ -123,3 +135,14 @@ def _to_litellm_message(message: ModelMessage) -> dict[str, Any]:
     if message.tool_call_id:
         row["tool_call_id"] = message.tool_call_id
     return row
+
+
+def _to_litellm_tool_call(call: Any) -> dict[str, Any]:
+    return {
+        "id": str(call.id),
+        "type": "function",
+        "function": {
+            "name": str(call.function.name),
+            "arguments": call.function.arguments,
+        },
+    }

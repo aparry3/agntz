@@ -239,6 +239,100 @@ describe("Runner", () => {
 		});
 	});
 
+	it("replays provider response messages on the next tool turn (OpenAI reasoning item refs)", async () => {
+		const provider = new MockModelProvider([
+			{
+				text: "",
+				responseMessages: [
+					{
+						role: "assistant",
+						content: [
+							{
+								type: "reasoning",
+								text: "",
+								providerOptions: {
+									openai: {
+										itemId: "rs_123",
+										reasoningEncryptedContent: "encrypted",
+									},
+								},
+							},
+							{
+								type: "tool-call",
+								toolCallId: "call_1",
+								toolName: "get_time",
+								input: {},
+								providerOptions: {
+									openai: { itemId: "fc_123" },
+								},
+							},
+						],
+					},
+				],
+				toolCalls: [
+					{
+						id: "call_1",
+						name: "get_time",
+						args: {},
+						providerMetadata: { openai: { itemId: "fc_123" } },
+					},
+				],
+				usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+				finishReason: "tool-calls",
+			},
+			mockResponse("The current time is 10:42 PM."),
+		]);
+
+		const getTime = defineTool({
+			name: "get_time",
+			description: "Get the current time",
+			input: z.object({}),
+			async execute() {
+				return { time: "10:42 PM" };
+			},
+		});
+
+		const runner = createRunner({ modelProvider: provider, tools: [getTime] });
+		runner.registerAgent(
+			defineAgent({
+				id: "openai-time-agent",
+				name: "OpenAI Time Agent",
+				systemPrompt: "You tell people the time.",
+				model: { provider: "openai", name: "gpt-5.5" },
+				tools: [{ type: "inline", name: "get_time" }],
+			}),
+		);
+
+		await runner.invoke("openai-time-agent", "What time is it?");
+
+		expect(provider.calls).toHaveLength(2);
+		const assistant = provider.calls[1].messages.find(
+			(m) => m.role === "assistant" && Array.isArray(m.content),
+		);
+		expect(assistant).toBeDefined();
+		expect(assistant?.content).toEqual([
+			{
+				type: "reasoning",
+				text: "",
+				providerOptions: {
+					openai: {
+						itemId: "rs_123",
+						reasoningEncryptedContent: "encrypted",
+					},
+				},
+			},
+			{
+				type: "tool-call",
+				toolCallId: "call_1",
+				toolName: "get_time",
+				input: {},
+				providerOptions: {
+					openai: { itemId: "fc_123" },
+				},
+			},
+		]);
+	});
+
 	it("passes toolContext to tool execute", async () => {
 		const capturedCtx: Record<string, unknown> = {};
 
