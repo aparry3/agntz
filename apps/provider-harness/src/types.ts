@@ -7,6 +7,9 @@ export type Provider =
 	| "cohere"
 	| "openrouter";
 
+export type HarnessSdk = "ts" | "python";
+export type HarnessSdkSelection = HarnessSdk | "both";
+
 export type Capability =
 	| "text"
 	| "multiTurn"
@@ -39,6 +42,8 @@ export type ResultBucket =
 	| "SKIPPED";
 
 export interface TestRunContext {
+	sdk: HarnessSdk;
+	adapter: ProviderAdapter;
 	abortSignal?: AbortSignal;
 }
 
@@ -58,6 +63,7 @@ export interface TestDefinition {
 }
 
 export interface TestResult {
+	sdk: HarnessSdk;
 	test: string;
 	provider: Provider;
 	model: string;
@@ -66,4 +72,73 @@ export interface TestResult {
 	error?: { name: string; message: string; stack?: string };
 	snapshotDiff?: string;
 	skipReason?: string;
+}
+
+export interface HarnessModelConfig {
+	provider: Provider;
+	name: string;
+}
+
+export interface HarnessMessage {
+	role: string;
+	content: unknown;
+	tool_calls?: Array<Record<string, unknown>>;
+	tool_call_id?: string;
+}
+
+export interface HarnessTool {
+	name: string;
+	description: string;
+	parameters: Record<string, unknown>;
+}
+
+export interface HarnessGenerateTextOptions {
+	model: HarnessModelConfig;
+	messages: HarnessMessage[];
+	tools?: readonly HarnessTool[];
+	outputSchema?: {
+		name: string;
+		schema: Record<string, unknown>;
+	};
+	maxTokens?: number;
+	signal?: AbortSignal;
+	invalidApiKey?: boolean;
+}
+
+export interface HarnessToolCall {
+	id: string;
+	name: string;
+	args: unknown;
+	providerMetadata?: unknown;
+}
+
+export interface HarnessGenerateTextResult {
+	text: string;
+	toolCalls?: HarnessToolCall[];
+	usage?: {
+		promptTokens?: number;
+		completionTokens?: number;
+		totalTokens?: number;
+		costUsd?: number | null;
+	};
+	finishReason?: string;
+	responseMessages?: HarnessMessage[];
+}
+
+export interface HarnessStreamTextResult {
+	textStream: AsyncIterable<string>;
+	toolCalls: Promise<HarnessToolCall[]>;
+	usage: Promise<HarnessGenerateTextResult["usage"]>;
+	finishReason: Promise<string | undefined>;
+	responseMessages?: Promise<HarnessMessage[] | undefined>;
+}
+
+export interface ProviderAdapter {
+	sdk: HarnessSdk;
+	generateText(
+		options: HarnessGenerateTextOptions,
+	): Promise<HarnessGenerateTextResult>;
+	streamText?(
+		options: HarnessGenerateTextOptions,
+	): Promise<HarnessStreamTextResult>;
 }

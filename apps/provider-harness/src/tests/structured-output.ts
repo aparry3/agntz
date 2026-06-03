@@ -1,12 +1,18 @@
 import type { TestDefinition } from "../types.js";
-import { modelConfig, provider } from "./_helpers.js";
+import { modelConfig } from "./_helpers.js";
 
 export const structuredOutput: TestDefinition = {
 	id: "structured-output",
 	capability: "structuredOutput",
 	timeoutMs: 60_000,
 	async run(model, ctx) {
-		const result = await provider.generateText({
+		if (ctx.sdk === "python") {
+			return {
+				ok: true,
+				skip: "python adapter does not support structured output yet",
+			};
+		}
+		const result = await ctx.adapter.generateText({
 			model: modelConfig(model),
 			messages: [
 				// The literal word "json" is required by some providers (e.g. Qwen,

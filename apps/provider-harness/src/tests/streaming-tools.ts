@@ -3,14 +3,16 @@ import {
 	WEATHER_TOOL,
 	consumeStream,
 	modelConfig,
-	provider,
+	requireStreaming,
 } from "./_helpers.js";
 
 export const streamingTools: TestDefinition = {
 	id: "streaming-tools",
 	capability: "streamingTools",
 	async run(model, ctx) {
-		const stream = await provider.streamText({
+		const skip = requireStreaming(ctx);
+		if (skip) return skip;
+		const stream = await ctx.adapter.streamText!({
 			model: modelConfig(model),
 			messages: [
 				{

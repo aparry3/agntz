@@ -3,19 +3,21 @@ import {
 	consumeStream,
 	isAbortError,
 	modelConfig,
-	provider,
+	requireStreaming,
 } from "./_helpers.js";
 
 export const cancellation: TestDefinition = {
 	id: "cancellation",
 	capability: "cancellation",
 	timeoutMs: 30_000,
-	async run(model, _ctx) {
+	async run(model, ctx) {
+		const skip = requireStreaming(ctx);
+		if (skip) return skip;
 		// Use our own controller (not the harness timeout) so we can abort the
 		// stream deliberately. A long prompt + large budget ensures generation is
 		// still in flight when we abort.
 		const controller = new AbortController();
-		const stream = await provider.streamText({
+		const stream = await ctx.adapter.streamText!({
 			model: modelConfig(model),
 			messages: [
 				{

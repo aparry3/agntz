@@ -1,5 +1,5 @@
-import type { TestDefinition } from "../types.js";
-import { WEATHER_TOOL, modelConfig, provider } from "./_helpers.js";
+import type { HarnessMessage, TestDefinition } from "../types.js";
+import { WEATHER_TOOL, modelConfig } from "./_helpers.js";
 
 export const toolRoundtrip: TestDefinition = {
 	id: "tool-roundtrip",
@@ -8,7 +8,7 @@ export const toolRoundtrip: TestDefinition = {
 	async run(model, ctx) {
 		const mc = modelConfig(model);
 
-		const firstMessages: Array<{ role: string; content: unknown }> = [
+		const firstMessages: HarnessMessage[] = [
 			{
 				role: "user",
 				content:
@@ -16,7 +16,7 @@ export const toolRoundtrip: TestDefinition = {
 			},
 		];
 
-		const first = await provider.generateText({
+		const first = await ctx.adapter.generateText({
 			model: mc,
 			messages: firstMessages,
 			tools: [WEATHER_TOOL],
@@ -61,23 +61,31 @@ export const toolRoundtrip: TestDefinition = {
 		// Replay the provider-normalized assistant response messages. This is the
 		// shape @agntz/core's runner uses; it preserves provider-specific parts
 		// such as OpenAI reasoning item references and Gemini thought signatures.
-		const followupMessages: Array<{ role: string; content: unknown }> = [
+		const followupMessages: HarnessMessage[] = [
 			...firstMessages,
 			...assistantResponseMessages,
-			...first.toolCalls.map((tc) => ({
-				role: "tool",
-				content: [
-					{
-						type: "tool-result" as const,
-						toolCallId: tc.id,
-						toolName: tc.name,
-						output: { type: "text" as const, value: "18°C and sunny" },
-					},
-				],
-			})),
+			...first.toolCalls.map((tc) =>
+				ctx.sdk === "python"
+					? {
+							role: "tool",
+							content: "18°C and sunny",
+							tool_call_id: tc.id,
+						}
+					: {
+							role: "tool",
+							content: [
+								{
+									type: "tool-result" as const,
+									toolCallId: tc.id,
+									toolName: tc.name,
+									output: { type: "text" as const, value: "18°C and sunny" },
+								},
+							],
+						},
+			),
 		];
 
-		const second = await provider.generateText({
+		const second = await ctx.adapter.generateText({
 			model: mc,
 			messages: followupMessages,
 			tools: [WEATHER_TOOL],

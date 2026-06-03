@@ -101,6 +101,7 @@ class LiteLLMModelProvider:
                     tool_calls=raw_tool_calls or None,
                 )
             ],
+            finish_reason=getattr(choice, "finish_reason", None),
         )
 
 

@@ -46,6 +46,7 @@ class GenerateTextResult:
     model: str | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)
     response_messages: list[ModelMessage] = field(default_factory=list)
+    finish_reason: str | None = None
 
 
 class ModelProvider(Protocol):

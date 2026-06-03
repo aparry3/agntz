@@ -113,7 +113,9 @@ function buildMarkdown(input: ReportInput): string {
 		lines.push("## Failures (require attention)");
 		lines.push("");
 		for (const r of failing) {
-			lines.push(`### ${r.provider}/${r.model} · ${r.test} · ${r.bucket}`);
+			lines.push(
+				`### ${r.sdk} · ${r.provider}/${r.model} · ${r.test} · ${r.bucket}`,
+			);
 			lines.push("");
 			if (r.error) {
 				lines.push("```");
@@ -150,9 +152,18 @@ function buildMatrixTable(matrix: readonly ProviderModelEntry[]): string {
 }
 
 function buildResultsTable(results: readonly TestResult[]): string {
-	const headers = ["provider", "model", "test", "bucket", "duration", "detail"];
+	const headers = [
+		"sdk",
+		"provider",
+		"model",
+		"test",
+		"bucket",
+		"duration",
+		"detail",
+	];
 	const sep = headers.map(() => "---");
 	const rows = results.map((r) => [
+		r.sdk,
 		r.provider,
 		r.model,
 		r.test,

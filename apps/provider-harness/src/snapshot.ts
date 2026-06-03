@@ -64,13 +64,14 @@ function normalize(value: unknown): unknown {
 }
 
 export async function compareSnapshot(args: {
+	sdk: string;
 	testId: string;
 	provider: string;
 	model: string;
 	value: unknown;
 	update?: boolean;
 }): Promise<SnapshotResult> {
-	const path = snapshotPath(args.testId, args.provider, args.model);
+	const path = snapshotPath(args.sdk, args.testId, args.provider, args.model);
 	const actual = serializeForSnapshot(args.value);
 
 	if (args.update) {
@@ -100,9 +101,14 @@ export async function compareSnapshot(args: {
 	};
 }
 
-function snapshotPath(testId: string, provider: string, model: string): string {
+function snapshotPath(
+	sdk: string,
+	testId: string,
+	provider: string,
+	model: string,
+): string {
 	const safeModel = model.replace(/[^\w.-]/g, "-");
-	return resolve(SNAPSHOTS_DIR, testId, `${provider}-${safeModel}.json`);
+	return resolve(SNAPSHOTS_DIR, sdk, testId, `${provider}-${safeModel}.json`);
 }
 
 async function writeSnapshotFile(path: string, content: string): Promise<void> {
