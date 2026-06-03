@@ -1,6 +1,6 @@
 [project]
 name = "agntz"
-version = "0.1.0"
+version = "0.1.1"
 description = "Python SDK and hosted client for Agntz"
 readme = "README.md"
 requires-python = ">=3.11"
