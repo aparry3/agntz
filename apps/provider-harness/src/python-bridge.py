@@ -15,7 +15,6 @@ import yaml
 from agntz import LiteLLMModelProvider, MemoryStore, agntz, tool
 from agntz.stores import LocalMessageRecord
 
-
 AGENT_ID = "provider-harness"
 
 
@@ -133,7 +132,9 @@ def runtime_tool(spec: dict[str, Any], executed_tools: list[dict[str, Any]]) -> 
         payload = params if isinstance(params, dict) else {}
         city = str(payload.get("city") or "unknown")
         output = {"forecast": "18°C and sunny", "city": city}
-        executed_tools.append({"id": f"local-{len(executed_tools) + 1}", "name": name, "args": payload})
+        executed_tools.append(
+            {"id": f"local-{len(executed_tools) + 1}", "name": name, "args": payload}
+        )
         return output
 
     return tool(
@@ -187,8 +188,8 @@ def to_runtime_content(value: Any) -> str | list[dict[str, Any]]:
     return parts
 
 
-def usage_from_traces(client: Any, summaries: list[dict[str, Any]]) -> dict[str, int]:
-    usage = {"promptTokens": 0, "completionTokens": 0, "totalTokens": 0}
+def usage_from_traces(client: Any, summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    usage: dict[str, Any] = {"promptTokens": 0, "completionTokens": 0, "totalTokens": 0}
     for summary in summaries:
         detail = client.traces.get(summary["traceId"])
         if not detail:
@@ -201,7 +202,48 @@ def usage_from_traces(client: Any, summaries: list[dict[str, Any]]) -> dict[str,
             usage["promptTokens"] += int(span_usage.get("promptTokens") or 0)
             usage["completionTokens"] += int(span_usage.get("completionTokens") or 0)
             usage["totalTokens"] += int(span_usage.get("totalTokens") or 0)
+            _accumulate_optional_usage(usage, span_usage)
     return usage
+
+
+def _accumulate_optional_usage(usage: dict[str, Any], span_usage: dict[str, Any]) -> None:
+    reasoning_tokens = _int_value(span_usage.get("reasoningTokens"))
+    if reasoning_tokens is not None:
+        usage["reasoningTokens"] = int(usage.get("reasoningTokens") or 0) + reasoning_tokens
+
+    cached_input_tokens = _int_value(span_usage.get("cachedInputTokens"))
+    if cached_input_tokens is not None:
+        usage["cachedInputTokens"] = (
+            int(usage.get("cachedInputTokens") or 0) + cached_input_tokens
+        )
+
+    input_details = span_usage.get("inputTokenDetails")
+    if isinstance(input_details, dict):
+        target = usage.setdefault("inputTokenDetails", {})
+        if isinstance(target, dict):
+            for key in ("noCacheTokens", "cacheReadTokens", "cacheWriteTokens"):
+                value = _int_value(input_details.get(key))
+                if value is not None:
+                    target[key] = int(target.get(key) or 0) + value
+
+    output_details = span_usage.get("outputTokenDetails")
+    if isinstance(output_details, dict):
+        target = usage.setdefault("outputTokenDetails", {})
+        if isinstance(target, dict):
+            for key in ("textTokens", "reasoningTokens"):
+                value = _int_value(output_details.get(key))
+                if value is not None:
+                    target[key] = int(target.get(key) or 0) + value
+
+
+def _int_value(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return None
 
 
 if __name__ == "__main__":

@@ -201,6 +201,57 @@ function mergeExtraContext(
 	return present.length > 0 ? present.join("\n\n") : undefined;
 }
 
+function accumulateTokenUsage(total: TokenUsage, step: TokenUsage): void {
+	total.promptTokens += step.promptTokens;
+	total.completionTokens += step.completionTokens;
+	total.totalTokens += step.totalTokens;
+	total.reasoningTokens = addOptionalNumber(
+		total.reasoningTokens,
+		step.reasoningTokens,
+	);
+	total.cachedInputTokens = addOptionalNumber(
+		total.cachedInputTokens,
+		step.cachedInputTokens,
+	);
+	total.cost = addOptionalNumber(total.cost, step.cost);
+
+	if (step.inputTokenDetails) {
+		total.inputTokenDetails ??= {};
+		total.inputTokenDetails.noCacheTokens = addOptionalNumber(
+			total.inputTokenDetails.noCacheTokens,
+			step.inputTokenDetails.noCacheTokens,
+		);
+		total.inputTokenDetails.cacheReadTokens = addOptionalNumber(
+			total.inputTokenDetails.cacheReadTokens,
+			step.inputTokenDetails.cacheReadTokens,
+		);
+		total.inputTokenDetails.cacheWriteTokens = addOptionalNumber(
+			total.inputTokenDetails.cacheWriteTokens,
+			step.inputTokenDetails.cacheWriteTokens,
+		);
+	}
+
+	if (step.outputTokenDetails) {
+		total.outputTokenDetails ??= {};
+		total.outputTokenDetails.textTokens = addOptionalNumber(
+			total.outputTokenDetails.textTokens,
+			step.outputTokenDetails.textTokens,
+		);
+		total.outputTokenDetails.reasoningTokens = addOptionalNumber(
+			total.outputTokenDetails.reasoningTokens,
+			step.outputTokenDetails.reasoningTokens,
+		);
+	}
+}
+
+function addOptionalNumber(
+	current: number | undefined,
+	value: number | undefined,
+): number | undefined {
+	if (typeof value !== "number" || !Number.isFinite(value)) return current;
+	return (current ?? 0) + value;
+}
+
 type NormalizedModelToolCall = {
 	id: string;
 	name: string;
@@ -1259,9 +1310,7 @@ export class Runner {
 						}
 					}
 
-					totalUsage.promptTokens += stepUsage.promptTokens;
-					totalUsage.completionTokens += stepUsage.completionTokens;
-					totalUsage.totalTokens += stepUsage.totalTokens;
+					accumulateTokenUsage(totalUsage, stepUsage);
 
 					// Termination + drain. See invoke() for the race rationale: a child
 					// may have settled during streaming; its status is terminal but the
@@ -2054,9 +2103,7 @@ export class Runner {
 				}
 
 				// Accumulate usage
-				totalUsage.promptTokens += result.usage.promptTokens;
-				totalUsage.completionTokens += result.usage.completionTokens;
-				totalUsage.totalTokens += result.usage.totalTokens;
+				accumulateTokenUsage(totalUsage, result.usage);
 
 				// Termination rule. Without a registry: classic "no tool calls → done".
 				// With a registry: a child may have settled *during* this model call

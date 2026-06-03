@@ -182,6 +182,85 @@ describe("Runner", () => {
 		expect(provider.calls).toHaveLength(2);
 	});
 
+	it("aggregates detailed token usage across tool loop steps", async () => {
+		const provider = new MockModelProvider([
+			{
+				text: "",
+				toolCalls: [{ id: "call_1", name: "get_time", args: {} }],
+				usage: {
+					promptTokens: 10,
+					completionTokens: 8,
+					totalTokens: 18,
+					inputTokenDetails: {
+						noCacheTokens: 9,
+						cacheReadTokens: 1,
+						cacheWriteTokens: 2,
+					},
+					outputTokenDetails: { textTokens: 3, reasoningTokens: 5 },
+					reasoningTokens: 5,
+					cachedInputTokens: 1,
+					cost: 0.01,
+				},
+				finishReason: "tool-calls",
+			},
+			{
+				text: "The current time is 10:42 PM.",
+				usage: {
+					promptTokens: 20,
+					completionTokens: 12,
+					totalTokens: 32,
+					inputTokenDetails: {
+						noCacheTokens: 18,
+						cacheReadTokens: 2,
+						cacheWriteTokens: 0,
+					},
+					outputTokenDetails: { textTokens: 12, reasoningTokens: 0 },
+					reasoningTokens: 0,
+					cachedInputTokens: 2,
+					cost: 0.02,
+				},
+				finishReason: "stop",
+			},
+		]);
+
+		const getTime = defineTool({
+			name: "get_time",
+			description: "Get the current time",
+			input: z.object({}),
+			async execute() {
+				return { time: "10:42 PM" };
+			},
+		});
+
+		const runner = createRunner({ modelProvider: provider, tools: [getTime] });
+		runner.registerAgent(
+			defineAgent({
+				id: "usage-agent",
+				name: "Usage Agent",
+				systemPrompt: "You tell people the time.",
+				model: { provider: "openai", name: "gpt-5.5" },
+				tools: [{ type: "inline", name: "get_time" }],
+			}),
+		);
+
+		const result = await runner.invoke("usage-agent", "What time is it?");
+
+		expect(result.usage).toMatchObject({
+			promptTokens: 30,
+			completionTokens: 20,
+			totalTokens: 50,
+			inputTokenDetails: {
+				noCacheTokens: 27,
+				cacheReadTokens: 3,
+				cacheWriteTokens: 2,
+			},
+			outputTokenDetails: { textTokens: 15, reasoningTokens: 5 },
+			reasoningTokens: 5,
+			cachedInputTokens: 3,
+		});
+		expect(result.usage.cost).toBeCloseTo(0.03);
+	});
+
 	it("replays tool-call providerMetadata as providerOptions on the next turn (Gemini thought_signature)", async () => {
 		const provider = new MockModelProvider([
 			{
@@ -306,9 +385,11 @@ describe("Runner", () => {
 		await runner.invoke("openai-time-agent", "What time is it?");
 
 		expect(provider.calls).toHaveLength(2);
-		const assistant = provider.calls[1].messages.find(
+		const assistantIndex = provider.calls[1].messages.findIndex(
 			(m) => m.role === "assistant" && Array.isArray(m.content),
 		);
+		expect(assistantIndex).toBeGreaterThanOrEqual(0);
+		const assistant = provider.calls[1].messages[assistantIndex];
 		expect(assistant).toBeDefined();
 		expect(assistant?.content).toEqual([
 			{
@@ -331,6 +412,16 @@ describe("Runner", () => {
 				},
 			},
 		]);
+		expect(provider.calls[1].messages[assistantIndex + 1]).toMatchObject({
+			role: "tool",
+			content: [
+				{
+					type: "tool-result",
+					toolCallId: "call_1",
+					toolName: "get_time",
+				},
+			],
+		});
 	});
 
 	it("passes toolContext to tool execute", async () => {

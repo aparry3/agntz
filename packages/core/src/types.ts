@@ -419,6 +419,19 @@ export interface TokenUsage {
 	completionTokens: number;
 	totalTokens: number;
 	model?: string;
+	inputTokenDetails?: {
+		noCacheTokens?: number;
+		cacheReadTokens?: number;
+		cacheWriteTokens?: number;
+	};
+	outputTokenDetails?: {
+		textTokens?: number;
+		reasoningTokens?: number;
+	};
+	/** Deprecated AI SDK alias; prefer outputTokenDetails.reasoningTokens. */
+	reasoningTokens?: number;
+	/** Deprecated AI SDK alias; prefer inputTokenDetails.cacheReadTokens. */
+	cachedInputTokens?: number;
 	/** Per-call cost in USD reported by the provider (e.g. OpenRouter). */
 	cost?: number;
 }

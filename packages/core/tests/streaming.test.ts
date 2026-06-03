@@ -18,6 +18,7 @@ import type {
 class MockStreamProvider implements ModelProvider {
 	private responses: GenerateTextResult[];
 	private callIndex = 0;
+	public calls: GenerateTextOptions[] = [];
 
 	constructor(responses: GenerateTextResult | GenerateTextResult[]) {
 		this.responses = Array.isArray(responses) ? responses : [responses];
@@ -26,6 +27,7 @@ class MockStreamProvider implements ModelProvider {
 	async generateText(
 		options: GenerateTextOptions,
 	): Promise<GenerateTextResult> {
+		this.calls.push(options);
 		const response =
 			this.responses[this.callIndex] ??
 			this.responses[this.responses.length - 1];
@@ -34,6 +36,7 @@ class MockStreamProvider implements ModelProvider {
 	}
 
 	async streamText(options: GenerateTextOptions): Promise<ModelStreamResult> {
+		this.calls.push(options);
 		const response =
 			this.responses[this.callIndex] ??
 			this.responses[this.responses.length - 1];
@@ -54,6 +57,7 @@ class MockStreamProvider implements ModelProvider {
 			toolCalls: Promise.resolve(response.toolCalls ?? []),
 			usage: Promise.resolve(response.usage),
 			finishReason: Promise.resolve(response.finishReason),
+			responseMessages: Promise.resolve(response.responseMessages),
 			async toResult(): Promise<GenerateTextResult> {
 				return response;
 			},
@@ -185,6 +189,111 @@ describe("Streaming", () => {
 		const result = await stream.result;
 		expect(result.output).toBe("It's 10:42 PM.");
 		expect(result.toolCalls).toHaveLength(1);
+	});
+
+	it("replays streamed provider response messages on the next tool turn", async () => {
+		const provider = new MockStreamProvider([
+			{
+				text: "",
+				responseMessages: [
+					{
+						role: "assistant",
+						content: [
+							{
+								type: "reasoning",
+								text: "",
+								providerOptions: {
+									openai: {
+										itemId: "rs_123",
+										reasoningEncryptedContent: "encrypted",
+									},
+								},
+							},
+							{
+								type: "tool-call",
+								toolCallId: "call_1",
+								toolName: "get_time",
+								input: {},
+								providerOptions: { openai: { itemId: "fc_123" } },
+							},
+						],
+					},
+				],
+				toolCalls: [
+					{
+						id: "call_1",
+						name: "get_time",
+						args: {},
+						providerMetadata: { openai: { itemId: "fc_123" } },
+					},
+				],
+				usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+				finishReason: "tool-calls",
+			},
+			mockResponse("It's 10:42 PM."),
+		]);
+
+		const getTime = defineTool({
+			name: "get_time",
+			description: "Get the time",
+			input: z.object({}),
+			async execute() {
+				return { time: "10:42 PM" };
+			},
+		});
+
+		const runner = createRunner({ modelProvider: provider, tools: [getTime] });
+		runner.registerAgent(
+			defineAgent({
+				id: "openai-stream-time",
+				name: "OpenAI Stream Time",
+				systemPrompt: "Tell time.",
+				model: { provider: "openai", name: "gpt-5.5" },
+				tools: [{ type: "inline", name: "get_time" }],
+			}),
+		);
+
+		const stream = runner.stream("openai-stream-time", "What time is it?");
+		for await (const _event of stream) {
+		}
+
+		expect(provider.calls).toHaveLength(2);
+		const assistantIndex = provider.calls[1].messages.findIndex(
+			(message) =>
+				message.role === "assistant" && Array.isArray(message.content),
+		);
+		expect(assistantIndex).toBeGreaterThanOrEqual(0);
+		const assistant = provider.calls[1].messages[assistantIndex];
+		expect(assistant).toBeDefined();
+		expect(assistant?.content).toEqual([
+			{
+				type: "reasoning",
+				text: "",
+				providerOptions: {
+					openai: {
+						itemId: "rs_123",
+						reasoningEncryptedContent: "encrypted",
+					},
+				},
+			},
+			{
+				type: "tool-call",
+				toolCallId: "call_1",
+				toolName: "get_time",
+				input: {},
+				providerOptions: { openai: { itemId: "fc_123" } },
+			},
+		]);
+		expect(provider.calls[1].messages[assistantIndex + 1]).toMatchObject({
+			role: "tool",
+			content: [
+				{
+					type: "tool-result",
+					toolCallId: "call_1",
+					toolName: "get_time",
+				},
+			],
+		});
 	});
 
 	it("falls back to non-streaming when streamText not available", async () => {

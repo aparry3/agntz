@@ -3,11 +3,12 @@ import { tsAdapter } from "./adapters/ts.js";
 import { maybeOpenIssue } from "./github.js";
 import { ALL_CAPABILITIES, MATRIX } from "./matrix.js";
 import { writeReport } from "./report.js";
-import { runMatrix } from "./runner.js";
+import { DEFAULT_PROVIDER_START_INTERVAL_MS, runMatrix } from "./runner.js";
 import { ALL_TESTS } from "./tests/index.js";
 import type {
 	Capability,
 	HarnessSdkSelection,
+	Provider,
 	ProviderAdapter,
 	ProviderModelEntry,
 	ResultBucket,
@@ -137,6 +138,7 @@ function parseArgs(argv: readonly string[]): {
 	githubDryRun: boolean;
 	globalConcurrency?: number;
 	providerConcurrency?: number;
+	providerStartIntervalMs: Partial<Record<Provider, number>>;
 	providerFilters: readonly string[];
 	modelFilters: readonly string[];
 	testFilters: readonly string[];
@@ -154,6 +156,7 @@ function parseArgs(argv: readonly string[]): {
 		githubDryRun: argv.includes("--github-dry-run"),
 		globalConcurrency: parsePositiveIntFlag(argv, "global-concurrency"),
 		providerConcurrency: parsePositiveIntFlag(argv, "provider-concurrency"),
+		providerStartIntervalMs: parseProviderStartIntervalMs(argv),
 		providerFilters: parseListFlag(argv, "provider"),
 		modelFilters: parseListFlag(argv, "model"),
 		testFilters: parseListFlag(argv, "test"),
@@ -189,6 +192,29 @@ function parsePositiveIntFlag(
 	return parsed;
 }
 
+function parseProviderStartIntervalMs(
+	argv: readonly string[],
+): Partial<Record<Provider, number>> {
+	const entries = parseListFlag(argv, "provider-start-interval-ms");
+	const intervals: Partial<Record<Provider, number>> = {};
+	for (const entry of entries) {
+		const [provider, raw] = entry.split("=");
+		if (!isProvider(provider)) {
+			throw new Error(
+				`Invalid --provider-start-interval-ms provider "${provider}".`,
+			);
+		}
+		const parsed = Number.parseInt(raw ?? "", 10);
+		if (!Number.isFinite(parsed) || parsed < 0) {
+			throw new Error(
+				`Invalid --provider-start-interval-ms value "${entry}". Expected provider=non-negative-integer.`,
+			);
+		}
+		intervals[provider] = parsed;
+	}
+	return intervals;
+}
+
 function parseListFlag(argv: readonly string[], name: string): string[] {
 	const flag = `--${name}`;
 	const values: string[] = [];
@@ -210,6 +236,18 @@ function parseListFlag(argv: readonly string[], name: string): string[] {
 		.flatMap((value) => value.split(","))
 		.map((value) => value.trim())
 		.filter(Boolean);
+}
+
+function isProvider(value: string | undefined): value is Provider {
+	return (
+		value === "anthropic" ||
+		value === "openai" ||
+		value === "google" ||
+		value === "mistral" ||
+		value === "groq" ||
+		value === "cohere" ||
+		value === "openrouter"
+	);
 }
 
 function adaptersFor(selection: HarnessSdkSelection): ProviderAdapter[] {
@@ -255,6 +293,10 @@ async function main(): Promise<void> {
 	const adapters = adaptersFor(args.sdk);
 	const matrix = filterMatrix(MATRIX, args);
 	const tests = filterTests(ALL_TESTS, args);
+	const providerStartIntervalMs = {
+		...DEFAULT_PROVIDER_START_INTERVAL_MS,
+		...args.providerStartIntervalMs,
+	};
 	if (matrix.length === 0) {
 		throw new Error("Filters matched no models.");
 	}
@@ -276,6 +318,16 @@ async function main(): Promise<void> {
 	}
 	if (args.globalConcurrency !== undefined) {
 		console.log(`  Global concurrency: ${args.globalConcurrency}`);
+	}
+	const providerPacing = Object.entries(providerStartIntervalMs).filter(
+		([, intervalMs]) => intervalMs > 0,
+	);
+	if (providerPacing.length > 0) {
+		console.log(
+			`  Provider pacing: ${providerPacing
+				.map(([provider, intervalMs]) => `${provider}=${intervalMs}ms`)
+				.join(", ")}`,
+		);
 	}
 	if (args.providerFilters.length > 0) {
 		console.log(`  Provider filter: ${args.providerFilters.join(", ")}`);
@@ -315,6 +367,7 @@ async function main(): Promise<void> {
 			updateSnapshots: args.updateSnapshots,
 			globalConcurrency: args.globalConcurrency,
 			providerConcurrency: args.providerConcurrency,
+			providerStartIntervalMs: args.providerStartIntervalMs,
 		});
 	} finally {
 		process.stderr.write = originalStderrWrite;
