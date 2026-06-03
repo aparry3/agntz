@@ -42,7 +42,7 @@ class ModelMessage:
 class GenerateTextResult:
     output: Any
     text: str | None = None
-    usage: dict[str, int] = field(default_factory=dict)
+    usage: dict[str, Any] = field(default_factory=dict)
     model: str | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)
     response_messages: list[ModelMessage] = field(default_factory=list)

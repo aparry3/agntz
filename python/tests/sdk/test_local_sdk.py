@@ -22,6 +22,7 @@ from agntz import (
     tool,
 )
 from agntz.core import format_litellm_model
+from agntz.core.litellm_provider import _usage_from_litellm
 from agntz.manifest import LLMAgentManifest
 from agntz.manifest.types import AgentState
 
@@ -549,6 +550,26 @@ def test_litellm_provider_model_slug_mapping() -> None:
     assert format_litellm_model("google", "gemini-3.5-flash") == "gemini/gemini-3.5-flash"
     assert format_litellm_model("openrouter", "openai/gpt-5.4") == "openrouter/openai/gpt-5.4"
     assert format_litellm_model("anthropic", "claude-sonnet-4.5") == ("anthropic/claude-sonnet-4.5")
+
+
+def test_litellm_provider_preserves_reasoning_usage_details() -> None:
+    usage = {
+        "prompt_tokens": 10,
+        "completion_tokens": 8,
+        "total_tokens": 18,
+        "prompt_tokens_details": {"cached_tokens": 3},
+        "completion_tokens_details": {"reasoning_tokens": 5, "text_tokens": 3},
+    }
+
+    assert _usage_from_litellm(usage) == {
+        "promptTokens": 10,
+        "completionTokens": 8,
+        "totalTokens": 18,
+        "outputTokenDetails": {"reasoningTokens": 5, "textTokens": 3},
+        "inputTokenDetails": {"cacheReadTokens": 3},
+        "cachedInputTokens": 3,
+        "reasoningTokens": 5,
+    }
 
 
 def test_local_sdk_can_persist_runs_to_sqlite(tmp_path: Path) -> None:

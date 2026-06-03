@@ -65,6 +65,8 @@ class LiteLLMModelProvider:
                 }
                 for tool in tools
             ]
+            if manifest.model.provider == "openrouter":
+                request["parallel_tool_calls"] = True
         if manifest.output_schema:
             request["response_format"] = {
                 "type": "json_schema",
@@ -104,11 +106,7 @@ class LiteLLMModelProvider:
         return GenerateTextResult(
             output=text,
             text=text,
-            usage={
-                "promptTokens": int(getattr(usage, "prompt_tokens", 0) or 0),
-                "completionTokens": int(getattr(usage, "completion_tokens", 0) or 0),
-                "totalTokens": int(getattr(usage, "total_tokens", 0) or 0),
-            },
+            usage=_usage_from_litellm(usage),
             model=manifest.model.name,
             tool_calls=tool_calls,
             response_messages=[
@@ -186,6 +184,90 @@ def _to_litellm_content(value: Any) -> Any:
             continue
         parts.append(dict(item))
     return parts
+
+
+def _usage_from_litellm(usage: Any) -> dict[str, Any]:
+    prompt_tokens = _int_usage_value(usage, "prompt_tokens") or 0
+    completion_tokens = _int_usage_value(usage, "completion_tokens") or 0
+    total_tokens = _int_usage_value(usage, "total_tokens") or (
+        prompt_tokens + completion_tokens
+    )
+    completion_details = _usage_value(
+        usage,
+        "completion_tokens_details",
+        "completionTokensDetails",
+        "output_token_details",
+        "outputTokenDetails",
+    )
+    prompt_details = _usage_value(
+        usage,
+        "prompt_tokens_details",
+        "promptTokensDetails",
+        "input_token_details",
+        "inputTokenDetails",
+    )
+
+    output_token_details: dict[str, int] = {}
+    reasoning_tokens = _int_usage_value(
+        completion_details,
+        "reasoning_tokens",
+        "reasoningTokens",
+        "reasoning",
+    )
+    text_tokens = _int_usage_value(completion_details, "text_tokens", "textTokens", "text")
+    if reasoning_tokens is not None:
+        output_token_details["reasoningTokens"] = reasoning_tokens
+    if text_tokens is not None:
+        output_token_details["textTokens"] = text_tokens
+
+    input_token_details: dict[str, int] = {}
+    cache_read_tokens = _int_usage_value(
+        prompt_details,
+        "cached_tokens",
+        "cache_read_tokens",
+        "cacheReadTokens",
+    )
+    if cache_read_tokens is not None:
+        input_token_details["cacheReadTokens"] = cache_read_tokens
+
+    result: dict[str, Any] = {
+        "promptTokens": prompt_tokens,
+        "completionTokens": completion_tokens,
+        "totalTokens": total_tokens,
+    }
+    if output_token_details:
+        result["outputTokenDetails"] = output_token_details
+    if input_token_details:
+        result["inputTokenDetails"] = input_token_details
+        result["cachedInputTokens"] = input_token_details.get("cacheReadTokens")
+    if reasoning_tokens is not None:
+        result["reasoningTokens"] = reasoning_tokens
+    return result
+
+
+def _int_usage_value(value: Any, *names: str) -> int | None:
+    raw = _usage_value(value, *names)
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, float) and raw.is_integer():
+        return int(raw)
+    return None
+
+
+def _usage_value(value: Any, *names: str) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        for name in names:
+            if name in value:
+                return value[name]
+        return None
+    for name in names:
+        if hasattr(value, name):
+            return getattr(value, name)
+    return None
 
 
 def _is_unsupported_response_format(exc: Exception) -> bool:

@@ -3,11 +3,12 @@ import { tsAdapter } from "./adapters/ts.js";
 import { maybeOpenIssue } from "./github.js";
 import { ALL_CAPABILITIES, MATRIX } from "./matrix.js";
 import { writeReport } from "./report.js";
-import { runMatrix } from "./runner.js";
+import { DEFAULT_PROVIDER_START_INTERVAL_MS, runMatrix } from "./runner.js";
 import { ALL_TESTS } from "./tests/index.js";
 import type {
 	Capability,
 	HarnessSdkSelection,
+	Provider,
 	ProviderAdapter,
 	ProviderModelEntry,
 	ResultBucket,
@@ -135,7 +136,12 @@ function parseArgs(argv: readonly string[]): {
 	updateSnapshots: boolean;
 	reportGithub: boolean;
 	githubDryRun: boolean;
+	globalConcurrency?: number;
 	providerConcurrency?: number;
+	providerStartIntervalMs: Partial<Record<Provider, number>>;
+	providerFilters: readonly string[];
+	modelFilters: readonly string[];
+	testFilters: readonly string[];
 } {
 	const sdk = parseSdk(argv);
 	if (sdk !== "ts" && sdk !== "python" && sdk !== "both") {
@@ -148,7 +154,12 @@ function parseArgs(argv: readonly string[]): {
 		updateSnapshots: argv.includes("--update-snapshots") || argv.includes("-u"),
 		reportGithub: argv.includes("--report-github"),
 		githubDryRun: argv.includes("--github-dry-run"),
-		providerConcurrency: parseProviderConcurrency(argv),
+		globalConcurrency: parsePositiveIntFlag(argv, "global-concurrency"),
+		providerConcurrency: parsePositiveIntFlag(argv, "provider-concurrency"),
+		providerStartIntervalMs: parseProviderStartIntervalMs(argv),
+		providerFilters: parseListFlag(argv, "provider"),
+		modelFilters: parseListFlag(argv, "model"),
+		testFilters: parseListFlag(argv, "test"),
 	};
 }
 
@@ -162,23 +173,81 @@ function parseSdk(argv: readonly string[]): HarnessSdkSelection {
 	return "ts";
 }
 
-function parseProviderConcurrency(argv: readonly string[]): number | undefined {
-	const equalsArg = argv.find((arg) =>
-		arg.startsWith("--provider-concurrency="),
-	);
+function parsePositiveIntFlag(
+	argv: readonly string[],
+	name: string,
+): number | undefined {
+	const flag = `--${name}`;
+	const equalsArg = argv.find((arg) => arg.startsWith(`${flag}=`));
 	const raw =
-		equalsArg?.slice("--provider-concurrency=".length) ??
-		(argv.includes("--provider-concurrency")
-			? argv[argv.indexOf("--provider-concurrency") + 1]
-			: undefined);
+		equalsArg?.slice(`${flag}=`.length) ??
+		(argv.includes(flag) ? argv[argv.indexOf(flag) + 1] : undefined);
 	if (raw === undefined) return undefined;
 	const parsed = Number.parseInt(raw, 10);
 	if (!Number.isFinite(parsed) || parsed < 1) {
 		throw new Error(
-			`Invalid --provider-concurrency value "${raw}". Expected a positive integer.`,
+			`Invalid ${flag} value "${raw}". Expected a positive integer.`,
 		);
 	}
 	return parsed;
+}
+
+function parseProviderStartIntervalMs(
+	argv: readonly string[],
+): Partial<Record<Provider, number>> {
+	const entries = parseListFlag(argv, "provider-start-interval-ms");
+	const intervals: Partial<Record<Provider, number>> = {};
+	for (const entry of entries) {
+		const [provider, raw] = entry.split("=");
+		if (!isProvider(provider)) {
+			throw new Error(
+				`Invalid --provider-start-interval-ms provider "${provider}".`,
+			);
+		}
+		const parsed = Number.parseInt(raw ?? "", 10);
+		if (!Number.isFinite(parsed) || parsed < 0) {
+			throw new Error(
+				`Invalid --provider-start-interval-ms value "${entry}". Expected provider=non-negative-integer.`,
+			);
+		}
+		intervals[provider] = parsed;
+	}
+	return intervals;
+}
+
+function parseListFlag(argv: readonly string[], name: string): string[] {
+	const flag = `--${name}`;
+	const values: string[] = [];
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (arg === flag) {
+			const next = argv[i + 1];
+			if (next !== undefined) {
+				values.push(next);
+				i++;
+			}
+			continue;
+		}
+		if (arg.startsWith(`${flag}=`)) {
+			values.push(arg.slice(`${flag}=`.length));
+		}
+	}
+	return values
+		.flatMap((value) => value.split(","))
+		.map((value) => value.trim())
+		.filter(Boolean);
+}
+
+function isProvider(value: string | undefined): value is Provider {
+	return (
+		value === "anthropic" ||
+		value === "openai" ||
+		value === "google" ||
+		value === "mistral" ||
+		value === "groq" ||
+		value === "cohere" ||
+		value === "openrouter"
+	);
 }
 
 function adaptersFor(selection: HarnessSdkSelection): ProviderAdapter[] {
@@ -187,9 +256,53 @@ function adaptersFor(selection: HarnessSdkSelection): ProviderAdapter[] {
 	return [tsAdapter, pythonAdapter];
 }
 
+function filterMatrix(
+	entries: readonly ProviderModelEntry[],
+	args: {
+		providerFilters: readonly string[];
+		modelFilters: readonly string[];
+	},
+): ProviderModelEntry[] {
+	return entries.filter((entry) => {
+		const providerOk =
+			args.providerFilters.length === 0 ||
+			args.providerFilters.includes(entry.provider);
+		const modelOk =
+			args.modelFilters.length === 0 ||
+			args.modelFilters.some(
+				(filter) =>
+					entry.model.includes(filter) ||
+					`${entry.provider}/${entry.model}`.includes(filter),
+			);
+		return providerOk && modelOk;
+	});
+}
+
+function filterTests(
+	tests: typeof ALL_TESTS,
+	args: { testFilters: readonly string[] },
+): typeof ALL_TESTS {
+	return tests.filter(
+		(test) =>
+			args.testFilters.length === 0 || args.testFilters.includes(test.id),
+	) as typeof ALL_TESTS;
+}
+
 async function main(): Promise<void> {
 	const args = parseArgs(process.argv.slice(2));
 	const adapters = adaptersFor(args.sdk);
+	const matrix = filterMatrix(MATRIX, args);
+	const tests = filterTests(ALL_TESTS, args);
+	const providerStartIntervalMs = {
+		...DEFAULT_PROVIDER_START_INTERVAL_MS,
+		...args.providerStartIntervalMs,
+	};
+	if (matrix.length === 0) {
+		throw new Error("Filters matched no models.");
+	}
+	if (tests.length === 0) {
+		throw new Error("Filters matched no tests.");
+	}
 	console.log("");
 	console.log(
 		"  agntz · provider harness · v0.1 — Phase 4 (snapshot infrastructure)",
@@ -203,16 +316,38 @@ async function main(): Promise<void> {
 	if (args.providerConcurrency !== undefined) {
 		console.log(`  Provider concurrency: ${args.providerConcurrency}`);
 	}
-	console.log("");
-	console.log(
-		`  Matrix: ${MATRIX.length} models, ${ALL_CAPABILITIES.length} capability dimensions`,
+	if (args.globalConcurrency !== undefined) {
+		console.log(`  Global concurrency: ${args.globalConcurrency}`);
+	}
+	const providerPacing = Object.entries(providerStartIntervalMs).filter(
+		([, intervalMs]) => intervalMs > 0,
 	);
-	console.log(`  Tests: ${ALL_TESTS.length}`);
-	console.log("");
-	printMatrix(MATRIX);
+	if (providerPacing.length > 0) {
+		console.log(
+			`  Provider pacing: ${providerPacing
+				.map(([provider, intervalMs]) => `${provider}=${intervalMs}ms`)
+				.join(", ")}`,
+		);
+	}
+	if (args.providerFilters.length > 0) {
+		console.log(`  Provider filter: ${args.providerFilters.join(", ")}`);
+	}
+	if (args.modelFilters.length > 0) {
+		console.log(`  Model filter: ${args.modelFilters.join(", ")}`);
+	}
+	if (args.testFilters.length > 0) {
+		console.log(`  Test filter: ${args.testFilters.join(", ")}`);
+	}
 	console.log("");
 	console.log(
-		`  Running ${ALL_TESTS.length} test(s) × ${MATRIX.length} models × ${adapters.length} SDK target(s) in parallel...`,
+		`  Matrix: ${matrix.length} models, ${ALL_CAPABILITIES.length} capability dimensions`,
+	);
+	console.log(`  Tests: ${tests.length}`);
+	console.log("");
+	printMatrix(matrix);
+	console.log("");
+	console.log(
+		`  Running ${tests.length} test(s) × ${matrix.length} models × ${adapters.length} SDK target(s) in parallel...`,
 	);
 	console.log("");
 
@@ -226,11 +361,13 @@ async function main(): Promise<void> {
 	let results: TestResult[];
 	try {
 		results = await runMatrix({
-			matrix: MATRIX,
-			tests: ALL_TESTS,
+			matrix,
+			tests,
 			adapters,
 			updateSnapshots: args.updateSnapshots,
+			globalConcurrency: args.globalConcurrency,
 			providerConcurrency: args.providerConcurrency,
+			providerStartIntervalMs: args.providerStartIntervalMs,
 		});
 	} finally {
 		process.stderr.write = originalStderrWrite;
@@ -252,7 +389,7 @@ async function main(): Promise<void> {
 	const written = await writeReport({
 		startedAt,
 		finishedAt,
-		matrix: MATRIX,
+		matrix,
 		results,
 	});
 	console.log(`  Wrote ${written.markdownPath}`);

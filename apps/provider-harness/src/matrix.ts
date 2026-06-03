@@ -300,11 +300,12 @@ const PRIOR_GENERATION: readonly ProviderModelEntry[] = [
 			"parallelTools",
 			"streamingTools",
 			"toolChoice",
+			"multimodalImage",
 			"structuredOutput",
 			"cancellation",
 		),
 		notes:
-			"Prior gen of command-a-plus-05-2026; predates the unified vision/reasoning surface.",
+			"Prior gen of command-a-plus-05-2026; predates the unified reasoning surface. Base64 image path confirmed by runtime harness 2026-06-03.",
 	},
 ];
 

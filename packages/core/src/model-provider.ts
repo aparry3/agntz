@@ -71,13 +71,14 @@ export class AISDKModelProvider implements ModelProvider {
 				abortSignal: options.signal,
 			});
 		} catch (err) {
+			const recovered = recoverCohereToolCitationResponse(err, options);
+			if (recovered) return recovered;
 			logLlmCallFailure("generateText", options.model, messages, tools, err);
 			throw err;
 		}
 
-		const inputTokens = result.usage?.inputTokens ?? 0;
-		const outputTokens = result.usage?.outputTokens ?? 0;
 		const cost = extractProviderCost(result.providerMetadata);
+		const usage = toTokenUsage(result.usage, cost);
 
 		return {
 			text: finalizeText(result.text ?? "", options),
@@ -88,12 +89,7 @@ export class AISDKModelProvider implements ModelProvider {
 				args: tc.input,
 				providerMetadata: tc.providerMetadata,
 			})),
-			usage: {
-				promptTokens: inputTokens,
-				completionTokens: outputTokens,
-				totalTokens: inputTokens + outputTokens,
-				...(cost !== undefined ? { cost } : {}),
-			},
+			usage,
 			finishReason: result.finishReason ?? "stop",
 		};
 	}
@@ -164,17 +160,10 @@ export class AISDKModelProvider implements ModelProvider {
 			})),
 		);
 		const usagePromise = Promise.resolve(result.usage).then(async (u) => {
-			const inputTokens = u?.inputTokens ?? 0;
-			const outputTokens = u?.outputTokens ?? 0;
 			const cost = extractProviderCost(
 				await Promise.resolve(result.providerMetadata).catch(() => undefined),
 			);
-			return {
-				promptTokens: inputTokens,
-				completionTokens: outputTokens,
-				totalTokens: inputTokens + outputTokens,
-				...(cost !== undefined ? { cost } : {}),
-			};
+			return toTokenUsage(u, cost);
 		});
 		const finishReasonPromise = Promise.resolve(
 			result.finishReason,
@@ -424,6 +413,256 @@ function extractJsonText(text: string): string {
 		}
 	}
 	return text;
+}
+
+type CohereApiResponse = {
+	message?: {
+		role?: string;
+		content?: Array<{ type?: string; text?: string; thinking?: string }>;
+		tool_calls?: Array<{
+			id?: string;
+			function?: { name?: string; arguments?: string };
+		}>;
+	};
+	finish_reason?: string;
+	usage?: {
+		tokens?: { input_tokens?: number; output_tokens?: number };
+		cached_tokens?: number;
+	};
+};
+
+function recoverCohereToolCitationResponse(
+	err: unknown,
+	options: GenerateTextOptions,
+): GenerateTextResult | undefined {
+	if (options.model.provider !== "cohere") return undefined;
+	const error = err as {
+		name?: string;
+		message?: string;
+		cause?: unknown;
+		responseBody?: unknown;
+	};
+	if (
+		error.name !== "AI_APICallError" ||
+		!/invalid json response/i.test(error.message ?? "")
+	) {
+		return undefined;
+	}
+
+	const response = cohereResponseFromError(error);
+	if (!response?.message) return undefined;
+	const text = cohereMessageText(response.message);
+	const toolCalls = cohereToolCalls(response.message);
+	const responseMessages = [cohereResponseMessage(response.message, toolCalls)];
+
+	return {
+		text: finalizeText(text, options),
+		responseMessages,
+		toolCalls,
+		usage: cohereTokenUsage(response.usage),
+		finishReason: cohereFinishReason(response.finish_reason),
+	};
+}
+
+function cohereResponseFromError(error: {
+	cause?: unknown;
+	responseBody?: unknown;
+}): CohereApiResponse | undefined {
+	const cause = error.cause;
+	if (isRecord(cause)) {
+		const value = cause.value;
+		if (isCohereApiResponse(value)) return value;
+	}
+	if (typeof error.responseBody === "string") {
+		try {
+			const parsed = JSON.parse(error.responseBody);
+			if (isCohereApiResponse(parsed)) return parsed;
+		} catch {
+			return undefined;
+		}
+	}
+	return undefined;
+}
+
+function isCohereApiResponse(value: unknown): value is CohereApiResponse {
+	return isRecord(value) && isRecord(value.message);
+}
+
+function cohereMessageText(
+	message: NonNullable<CohereApiResponse["message"]>,
+): string {
+	return (message.content ?? [])
+		.filter((part) => part.type === "text" && typeof part.text === "string")
+		.map((part) => part.text)
+		.join("");
+}
+
+function cohereToolCalls(
+	message: NonNullable<CohereApiResponse["message"]>,
+): GenerateTextResult["toolCalls"] {
+	const calls = message.tool_calls ?? [];
+	return calls
+		.map((call) => {
+			const id = call.id;
+			const name = call.function?.name;
+			if (!id || !name) return undefined;
+			return {
+				id,
+				name,
+				args: parseCohereToolArguments(call.function?.arguments),
+			};
+		})
+		.filter(
+			(call): call is NonNullable<GenerateTextResult["toolCalls"]>[number] =>
+				Boolean(call),
+		);
+}
+
+function parseCohereToolArguments(value: string | undefined): unknown {
+	if (!value || value === "null") return {};
+	try {
+		return JSON.parse(value);
+	} catch {
+		return value;
+	}
+}
+
+function cohereResponseMessage(
+	message: NonNullable<CohereApiResponse["message"]>,
+	toolCalls: GenerateTextResult["toolCalls"],
+): { role: string; content: unknown } {
+	const content: Array<Record<string, unknown>> = [];
+	for (const part of message.content ?? []) {
+		if (part.type === "text" && typeof part.text === "string") {
+			content.push({ type: "text", text: part.text });
+		}
+		if (part.type === "thinking" && typeof part.thinking === "string") {
+			content.push({ type: "reasoning", text: part.thinking });
+		}
+	}
+	for (const call of toolCalls ?? []) {
+		content.push({
+			type: "tool-call",
+			toolCallId: call.id,
+			toolName: call.name,
+			input: call.args,
+		});
+	}
+	return {
+		role: message.role ?? "assistant",
+		content: content.length > 0 ? content : cohereMessageText(message),
+	};
+}
+
+function cohereTokenUsage(usage: CohereApiResponse["usage"]): TokenUsage {
+	const promptTokens = numberOrZero(usage?.tokens?.input_tokens);
+	const completionTokens = numberOrZero(usage?.tokens?.output_tokens);
+	const cachedInputTokens = numberOrUndefined(usage?.cached_tokens);
+	return {
+		promptTokens,
+		completionTokens,
+		totalTokens: promptTokens + completionTokens,
+		...(cachedInputTokens !== undefined
+			? {
+					cachedInputTokens,
+					inputTokenDetails: { cacheReadTokens: cachedInputTokens },
+				}
+			: {}),
+	};
+}
+
+function cohereFinishReason(reason: string | undefined): string {
+	switch (reason) {
+		case "TOOL_CALL":
+			return "tool-calls";
+		case "MAX_TOKENS":
+			return "length";
+		case "COMPLETE":
+		case "STOP_SEQUENCE":
+			return "stop";
+		default:
+			return reason?.toLowerCase() ?? "stop";
+	}
+}
+
+type AiUsageShape = {
+	inputTokens?: number;
+	outputTokens?: number;
+	totalTokens?: number;
+	inputTokenDetails?: {
+		noCacheTokens?: number;
+		cacheReadTokens?: number;
+		cacheWriteTokens?: number;
+	};
+	outputTokenDetails?: {
+		textTokens?: number;
+		reasoningTokens?: number;
+	};
+	reasoningTokens?: number;
+	cachedInputTokens?: number;
+};
+
+function toTokenUsage(usage: unknown, cost?: number): TokenUsage {
+	const u = (usage ?? {}) as AiUsageShape;
+	const promptTokens = numberOrZero(u.inputTokens);
+	const completionTokens = numberOrZero(u.outputTokens);
+	const totalTokens =
+		numberOrUndefined(u.totalTokens) ?? promptTokens + completionTokens;
+	const inputTokenDetails = compactTokenDetails({
+		noCacheTokens: u.inputTokenDetails?.noCacheTokens,
+		cacheReadTokens: u.inputTokenDetails?.cacheReadTokens,
+		cacheWriteTokens: u.inputTokenDetails?.cacheWriteTokens,
+	});
+	const outputTokenDetails = compactTokenDetails({
+		textTokens: u.outputTokenDetails?.textTokens,
+		reasoningTokens: u.outputTokenDetails?.reasoningTokens,
+	});
+	const reasoningTokens =
+		numberOrUndefined(u.reasoningTokens) ??
+		numberOrUndefined(outputTokenDetails.reasoningTokens);
+	const cachedInputTokens =
+		numberOrUndefined(u.cachedInputTokens) ??
+		numberOrUndefined(inputTokenDetails.cacheReadTokens);
+
+	return {
+		promptTokens,
+		completionTokens,
+		totalTokens,
+		...(Object.keys(inputTokenDetails).length > 0 ? { inputTokenDetails } : {}),
+		...(Object.keys(outputTokenDetails).length > 0
+			? { outputTokenDetails }
+			: {}),
+		...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+		...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+		...(cost !== undefined ? { cost } : {}),
+	};
+}
+
+function compactTokenDetails<T extends Record<string, number | undefined>>(
+	details: T,
+): Partial<T> {
+	const output: Partial<T> = {};
+	for (const [key, value] of Object.entries(details)) {
+		const parsed = numberOrUndefined(value);
+		if (parsed !== undefined) {
+			output[key as keyof T] = parsed as T[keyof T];
+		}
+	}
+	return output;
+}
+
+function numberOrZero(value: unknown): number {
+	return numberOrUndefined(value) ?? 0;
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isFinite(value)
+		? value
+		: undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
 }
 
 function jsonSchemaToZod(
