@@ -424,6 +424,123 @@ describe("Runner", () => {
 		});
 	});
 
+	it("keeps shared session history portable when switching providers", async () => {
+		const provider = new MockModelProvider([
+			{
+				text: "",
+				responseMessages: [
+					{
+						role: "assistant",
+						content: [
+							{
+								type: "reasoning",
+								text: "",
+								providerOptions: {
+									google: { thoughtSignature: "sig-google-123" },
+								},
+							},
+							{
+								type: "tool-call",
+								toolCallId: "call_1",
+								toolName: "get_time",
+								input: {},
+								providerOptions: {
+									google: { thoughtSignature: "sig-google-123" },
+								},
+							},
+						],
+					},
+				],
+				toolCalls: [
+					{
+						id: "call_1",
+						name: "get_time",
+						args: {},
+						providerMetadata: {
+							google: { thoughtSignature: "sig-google-123" },
+						},
+					},
+				],
+				usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+				finishReason: "tool-calls",
+			},
+			mockResponse("Gemini answered with the time."),
+			mockResponse("GPT answered the follow-up."),
+		]);
+
+		const getTime = defineTool({
+			name: "get_time",
+			description: "Get the current time",
+			input: z.object({}),
+			async execute() {
+				return { time: "10:42 PM" };
+			},
+		});
+
+		const runner = createRunner({ modelProvider: provider, tools: [getTime] });
+		runner.registerAgent(
+			defineAgent({
+				id: "gemini-agent",
+				name: "Gemini Agent",
+				systemPrompt: "You tell people the time.",
+				model: { provider: "google", name: "gemini-3.5-flash" },
+				tools: [{ type: "inline", name: "get_time" }],
+			}),
+		);
+		runner.registerAgent(
+			defineAgent({
+				id: "gpt-agent",
+				name: "GPT Agent",
+				systemPrompt: "You answer follow-up questions.",
+				model: { provider: "openai", name: "gpt-5.5" },
+			}),
+		);
+
+		await runner.invoke("gemini-agent", "What time is it?", {
+			sessionId: "shared-session",
+		});
+		await runner.invoke("gpt-agent", "What did the last agent say?", {
+			sessionId: "shared-session",
+		});
+
+		expect(provider.calls).toHaveLength(3);
+		const openAiCall = provider.calls[2];
+		expect(openAiCall.model).toEqual({ provider: "openai", name: "gpt-5.5" });
+		expect(openAiCall.messages).toMatchObject([
+			{ role: "system", content: "You answer follow-up questions." },
+			{ role: "user", content: "What time is it?" },
+			{ role: "assistant", content: "Gemini answered with the time." },
+			{ role: "user", content: "What did the last agent say?" },
+		]);
+		expect(
+			openAiCall.messages.some(
+				(message) =>
+					Array.isArray(message.content) &&
+					message.content.some((part) => {
+						const typedPart = part as Record<string, unknown>;
+						return (
+							typedPart.type === "reasoning" ||
+							typedPart.type === "tool-call" ||
+							typedPart.type === "tool-result" ||
+							"providerOptions" in typedPart
+						);
+					}),
+			),
+		).toBe(false);
+
+		const stored = await runner.sessions.getMessages("shared-session");
+		expect(stored).toHaveLength(4);
+		expect(stored[1]).toMatchObject({
+			role: "assistant",
+			content: "Gemini answered with the time.",
+		});
+		expect(
+			stored[1].toolCalls?.some(
+				(call) => "providerMetadata" in (call as Record<string, unknown>),
+			),
+		).toBe(false);
+	});
+
 	it("passes toolContext to tool execute", async () => {
 		const capturedCtx: Record<string, unknown> = {};
 
