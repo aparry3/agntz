@@ -1,5 +1,14 @@
 # @agntz/sdk
 
+## 3.0.5
+
+### Patch Changes
+
+- Updated dependencies [665142b]
+  - @agntz/core@1.2.3
+  - @agntz/manifest@3.0.0
+  - @agntz/store-sqlite@3.0.0
+
 ## 3.0.4
 
 ### Patch Changes
