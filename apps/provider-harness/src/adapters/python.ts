@@ -53,18 +53,44 @@ async function runBridge(
 			throw new Error("Python provider call aborted");
 		}
 		if (code !== 0) {
-			throw new Error(
-				(
-					stderr.trim() ||
-					stdout.trim() ||
-					`Python bridge exited ${code}`
-				).slice(0, 2000),
-			);
+			const details =
+				stderr.trim() || stdout.trim() || `Python bridge exited ${code}`;
+			throw new Error(details.slice(Math.max(0, details.length - 2000)));
 		}
-		return JSON.parse(stdout) as HarnessGenerateTextResult;
+		return JSON.parse(firstJsonObject(stdout)) as HarnessGenerateTextResult;
 	} finally {
 		options.signal?.removeEventListener("abort", abort);
 	}
+}
+
+function firstJsonObject(stdout: string): string {
+	const start = stdout.indexOf("{");
+	if (start === -1) return stdout;
+	let depth = 0;
+	let inString = false;
+	let escaped = false;
+	for (let index = start; index < stdout.length; index++) {
+		const char = stdout[index];
+		if (escaped) {
+			escaped = false;
+			continue;
+		}
+		if (char === "\\") {
+			escaped = inString;
+			continue;
+		}
+		if (char === '"') {
+			inString = !inString;
+			continue;
+		}
+		if (inString) continue;
+		if (char === "{") depth++;
+		if (char === "}") {
+			depth--;
+			if (depth === 0) return stdout.slice(start, index + 1);
+		}
+	}
+	return stdout.slice(start);
 }
 
 function pythonExecutable(): string {

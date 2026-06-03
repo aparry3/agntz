@@ -123,6 +123,7 @@ export interface HarnessGenerateTextResult {
 	};
 	finishReason?: string;
 	responseMessages?: HarnessMessage[];
+	sessionMessages?: HarnessMessage[];
 }
 
 export interface HarnessStreamTextResult {
