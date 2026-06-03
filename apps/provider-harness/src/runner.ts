@@ -17,6 +17,7 @@ export interface RunOptions {
 	matrix: readonly ProviderModelEntry[];
 	tests: readonly TestDefinition[];
 	adapters: readonly ProviderAdapter[];
+	globalConcurrency?: number;
 	providerConcurrency?: number;
 	defaultTimeoutMs?: number;
 	updateSnapshots?: boolean;
@@ -26,6 +27,10 @@ export async function runMatrix(opts: RunOptions): Promise<TestResult[]> {
 	const concurrency = opts.providerConcurrency ?? DEFAULT_PROVIDER_CONCURRENCY;
 	const defaultTimeoutMs = opts.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
 	const updateSnapshots = opts.updateSnapshots ?? false;
+	const globalSemaphore =
+		opts.globalConcurrency !== undefined
+			? new Semaphore(opts.globalConcurrency)
+			: undefined;
 
 	const semaphores = new Map<string, Semaphore>();
 	const semaphoreFor = (provider: string): Semaphore => {
@@ -47,6 +52,7 @@ export async function runMatrix(opts: RunOptions): Promise<TestResult[]> {
 						entry,
 						test,
 						semaphoreFor(`${adapter.sdk}:${entry.provider}`),
+						globalSemaphore,
 						defaultTimeoutMs,
 						updateSnapshots,
 					),
@@ -62,6 +68,7 @@ async function runOne(
 	model: ProviderModelEntry,
 	test: TestDefinition,
 	semaphore: Semaphore,
+	globalSemaphore: Semaphore | undefined,
 	defaultTimeoutMs: number,
 	updateSnapshots: boolean,
 ): Promise<TestResult> {
@@ -85,7 +92,7 @@ async function runOne(
 		};
 	}
 
-	return semaphore.run(async () => {
+	const runBody = async (): Promise<TestResult> => {
 		const timeoutMs = test.timeoutMs ?? defaultTimeoutMs;
 		const controller = new AbortController();
 		const timer = setTimeout(() => controller.abort("timeout"), timeoutMs);
@@ -196,7 +203,11 @@ async function runOne(
 		} finally {
 			clearTimeout(timer);
 		}
-	});
+	};
+
+	return semaphore.run(() =>
+		globalSemaphore ? globalSemaphore.run(runBody) : runBody(),
+	);
 }
 
 function hasCapability(
