@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@agntz/core": "workspace:*"
+    "@agntz/core": "workspace:*",
+    "zod": "^3.25.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

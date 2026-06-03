@@ -135,6 +135,7 @@ function parseArgs(argv: readonly string[]): {
 	updateSnapshots: boolean;
 	reportGithub: boolean;
 	githubDryRun: boolean;
+	providerConcurrency?: number;
 } {
 	const sdk = parseSdk(argv);
 	if (sdk !== "ts" && sdk !== "python" && sdk !== "both") {
@@ -147,6 +148,7 @@ function parseArgs(argv: readonly string[]): {
 		updateSnapshots: argv.includes("--update-snapshots") || argv.includes("-u"),
 		reportGithub: argv.includes("--report-github"),
 		githubDryRun: argv.includes("--github-dry-run"),
+		providerConcurrency: parseProviderConcurrency(argv),
 	};
 }
 
@@ -158,6 +160,25 @@ function parseSdk(argv: readonly string[]): HarnessSdkSelection {
 		return (argv[flagIndex + 1] || "ts") as HarnessSdkSelection;
 	}
 	return "ts";
+}
+
+function parseProviderConcurrency(argv: readonly string[]): number | undefined {
+	const equalsArg = argv.find((arg) =>
+		arg.startsWith("--provider-concurrency="),
+	);
+	const raw =
+		equalsArg?.slice("--provider-concurrency=".length) ??
+		(argv.includes("--provider-concurrency")
+			? argv[argv.indexOf("--provider-concurrency") + 1]
+			: undefined);
+	if (raw === undefined) return undefined;
+	const parsed = Number.parseInt(raw, 10);
+	if (!Number.isFinite(parsed) || parsed < 1) {
+		throw new Error(
+			`Invalid --provider-concurrency value "${raw}". Expected a positive integer.`,
+		);
+	}
+	return parsed;
 }
 
 function adaptersFor(selection: HarnessSdkSelection): ProviderAdapter[] {
@@ -178,6 +199,9 @@ async function main(): Promise<void> {
 		console.log(
 			"  Snapshot update mode: existing snapshots will be overwritten.",
 		);
+	}
+	if (args.providerConcurrency !== undefined) {
+		console.log(`  Provider concurrency: ${args.providerConcurrency}`);
 	}
 	console.log("");
 	console.log(
@@ -206,6 +230,7 @@ async function main(): Promise<void> {
 			tests: ALL_TESTS,
 			adapters,
 			updateSnapshots: args.updateSnapshots,
+			providerConcurrency: args.providerConcurrency,
 		});
 	} finally {
 		process.stderr.write = originalStderrWrite;

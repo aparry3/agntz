@@ -21,7 +21,7 @@ export function classify(input: {
 	if (outcome.kind === "assertion-failed") {
 		// The call returned but our structural check on the result failed.
 		// Treat as SDK_ERROR — the response shape didn't match what we expect.
-		return "SDK_ERROR";
+		return capabilitySupported ? "SDK_ERROR" : "EXPECTED_UNSUPPORTED";
 	}
 
 	const msg = outcome.error.message ?? "";
@@ -39,6 +39,12 @@ export function classify(input: {
 	// Gated on !capabilitySupported so an empty stream on a *supported* capability
 	// still reads as a real SDK_ERROR.
 	if (!capabilitySupported && /no output generated/i.test(msg)) {
+		return "EXPECTED_UNSUPPORTED";
+	}
+	if (
+		!capabilitySupported &&
+		/\b(400|404)\b|not found|invalid request/i.test(msg)
+	) {
 		return "EXPECTED_UNSUPPORTED";
 	}
 	if (looksLikeProviderError(msg)) {

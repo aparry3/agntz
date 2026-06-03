@@ -28,6 +28,7 @@ export interface ProviderModelEntry {
 	provider: Provider;
 	model: string;
 	capabilities: ReadonlySet<Capability>;
+	sdkCapabilities?: Partial<Record<HarnessSdk, ReadonlySet<Capability>>>;
 	notes?: string;
 }
 
@@ -123,6 +124,7 @@ export interface HarnessGenerateTextResult {
 	};
 	finishReason?: string;
 	responseMessages?: HarnessMessage[];
+	sessionMessages?: HarnessMessage[];
 }
 
 export interface HarnessStreamTextResult {

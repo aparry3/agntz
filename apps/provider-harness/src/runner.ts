@@ -108,7 +108,11 @@ async function runOne(
 				};
 			}
 
-			const capabilitySupported = model.capabilities.has(test.capability);
+			const capabilitySupported = hasCapability(
+				adapter.sdk,
+				model,
+				test.capability,
+			);
 
 			if (output.ok) {
 				if (output.snapshot !== undefined) {
@@ -175,7 +179,11 @@ async function runOne(
 				};
 			}
 
-			const capabilitySupported = model.capabilities.has(test.capability);
+			const capabilitySupported = hasCapability(
+				adapter.sdk,
+				model,
+				test.capability,
+			);
 			return {
 				...base,
 				bucket: classify({
@@ -189,4 +197,15 @@ async function runOne(
 			clearTimeout(timer);
 		}
 	});
+}
+
+function hasCapability(
+	sdk: HarnessSdk,
+	model: ProviderModelEntry,
+	capability: TestDefinition["capability"],
+): boolean {
+	return (
+		model.sdkCapabilities?.[sdk]?.has(capability) ??
+		model.capabilities.has(capability)
+	);
 }

@@ -6,12 +6,6 @@ export const structuredOutput: TestDefinition = {
 	capability: "structuredOutput",
 	timeoutMs: 60_000,
 	async run(model, ctx) {
-		if (ctx.sdk === "python") {
-			return {
-				ok: true,
-				skip: "python adapter does not support structured output yet",
-			};
-		}
 		const result = await ctx.adapter.generateText({
 			model: modelConfig(model),
 			messages: [
@@ -35,7 +29,7 @@ export const structuredOutput: TestDefinition = {
 					additionalProperties: false,
 				},
 			},
-			maxTokens: 256,
+			maxTokens: 1024,
 			signal: ctx.abortSignal,
 		});
 
