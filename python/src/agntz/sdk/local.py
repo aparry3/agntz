@@ -431,6 +431,7 @@ class _LocalExecutionContext:
         for _round in range(4):
             if not result.tool_calls:
                 break
+            _append_model_response_messages(messages, result)
             tool_results = [
                 ToolResult(
                     tool_call_id=call.id,
@@ -439,6 +440,14 @@ class _LocalExecutionContext:
                 )
                 for call in result.tool_calls
             ]
+            messages.extend(
+                ModelMessage(
+                    role="tool",
+                    content=_tool_result_content(tool_result.output),
+                    tool_call_id=tool_result.tool_call_id,
+                )
+                for tool_result in tool_results
+            )
             result = await self._generate_text(
                 manifest=manifest,
                 instruction=instruction,
@@ -938,6 +947,39 @@ def _message_content(value: Any) -> str | list[dict[str, Any]]:
     if blocks is not None:
         return blocks
     return json.dumps(value, separators=(",", ":"), sort_keys=True)
+
+
+def _append_model_response_messages(
+    messages: list[ModelMessage],
+    result: GenerateTextResult,
+) -> None:
+    if result.response_messages:
+        messages.extend(result.response_messages)
+        return
+    messages.append(
+        ModelMessage(
+            role="assistant",
+            content=result.text or "",
+            tool_calls=[_tool_call_message(call) for call in result.tool_calls] or None,
+        )
+    )
+
+
+def _tool_call_message(call: ToolCall) -> dict[str, Any]:
+    return {
+        "id": call.id,
+        "type": "function",
+        "function": {
+            "name": call.name,
+            "arguments": json.dumps(call.input, separators=(",", ":"), sort_keys=True),
+        },
+    }
+
+
+def _tool_result_content(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, default=str, separators=(",", ":"), sort_keys=True)
 
 
 def _content_blocks(value: Any) -> list[dict[str, Any]] | None:

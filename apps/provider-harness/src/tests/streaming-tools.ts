@@ -41,6 +41,27 @@ export const streamingTools: TestDefinition = {
 				reason: `expected tool "${WEATHER_TOOL.name}", got "${call.name}"`,
 			};
 		}
+		if (consumed.responseMessages) {
+			const hasToolCallResponsePart = consumed.responseMessages.some(
+				(message) =>
+					message.role === "assistant" &&
+					Array.isArray(message.content) &&
+					message.content.some(
+						(part) =>
+							part &&
+							typeof part === "object" &&
+							"type" in part &&
+							part.type === "tool-call",
+					),
+			);
+			if (!hasToolCallResponsePart) {
+				return {
+					ok: false,
+					reason:
+						"expected streaming responseMessages to include an assistant tool-call part",
+				};
+			}
+		}
 		return { ok: true };
 	},
 };

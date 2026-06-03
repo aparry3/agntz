@@ -55,7 +55,13 @@ class FakeProvider:
 
 class ToolCallingProvider:
     def __init__(self) -> None:
-        self.calls: list[tuple[list[ModelTool] | None, list[ToolResult] | None]] = []
+        self.calls: list[
+            tuple[
+                list[ModelTool] | None,
+                list[ToolResult] | None,
+                list[ModelMessage] | None,
+            ]
+        ] = []
 
     async def generate_text(
         self,
@@ -68,11 +74,61 @@ class ToolCallingProvider:
         tools: list[ModelTool] | None = None,
         tool_results: list[ToolResult] | None = None,
     ) -> GenerateTextResult:
-        self.calls.append((tools, tool_results))
+        self.calls.append((tools, tool_results, list(messages or [])))
+        if not tool_results:
+            raw_tool_call = {
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "add", "arguments": '{"a":2,"b":3}'},
+            }
+            return GenerateTextResult(
+                output="",
+                tool_calls=[ToolCall(id="call_1", name="add", input={"a": 2, "b": 3})],
+                response_messages=[
+                    ModelMessage(role="assistant", content="", tool_calls=[raw_tool_call])
+                ],
+            )
+        return GenerateTextResult(output={"answer": tool_results[0].output["result"]})
+
+
+class ResponseReplayProvider:
+    def __init__(self) -> None:
+        self.messages: list[list[ModelMessage]] = []
+
+    async def generate_text(
+        self,
+        *,
+        manifest: LLMAgentManifest,
+        instruction: str,
+        prompt: str | None,
+        state: AgentState,
+        messages: list[ModelMessage] | None = None,
+        tools: list[ModelTool] | None = None,
+        tool_results: list[ToolResult] | None = None,
+    ) -> GenerateTextResult:
+        self.messages.append(list(messages or []))
         if not tool_results:
             return GenerateTextResult(
                 output="",
                 tool_calls=[ToolCall(id="call_1", name="add", input={"a": 2, "b": 3})],
+                response_messages=[
+                    ModelMessage(
+                        role="assistant",
+                        content=[
+                            {
+                                "type": "reasoning",
+                                "providerOptions": {"openai": {"itemId": "rs_123"}},
+                            },
+                            {
+                                "type": "tool-call",
+                                "toolCallId": "call_1",
+                                "toolName": "add",
+                                "input": {"a": 2, "b": 3},
+                                "providerOptions": {"openai": {"itemId": "fc_123"}},
+                            },
+                        ],
+                    )
+                ],
             )
         return GenerateTextResult(output={"answer": tool_results[0].output["result"]})
 
@@ -237,6 +293,21 @@ tools:
     assert provider.calls[0][0][0].name == "add"
     assert provider.calls[1][1] is not None
     assert provider.calls[1][1][0].output == {"result": 5.0}
+    assert provider.calls[1][2] is not None
+    assert [message.role for message in provider.calls[1][2]] == [
+        "user",
+        "assistant",
+        "tool",
+    ]
+    assert provider.calls[1][2][1].tool_calls == [
+        {
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "add", "arguments": '{"a":2,"b":3}'},
+        }
+    ]
+    assert provider.calls[1][2][2].tool_call_id == "call_1"
+    assert provider.calls[1][2][2].content == '{"result":5.0}'
     traces = client.traces.list(agent_id="tool-user", status="ok")
     trace_id = traces["rows"][0]["traceId"]
     detail = client.traces.get(trace_id)
@@ -247,6 +318,68 @@ tools:
         "tool",
         "model",
     ]
+
+
+def test_local_sdk_replays_provider_response_messages_for_tool_followup(
+    tmp_path: Path,
+) -> None:
+    agents_dir = _copy_agents(tmp_path)
+    (agents_dir / "tool-user.yaml").write_text(
+        """
+id: tool-user
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.5
+instruction: Use the add tool.
+tools:
+  - kind: local
+    tools: [add]
+""",
+        encoding="utf-8",
+    )
+
+    def add(args: AddInput) -> dict[str, Any]:
+        return {"result": args.a + args.b}
+
+    provider = ResponseReplayProvider()
+    client = agntz(
+        agents=str(agents_dir),
+        tools=[
+            tool(
+                name="add",
+                description="Add two numbers",
+                input_schema=AddInput,
+                execute=add,
+            )
+        ],
+        model_provider=provider,
+    )
+
+    result = client.agents.run(agent_id="tool-user", input="add two numbers")
+
+    assert result.output == {"answer": 5.0}
+    assert len(provider.messages) == 2
+    assert [message.role for message in provider.messages[1]] == [
+        "user",
+        "assistant",
+        "tool",
+    ]
+    assert provider.messages[1][1].content == [
+        {
+            "type": "reasoning",
+            "providerOptions": {"openai": {"itemId": "rs_123"}},
+        },
+        {
+            "type": "tool-call",
+            "toolCallId": "call_1",
+            "toolName": "add",
+            "input": {"a": 2, "b": 3},
+            "providerOptions": {"openai": {"itemId": "fc_123"}},
+        },
+    ]
+    assert provider.messages[1][2].role == "tool"
+    assert provider.messages[1][2].tool_call_id == "call_1"
 
 
 def test_local_sdk_runs_pipeline_and_streams_terminal_events(tmp_path: Path) -> None:

@@ -1390,6 +1390,13 @@ export interface ModelStreamResult {
 	>;
 	usage: Promise<TokenUsage>;
 	finishReason: Promise<string>;
+	/**
+	 * Provider-normalized response messages from the model call. When present,
+	 * callers should replay these messages on follow-up turns instead of
+	 * reconstructing assistant content from text/tool calls, because providers
+	 * may require opaque parts such as reasoning item references.
+	 */
+	responseMessages?: Promise<Array<{ role: string; content: unknown }>>;
 	/** Collect all text + tool calls into a final result */
 	toResult(): Promise<GenerateTextResult>;
 }
@@ -1425,6 +1432,13 @@ export interface GenerateTextOptions {
 
 export interface GenerateTextResult {
 	text: string;
+	/**
+	 * Provider-normalized response messages from the model call. When present,
+	 * callers should replay these messages on follow-up turns instead of
+	 * reconstructing assistant content from text/tool calls, because providers
+	 * may require opaque parts such as reasoning item references.
+	 */
+	responseMessages?: Array<{ role: string; content: unknown }>;
 	toolCalls?: Array<{
 		id: string;
 		name: string;

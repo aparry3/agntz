@@ -49,6 +49,7 @@ export interface ConsumedStream {
 	toolCalls: Array<{ id: string; name: string; args: unknown }>;
 	usage: Awaited<StreamResult["usage"]> | undefined;
 	finishReason: string | undefined;
+	responseMessages: Array<{ role: string; content: unknown }> | undefined;
 	streamError?: Error;
 }
 
@@ -64,6 +65,7 @@ export async function consumeStream(
 		stream.toolCalls,
 		stream.usage,
 		stream.finishReason,
+		stream.responseMessages ?? Promise.resolve(undefined),
 	]);
 
 	let chunks = 0;
@@ -78,7 +80,7 @@ export async function consumeStream(
 		streamError = err instanceof Error ? err : new Error(String(err));
 	}
 
-	const [tc, usage, finish] = await trailing;
+	const [tc, usage, finish, responseMessages] = await trailing;
 
 	// Some providers (notably on auth failure) surface the error on the trailing
 	// metadata promises rather than the chunk iterator — the textStream just
@@ -101,6 +103,10 @@ export async function consumeStream(
 		toolCalls: tc.status === "fulfilled" ? tc.value : [],
 		usage: usage.status === "fulfilled" ? usage.value : undefined,
 		finishReason: finish.status === "fulfilled" ? finish.value : undefined,
+		responseMessages:
+			responseMessages.status === "fulfilled"
+				? responseMessages.value
+				: undefined,
 		streamError,
 	};
 }

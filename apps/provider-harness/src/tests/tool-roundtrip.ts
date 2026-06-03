@@ -38,26 +38,32 @@ export const toolRoundtrip: TestDefinition = {
 			};
 		}
 
-		// Reconstruct the next turn in the AI SDK canonical format — mirrors the
-		// exact shape @agntz/core's runner builds (assistant tool-call parts +
-		// role:'tool' tool-result parts, each carrying toolName). This is the
-		// structure the original bug lived in, so it's what we snapshot.
+		const assistantResponseMessages =
+			first.responseMessages && first.responseMessages.length > 0
+				? first.responseMessages
+				: [
+						{
+							role: "assistant",
+							content: first.toolCalls.map((tc) => ({
+								type: "tool-call" as const,
+								toolCallId: tc.id,
+								toolName: tc.name,
+								input: tc.args,
+								// Echo provider metadata (e.g. Gemini thought_signature) back so
+								// the follow-up turn is accepted.
+								...(tc.providerMetadata != null
+									? { providerOptions: tc.providerMetadata }
+									: {}),
+							})),
+						},
+					];
+
+		// Replay the provider-normalized assistant response messages. This is the
+		// shape @agntz/core's runner uses; it preserves provider-specific parts
+		// such as OpenAI reasoning item references and Gemini thought signatures.
 		const followupMessages: Array<{ role: string; content: unknown }> = [
 			...firstMessages,
-			{
-				role: "assistant",
-				content: first.toolCalls.map((tc) => ({
-					type: "tool-call" as const,
-					toolCallId: tc.id,
-					toolName: tc.name,
-					input: tc.args,
-					// Echo provider metadata (e.g. Gemini thought_signature) back so the
-					// follow-up turn is accepted — mirrors what @agntz/core's runner does.
-					...(tc.providerMetadata != null
-						? { providerOptions: tc.providerMetadata }
-						: {}),
-				})),
-			},
+			...assistantResponseMessages,
 			...first.toolCalls.map((tc) => ({
 				role: "tool",
 				content: [

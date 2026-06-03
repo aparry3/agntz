@@ -647,17 +647,31 @@ function sanitizePart(part: AiMessagePart): {
 					: rendered,
 		};
 	}
-	// tool-result
-	const value =
-		part.output.type === "text"
-			? part.output.value
-			: JSON.stringify(part.output.value);
-	const rendered = `tool-result ${part.toolName}: ${value}`;
-	return {
-		type: "tool-result",
-		text:
-			rendered.length > PROMPT_PER_MESSAGE_CAP
-				? rendered.slice(0, PROMPT_PER_MESSAGE_CAP)
-				: rendered,
-	};
+	if (part.type === "tool-result") {
+		const value =
+			part.output.type === "text"
+				? part.output.value
+				: JSON.stringify(part.output.value);
+		const rendered = `tool-result ${part.toolName}: ${value}`;
+		return {
+			type: "tool-result",
+			text:
+				rendered.length > PROMPT_PER_MESSAGE_CAP
+					? rendered.slice(0, PROMPT_PER_MESSAGE_CAP)
+					: rendered,
+		};
+	}
+	if (part.type === "reasoning") {
+		return {
+			type: "reasoning",
+			text:
+				part.text.length > PROMPT_PER_MESSAGE_CAP
+					? part.text.slice(0, PROMPT_PER_MESSAGE_CAP)
+					: part.text,
+		};
+	}
+	if (part.type === "file") {
+		return { type: "file", mediaType: part.mediaType, size: part.data.length };
+	}
+	return { type: part.type };
 }
