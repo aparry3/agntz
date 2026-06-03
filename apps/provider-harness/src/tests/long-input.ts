@@ -1,5 +1,5 @@
 import type { TestDefinition } from "../types.js";
-import { assertNonEmptyText, modelConfig, provider } from "./_helpers.js";
+import { assertNonEmptyText, modelConfig } from "./_helpers.js";
 
 // ~500 repeats × 47 chars ≈ 23.5k chars ≈ ~5.8k tokens — non-trivial but cheap.
 // Catches truncation, encoding, and message-size bugs in the SDK.
@@ -10,7 +10,7 @@ export const longInput: TestDefinition = {
 	capability: "text",
 	timeoutMs: 60_000,
 	async run(model, ctx) {
-		const result = await provider.generateText({
+		const result = await ctx.adapter.generateText({
 			model: modelConfig(model),
 			messages: [
 				{

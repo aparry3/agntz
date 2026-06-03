@@ -103,7 +103,9 @@ function buildIssueBody(
 	lines.push(`- Local report: \`${markdownPath}\``);
 	lines.push("");
 	for (const f of failures) {
-		lines.push(`### ${f.provider}/${f.model} · ${f.test} · ${f.bucket}`);
+		lines.push(
+			`### ${f.sdk} · ${f.provider}/${f.model} · ${f.test} · ${f.bucket}`,
+		);
 		if (f.error) {
 			lines.push("```");
 			lines.push(`${f.error.name}: ${f.error.message}`);

@@ -1,10 +1,16 @@
-import { AISDKModelProvider } from "@agntz/core";
-import type { ProviderModelEntry, TestOutput } from "../types.js";
-
-export const provider = new AISDKModelProvider();
+import type {
+	HarnessGenerateTextResult,
+	HarnessMessage,
+	HarnessModelConfig,
+	HarnessStreamTextResult,
+	HarnessToolCall,
+	ProviderModelEntry,
+	TestOutput,
+	TestRunContext,
+} from "../types.js";
 
 export function modelConfig(model: ProviderModelEntry): {
-	provider: string;
+	provider: HarnessModelConfig["provider"];
 	name: string;
 } {
 	return { provider: model.provider, name: model.model };
@@ -41,15 +47,13 @@ export const WEATHER_TOOL = {
 	},
 } as const;
 
-type StreamResult = Awaited<ReturnType<typeof provider.streamText>>;
-
 export interface ConsumedStream {
 	chunks: number;
 	text: string;
-	toolCalls: Array<{ id: string; name: string; args: unknown }>;
-	usage: Awaited<StreamResult["usage"]> | undefined;
+	toolCalls: HarnessToolCall[];
+	usage: HarnessGenerateTextResult["usage"] | undefined;
 	finishReason: string | undefined;
-	responseMessages: Array<{ role: string; content: unknown }> | undefined;
+	responseMessages: HarnessMessage[] | undefined;
 	streamError?: Error;
 }
 
@@ -59,7 +63,7 @@ export interface ConsumedStream {
 // allSettled (which never rejects) prevents that while still surfacing any
 // stream error via `streamError`.
 export async function consumeStream(
-	stream: StreamResult,
+	stream: HarnessStreamTextResult,
 ): Promise<ConsumedStream> {
 	const trailing = Promise.allSettled([
 		stream.toolCalls,
@@ -109,4 +113,14 @@ export async function consumeStream(
 				: undefined,
 		streamError,
 	};
+}
+
+export function requireStreaming(ctx: TestRunContext): TestOutput | undefined {
+	if (!ctx.adapter.streamText) {
+		return {
+			ok: true,
+			skip: `${ctx.sdk} adapter does not support streaming yet`,
+		};
+	}
+	return undefined;
 }

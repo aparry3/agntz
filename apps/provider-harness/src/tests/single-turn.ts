@@ -1,11 +1,11 @@
 import type { TestDefinition } from "../types.js";
-import { assertNonEmptyText, modelConfig, provider } from "./_helpers.js";
+import { assertNonEmptyText, modelConfig } from "./_helpers.js";
 
 export const singleTurnText: TestDefinition = {
 	id: "single-turn-text",
 	capability: "text",
 	async run(model, ctx) {
-		const result = await provider.generateText({
+		const result = await ctx.adapter.generateText({
 			model: modelConfig(model),
 			messages: [{ role: "user", content: "Reply with the single word OK." }],
 			// Generous to accommodate reasoning models that burn tokens on internal

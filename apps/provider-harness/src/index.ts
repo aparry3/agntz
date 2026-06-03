@@ -1,3 +1,5 @@
+import { pythonAdapter } from "./adapters/python.js";
+import { tsAdapter } from "./adapters/ts.js";
 import { maybeOpenIssue } from "./github.js";
 import { ALL_CAPABILITIES, MATRIX } from "./matrix.js";
 import { writeReport } from "./report.js";
@@ -5,6 +7,8 @@ import { runMatrix } from "./runner.js";
 import { ALL_TESTS } from "./tests/index.js";
 import type {
 	Capability,
+	HarnessSdkSelection,
+	ProviderAdapter,
 	ProviderModelEntry,
 	ResultBucket,
 	TestResult,
@@ -75,6 +79,7 @@ function bucketCell(b: ResultBucket): string {
 }
 
 function printResults(results: readonly TestResult[]): void {
+	const sdkW = Math.max("sdk".length, ...results.map((r) => r.sdk.length)) + 2;
 	const slugW =
 		Math.max(...results.map((r) => `${r.provider}/${r.model}`.length)) + 2;
 	const testW = Math.max(...results.map((r) => r.test.length)) + 2;
@@ -89,7 +94,7 @@ function printResults(results: readonly TestResult[]): void {
 					? `  ${r.durationMs}ms`
 					: `  ${r.durationMs}ms  ${r.error?.message ?? ""}`;
 		console.log(
-			`  ${pad(slug, slugW)}${pad(r.test, testW)}${bucketCell(r.bucket)}${detail}`,
+			`  ${pad(r.sdk, sdkW)}${pad(slug, slugW)}${pad(r.test, testW)}${bucketCell(r.bucket)}${detail}`,
 		);
 	}
 }
@@ -126,23 +131,49 @@ process.on("unhandledRejection", () => {
 });
 
 function parseArgs(argv: readonly string[]): {
+	sdk: HarnessSdkSelection;
 	updateSnapshots: boolean;
 	reportGithub: boolean;
 	githubDryRun: boolean;
 } {
+	const sdk = parseSdk(argv);
+	if (sdk !== "ts" && sdk !== "python" && sdk !== "both") {
+		throw new Error(
+			`Invalid --sdk value "${sdk}". Expected ts, python, or both.`,
+		);
+	}
 	return {
+		sdk,
 		updateSnapshots: argv.includes("--update-snapshots") || argv.includes("-u"),
 		reportGithub: argv.includes("--report-github"),
 		githubDryRun: argv.includes("--github-dry-run"),
 	};
 }
 
+function parseSdk(argv: readonly string[]): HarnessSdkSelection {
+	const equalsArg = argv.find((arg) => arg.startsWith("--sdk="));
+	if (equalsArg) return equalsArg.slice("--sdk=".length) as HarnessSdkSelection;
+	const flagIndex = argv.indexOf("--sdk");
+	if (flagIndex !== -1) {
+		return (argv[flagIndex + 1] || "ts") as HarnessSdkSelection;
+	}
+	return "ts";
+}
+
+function adaptersFor(selection: HarnessSdkSelection): ProviderAdapter[] {
+	if (selection === "ts") return [tsAdapter];
+	if (selection === "python") return [pythonAdapter];
+	return [tsAdapter, pythonAdapter];
+}
+
 async function main(): Promise<void> {
 	const args = parseArgs(process.argv.slice(2));
+	const adapters = adaptersFor(args.sdk);
 	console.log("");
 	console.log(
 		"  agntz · provider harness · v0.1 — Phase 4 (snapshot infrastructure)",
 	);
+	console.log(`  SDK target: ${args.sdk}`);
 	if (args.updateSnapshots) {
 		console.log(
 			"  Snapshot update mode: existing snapshots will be overwritten.",
@@ -157,7 +188,7 @@ async function main(): Promise<void> {
 	printMatrix(MATRIX);
 	console.log("");
 	console.log(
-		`  Running ${ALL_TESTS.length} test(s) × ${MATRIX.length} models in parallel...`,
+		`  Running ${ALL_TESTS.length} test(s) × ${MATRIX.length} models × ${adapters.length} SDK target(s) in parallel...`,
 	);
 	console.log("");
 
@@ -173,6 +204,7 @@ async function main(): Promise<void> {
 		results = await runMatrix({
 			matrix: MATRIX,
 			tests: ALL_TESTS,
+			adapters,
 			updateSnapshots: args.updateSnapshots,
 		});
 	} finally {

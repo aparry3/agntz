@@ -1,11 +1,13 @@
 import type { TestDefinition } from "../types.js";
-import { consumeStream, modelConfig, provider } from "./_helpers.js";
+import { consumeStream, modelConfig, requireStreaming } from "./_helpers.js";
 
 export const streamingText: TestDefinition = {
 	id: "streaming-text",
 	capability: "streaming",
 	async run(model, ctx) {
-		const stream = await provider.streamText({
+		const skip = requireStreaming(ctx);
+		if (skip) return skip;
+		const stream = await ctx.adapter.streamText!({
 			model: modelConfig(model),
 			messages: [
 				{ role: "user", content: "Count from 1 to 3. One number per line." },

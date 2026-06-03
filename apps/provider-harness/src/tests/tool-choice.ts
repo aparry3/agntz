@@ -1,10 +1,5 @@
 import type { TestDefinition } from "../types.js";
-import {
-	WEATHER_TOOL,
-	assertNonEmptyText,
-	modelConfig,
-	provider,
-} from "./_helpers.js";
+import { WEATHER_TOOL, assertNonEmptyText, modelConfig } from "./_helpers.js";
 
 export const toolChoiceAuto: TestDefinition = {
 	id: "tool-choice-auto",
@@ -15,7 +10,7 @@ export const toolChoiceAuto: TestDefinition = {
 		// we exercise the default (auto): tools are available but the prompt does
 		// not need them. A correct SDK returns plain text with no spurious call.
 		// Catches adapters that force a tool call whenever tools are present.
-		const result = await provider.generateText({
+		const result = await ctx.adapter.generateText({
 			model: modelConfig(model),
 			messages: [
 				{

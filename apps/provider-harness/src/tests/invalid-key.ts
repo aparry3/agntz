@@ -1,34 +1,18 @@
-import { AISDKModelProvider } from "@agntz/core";
 import { isMissingCredentials } from "../bucket.js";
 import type { TestDefinition } from "../types.js";
 import { modelConfig } from "./_helpers.js";
-
-// A provider wired to a deliberately-invalid key via a stub ProviderStore
-// (checked before env), so the negative-path test neither depends on nor
-// mutates the real credentials.
-const badKeyProvider = new AISDKModelProvider({
-	providerStore: {
-		async getProvider(id: string) {
-			return { id, apiKey: "invalid-agntz-harness-negative-test-key" };
-		},
-		async listProviders() {
-			return [];
-		},
-		async putProvider() {},
-		async deleteProvider() {},
-	},
-});
 
 export const invalidKey: TestDefinition = {
 	id: "invalid-api-key",
 	capability: "text",
 	async run(model, ctx) {
 		try {
-			await badKeyProvider.generateText({
+			await ctx.adapter.generateText({
 				model: modelConfig(model),
 				messages: [{ role: "user", content: "Hi" }],
 				maxTokens: 16,
 				signal: ctx.abortSignal,
+				invalidApiKey: true,
 			});
 			return {
 				ok: false,

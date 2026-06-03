@@ -17,6 +17,6 @@ export function envVarFor(provider: Provider): string {
 }
 
 export function hasCredentials(provider: Provider): boolean {
-	const value = process.env[ENV_VAR[provider]];
+	const value = process.env[envVarFor(provider)];
 	return typeof value === "string" && value.trim().length > 0;
 }

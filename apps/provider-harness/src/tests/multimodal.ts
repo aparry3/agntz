@@ -1,5 +1,5 @@
 import type { TestDefinition } from "../types.js";
-import { assertNonEmptyText, modelConfig, provider } from "./_helpers.js";
+import { assertNonEmptyText, modelConfig } from "./_helpers.js";
 
 // 32×32 solid-red PNG (96 bytes), generated offline. Self-contained so the
 // base64 path needs no network and no external fixture.
@@ -15,7 +15,7 @@ export const multimodalBase64: TestDefinition = {
 	capability: "multimodalImage",
 	timeoutMs: 60_000,
 	async run(model, ctx) {
-		const result = await provider.generateText({
+		const result = await ctx.adapter.generateText({
 			model: modelConfig(model),
 			messages: [
 				{
@@ -48,7 +48,7 @@ export const multimodalUrl: TestDefinition = {
 				skip: "set HARNESS_IMAGE_URL to a public image to test URL-based input",
 			};
 		}
-		const result = await provider.generateText({
+		const result = await ctx.adapter.generateText({
 			model: modelConfig(model),
 			messages: [
 				{

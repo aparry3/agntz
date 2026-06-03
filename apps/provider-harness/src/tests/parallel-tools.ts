@@ -1,12 +1,12 @@
 import type { TestDefinition } from "../types.js";
-import { WEATHER_TOOL, modelConfig, provider } from "./_helpers.js";
+import { WEATHER_TOOL, modelConfig } from "./_helpers.js";
 
 export const parallelTools: TestDefinition = {
 	id: "parallel-tools",
 	capability: "parallelTools",
 	timeoutMs: 60_000,
 	async run(model, ctx) {
-		const result = await provider.generateText({
+		const result = await ctx.adapter.generateText({
 			model: modelConfig(model),
 			messages: [
 				{

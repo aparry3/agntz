@@ -3,6 +3,8 @@ import { envVarFor, hasCredentials } from "./credentials.js";
 import { Semaphore } from "./semaphore.js";
 import { compareSnapshot } from "./snapshot.js";
 import type {
+	HarnessSdk,
+	ProviderAdapter,
 	ProviderModelEntry,
 	TestDefinition,
 	TestResult,
@@ -14,6 +16,7 @@ export const DEFAULT_PROVIDER_CONCURRENCY = 4;
 export interface RunOptions {
 	matrix: readonly ProviderModelEntry[];
 	tests: readonly TestDefinition[];
+	adapters: readonly ProviderAdapter[];
 	providerConcurrency?: number;
 	defaultTimeoutMs?: number;
 	updateSnapshots?: boolean;
@@ -35,23 +38,27 @@ export async function runMatrix(opts: RunOptions): Promise<TestResult[]> {
 	};
 
 	const tasks: Array<Promise<TestResult>> = [];
-	for (const entry of opts.matrix) {
-		for (const test of opts.tests) {
-			tasks.push(
-				runOne(
-					entry,
-					test,
-					semaphoreFor(entry.provider),
-					defaultTimeoutMs,
-					updateSnapshots,
-				),
-			);
+	for (const adapter of opts.adapters) {
+		for (const entry of opts.matrix) {
+			for (const test of opts.tests) {
+				tasks.push(
+					runOne(
+						adapter,
+						entry,
+						test,
+						semaphoreFor(`${adapter.sdk}:${entry.provider}`),
+						defaultTimeoutMs,
+						updateSnapshots,
+					),
+				);
+			}
 		}
 	}
 	return Promise.all(tasks);
 }
 
 async function runOne(
+	adapter: ProviderAdapter,
 	model: ProviderModelEntry,
 	test: TestDefinition,
 	semaphore: Semaphore,
@@ -59,6 +66,7 @@ async function runOne(
 	updateSnapshots: boolean,
 ): Promise<TestResult> {
 	const base = {
+		sdk: adapter.sdk as HarnessSdk,
 		test: test.id,
 		provider: model.provider,
 		model: model.model,
@@ -84,7 +92,11 @@ async function runOne(
 		const start = Date.now();
 
 		try {
-			const output = await test.run(model, { abortSignal: controller.signal });
+			const output = await test.run(model, {
+				sdk: adapter.sdk,
+				adapter,
+				abortSignal: controller.signal,
+			});
 			const durationMs = Date.now() - start;
 
 			if (output.skip) {
@@ -101,6 +113,7 @@ async function runOne(
 			if (output.ok) {
 				if (output.snapshot !== undefined) {
 					const snap = await compareSnapshot({
+						sdk: adapter.sdk,
 						testId: test.id,
 						provider: model.provider,
 						model: model.model,
