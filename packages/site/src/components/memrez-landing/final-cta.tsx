@@ -187,6 +187,8 @@ export function MemrezFinalCTA() {
 							</Btn>
 							<Btn
 								size="lg"
+								href="https://app.agntz.co/sign-up"
+								newTab
 								style={{
 									background: "transparent",
 									color: TOKENS.bg,

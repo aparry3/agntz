@@ -24,6 +24,7 @@ type Cap = {
 	body: string;
 	icon: ReactNode;
 	link: string;
+	href?: string;
 	tag: "shipped" | "planned";
 };
 
@@ -33,6 +34,7 @@ const CAPS: Cap[] = [
 		body: "Memories live at one owning scope (org/acme/user/u_123). Reads inherit ancestors; siblings can't see each other. The runtime enforces it — the model can't override it.",
 		icon: <BranchIcon />,
 		link: "scope",
+		href: "/docs/concepts/context-and-resources",
 		tag: "shipped",
 	},
 	{
@@ -40,6 +42,7 @@ const CAPS: Cap[] = [
 		body: "The model never names a namespace. Grants are minted at the trust boundary, passed per-run as context: [...], and threaded narrow-only into sub-agents.",
 		icon: <CheckIcon />,
 		link: "grants",
+		href: "/docs/concepts/context-and-resources",
 		tag: "shipped",
 	},
 	{
@@ -47,6 +50,7 @@ const CAPS: Cap[] = [
 		body: "Deterministic scan → read over topics. No embedding cost on the hot path, no surprise recall. Embeddings come later as an additive strategy, not a replacement.",
 		icon: <EyeIcon />,
 		link: "retrieval",
+		href: "/docs/tools/memory-memrez",
 		tag: "shipped",
 	},
 	{
@@ -54,6 +58,7 @@ const CAPS: Cap[] = [
 		body: "Append-only + supersede — nothing ever hard-deletes. A stronger model merges duplicates, reconciles contradictions, refreshes the topic TOC. Run on cron or manually.",
 		icon: <SparkIcon />,
 		link: "curation",
+		href: "/docs/tools/memory-memrez",
 		tag: "shipped",
 	},
 	{
@@ -61,6 +66,7 @@ const CAPS: Cap[] = [
 		body: "In-memory for tests, SQLite for single-process deploys, Postgres for production. Same MemoryStore interface, graduate by swapping the constructor.",
 		icon: <CubeIcon />,
 		link: "stores",
+		href: "/docs/tools/memory-memrez",
 		tag: "shipped",
 	},
 	{
@@ -176,23 +182,25 @@ export function MemrezMemoryCapabilities() {
 							{c.body}
 						</p>
 
-						<a
-							href="#"
-							style={{
-								display: "inline-flex",
-								alignItems: "center",
-								gap: 6,
-								paddingTop: 14,
-								marginTop: 4,
-								borderTop: `1px solid ${TOKENS.line2}`,
-								color: a.fg,
-								fontSize: 13,
-								textDecoration: "none",
-								fontWeight: 500,
-							}}
-						>
-							Learn about {c.link} <ArrowIcon />
-						</a>
+						{c.href && (
+							<a
+								href={c.href}
+								style={{
+									display: "inline-flex",
+									alignItems: "center",
+									gap: 6,
+									paddingTop: 14,
+									marginTop: 4,
+									borderTop: `1px solid ${TOKENS.line2}`,
+									color: a.fg,
+									fontSize: 13,
+									textDecoration: "none",
+									fontWeight: 500,
+								}}
+							>
+								Learn about {c.link} <ArrowIcon />
+							</a>
+						)}
 					</Card>
 				))}
 			</div>

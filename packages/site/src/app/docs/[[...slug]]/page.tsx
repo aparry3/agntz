@@ -7,7 +7,7 @@ import { DocsToc } from "@/components/docs/toc";
 import { FooterX } from "@/components/landing/footer";
 import { Nav } from "@/components/landing/nav";
 import { TOKENS } from "@/components/landing/tokens";
-import { LanguageProvider, LanguageToggle } from "@/components/language";
+import { LanguageProvider } from "@/components/language";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
@@ -75,8 +75,8 @@ export default async function DocsPage({
 
 	return (
 		<>
-			<Nav />
 			<LanguageProvider>
+				<Nav showLanguageToggle />
 				<main style={{ background: TOKENS.bg, paddingBottom: 80 }}>
 					<div
 						style={{
@@ -100,33 +100,21 @@ export default async function DocsPage({
 						>
 							<div
 								style={{
-									display: "flex",
+									display: "inline-flex",
 									alignItems: "center",
-									justifyContent: "space-between",
-									gap: 16,
-									flexWrap: "wrap",
+									gap: 8,
 									marginBottom: 16,
+									fontFamily: "var(--mono)",
+									fontSize: 11,
+									letterSpacing: "0.18em",
+									textTransform: "uppercase",
+									color: TOKENS.text2,
 								}}
 							>
-								<div
-									style={{
-										display: "inline-flex",
-										alignItems: "center",
-										gap: 8,
-										fontFamily: "var(--mono)",
-										fontSize: 11,
-										letterSpacing: "0.18em",
-										textTransform: "uppercase",
-										color: TOKENS.text2,
-									}}
-								>
-									<span
-										style={{ width: 18, height: 1, background: TOKENS.text2 }}
-									/>
-									Documentation
-								</div>
-
-								<LanguageToggle />
+								<span
+									style={{ width: 18, height: 1, background: TOKENS.text2 }}
+								/>
+								Documentation
 							</div>
 
 							<CopyMarkdownButton markdown={page.markdown} rawHref={rawHref} />

@@ -9,7 +9,7 @@ type DivProps = {
 export function Wordmark({ size = 22 }: { size?: number }) {
 	return (
 		<a
-			href="#"
+			href="/"
 			style={{
 				display: "inline-flex",
 				alignItems: "center",
@@ -112,6 +112,7 @@ export function Btn({
 	ghost = false,
 	mono = false,
 	href,
+	newTab = false,
 	icon,
 	style,
 	size = "md",
@@ -121,6 +122,7 @@ export function Btn({
 	ghost?: boolean;
 	mono?: boolean;
 	href?: string;
+	newTab?: boolean;
 	icon?: ReactNode;
 	style?: CSSProperties;
 	size?: BtnSize;
@@ -152,7 +154,11 @@ export function Btn({
 	};
 	if (ghost) base.borderColor = "transparent";
 	return (
-		<a href={href || "#"} style={base}>
+		<a
+			href={href || "#"}
+			{...(newTab ? { target: "_blank", rel: "noreferrer" } : {})}
+			style={base}
+		>
 			{icon && <span style={{ display: "inline-flex" }}>{icon}</span>}
 			{children}
 		</a>

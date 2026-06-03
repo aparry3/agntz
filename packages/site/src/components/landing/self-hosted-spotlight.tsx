@@ -103,10 +103,14 @@ export function SelfHostedSpotlight({
 					</Stack>
 
 					<Row gap={10} style={{ marginTop: 8, flexWrap: "wrap" }}>
-						<Btn primary>
+						<Btn primary href="/docs/deploy/self-host-production">
 							Read the self-host guide <ArrowIcon />
 						</Btn>
-						<Btn icon={<GithubIcon />}>
+						<Btn
+							icon={<GithubIcon />}
+							href="https://github.com/aparry3/agntz"
+							newTab
+						>
 							agntz/self-host <ExternalIcon />
 						</Btn>
 					</Row>

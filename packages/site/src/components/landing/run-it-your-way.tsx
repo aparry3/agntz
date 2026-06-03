@@ -14,6 +14,7 @@ type Option = {
 	best: string;
 	cmd: string;
 	cta: string;
+	href: string;
 	icon: ReactNode;
 };
 
@@ -31,6 +32,7 @@ const OPTIONS: Option[] = [
 		best: "Solo devs, internal tools, existing services.",
 		cmd: "npm i @agntz/sdk",
 		cta: "Read the runner docs",
+		href: "/docs/sdk-cli/sdk",
 		icon: <CodeIcon />,
 	},
 	{
@@ -46,6 +48,7 @@ const OPTIONS: Option[] = [
 		best: "Teams iterating fast on shared agents.",
 		cmd: "Sign up at agntz.co",
 		cta: "Open the hosted app",
+		href: "https://app.agntz.co",
 		icon: <SparkIcon />,
 	},
 	{
@@ -61,6 +64,7 @@ const OPTIONS: Option[] = [
 		best: "Regulated environments, on-prem, air-gapped.",
 		cmd: "docker compose up",
 		cta: "Read the self-host guide",
+		href: "/docs/deploy/self-host-production",
 		icon: <ServerIcon />,
 	},
 ];
@@ -242,7 +246,10 @@ export function RunItYourWay({ accent = "blue" }: { accent?: AccentName }) {
 								{o.best}
 							</span>
 							<a
-								href="#"
+								href={o.href}
+								{...(o.href.startsWith("http")
+									? { target: "_blank", rel: "noreferrer" }
+									: {})}
 								style={{
 									marginTop: 4,
 									display: "inline-flex",

@@ -1,3 +1,4 @@
+import { LanguageToggle } from "../language";
 import { ArrowIcon, GithubIcon } from "./icons";
 import { Btn, Row, Wordmark } from "./primitives";
 import { TOKENS } from "./tokens";
@@ -7,12 +8,16 @@ const NAV_LINKS: [string, string][] = [
 	["Hosted", "/#hosted"],
 	["Self-host", "/#self-hosted"],
 	["Docs", "/docs"],
-	["Changelog", "#"],
+	["Changelog", "https://github.com/aparry3/agntz/releases"],
 ];
 
 const GITHUB_STARS = 0;
 
-export function Nav() {
+export function Nav({
+	showLanguageToggle = false,
+}: {
+	showLanguageToggle?: boolean;
+}) {
 	return (
 		<div
 			style={{
@@ -38,27 +43,34 @@ export function Nav() {
 				<Row gap={28} style={{ alignItems: "center" }}>
 					<Wordmark />
 					<Row gap={2} style={{ alignItems: "center" }}>
-						{NAV_LINKS.map(([l, h]) => (
-							<a
-								key={l}
-								href={h}
-								style={{
-									padding: "6px 12px",
-									fontSize: 13.5,
-									color: TOKENS.text2,
-									textDecoration: "none",
-									borderRadius: 5,
-									letterSpacing: "-0.005em",
-								}}
-							>
-								{l}
-							</a>
-						))}
+						{NAV_LINKS.map(([l, h]) => {
+							const external = h.startsWith("http");
+							return (
+								<a
+									key={l}
+									href={h}
+									{...(external ? { target: "_blank", rel: "noreferrer" } : {})}
+									style={{
+										padding: "6px 12px",
+										fontSize: 13.5,
+										color: TOKENS.text2,
+										textDecoration: "none",
+										borderRadius: 5,
+										letterSpacing: "-0.005em",
+									}}
+								>
+									{l}
+								</a>
+							);
+						})}
 					</Row>
 				</Row>
 				<Row gap={10} style={{ alignItems: "center" }}>
+					{showLanguageToggle && <LanguageToggle compact />}
 					<a
 						href="https://github.com/aparry3/agntz"
+						target="_blank"
+						rel="noreferrer"
 						style={{
 							display: "inline-flex",
 							alignItems: "center",
@@ -76,7 +88,7 @@ export function Nav() {
 						)}
 					</a>
 					<a
-						href="#"
+						href="https://app.agntz.co/sign-in"
 						style={{
 							color: TOKENS.text2,
 							fontSize: 13.5,

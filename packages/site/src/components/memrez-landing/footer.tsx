@@ -3,28 +3,46 @@ import { Row, Stack } from "../landing/primitives";
 import { ACCENTS, TOKENS } from "../landing/tokens";
 import { MemrezWordmark } from "./wordmark";
 
-const COLS = [
+const COLS: { h: string; items: { label: string; href: string }[] }[] = [
 	{
 		h: "Memory",
 		items: [
-			"createMemrez",
-			"Resource slot",
-			"Grants & scope",
-			"Curation",
-			"Stores",
+			{ label: "createMemrez", href: "/docs/tools/memory-memrez" },
+			{ label: "Resource slot", href: "/docs/schema/resources" },
+			{ label: "Grants & scope", href: "/docs/concepts/context-and-resources" },
+			{ label: "Curation", href: "/docs/tools/memory-memrez" },
+			{ label: "Stores", href: "/docs/tools/memory-memrez" },
 		],
 	},
 	{
 		h: "Hosted",
-		items: ["Explorer", "Curate dashboard", "Team plans", "SLA", "Pricing"],
+		items: [
+			{ label: "Hosted cloud", href: "/docs/deploy/hosted-cloud" },
+			{ label: "HTTP API", href: "/docs/deploy/http-api" },
+		],
 	},
 	{
 		h: "Self-host",
-		items: ["Guide", "Docker", "Postgres setup", "Cron curator", "Upgrades"],
+		items: [
+			{ label: "Guide", href: "/docs/deploy/self-host-production" },
+			{ label: "Docker", href: "/docs/deploy/self-host-docker" },
+			{ label: "Postgres setup", href: "/docs/deploy/self-host-production" },
+		],
 	},
 	{
 		h: "Resources",
-		items: ["Docs", "Quickstart", "Examples", "Contracts", "Blog"],
+		items: [
+			{ label: "Docs", href: "/docs" },
+			{ label: "Quickstart", href: "/docs/quickstart" },
+			{
+				label: "Examples",
+				href: "https://github.com/aparry3/agntz/tree/main/examples",
+			},
+			{
+				label: "Contracts",
+				href: "https://github.com/aparry3/agntz/tree/main/contracts",
+			},
+		],
 	},
 ];
 
@@ -84,6 +102,8 @@ export function MemrezFooter() {
 						<Row gap={10} style={{ marginTop: 6 }}>
 							<a
 								href="https://github.com/aparry3/agntz"
+								target="_blank"
+								rel="noreferrer"
 								style={{
 									display: "inline-flex",
 									padding: 8,
@@ -93,43 +113,6 @@ export function MemrezFooter() {
 								}}
 							>
 								<GithubIcon />
-							</a>
-							<a
-								href="#"
-								style={{
-									display: "inline-flex",
-									padding: 8,
-									border: "1px solid rgba(244,241,233,0.2)",
-									borderRadius: 6,
-									color: TOKENS.bg,
-									fontFamily: "var(--mono)",
-									fontSize: 12,
-								}}
-							>
-								X
-							</a>
-							<a
-								href="#"
-								style={{
-									display: "inline-flex",
-									padding: "8px 12px",
-									border: "1px solid rgba(244,241,233,0.2)",
-									borderRadius: 6,
-									color: TOKENS.bg,
-									fontSize: 12,
-									alignItems: "center",
-									gap: 6,
-								}}
-							>
-								<span
-									style={{
-										width: 6,
-										height: 6,
-										borderRadius: 99,
-										background: ACCENTS.green.fg,
-									}}
-								/>
-								Discord
 							</a>
 						</Row>
 					</Stack>
@@ -148,19 +131,25 @@ export function MemrezFooter() {
 								{c.h}
 							</span>
 							<Stack gap={8}>
-								{c.items.map((i) => (
-									<a
-										key={i}
-										href="#"
-										style={{
-											fontSize: 13.5,
-											color: "rgba(244,241,233,0.8)",
-											textDecoration: "none",
-										}}
-									>
-										{i}
-									</a>
-								))}
+								{c.items.map((i) => {
+									const external = i.href.startsWith("http");
+									return (
+										<a
+											key={i.label}
+											href={i.href}
+											{...(external
+												? { target: "_blank", rel: "noreferrer" }
+												: {})}
+											style={{
+												fontSize: 13.5,
+												color: "rgba(244,241,233,0.8)",
+												textDecoration: "none",
+											}}
+										>
+											{i.label}
+										</a>
+									);
+								})}
 							</Stack>
 						</Stack>
 					))}

@@ -2,22 +2,44 @@ import { GithubIcon } from "./icons";
 import { Row, Stack, Wordmark } from "./primitives";
 import { ACCENTS, TOKENS } from "./tokens";
 
-const COLS = [
+const COLS: { h: string; items: { label: string; href: string }[] }[] = [
 	{
 		h: "Runtime",
-		items: ["@agntz/sdk", "Manifest spec", "Tool kinds", "Sessions", "Tracing"],
+		items: [
+			{ label: "@agntz/sdk", href: "/docs/sdk-cli/sdk" },
+			{ label: "Manifest spec", href: "/docs/schema/common-fields" },
+			{ label: "Tool kinds", href: "/docs/tools/local" },
+			{ label: "Sessions", href: "/docs/concepts/sessions" },
+			{ label: "Tracing", href: "/docs/concepts/runs-and-traces" },
+		],
 	},
 	{
 		h: "Hosted",
-		items: ["Visual builder", "Versions", "Evals", "Team plans", "SLA"],
+		items: [
+			{ label: "Visual builder", href: "https://app.agntz.co" },
+			{ label: "Hosted cloud", href: "/docs/deploy/hosted-cloud" },
+			{ label: "HTTP API", href: "/docs/deploy/http-api" },
+		],
 	},
 	{
 		h: "Self-host",
-		items: ["Guide", "Docker", "Helm chart", "Architecture", "Upgrades"],
+		items: [
+			{ label: "Guide", href: "/docs/deploy/self-host-production" },
+			{ label: "Docker", href: "/docs/deploy/self-host-docker" },
+			{ label: "Models & providers", href: "/docs/models" },
+		],
 	},
 	{
 		h: "Resources",
-		items: ["Docs", "Quickstart", "Examples", "Discord", "Blog"],
+		items: [
+			{ label: "Docs", href: "/docs" },
+			{ label: "Quickstart", href: "/docs/quickstart" },
+			{
+				label: "Examples",
+				href: "https://github.com/aparry3/agntz/tree/main/examples",
+			},
+			{ label: "Changelog", href: "https://github.com/aparry3/agntz/releases" },
+		],
 	},
 ];
 
@@ -63,6 +85,8 @@ export function FooterX() {
 						<Row gap={10} style={{ marginTop: 6 }}>
 							<a
 								href="https://github.com/aparry3/agntz"
+								target="_blank"
+								rel="noreferrer"
 								style={{
 									display: "inline-flex",
 									padding: 8,
@@ -72,43 +96,6 @@ export function FooterX() {
 								}}
 							>
 								<GithubIcon />
-							</a>
-							<a
-								href="#"
-								style={{
-									display: "inline-flex",
-									padding: 8,
-									border: "1px solid rgba(244,241,233,0.2)",
-									borderRadius: 6,
-									color: TOKENS.bg,
-									fontFamily: "var(--mono)",
-									fontSize: 12,
-								}}
-							>
-								X
-							</a>
-							<a
-								href="#"
-								style={{
-									display: "inline-flex",
-									padding: "8px 12px",
-									border: "1px solid rgba(244,241,233,0.2)",
-									borderRadius: 6,
-									color: TOKENS.bg,
-									fontSize: 12,
-									alignItems: "center",
-									gap: 6,
-								}}
-							>
-								<span
-									style={{
-										width: 6,
-										height: 6,
-										borderRadius: 99,
-										background: ACCENTS.green.fg,
-									}}
-								/>
-								Discord · 1.2k
 							</a>
 						</Row>
 					</Stack>
@@ -127,19 +114,25 @@ export function FooterX() {
 								{c.h}
 							</span>
 							<Stack gap={8}>
-								{c.items.map((i) => (
-									<a
-										key={i}
-										href="#"
-										style={{
-											fontSize: 13.5,
-											color: "rgba(244,241,233,0.8)",
-											textDecoration: "none",
-										}}
-									>
-										{i}
-									</a>
-								))}
+								{c.items.map((i) => {
+									const external = i.href.startsWith("http");
+									return (
+										<a
+											key={i.label}
+											href={i.href}
+											{...(external
+												? { target: "_blank", rel: "noreferrer" }
+												: {})}
+											style={{
+												fontSize: 13.5,
+												color: "rgba(244,241,233,0.8)",
+												textDecoration: "none",
+											}}
+										>
+											{i.label}
+										</a>
+									);
+								})}
 							</Stack>
 						</Stack>
 					))}

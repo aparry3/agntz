@@ -20,6 +20,7 @@ type Option = {
 	best: string;
 	cmd: string;
 	cta: string;
+	href: string;
 	icon: ReactNode;
 };
 
@@ -37,6 +38,7 @@ const OPTIONS: Option[] = [
 		best: "Solo devs, small services, single-tenant tools.",
 		cmd: "npm i memrez",
 		cta: "Read the embedded guide",
+		href: "/docs/tools/memory-memrez",
 		icon: <CodeIcon />,
 	},
 	{
@@ -52,6 +54,7 @@ const OPTIONS: Option[] = [
 		best: "Teams that don't want to operate a memory store.",
 		cmd: "Sign up at memrez.co",
 		cta: "Open the hosted app",
+		href: "https://app.agntz.co",
 		icon: <SparkIcon />,
 	},
 	{
@@ -67,6 +70,7 @@ const OPTIONS: Option[] = [
 		best: "Regulated environments, on-prem, air-gapped.",
 		cmd: "docker compose up",
 		cta: "Read the self-host guide",
+		href: "/docs/deploy/self-host-production",
 		icon: <ServerIcon />,
 	},
 ];
@@ -254,7 +258,10 @@ export function MemrezRunItYourWay() {
 								{o.best}
 							</span>
 							<a
-								href="#"
+								href={o.href}
+								{...(o.href.startsWith("http")
+									? { target: "_blank", rel: "noreferrer" }
+									: {})}
 								style={{
 									marginTop: 4,
 									display: "inline-flex",

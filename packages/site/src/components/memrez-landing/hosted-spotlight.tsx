@@ -1,4 +1,4 @@
-import { ArrowIcon, BranchIcon, ExternalIcon, PinIcon } from "../landing/icons";
+import { ArrowIcon, BranchIcon, PinIcon } from "../landing/icons";
 import { Btn, H2, Lede, Row, Section, Stack } from "../landing/primitives";
 import { ACCENTS, TOKENS } from "../landing/tokens";
 
@@ -440,11 +440,8 @@ export function MemrezHostedSpotlight() {
 				gap={12}
 				style={{ marginTop: 40, alignItems: "center", flexWrap: "wrap" }}
 			>
-				<Btn primary>
+				<Btn primary href="https://app.agntz.co" newTab>
 					See hosted <ArrowIcon />
-				</Btn>
-				<Btn>
-					Watch the 90-second tour <ExternalIcon />
 				</Btn>
 				<span style={{ fontSize: 13, color: TOKENS.muted, marginLeft: 8 }}>
 					Free tier · no credit card · same memrez client works locally.

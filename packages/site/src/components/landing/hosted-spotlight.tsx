@@ -1,4 +1,4 @@
-import { ArrowIcon, ExternalIcon } from "./icons";
+import { ArrowIcon } from "./icons";
 import { Btn, H2, Lede, Row, Section } from "./primitives";
 import { type AccentName, TOKENS } from "./tokens";
 
@@ -57,11 +57,8 @@ export function HostedSpotlight({ accent = "blue" }: { accent?: AccentName }) {
 				gap={12}
 				style={{ marginTop: 40, alignItems: "center", flexWrap: "wrap" }}
 			>
-				<Btn primary>
+				<Btn primary href="https://app.agntz.co" newTab>
 					See hosted <ArrowIcon />
-				</Btn>
-				<Btn>
-					Watch the 90-second tour <ExternalIcon />
 				</Btn>
 				<span style={{ fontSize: 13, color: TOKENS.muted, marginLeft: 8 }}>
 					Free tier · no credit card · same YAML works locally.

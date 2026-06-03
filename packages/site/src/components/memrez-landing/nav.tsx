@@ -8,7 +8,7 @@ const NAV_LINKS: [string, string][] = [
 	["Hosted", "/memrez#hosted"],
 	["Self-host", "/memrez#self-hosted"],
 	["Docs", "/docs"],
-	["Changelog", "#"],
+	["Changelog", "https://github.com/aparry3/agntz/releases"],
 ];
 
 export function MemrezNav() {
@@ -46,27 +46,33 @@ export function MemrezNav() {
 						</Pill>
 					</a>
 					<Row gap={2} style={{ alignItems: "center" }}>
-						{NAV_LINKS.map(([l, h]) => (
-							<a
-								key={l}
-								href={h}
-								style={{
-									padding: "6px 12px",
-									fontSize: 13.5,
-									color: TOKENS.text2,
-									textDecoration: "none",
-									borderRadius: 5,
-									letterSpacing: "-0.005em",
-								}}
-							>
-								{l}
-							</a>
-						))}
+						{NAV_LINKS.map(([l, h]) => {
+							const external = h.startsWith("http");
+							return (
+								<a
+									key={l}
+									href={h}
+									{...(external ? { target: "_blank", rel: "noreferrer" } : {})}
+									style={{
+										padding: "6px 12px",
+										fontSize: 13.5,
+										color: TOKENS.text2,
+										textDecoration: "none",
+										borderRadius: 5,
+										letterSpacing: "-0.005em",
+									}}
+								>
+									{l}
+								</a>
+							);
+						})}
 					</Row>
 				</Row>
 				<Row gap={10} style={{ alignItems: "center" }}>
 					<a
 						href="https://github.com/aparry3/agntz"
+						target="_blank"
+						rel="noreferrer"
 						style={{
 							display: "inline-flex",
 							alignItems: "center",
@@ -79,7 +85,7 @@ export function MemrezNav() {
 						<GithubIcon />
 					</a>
 					<a
-						href="#"
+						href="https://app.agntz.co/sign-in"
 						style={{
 							color: TOKENS.text2,
 							fontSize: 13.5,

@@ -16,6 +16,7 @@ type Cap = {
 	body: string;
 	icon: ReactNode;
 	link: string;
+	href?: string;
 	tag: "shipped" | "planned";
 };
 
@@ -25,6 +26,7 @@ const CAPS: Cap[] = [
 		body: "Tool calling, multi-step reasoning, automatic retries on transient failure. You don't write the while-loop.",
 		icon: <SparkIcon />,
 		link: "the agent loop",
+		href: "/docs/concepts/agents",
 		tag: "shipped",
 	},
 	{
@@ -32,6 +34,7 @@ const CAPS: Cap[] = [
 		body: "Resumable across processes. Multimodal input. Reply to any past session — state is durable, not in-memory.",
 		icon: <CubeIcon />,
 		link: "sessions",
+		href: "/docs/concepts/sessions",
 		tag: "shipped",
 	},
 	{
@@ -39,6 +42,7 @@ const CAPS: Cap[] = [
 		body: "MCP servers, HTTP APIs, and local TypeScript functions — declared the same way. OAuth2, refresh, and credential redaction included.",
 		icon: <ServerIcon />,
 		link: "tools",
+		href: "/docs/tools/local",
 		tag: "shipped",
 	},
 	{
@@ -46,6 +50,7 @@ const CAPS: Cap[] = [
 		body: "Windowing and summarization handled by the runtime. Long sessions don't blow past the model's context.",
 		icon: <CodeIcon />,
 		link: "context",
+		href: "/docs/concepts/context-and-resources",
 		tag: "shipped",
 	},
 	{
@@ -53,6 +58,7 @@ const CAPS: Cap[] = [
 		body: "Every step, every tool call, every token — captured. JSON locally; full timeline UI in hosted.",
 		icon: <EyeIcon />,
 		link: "tracing",
+		href: "/docs/concepts/runs-and-traces",
 		tag: "shipped",
 	},
 	{
@@ -166,23 +172,25 @@ export function RuntimeCapabilities({
 							{c.body}
 						</p>
 
-						<a
-							href="#"
-							style={{
-								display: "inline-flex",
-								alignItems: "center",
-								gap: 6,
-								paddingTop: 14,
-								marginTop: 4,
-								borderTop: `1px solid ${TOKENS.line2}`,
-								color: a.fg,
-								fontSize: 13,
-								textDecoration: "none",
-								fontWeight: 500,
-							}}
-						>
-							Learn about {c.link} <ArrowIcon />
-						</a>
+						{c.href && (
+							<a
+								href={c.href}
+								style={{
+									display: "inline-flex",
+									alignItems: "center",
+									gap: 6,
+									paddingTop: 14,
+									marginTop: 4,
+									borderTop: `1px solid ${TOKENS.line2}`,
+									color: a.fg,
+									fontSize: 13,
+									textDecoration: "none",
+									fontWeight: 500,
+								}}
+							>
+								Learn about {c.link} <ArrowIcon />
+							</a>
+						)}
 					</Card>
 				))}
 			</div>
