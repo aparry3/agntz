@@ -1,6 +1,6 @@
 {
   "name": "@agntz/client",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Official TypeScript HTTP client for the agntz API. Universal (Node + browser), SSE streaming, AbortSignal-native.",
   "type": "module",
   "main": "./dist/index.js",

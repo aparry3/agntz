@@ -1,5 +1,18 @@
 # @agntz/store-sqlite
 
+## 4.0.0
+
+### Minor Changes
+
+- 2879d18: Complete the first-class eval system with agent-scoped datasets, async hosted eval runs, cancellation, and latest-score persistence for version comparisons.
+
+  Datasets now carry an `agentId`, evals validate that their default dataset belongs to the same agent, and failed cases with zero scores are included in aggregate scoring. Hosted eval runs now return immediately in a running state, persist progress case-by-case, support cancellation, and update a latest-score cache keyed by eval, dataset, and resolved agent version while preserving immutable run history.
+
+### Patch Changes
+
+- Updated dependencies [2879d18]
+  - @agntz/core@1.3.0
+
 ## 3.0.0
 
 ### Patch Changes
