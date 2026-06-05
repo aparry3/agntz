@@ -1149,6 +1149,7 @@ export interface EvalDatasetItem {
 
 export interface EvalDataset {
 	id: string;
+	agentId: string;
 	name: string;
 	description?: string;
 	items: EvalDatasetItem[];
@@ -1230,6 +1231,10 @@ export interface EvalListFilters {
 	agentId?: string;
 }
 
+export interface EvalDatasetListFilters {
+	agentId?: string;
+}
+
 export interface EvalRunListFilters {
 	agentId?: string;
 	evalId?: string;
@@ -1247,18 +1252,53 @@ export interface EvalRunListResult {
 	cursor?: string;
 }
 
+export interface EvalLatestScoreKey {
+	evalId: string;
+	datasetId: string;
+	resolvedAgentVersion?: string;
+}
+
+export interface EvalLatestScoreListFilters {
+	agentId?: string;
+	evalId?: string;
+	datasetId?: string;
+	resolvedAgentVersion?: string;
+	status?: EvalRunStatus;
+}
+
+export interface EvalLatestScore {
+	evalId: string;
+	datasetId: string;
+	agentId: string;
+	requestedAgentVersion?: string;
+	resolvedAgentVersion?: string;
+	runId: string;
+	status: EvalRunStatus;
+	summary?: EvalRunSummary;
+	overallScore: number;
+	passed: boolean;
+	startedAt: string;
+	endedAt?: string;
+	updatedAt: string;
+}
+
 export interface EvalStore {
 	listEvals(filters?: EvalListFilters): Promise<EvalDefinition[]>;
 	getEval(evalId: string): Promise<EvalDefinition | null>;
 	putEval(definition: EvalDefinition): Promise<void>;
 	deleteEval(evalId: string): Promise<void>;
-	listDatasets(): Promise<EvalDataset[]>;
+	listDatasets(filters?: EvalDatasetListFilters): Promise<EvalDataset[]>;
 	getDataset(datasetId: string): Promise<EvalDataset | null>;
 	putDataset(dataset: EvalDataset): Promise<void>;
 	deleteDataset(datasetId: string): Promise<void>;
 	putEvalRun(run: EvalRun): Promise<void>;
 	getEvalRun(runId: string): Promise<EvalRun | null>;
 	listEvalRuns(filters?: EvalRunListFilters): Promise<EvalRunListResult>;
+	getEvalLatestScore(key: EvalLatestScoreKey): Promise<EvalLatestScore | null>;
+	listEvalLatestScores(
+		filters?: EvalLatestScoreListFilters,
+	): Promise<EvalLatestScore[]>;
+	putEvalLatestScore(score: EvalLatestScore): Promise<void>;
 }
 
 // ═══════════════════════════════════════════════════════════════════════

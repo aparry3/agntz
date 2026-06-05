@@ -77,6 +77,32 @@ export async function workerEvalRun(req: EvalRunRequest): Promise<EvalRun> {
 	return res.json() as Promise<EvalRun>;
 }
 
+export async function workerCancelEvalRun(
+	userId: string,
+	runId: string,
+): Promise<EvalRun> {
+	const res = await fetch(
+		`${WORKER_URL}/eval-runs/${encodeURIComponent(runId)}/cancel`,
+		{
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"X-Internal-Secret": internalSecret(),
+			},
+			body: JSON.stringify({ userId }),
+		},
+	);
+
+	if (!res.ok) {
+		const body = await res.json().catch(() => ({}));
+		throw new Error(
+			(body as { error?: string }).error ?? `Worker error: ${res.status}`,
+		);
+	}
+
+	return res.json() as Promise<EvalRun>;
+}
+
 /**
  * Call the worker's /run/stream endpoint. Returns a ReadableStream of SSE events.
  */

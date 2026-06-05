@@ -215,6 +215,8 @@ const EVAL_HELP = `agntz eval — run and inspect hosted evals
 Usage:
   agntz eval run  <evalId> [--dataset <id>] [--version <agentVersion>]
   agntz eval runs [--agent <id>] [--eval <id>] [--dataset <id>] [--status <s>] [--limit <n>] [--cursor <c>]
+  agntz eval cancel <runId>
+  agntz eval scores [--agent <id>] [--eval <id>] [--dataset <id>] [--version <createdAt>]
   agntz eval get  <evalId>
 
 Auth:
@@ -223,6 +225,7 @@ Auth:
 Examples:
   agntz eval run support-quality --dataset refund-cases
   agntz eval runs --agent support --limit 10
+  agntz eval scores --eval support-quality --dataset refund-cases
   agntz eval get support-quality
 
 Output:
@@ -615,6 +618,12 @@ async function cmdEval(args: string[]): Promise<void> {
 		case "runs":
 			await evalRuns(rest);
 			return;
+		case "cancel":
+			await evalCancel(rest);
+			return;
+		case "scores":
+			await evalScores(rest);
+			return;
 		case "get":
 			await evalGet(rest);
 			return;
@@ -670,6 +679,38 @@ async function evalRuns(args: string[]): Promise<void> {
 		status: values.status as never,
 		limit: values.limit ? Number(values.limit) : undefined,
 		cursor: values.cursor,
+	});
+	process.stdout.write(`${formatJson(result)}\n`);
+}
+
+async function evalCancel(args: string[]): Promise<void> {
+	const [runId] = args;
+	if (!runId) fail("Usage: agntz eval cancel <runId>");
+	const client = await requireHostedClient();
+	const run = await client.evals.cancelRun(runId);
+	process.stdout.write(`${formatJson(run)}\n`);
+}
+
+async function evalScores(args: string[]): Promise<void> {
+	const { values } = parseArgs({
+		args,
+		options: {
+			agent: { type: "string" },
+			eval: { type: "string" },
+			dataset: { type: "string" },
+			version: { type: "string" },
+			status: { type: "string" },
+		},
+		allowPositionals: false,
+		strict: true,
+	});
+	const client = await requireHostedClient();
+	const result = await client.evals.listLatestScores({
+		agentId: values.agent,
+		evalId: values.eval,
+		datasetId: values.dataset,
+		resolvedAgentVersion: values.version,
+		status: values.status as never,
 	});
 	process.stdout.write(`${formatJson(result)}\n`);
 }

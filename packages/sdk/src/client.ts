@@ -1,6 +1,10 @@
 import type {
 	EvalDataset,
+	EvalDatasetListFilter,
 	EvalDefinition,
+	EvalLatestScore,
+	EvalLatestScoreKey,
+	EvalLatestScoreListFilter,
 	EvalListFilter,
 	EvalRun,
 	EvalRunInput,
@@ -16,9 +20,17 @@ import type {
 	TraceFilter,
 	TracesListResult,
 } from "@agntz/client";
-import { MemoryStore, SpanEmitter, createRunner, runEval } from "@agntz/core";
+import {
+	MemoryStore,
+	SpanEmitter,
+	createRunner,
+	latestScoreFromEvalRun,
+	runEval,
+	summarizeEvalRun,
+} from "@agntz/core";
 import type { TokenCache } from "@agntz/core";
 import type {
+	EvalRun as CoreEvalRun,
 	StreamEvent as CoreStreamEvent,
 	InvokeResult,
 	ModelProvider,
@@ -82,7 +94,7 @@ export interface LocalAgentsResource {
 }
 
 export interface LocalDatasetsResource {
-	list(): Promise<EvalDataset[]>;
+	list(filter?: EvalDatasetListFilter): Promise<EvalDataset[]>;
 	create(dataset: EvalDataset): Promise<EvalDataset>;
 	get(id: string): Promise<EvalDataset | null>;
 	update(id: string, patch: Partial<EvalDataset>): Promise<EvalDataset>;
@@ -98,6 +110,11 @@ export interface LocalEvalsResource {
 	run(input: EvalRunInput): Promise<EvalRun>;
 	getRun(id: string): Promise<EvalRun | null>;
 	listRuns(filter?: EvalRunListFilter): Promise<EvalRunListResult>;
+	cancelRun(id: string): Promise<EvalRun | null>;
+	getLatestScore(key: EvalLatestScoreKey): Promise<EvalLatestScore | null>;
+	listLatestScores(
+		filter?: EvalLatestScoreListFilter,
+	): Promise<EvalLatestScore[]>;
 }
 
 export interface LocalRunsResource {
@@ -196,8 +213,8 @@ class LocalClientImpl implements LocalClient {
 class DatasetsResourceImpl implements LocalDatasetsResource {
 	constructor(private readonly store: UnifiedStore) {}
 
-	async list(): Promise<EvalDataset[]> {
-		return this.store.listDatasets();
+	async list(filter: EvalDatasetListFilter = {}): Promise<EvalDataset[]> {
+		return this.store.listDatasets(filter);
 	}
 
 	async create(dataset: EvalDataset): Promise<EvalDataset> {
@@ -266,6 +283,55 @@ class EvalsResourceImpl implements LocalEvalsResource {
 
 	async listRuns(filter: EvalRunListFilter = {}): Promise<EvalRunListResult> {
 		return this.store.listEvalRuns(filter);
+	}
+
+	async cancelRun(id: string): Promise<EvalRun | null> {
+		const run = await this.store.getEvalRun(id);
+		if (!run) return null;
+		if (run.status !== "running" && run.status !== "pending") return run;
+		const next: EvalRun = {
+			...run,
+			status: "cancelled",
+			endedAt: run.endedAt ?? new Date().toISOString(),
+			caseResults: [
+				...run.caseResults,
+				...run.snapshots.dataset.items
+					.filter(
+						(item) =>
+							!run.caseResults.some((result) => result.itemId === item.id),
+					)
+					.map((item) => ({
+						itemId: item.id,
+						status: "cancelled" as const,
+						input: item.input,
+						expected: item.expected,
+						criteria: {},
+						score: 0,
+						passed: false,
+						error: "Eval run cancelled.",
+					})),
+			],
+		};
+		const coreRun = next as unknown as CoreEvalRun;
+		next.summary = summarizeEvalRun(
+			coreRun.snapshots.eval,
+			coreRun.caseResults,
+		);
+		await this.store.putEvalRun(coreRun);
+		await this.store.putEvalLatestScore(latestScoreFromEvalRun(coreRun));
+		return next;
+	}
+
+	async getLatestScore(
+		key: EvalLatestScoreKey,
+	): Promise<EvalLatestScore | null> {
+		return this.store.getEvalLatestScore(key);
+	}
+
+	async listLatestScores(
+		filter: EvalLatestScoreListFilter = {},
+	): Promise<EvalLatestScore[]> {
+		return this.store.listEvalLatestScores(filter);
 	}
 }
 

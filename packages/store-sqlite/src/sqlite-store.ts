@@ -17,7 +17,11 @@ import type {
 	ContentBlock,
 	ContextEntry,
 	EvalDataset,
+	EvalDatasetListFilters,
 	EvalDefinition,
+	EvalLatestScore,
+	EvalLatestScoreKey,
+	EvalLatestScoreListFilters,
 	EvalListFilters,
 	EvalRun,
 	EvalRunListFilters,
@@ -388,6 +392,57 @@ const MIGRATIONS = [
   CREATE INDEX IF NOT EXISTS idx_eval_runs_user_dataset ON eval_runs(user_id, dataset_id, started_at DESC);
 
   UPDATE schema_version SET version = 10;
+  `,
+	// v11: Agent-scoped eval datasets plus a latest-score cache for
+	// version-comparison views. Run history remains append-only in eval_runs.
+	`
+  ALTER TABLE eval_datasets ADD COLUMN agent_id TEXT;
+  CREATE INDEX IF NOT EXISTS idx_eval_datasets_user_agent
+    ON eval_datasets(user_id, agent_id, updated_at DESC);
+
+  UPDATE eval_datasets
+     SET agent_id = COALESCE(
+       json_extract(dataset, '$.agentId'),
+       (
+         SELECT e.agent_id
+           FROM evals e
+          WHERE e.user_id = eval_datasets.user_id
+            AND json_extract(e.definition, '$.defaultDatasetId') = eval_datasets.id
+          LIMIT 1
+       ),
+       ''
+     )
+   WHERE agent_id IS NULL;
+
+  UPDATE eval_datasets
+     SET dataset = json_set(dataset, '$.agentId', agent_id)
+   WHERE agent_id IS NOT NULL
+     AND agent_id <> ''
+     AND json_extract(dataset, '$.agentId') IS NULL;
+
+  CREATE TABLE IF NOT EXISTS eval_latest_scores (
+    user_id                 TEXT NOT NULL,
+    eval_id                 TEXT NOT NULL,
+    dataset_id              TEXT NOT NULL,
+    agent_id                TEXT NOT NULL,
+    resolved_agent_version  TEXT NOT NULL,
+    requested_agent_version TEXT,
+    run_id                  TEXT NOT NULL,
+    status                  TEXT NOT NULL,
+    overall_score           REAL NOT NULL,
+    passed                  INTEGER NOT NULL,
+    score                   TEXT NOT NULL,
+    started_at              TEXT NOT NULL,
+    ended_at                TEXT,
+    updated_at              TEXT NOT NULL,
+    PRIMARY KEY (user_id, eval_id, dataset_id, resolved_agent_version)
+  );
+  CREATE INDEX IF NOT EXISTS idx_eval_latest_scores_user_agent
+    ON eval_latest_scores(user_id, agent_id, updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_eval_latest_scores_user_eval
+    ON eval_latest_scores(user_id, eval_id, dataset_id);
+
+  UPDATE schema_version SET version = 11;
   `,
 ];
 
@@ -1376,24 +1431,43 @@ export class SqliteStore implements UnifiedStore {
 			.run(u, evalId);
 	}
 
-	async listDatasets(): Promise<EvalDataset[]> {
+	async listDatasets(
+		filters: EvalDatasetListFilters = {},
+	): Promise<EvalDataset[]> {
 		const u = this.requireUser();
+		if (filters.agentId) {
+			const rows = this.db
+				.prepare(
+					`SELECT dataset, agent_id FROM eval_datasets
+         WHERE user_id = ? AND agent_id = ?
+         ORDER BY updated_at DESC, id DESC`,
+				)
+				.all(u, filters.agentId) as Array<{
+				dataset: string;
+				agent_id: string | null;
+			}>;
+			return rows.map(rowToEvalDataset);
+		}
 		const rows = this.db
 			.prepare(
-				`SELECT dataset FROM eval_datasets
+				`SELECT dataset, agent_id FROM eval_datasets
          WHERE user_id = ?
          ORDER BY updated_at DESC, id DESC`,
 			)
-			.all(u) as Array<{ dataset: string }>;
-		return rows.map((r) => JSON.parse(r.dataset) as EvalDataset);
+			.all(u) as Array<{ dataset: string; agent_id: string | null }>;
+		return rows.map(rowToEvalDataset);
 	}
 
 	async getDataset(datasetId: string): Promise<EvalDataset | null> {
 		const u = this.requireUser();
 		const row = this.db
-			.prepare("SELECT dataset FROM eval_datasets WHERE user_id = ? AND id = ?")
-			.get(u, datasetId) as { dataset: string } | undefined;
-		return row ? (JSON.parse(row.dataset) as EvalDataset) : null;
+			.prepare(
+				"SELECT dataset, agent_id FROM eval_datasets WHERE user_id = ? AND id = ?",
+			)
+			.get(u, datasetId) as
+			| { dataset: string; agent_id: string | null }
+			| undefined;
+		return row ? rowToEvalDataset(row) : null;
 	}
 
 	async putDataset(dataset: EvalDataset): Promise<void> {
@@ -1408,14 +1482,23 @@ export class SqliteStore implements UnifiedStore {
 		this.db
 			.prepare(
 				`INSERT INTO eval_datasets
-           (user_id, id, name, dataset, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)
+           (user_id, id, agent_id, name, dataset, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(user_id, id) DO UPDATE SET
+           agent_id = excluded.agent_id,
            name = excluded.name,
            dataset = excluded.dataset,
            updated_at = excluded.updated_at`,
 			)
-			.run(u, row.id, row.name, JSON.stringify(row), row.createdAt, now);
+			.run(
+				u,
+				row.id,
+				row.agentId,
+				row.name,
+				JSON.stringify(row),
+				row.createdAt,
+				now,
+			);
 	}
 
 	async deleteDataset(datasetId: string): Promise<void> {
@@ -1478,6 +1561,99 @@ export class SqliteStore implements UnifiedStore {
 			rows.map((r) => JSON.parse(r.run) as EvalRun),
 			filters,
 		);
+	}
+
+	async getEvalLatestScore(
+		key: EvalLatestScoreKey,
+	): Promise<EvalLatestScore | null> {
+		const u = this.requireUser();
+		const row = this.db
+			.prepare(
+				`SELECT score FROM eval_latest_scores
+         WHERE user_id = ? AND eval_id = ? AND dataset_id = ?
+           AND resolved_agent_version = ?`,
+			)
+			.get(u, key.evalId, key.datasetId, key.resolvedAgentVersion ?? "") as
+			| { score: string }
+			| undefined;
+		return row ? (JSON.parse(row.score) as EvalLatestScore) : null;
+	}
+
+	async listEvalLatestScores(
+		filters: EvalLatestScoreListFilters = {},
+	): Promise<EvalLatestScore[]> {
+		const u = this.requireUser();
+		const clauses = ["user_id = ?"];
+		const args: unknown[] = [u];
+		if (filters.agentId) {
+			clauses.push("agent_id = ?");
+			args.push(filters.agentId);
+		}
+		if (filters.evalId) {
+			clauses.push("eval_id = ?");
+			args.push(filters.evalId);
+		}
+		if (filters.datasetId) {
+			clauses.push("dataset_id = ?");
+			args.push(filters.datasetId);
+		}
+		if (filters.resolvedAgentVersion !== undefined) {
+			clauses.push("resolved_agent_version = ?");
+			args.push(filters.resolvedAgentVersion);
+		}
+		if (filters.status) {
+			clauses.push("status = ?");
+			args.push(filters.status);
+		}
+		const rows = this.db
+			.prepare(
+				`SELECT score FROM eval_latest_scores
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY updated_at DESC, started_at DESC, run_id DESC`,
+			)
+			.all(...args) as Array<{ score: string }>;
+		return rows.map((r) => JSON.parse(r.score) as EvalLatestScore);
+	}
+
+	async putEvalLatestScore(score: EvalLatestScore): Promise<void> {
+		const u = this.requireUser();
+		const resolvedVersion = score.resolvedAgentVersion ?? "";
+		this.db
+			.prepare(
+				`INSERT INTO eval_latest_scores
+           (user_id, eval_id, dataset_id, agent_id, resolved_agent_version,
+            requested_agent_version, run_id, status, overall_score, passed,
+            score, started_at, ended_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, eval_id, dataset_id, resolved_agent_version)
+         DO UPDATE SET
+           agent_id = excluded.agent_id,
+           requested_agent_version = excluded.requested_agent_version,
+           run_id = excluded.run_id,
+           status = excluded.status,
+           overall_score = excluded.overall_score,
+           passed = excluded.passed,
+           score = excluded.score,
+           started_at = excluded.started_at,
+           ended_at = excluded.ended_at,
+           updated_at = excluded.updated_at`,
+			)
+			.run(
+				u,
+				score.evalId,
+				score.datasetId,
+				score.agentId,
+				resolvedVersion,
+				score.requestedAgentVersion ?? null,
+				score.runId,
+				score.status,
+				score.overallScore,
+				score.passed ? 1 : 0,
+				JSON.stringify(score),
+				score.startedAt,
+				score.endedAt ?? null,
+				score.updatedAt,
+			);
 	}
 
 	// ═══ TraceStore ═══
@@ -2263,6 +2439,17 @@ function sqliteRowToConnection(r: {
 		createdAt: r.created_at,
 		updatedAt: r.updated_at,
 	};
+}
+
+function rowToEvalDataset(r: {
+	dataset: string;
+	agent_id: string | null;
+}): EvalDataset {
+	const dataset = JSON.parse(r.dataset) as EvalDataset;
+	if (!dataset.agentId && r.agent_id) {
+		return { ...dataset, agentId: r.agent_id };
+	}
+	return dataset;
 }
 
 function rowToApiKey(r: ApiKeyRow): ApiKeyRecord {

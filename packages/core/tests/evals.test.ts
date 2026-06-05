@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
 	MemoryStore,
 	createRunner,
+	latestScoreFromEvalRun,
 	runEval,
 	scoreJudgeEnvelope,
+	summarizeEvalRun,
 } from "../src/index.js";
 import type {
 	EvalDataset,
@@ -27,6 +29,7 @@ const definition: EvalDefinition = {
 
 const dataset: EvalDataset = {
 	id: "refund-cases",
+	agentId: "support",
 	name: "Refund Cases",
 	items: [
 		{
@@ -53,6 +56,35 @@ describe("eval scoring", () => {
 		expect(scored.passed).toBe(true);
 		expect(scored.criteria.accuracy.reason).toBe("matches");
 		expect(Object.keys(scored.criteria)).toEqual(["accuracy", "tone"]);
+	});
+
+	it("includes failed zero-score cases in the aggregate score", () => {
+		const summary = summarizeEvalRun(definition, [
+			{
+				itemId: "case_001",
+				status: "completed",
+				input: "ok",
+				criteria: {
+					accuracy: { score: 1, passed: true, reason: "ok" },
+					tone: { score: 1, passed: true, reason: "ok" },
+				},
+				score: 1,
+				passed: true,
+			},
+			{
+				itemId: "case_002",
+				status: "failed",
+				input: "bad",
+				criteria: {},
+				score: 0,
+				passed: false,
+				error: "target failed",
+			},
+		]);
+
+		expect(summary.overallScore).toBe(0.5);
+		expect(summary.failedCases).toBe(1);
+		expect(summary.passed).toBe(false);
 	});
 });
 
@@ -94,6 +126,8 @@ describe("EvalStore conformance", () => {
 async function exerciseEvalStore(store: UnifiedStore) {
 	await store.putEval(definition);
 	await store.putDataset(dataset);
+	expect(await store.listDatasets({ agentId: "support" })).toHaveLength(1);
+	expect(await store.listDatasets({ agentId: "other" })).toHaveLength(0);
 	expect(await store.getEval(definition.id)).toMatchObject({
 		id: definition.id,
 		agentId: "support",
@@ -117,8 +151,28 @@ async function exerciseEvalStore(store: UnifiedStore) {
 		{ evalId: definition.id, datasetId: dataset.id },
 	);
 	await store.putEvalRun(run);
+	await store.putEvalLatestScore(latestScoreFromEvalRun(run));
 	const listed = await store.listEvalRuns({ agentId: "support" });
 	expect(listed.rows.map((row) => row.id)).toEqual([run.id]);
+	const latest = await store.getEvalLatestScore({
+		evalId: run.evalId,
+		datasetId: run.datasetId,
+		resolvedAgentVersion: run.agentVersion,
+	});
+	expect(latest?.runId).toBe(run.id);
+	await store.putEvalLatestScore({
+		...latestScoreFromEvalRun({ ...run, id: "evalrun_new" }),
+		overallScore: 0.25,
+	});
+	expect(
+		(
+			await store.getEvalLatestScore({
+				evalId: run.evalId,
+				datasetId: run.datasetId,
+				resolvedAgentVersion: run.agentVersion,
+			})
+		)?.runId,
+	).toBe("evalrun_new");
 }
 
 class StubProvider implements ModelProvider {

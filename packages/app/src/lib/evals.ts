@@ -55,6 +55,8 @@ export function normalizeEvalDataset(
 		stringOrUndefined(fallbackId) ??
 		stringOrUndefined(body.id) ??
 		generateId("dataset");
+	const agentId = stringOrUndefined(body.agentId);
+	if (!agentId) throw new Error("Missing required field: agentId");
 	const name = stringOrUndefined(body.name) ?? id;
 	const items = Array.isArray(body.items)
 		? body.items.map((item, index) => ({
@@ -71,6 +73,7 @@ export function normalizeEvalDataset(
 		: [];
 	return {
 		id,
+		agentId,
 		name,
 		description: stringOrUndefined(body.description),
 		items,
@@ -78,6 +81,24 @@ export function normalizeEvalDataset(
 		createdAt: body.createdAt,
 		updatedAt: body.updatedAt,
 	};
+}
+
+export async function assertEvalDatasetScope(
+	store: {
+		getDataset(datasetId: string): Promise<EvalDataset | null>;
+	},
+	definition: EvalDefinition,
+): Promise<void> {
+	if (!definition.defaultDatasetId) return;
+	const dataset = await store.getDataset(definition.defaultDatasetId);
+	if (!dataset) {
+		throw new Error(`Dataset "${definition.defaultDatasetId}" not found`);
+	}
+	if (dataset.agentId !== definition.agentId) {
+		throw new Error(
+			`Dataset "${dataset.id}" belongs to agent "${dataset.agentId}", not "${definition.agentId}"`,
+		);
+	}
 }
 
 export function evalRunFiltersFromSearch(

@@ -26,6 +26,7 @@ import {
 	createWebhookDispatcher,
 	generateId,
 	generateSessionId,
+	latestScoreFromEvalRun,
 	parseJudgeOutputText,
 	scoreJudgeEnvelope,
 	summarizeEvalRun,
@@ -138,6 +139,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 				}
 			},
 		});
+	const evalRunControllers = new Map<string, AbortController>();
 
 	app.use("*", cors());
 
@@ -262,6 +264,8 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 	app.use("/datasets/*", workerAuth({ store, internalSecret }));
 	app.use("/eval-runs", workerAuth({ store, internalSecret }));
 	app.use("/eval-runs/*", workerAuth({ store, internalSecret }));
+	app.use("/eval-scores", workerAuth({ store, internalSecret }));
+	app.use("/eval-scores/*", workerAuth({ store, internalSecret }));
 	app.use("/traces", workerAuth({ store, internalSecret }));
 	app.use("/traces/*", workerAuth({ store, internalSecret }));
 	app.use("/validate", workerAuth({ store, internalSecret }));
@@ -896,7 +900,9 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			EvalDefinition & { id?: string }
 		>;
 		const definition = normalizeEvalDefinition(body);
-		await store.forUser(userId).putEval(definition);
+		const scoped = store.forUser(userId);
+		await assertEvalDatasetScope(scoped, definition);
+		await scoped.putEval(definition);
 		return c.json(definition, 201);
 	});
 
@@ -921,6 +927,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			...body,
 			id: evalId,
 		});
+		await assertEvalDatasetScope(scoped, definition);
 		await scoped.putEval(definition);
 		return c.json(definition);
 	});
@@ -934,7 +941,11 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 
 	app.get("/datasets", async (c) => {
 		const userId = getUserId(c);
-		return c.json(await store.forUser(userId).listDatasets());
+		return c.json(
+			await store
+				.forUser(userId)
+				.listDatasets({ agentId: c.req.query("agentId") }),
+		);
 	});
 
 	app.post("/datasets", async (c) => {
@@ -1010,7 +1021,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			return c.json({ error: "Missing required field: evalId" }, 400);
 		}
 		try {
-			const run = await runHostedEval({
+			const started = await startHostedEval({
 				store,
 				userId,
 				evalId: body.evalId,
@@ -1018,8 +1029,9 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 				agentVersion: body.agentVersion,
 				resolveRunnerAndManifest: resolveRunnerAndManifestImpl,
 				traceRegistry,
+				controllers: evalRunControllers,
 			});
-			return c.json(run, 201);
+			return c.json(started, 201);
 		} catch (error) {
 			const status = isNotFound(error) ? 404 : 500;
 			return c.json({ error: errorMessage(error) }, status);
@@ -1032,6 +1044,50 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 		const row = await store.forUser(userId).getEvalRun(runId);
 		if (!row) return c.json({ error: "Eval run not found" }, 404);
 		return c.json(row);
+	});
+
+	app.post("/eval-runs/:id/cancel", async (c) => {
+		const userId = getUserId(c);
+		const runId = decodeURIComponent(c.req.param("id"));
+		const scoped = store.forUser(userId);
+		const row = await scoped.getEvalRun(runId);
+		if (!row) return c.json({ error: "Eval run not found" }, 404);
+		const controller = evalRunControllers.get(runId);
+		controller?.abort("cancelled by user");
+		const cancelled = await cancelStoredEvalRun(scoped, row);
+		return c.json(cancelled);
+	});
+
+	app.get("/eval-scores", async (c) => {
+		const userId = getUserId(c);
+		return c.json(
+			await store.forUser(userId).listEvalLatestScores({
+				agentId: c.req.query("agentId"),
+				evalId: c.req.query("evalId"),
+				datasetId: c.req.query("datasetId"),
+				resolvedAgentVersion: c.req.query("resolvedAgentVersion"),
+				status: c.req.query("status") as never,
+			}),
+		);
+	});
+
+	app.get("/eval-scores/latest", async (c) => {
+		const userId = getUserId(c);
+		const evalId = c.req.query("evalId");
+		const datasetId = c.req.query("datasetId");
+		if (!evalId || !datasetId) {
+			return c.json(
+				{ error: "Missing required query params: evalId, datasetId" },
+				400,
+			);
+		}
+		return c.json(
+			await store.forUser(userId).getEvalLatestScore({
+				evalId,
+				datasetId,
+				resolvedAgentVersion: c.req.query("resolvedAgentVersion"),
+			}),
+		);
 	});
 
 	// ───────────────────────────────────────────────────────────────────────
@@ -1221,7 +1277,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 	return app;
 }
 
-async function runHostedEval(opts: {
+async function startHostedEval(opts: {
 	store: UnifiedStore;
 	userId: string;
 	evalId: string;
@@ -1233,6 +1289,7 @@ async function runHostedEval(opts: {
 		agentId: string,
 	) => Promise<{ runner: Runner; manifest: AgentManifest }>;
 	traceRegistry: InMemoryTraceRegistry;
+	controllers: Map<string, AbortController>;
 }): Promise<EvalRun> {
 	const scoped = opts.store.forUser(opts.userId);
 	const definition = await scoped.getEval(opts.evalId);
@@ -1257,6 +1314,11 @@ async function runHostedEval(opts: {
 		throw Object.assign(new Error(`Dataset "${datasetId}" not found`), {
 			code: "NOT_FOUND",
 		});
+	}
+	if (dataset.agentId !== definition.agentId) {
+		throw new Error(
+			`Dataset "${dataset.id}" belongs to agent "${dataset.agentId}", not "${definition.agentId}"`,
+		);
 	}
 
 	const agentRef = opts.agentVersion
@@ -1294,10 +1356,75 @@ async function runHostedEval(opts: {
 	};
 	await scoped.putEvalRun(run);
 
+	const controller = new AbortController();
+	opts.controllers.set(run.id, controller);
+	void executeHostedEval({
+		scoped,
+		run,
+		runner,
+		manifest,
+		definition,
+		dataset,
+		traceRegistry: opts.traceRegistry,
+		userId: opts.userId,
+		signal: controller.signal,
+	})
+		.catch(async (error) => {
+			run.status = "failed";
+			run.error = errorMessage(error);
+			run.summary = summarizeEvalRun(definition, run.caseResults);
+			run.endedAt = new Date().toISOString();
+			await scoped.putEvalRun(run);
+			await scoped.putEvalLatestScore(latestScoreFromEvalRun(run));
+		})
+		.finally(() => {
+			opts.controllers.delete(run.id);
+		});
+
+	return run;
+}
+
+async function executeHostedEval(opts: {
+	scoped: UnifiedStore;
+	run: EvalRun;
+	runner: Runner;
+	manifest: AgentManifest;
+	definition: EvalDefinition;
+	dataset: EvalDataset;
+	traceRegistry: InMemoryTraceRegistry;
+	userId: string;
+	signal: AbortSignal;
+}): Promise<void> {
+	const {
+		scoped,
+		run,
+		runner,
+		manifest,
+		definition,
+		dataset,
+		traceRegistry,
+		userId,
+		signal,
+	} = opts;
 	const judgeId = `__agntz_eval_judge_${run.id}`;
 	runner.registerAgent(createEvalJudgeAgent(judgeId, definition));
 	try {
 		for (const item of dataset.items) {
+			const latest = await scoped.getEvalRun(run.id);
+			if (signal.aborted || latest?.status === "cancelled") {
+				if (latest?.status === "cancelled") {
+					run.caseResults = mergeEvalCaseResults(
+						run.caseResults,
+						latest.caseResults,
+					);
+				}
+				if (!run.caseResults.some((result) => result.itemId === item.id)) {
+					run.caseResults.push(cancelledEvalCase(item));
+				}
+				run.status = "cancelled";
+				await scoped.putEvalRun({ ...run, caseResults: [...run.caseResults] });
+				continue;
+			}
 			const started = Date.now();
 			let output: unknown;
 			try {
@@ -1305,11 +1432,11 @@ async function runHostedEval(opts: {
 				const spanEmitter = new SpanEmitter({
 					traceSink: (event) => {
 						if (event.type === "span-start")
-							opts.traceRegistry.spanStart(event.span);
+							traceRegistry.spanStart(event.span);
 						else if (event.type === "span-end")
-							opts.traceRegistry.spanEnd(event.spanId, event.patch);
+							traceRegistry.spanEnd(event.spanId, event.patch);
 						else if (event.type === "trace-done")
-							opts.traceRegistry.traceDone(
+							traceRegistry.traceDone(
 								event.summary.traceId,
 								event.summary.ownerId,
 								event.summary,
@@ -1320,13 +1447,35 @@ async function runHostedEval(opts: {
 				const ctx = createExecutionContext(runner, {
 					runRegistry: new InMemoryRunRegistry(),
 					spanEmitter,
-					ownerId: opts.userId,
-					userId: opts.userId,
+					ownerId: userId,
+					userId,
 					sessionId,
 				});
 				const result = await execute(manifest, item.input ?? "", ctx);
 				output = result.output;
+				if (signal.aborted) {
+					if (!run.caseResults.some((result) => result.itemId === item.id)) {
+						run.caseResults.push(cancelledEvalCase(item));
+					}
+					run.status = "cancelled";
+					await scoped.putEvalRun({
+						...run,
+						caseResults: [...run.caseResults],
+					});
+					continue;
+				}
 			} catch (error) {
+				if (signal.aborted) {
+					if (!run.caseResults.some((result) => result.itemId === item.id)) {
+						run.caseResults.push(cancelledEvalCase(item));
+					}
+					run.status = "cancelled";
+					await scoped.putEvalRun({
+						...run,
+						caseResults: [...run.caseResults],
+					});
+					continue;
+				}
 				run.caseResults.push(
 					failedEvalCase(item, {
 						error: `Target agent failed: ${errorMessage(error)}`,
@@ -1351,7 +1500,7 @@ async function runHostedEval(opts: {
 					null,
 					2,
 				);
-				const judged = await runner.invoke(judgeId, prompt);
+				const judged = await runner.invoke(judgeId, prompt, { signal });
 				const scored = scoreJudgeEnvelope(
 					definition.criteria,
 					definition.passThreshold,
@@ -1370,6 +1519,17 @@ async function runHostedEval(opts: {
 					reason: scored.reason,
 				});
 			} catch (error) {
+				if (signal.aborted) {
+					if (!run.caseResults.some((result) => result.itemId === item.id)) {
+						run.caseResults.push(cancelledEvalCase(item));
+					}
+					run.status = "cancelled";
+					await scoped.putEvalRun({
+						...run,
+						caseResults: [...run.caseResults],
+					});
+					continue;
+				}
 				run.caseResults.push(
 					failedEvalCase(item, {
 						output: outputToString(output),
@@ -1385,10 +1545,10 @@ async function runHostedEval(opts: {
 	}
 
 	run.summary = summarizeEvalRun(definition, run.caseResults);
-	run.status = "completed";
+	run.status = signal.aborted ? "cancelled" : "completed";
 	run.endedAt = new Date().toISOString();
 	await scoped.putEvalRun(run);
-	return run;
+	await scoped.putEvalLatestScore(latestScoreFromEvalRun(run));
 }
 
 function normalizeEvalDefinition(
@@ -1431,6 +1591,8 @@ function normalizeEvalDefinition(
 
 function normalizeEvalDataset(body: Partial<EvalDataset>): EvalDataset {
 	const id = stringOrUndefined(body.id) ?? generateId("dataset");
+	const agentId = stringOrUndefined(body.agentId);
+	if (!agentId) throw new Error("Missing required field: agentId");
 	const name = stringOrUndefined(body.name) ?? id;
 	const items = Array.isArray(body.items)
 		? body.items.map((item, index) => ({
@@ -1447,6 +1609,7 @@ function normalizeEvalDataset(body: Partial<EvalDataset>): EvalDataset {
 		: [];
 	return {
 		id,
+		agentId,
 		name,
 		description: stringOrUndefined(body.description),
 		items,
@@ -1454,6 +1617,25 @@ function normalizeEvalDataset(body: Partial<EvalDataset>): EvalDataset {
 		createdAt: body.createdAt,
 		updatedAt: body.updatedAt,
 	};
+}
+
+async function assertEvalDatasetScope(
+	store: UnifiedStore,
+	definition: EvalDefinition,
+): Promise<void> {
+	if (!definition.defaultDatasetId) return;
+	const dataset = await store.getDataset(definition.defaultDatasetId);
+	if (!dataset) {
+		throw Object.assign(
+			new Error(`Dataset "${definition.defaultDatasetId}" not found`),
+			{ code: "NOT_FOUND" },
+		);
+	}
+	if (dataset.agentId !== definition.agentId) {
+		throw new Error(
+			`Dataset "${dataset.id}" belongs to agent "${dataset.agentId}", not "${definition.agentId}"`,
+		);
+	}
 }
 
 function failedEvalCase(
@@ -1472,6 +1654,54 @@ function failedEvalCase(
 		passed: false,
 		error: opts.error,
 	};
+}
+
+function cancelledEvalCase(item: EvalDataset["items"][number]): EvalCaseResult {
+	return {
+		itemId: item.id,
+		status: "cancelled",
+		input: item.input,
+		expected: item.expected,
+		criteria: {},
+		score: 0,
+		passed: false,
+		error: "Eval run cancelled.",
+	};
+}
+
+async function cancelStoredEvalRun(
+	store: UnifiedStore,
+	run: EvalRun,
+): Promise<EvalRun> {
+	if (run.status !== "pending" && run.status !== "running") return run;
+	const seen = new Set(run.caseResults.map((result) => result.itemId));
+	const caseResults = [
+		...run.caseResults,
+		...run.snapshots.dataset.items
+			.filter((item) => !seen.has(item.id))
+			.map(cancelledEvalCase),
+	];
+	const next: EvalRun = {
+		...run,
+		status: "cancelled",
+		endedAt: run.endedAt ?? new Date().toISOString(),
+		caseResults,
+		summary: summarizeEvalRun(run.snapshots.eval, caseResults),
+	};
+	await store.putEvalRun(next);
+	await store.putEvalLatestScore(latestScoreFromEvalRun(next));
+	return next;
+}
+
+function mergeEvalCaseResults(
+	local: EvalCaseResult[],
+	stored: EvalCaseResult[],
+): EvalCaseResult[] {
+	const byId = new Map(local.map((result) => [result.itemId, result]));
+	for (const result of stored) {
+		if (!byId.has(result.itemId)) byId.set(result.itemId, result);
+	}
+	return Array.from(byId.values());
 }
 
 function outputToString(output: unknown): string {

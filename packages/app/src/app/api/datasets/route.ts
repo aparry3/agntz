@@ -2,10 +2,14 @@ import { normalizeEvalDataset } from "@/lib/evals";
 import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import { type NextRequest, NextResponse } from "next/server";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
 	try {
 		const { store } = await requireUserContext();
-		return NextResponse.json(await store.listDatasets());
+		return NextResponse.json(
+			await store.listDatasets({
+				agentId: req.nextUrl.searchParams.get("agentId") ?? undefined,
+			}),
+		);
 	} catch (error) {
 		return errorResponse(error);
 	}

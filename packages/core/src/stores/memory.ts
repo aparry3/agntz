@@ -9,7 +9,11 @@ import type {
 	ConnectionKind,
 	ContextEntry,
 	EvalDataset,
+	EvalDatasetListFilters,
 	EvalDefinition,
+	EvalLatestScore,
+	EvalLatestScoreKey,
+	EvalLatestScoreListFilters,
 	EvalListFilters,
 	EvalRun,
 	EvalRunListFilters,
@@ -91,6 +95,7 @@ interface MemoryBackend {
 	evals: Map<string, Map<string, EvalDefinition>>; // userId -> evalId -> eval
 	datasets: Map<string, Map<string, EvalDataset>>; // userId -> datasetId -> dataset
 	evalRuns: Map<string, EvalRun>; // `${userId}:${runId}` -> run
+	evalLatestScores: Map<string, EvalLatestScore>; // `${userId}:${evalId}:${datasetId}:${version}` -> score
 }
 
 function createBackend(): MemoryBackend {
@@ -113,6 +118,7 @@ function createBackend(): MemoryBackend {
 		evals: new Map(),
 		datasets: new Map(),
 		evalRuns: new Map(),
+		evalLatestScores: new Map(),
 	};
 }
 
@@ -803,9 +809,12 @@ export class MemoryStore implements UnifiedStore {
 		this.evalMap().delete(evalId);
 	}
 
-	async listDatasets(): Promise<EvalDataset[]> {
+	async listDatasets(
+		filters: EvalDatasetListFilters = {},
+	): Promise<EvalDataset[]> {
 		return Array.from(this.datasetMap().values())
 			.map(cloneJson)
+			.filter((row) => !filters.agentId || row.agentId === filters.agentId)
 			.sort((a, b) => b.updatedAt?.localeCompare(a.updatedAt ?? "") ?? 0);
 	}
 
@@ -850,6 +859,56 @@ export class MemoryStore implements UnifiedStore {
 			if (key.startsWith(prefix)) rows.push(cloneJson(run));
 		}
 		return listEvalRunsInProcess(rows, filters);
+	}
+
+	private evalLatestScoreKey(userId: string, key: EvalLatestScoreKey): string {
+		return `${userId}:${key.evalId}:${key.datasetId}:${key.resolvedAgentVersion ?? ""}`;
+	}
+
+	async getEvalLatestScore(
+		key: EvalLatestScoreKey,
+	): Promise<EvalLatestScore | null> {
+		const u = this.requireUser();
+		const row = this.backend.evalLatestScores.get(
+			this.evalLatestScoreKey(u, key),
+		);
+		return row ? cloneJson(row) : null;
+	}
+
+	async listEvalLatestScores(
+		filters: EvalLatestScoreListFilters = {},
+	): Promise<EvalLatestScore[]> {
+		const u = this.requireUser();
+		const prefix = `${u}:`;
+		const rows: EvalLatestScore[] = [];
+		for (const [key, score] of this.backend.evalLatestScores) {
+			if (!key.startsWith(prefix)) continue;
+			if (filters.agentId && score.agentId !== filters.agentId) continue;
+			if (filters.evalId && score.evalId !== filters.evalId) continue;
+			if (filters.datasetId && score.datasetId !== filters.datasetId) continue;
+			if (
+				filters.resolvedAgentVersion !== undefined &&
+				score.resolvedAgentVersion !== filters.resolvedAgentVersion
+			) {
+				continue;
+			}
+			if (filters.status && score.status !== filters.status) continue;
+			rows.push(cloneJson(score));
+		}
+		return rows.sort(
+			(a, b) =>
+				b.updatedAt.localeCompare(a.updatedAt) ||
+				b.startedAt.localeCompare(a.startedAt) ||
+				b.runId.localeCompare(a.runId),
+		);
+	}
+
+	async putEvalLatestScore(score: EvalLatestScore): Promise<void> {
+		const u = this.requireUser();
+		this.backend.evalLatestScores.set(
+			this.evalLatestScoreKey(u, score),
+			cloneJson(score),
+		);
 	}
 
 	// ═══ TraceStore ═══

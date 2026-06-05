@@ -14,6 +14,7 @@ export type {
 } from "./run-registry.js";
 export {
 	createEvalJudgeAgent,
+	latestScoreFromEvalRun,
 	listEvalRunsInProcess,
 	normalizeCriterionWeight,
 	normalizePassThreshold,
@@ -290,8 +291,12 @@ export type {
 	EvalRunSnapshots,
 	EvalRun,
 	EvalListFilters,
+	EvalDatasetListFilters,
 	EvalRunListFilters,
 	EvalRunListResult,
+	EvalLatestScore,
+	EvalLatestScoreKey,
+	EvalLatestScoreListFilters,
 	EvalStore,
 	// Traces
 	SpanKind,

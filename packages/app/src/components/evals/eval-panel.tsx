@@ -2,7 +2,13 @@
 
 import { I } from "@/components/v3/icons";
 import { Btn, Mono, Tag, ag } from "@/components/v3/primitives";
-import type { EvalDataset, EvalDefinition, EvalRun } from "@agntz/core";
+import type {
+	AgentVersionSummary,
+	EvalDataset,
+	EvalDefinition,
+	EvalLatestScore,
+	EvalRun,
+} from "@agntz/core";
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -10,6 +16,11 @@ export function EvalPanel({ agentId }: { agentId: string }) {
 	const [evals, setEvals] = useState<EvalDefinition[]>([]);
 	const [datasets, setDatasets] = useState<EvalDataset[]>([]);
 	const [runs, setRuns] = useState<EvalRun[]>([]);
+	const [versions, setVersions] = useState<AgentVersionSummary[]>([]);
+	const [latestScores, setLatestScores] = useState<EvalLatestScore[]>([]);
+	const [selectedVersionRefs, setSelectedVersionRefs] = useState<string[]>([
+		"latest",
+	]);
 	const [selectedDatasetId, setSelectedDatasetId] = useState("");
 	const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 	const [loading, setLoading] = useState(true);
@@ -27,18 +38,29 @@ export function EvalPanel({ agentId }: { agentId: string }) {
 
 	const load = async () => {
 		setError(null);
-		const [evalRows, datasetRows, runRows] = await Promise.all([
-			fetch(`/api/evals?agentId=${encodeURIComponent(agentId)}`).then((r) =>
-				r.json(),
-			),
-			fetch("/api/datasets").then((r) => r.json()),
-			fetch(`/api/eval-runs?agentId=${encodeURIComponent(agentId)}`).then((r) =>
-				r.json(),
-			),
-		]);
+		const [evalRows, datasetRows, runRows, versionRows, scoreRows] =
+			await Promise.all([
+				fetch(`/api/evals?agentId=${encodeURIComponent(agentId)}`).then((r) =>
+					r.json(),
+				),
+				fetch(`/api/datasets?agentId=${encodeURIComponent(agentId)}`).then(
+					(r) => r.json(),
+				),
+				fetch(`/api/eval-runs?agentId=${encodeURIComponent(agentId)}`).then(
+					(r) => r.json(),
+				),
+				fetch(`/api/agents/${encodeURIComponent(agentId)}/versions`).then((r) =>
+					r.json(),
+				),
+				fetch(`/api/eval-scores?agentId=${encodeURIComponent(agentId)}`).then(
+					(r) => r.json(),
+				),
+			]);
 		setEvals(Array.isArray(evalRows) ? evalRows : []);
 		setDatasets(Array.isArray(datasetRows) ? datasetRows : []);
 		setRuns(Array.isArray(runRows.rows) ? runRows.rows : []);
+		setVersions(Array.isArray(versionRows) ? versionRows : []);
+		setLatestScores(Array.isArray(scoreRows) ? scoreRows : []);
 		if (!selectedDatasetId && Array.isArray(datasetRows) && datasetRows[0]) {
 			setSelectedDatasetId(datasetRows[0].id);
 		}
@@ -52,6 +74,18 @@ export function EvalPanel({ agentId }: { agentId: string }) {
 		});
 	}, [agentId]);
 
+	useEffect(() => {
+		if (
+			!runs.some((run) => run.status === "running" || run.status === "pending")
+		) {
+			return;
+		}
+		const timer = window.setInterval(() => {
+			void load().catch((err) => setError(String(err)));
+		}, 1500);
+		return () => window.clearInterval(timer);
+	}, [runs, agentId]);
+
 	const latestByEval = useMemo(() => {
 		const map = new Map<string, EvalRun>();
 		for (const run of runs) {
@@ -59,6 +93,22 @@ export function EvalPanel({ agentId }: { agentId: string }) {
 		}
 		return map;
 	}, [runs]);
+
+	const versionOptions = useMemo(
+		() => buildVersionOptions(versions),
+		[versions],
+	);
+
+	const latestScoreByKey = useMemo(() => {
+		const map = new Map<string, EvalLatestScore>();
+		for (const score of latestScores) {
+			map.set(
+				scoreKey(score.evalId, score.datasetId, score.resolvedAgentVersion),
+				score,
+			);
+		}
+		return map;
+	}, [latestScores]);
 
 	const selectedRun =
 		runs.find((run) => run.id === selectedRunId) ?? runs[0] ?? null;
@@ -80,7 +130,7 @@ export function EvalPanel({ agentId }: { agentId: string }) {
 		const res = await fetch("/api/datasets", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ name: datasetName, items }),
+			body: JSON.stringify({ agentId, name: datasetName, items }),
 		});
 		const data = await res.json();
 		if (!res.ok) {
@@ -119,16 +169,18 @@ export function EvalPanel({ agentId }: { agentId: string }) {
 		await load();
 	};
 
-	const runEval = async (definition: EvalDefinition) => {
+	const runEval = async (definition: EvalDefinition, versionRef?: string) => {
 		setError(null);
 		setRunningEvalId(definition.id);
 		try {
+			const datasetId = definition.defaultDatasetId || selectedDatasetId;
 			const res = await fetch("/api/eval-runs", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
 					evalId: definition.id,
-					datasetId: definition.defaultDatasetId || selectedDatasetId,
+					datasetId,
+					agentVersion: versionRef === "current" ? undefined : versionRef,
 				}),
 			});
 			const data = await res.json();
@@ -141,6 +193,29 @@ export function EvalPanel({ agentId }: { agentId: string }) {
 		} finally {
 			setRunningEvalId(null);
 		}
+	};
+
+	const cancelRun = async (runId: string) => {
+		setError(null);
+		const res = await fetch(
+			`/api/eval-runs/${encodeURIComponent(runId)}/cancel`,
+			{ method: "POST" },
+		);
+		const data = await res.json();
+		if (!res.ok) {
+			setError(data.error ?? "Failed to cancel eval run");
+			return;
+		}
+		setSelectedRunId(data.id);
+		await load();
+	};
+
+	const toggleVersionRef = (value: string) => {
+		setSelectedVersionRefs((current) =>
+			current.includes(value)
+				? current.filter((row) => row !== value)
+				: [...current, value],
+		);
 	};
 
 	return (
@@ -173,40 +248,91 @@ export function EvalPanel({ agentId }: { agentId: string }) {
 				</div>
 			)}
 
+			<Section label="Compare Versions">
+				{versionOptions.map((option) => (
+					<label key={option.value} style={checkboxRowStyle}>
+						<input
+							type="checkbox"
+							checked={selectedVersionRefs.includes(option.value)}
+							onChange={() => toggleVersionRef(option.value)}
+						/>
+						<Mono size={11}>{option.label}</Mono>
+					</label>
+				))}
+				{versionOptions.length === 0 && <EmptyText>No versions yet</EmptyText>}
+			</Section>
+
 			<Section label="Definitions">
 				{evals.map((definition) => {
 					const latest = latestByEval.get(definition.id);
+					const datasetId = definition.defaultDatasetId || selectedDatasetId;
+					const compareOptions = versionOptions.filter((option) =>
+						selectedVersionRefs.includes(option.value),
+					);
 					return (
-						<div key={definition.id} style={rowStyle}>
-							<div style={{ minWidth: 0, flex: 1 }}>
-								<div style={{ fontSize: 13, fontWeight: 600, color: ag.ink }}>
-									{definition.name}
+						<div key={definition.id} style={{ ...rowStyle, display: "block" }}>
+							<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+								<div style={{ minWidth: 0, flex: 1 }}>
+									<div style={{ fontSize: 13, fontWeight: 600, color: ag.ink }}>
+										{definition.name}
+									</div>
+									<Mono size={11} color={ag.muted}>
+										{definition.criteria.length} criteria ·{" "}
+										{datasetId || "no dataset"}
+									</Mono>
+									<div style={{ marginTop: 6 }}>
+										{latest ? (
+											<ScoreTag run={latest} />
+										) : (
+											<Tag bg="transparent" color={ag.muted}>
+												not run
+											</Tag>
+										)}
+									</div>
 								</div>
-								<Mono size={11} color={ag.muted}>
-									{definition.criteria.length} criteria ·{" "}
-									{definition.defaultDatasetId ??
-										selectedDatasetId ??
-										"no dataset"}
-								</Mono>
-								<div style={{ marginTop: 6 }}>
-									{latest ? (
-										<ScoreTag run={latest} />
-									) : (
-										<Tag bg="transparent" color={ag.muted}>
-											not run
-										</Tag>
-									)}
-								</div>
+								<Btn
+									size="sm"
+									variant="secondary"
+									disabled={runningEvalId === definition.id || !datasetId}
+									icon={<I.Play size={10} style={{ marginRight: 5 }} />}
+									onClick={() => runEval(definition)}
+								>
+									{runningEvalId === definition.id ? "Running" : "Run"}
+								</Btn>
 							</div>
-							<Btn
-								size="sm"
-								variant="secondary"
-								disabled={runningEvalId === definition.id}
-								icon={<I.Play size={10} style={{ marginRight: 5 }} />}
-								onClick={() => runEval(definition)}
-							>
-								{runningEvalId === definition.id ? "Running" : "Run"}
-							</Btn>
+							{compareOptions.length > 0 && datasetId && (
+								<div style={{ marginTop: 10, display: "grid", gap: 6 }}>
+									{compareOptions.map((option) => {
+										const score = latestScoreByKey.get(
+											scoreKey(
+												definition.id,
+												datasetId,
+												option.resolvedVersion,
+											),
+										);
+										return (
+											<div key={option.value} style={compareRowStyle}>
+												<Mono size={11}>{option.label}</Mono>
+												{score ? (
+													<ScorePill score={score} />
+												) : (
+													<Tag bg="transparent" color={ag.muted}>
+														no score
+													</Tag>
+												)}
+												<Btn
+													size="sm"
+													variant="secondary"
+													disabled={runningEvalId === definition.id}
+													onClick={() => runEval(definition, option.runVersion)}
+												>
+													{score ? "Rerun" : "Run"}
+												</Btn>
+											</div>
+										);
+									})}
+								</div>
+							)}
 						</div>
 					);
 				})}
@@ -310,6 +436,16 @@ export function EvalPanel({ agentId }: { agentId: string }) {
 						<Tag bg="transparent" color={ag.muted}>
 							{selectedRun.status}
 						</Tag>
+						{(selectedRun.status === "running" ||
+							selectedRun.status === "pending") && (
+							<Btn
+								size="sm"
+								variant="secondary"
+								onClick={() => cancelRun(selectedRun.id)}
+							>
+								Cancel
+							</Btn>
+						)}
 					</div>
 					{selectedRun.caseResults.map((result) => (
 						<div key={result.itemId} style={caseStyle}>
@@ -494,8 +630,79 @@ function ScoreTag({ run }: { run: EvalRun }) {
 	);
 }
 
+function ScorePill({ score }: { score: EvalLatestScore }) {
+	return (
+		<Tag
+			bg={score.passed ? ag.okBg : ag.warnBg}
+			color={score.passed ? ag.ok : ag.warn}
+		>
+			{percent(score.overallScore)} · {score.status}
+		</Tag>
+	);
+}
+
 function EmptyText({ children }: { children: ReactNode }) {
 	return <div style={{ color: ag.muted, fontSize: 12 }}>{children}</div>;
+}
+
+interface VersionOption {
+	value: string;
+	label: string;
+	runVersion?: string;
+	resolvedVersion?: string;
+}
+
+function buildVersionOptions(versions: AgentVersionSummary[]): VersionOption[] {
+	const latest = versions[0];
+	const current = versions.find((version) => version.activatedAt) ?? latest;
+	const options: VersionOption[] = [];
+	if (latest) {
+		options.push({
+			value: "latest",
+			label: "latest",
+			runVersion: "latest",
+			resolvedVersion: latest.createdAt,
+		});
+	}
+	if (current) {
+		options.push({
+			value: "current",
+			label: "current",
+			resolvedVersion: current.createdAt,
+		});
+	}
+	for (const version of versions) {
+		for (const alias of version.aliases) {
+			options.push({
+				value: `alias:${alias}`,
+				label: `@${alias}`,
+				runVersion: alias,
+				resolvedVersion: version.createdAt,
+			});
+		}
+	}
+	for (const version of versions.slice(0, 5)) {
+		options.push({
+			value: `version:${version.createdAt}`,
+			label: shortVersion(version.createdAt),
+			runVersion: version.createdAt,
+			resolvedVersion: version.createdAt,
+		});
+	}
+	const seen = new Set<string>();
+	return options.filter((option) => {
+		if (seen.has(option.value)) return false;
+		seen.add(option.value);
+		return true;
+	});
+}
+
+function scoreKey(
+	evalId: string,
+	datasetId: string,
+	resolvedAgentVersion?: string,
+): string {
+	return `${evalId}:${datasetId}:${resolvedAgentVersion ?? ""}`;
 }
 
 function percent(value: number): string {
@@ -507,6 +714,10 @@ function formatDate(value: string): string {
 		month: "short",
 		day: "numeric",
 	});
+}
+
+function shortVersion(value: string): string {
+	return value.replace("T", " ").replace(/\.\d+Z$/, "Z");
 }
 
 function slug(value: string): string {
@@ -537,6 +748,22 @@ const rowStyle: CSSProperties = {
 	borderRadius: 4,
 	padding: 9,
 	marginBottom: 8,
+};
+
+const compareRowStyle: CSSProperties = {
+	display: "grid",
+	gridTemplateColumns: "minmax(0, 1fr) auto auto",
+	alignItems: "center",
+	gap: 8,
+	borderTop: `1px solid ${ag.line2}`,
+	paddingTop: 6,
+};
+
+const checkboxRowStyle: CSSProperties = {
+	display: "flex",
+	alignItems: "center",
+	gap: 7,
+	marginBottom: 6,
 };
 
 const caseStyle: CSSProperties = {

@@ -153,6 +153,7 @@ export interface EvalDatasetItem {
 
 export interface EvalDataset {
 	id: string;
+	agentId: string;
 	name: string;
 	description?: string;
 	items: EvalDatasetItem[];
@@ -255,6 +256,40 @@ export interface EvalRunListFilter {
 export interface EvalRunListResult {
 	rows: EvalRun[];
 	cursor?: string;
+}
+
+export interface EvalDatasetListFilter {
+	agentId?: string;
+}
+
+export interface EvalLatestScoreKey {
+	evalId: string;
+	datasetId: string;
+	resolvedAgentVersion?: string;
+}
+
+export interface EvalLatestScoreListFilter {
+	agentId?: string;
+	evalId?: string;
+	datasetId?: string;
+	resolvedAgentVersion?: string;
+	status?: EvalRunStatus;
+}
+
+export interface EvalLatestScore {
+	evalId: string;
+	datasetId: string;
+	agentId: string;
+	requestedAgentVersion?: string;
+	resolvedAgentVersion?: string;
+	runId: string;
+	status: EvalRunStatus;
+	summary?: EvalRun["summary"];
+	overallScore: number;
+	passed: boolean;
+	startedAt: string;
+	endedAt?: string;
+	updatedAt: string;
 }
 
 /** @internal */

@@ -1,4 +1,4 @@
-import { normalizeEvalDefinition } from "@/lib/evals";
+import { assertEvalDatasetScope, normalizeEvalDefinition } from "@/lib/evals";
 import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import { type NextRequest, NextResponse } from "next/server";
 
@@ -34,6 +34,7 @@ export async function PUT(
 			{ ...existing, ...(await req.json()), id: evalId },
 			evalId,
 		);
+		await assertEvalDatasetScope(store, definition);
 		await store.putEval(definition);
 		return NextResponse.json(definition);
 	} catch (error) {

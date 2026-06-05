@@ -17,7 +17,11 @@ import type {
 	ContentBlock,
 	ContextEntry,
 	EvalDataset,
+	EvalDatasetListFilters,
 	EvalDefinition,
+	EvalLatestScore,
+	EvalLatestScoreKey,
+	EvalLatestScoreListFilters,
 	EvalListFilters,
 	EvalRun,
 	EvalRunListFilters,
@@ -440,6 +444,57 @@ const MIGRATIONS: string[] = [
     ON ar_eval_runs(user_id, dataset_id, started_at DESC);
 
   UPDATE ar_schema_version SET version = 11;
+  `,
+	// v12: Agent-scoped eval datasets plus latest-score cache for version
+	// comparisons. Eval run history remains append-only in ar_eval_runs.
+	`
+  ALTER TABLE ar_eval_datasets ADD COLUMN IF NOT EXISTS agent_id TEXT;
+  CREATE INDEX IF NOT EXISTS idx_ar_eval_datasets_user_agent
+    ON ar_eval_datasets(user_id, agent_id, updated_at DESC);
+
+  UPDATE ar_eval_datasets d
+     SET agent_id = COALESCE(
+       d.dataset->>'agentId',
+       (
+         SELECT e.agent_id
+           FROM ar_evals e
+          WHERE e.user_id = d.user_id
+            AND e.definition->>'defaultDatasetId' = d.id
+          LIMIT 1
+       ),
+       ''
+     )
+   WHERE d.agent_id IS NULL;
+
+  UPDATE ar_eval_datasets
+     SET dataset = jsonb_set(dataset, '{agentId}', to_jsonb(agent_id), true)
+   WHERE agent_id IS NOT NULL
+     AND agent_id <> ''
+     AND dataset->>'agentId' IS NULL;
+
+  CREATE TABLE IF NOT EXISTS ar_eval_latest_scores (
+    user_id                  TEXT NOT NULL,
+    eval_id                  TEXT NOT NULL,
+    dataset_id               TEXT NOT NULL,
+    agent_id                 TEXT NOT NULL,
+    resolved_agent_version   TEXT NOT NULL,
+    requested_agent_version  TEXT,
+    run_id                   TEXT NOT NULL,
+    status                   TEXT NOT NULL,
+    overall_score            DOUBLE PRECISION NOT NULL,
+    passed                   BOOLEAN NOT NULL,
+    score                    JSONB NOT NULL,
+    started_at               TIMESTAMPTZ NOT NULL,
+    ended_at                 TIMESTAMPTZ,
+    updated_at               TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (user_id, eval_id, dataset_id, resolved_agent_version)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ar_eval_latest_scores_user_agent
+    ON ar_eval_latest_scores(user_id, agent_id, updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_ar_eval_latest_scores_user_eval
+    ON ar_eval_latest_scores(user_id, eval_id, dataset_id);
+
+  UPDATE ar_schema_version SET version = 12;
   `,
 ];
 
@@ -1478,26 +1533,34 @@ export class PostgresStore implements UnifiedStore {
 		);
 	}
 
-	async listDatasets(): Promise<EvalDataset[]> {
+	async listDatasets(
+		filters: EvalDatasetListFilters = {},
+	): Promise<EvalDataset[]> {
 		await this.ensureMigrated();
 		const u = this.requireUser();
+		const args: unknown[] = [u];
+		let where = "WHERE user_id = $1";
+		if (filters.agentId) {
+			where += " AND agent_id = $2";
+			args.push(filters.agentId);
+		}
 		const { rows } = await this.pool.query(
-			`SELECT dataset FROM ${this.t("eval_datasets")}
-       WHERE user_id = $1
+			`SELECT dataset, agent_id FROM ${this.t("eval_datasets")}
+       ${where}
        ORDER BY updated_at DESC, id DESC`,
-			[u],
+			args,
 		);
-		return rows.map((r) => r.dataset as EvalDataset);
+		return rows.map((r) => rowToEvalDataset(r));
 	}
 
 	async getDataset(datasetId: string): Promise<EvalDataset | null> {
 		await this.ensureMigrated();
 		const u = this.requireUser();
 		const { rows } = await this.pool.query(
-			`SELECT dataset FROM ${this.t("eval_datasets")} WHERE user_id = $1 AND id = $2`,
+			`SELECT dataset, agent_id FROM ${this.t("eval_datasets")} WHERE user_id = $1 AND id = $2`,
 			[u, datasetId],
 		);
-		return rows[0]?.dataset ?? null;
+		return rows[0] ? rowToEvalDataset(rows[0]) : null;
 	}
 
 	async putDataset(dataset: EvalDataset): Promise<void> {
@@ -1512,13 +1575,22 @@ export class PostgresStore implements UnifiedStore {
 		};
 		await this.pool.query(
 			`INSERT INTO ${this.t("eval_datasets")}
-         (user_id, id, name, dataset, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6)
+         (user_id, id, agent_id, name, dataset, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (user_id, id) DO UPDATE SET
+         agent_id = EXCLUDED.agent_id,
          name = EXCLUDED.name,
          dataset = EXCLUDED.dataset,
          updated_at = EXCLUDED.updated_at`,
-			[u, row.id, row.name, JSON.stringify(row), row.createdAt, now],
+			[
+				u,
+				row.id,
+				row.agentId,
+				row.name,
+				JSON.stringify(row),
+				row.createdAt,
+				now,
+			],
 		);
 	}
 
@@ -1587,6 +1659,97 @@ export class PostgresStore implements UnifiedStore {
 		return listEvalRunsInProcess(
 			rows.map((r) => r.run as EvalRun),
 			filters,
+		);
+	}
+
+	async getEvalLatestScore(
+		key: EvalLatestScoreKey,
+	): Promise<EvalLatestScore | null> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT score FROM ${this.t("eval_latest_scores")}
+       WHERE user_id = $1 AND eval_id = $2 AND dataset_id = $3
+         AND resolved_agent_version = $4`,
+			[u, key.evalId, key.datasetId, key.resolvedAgentVersion ?? ""],
+		);
+		return rows[0]?.score ?? null;
+	}
+
+	async listEvalLatestScores(
+		filters: EvalLatestScoreListFilters = {},
+	): Promise<EvalLatestScore[]> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const clauses = ["user_id = $1"];
+		const args: unknown[] = [u];
+		let i = 2;
+		if (filters.agentId) {
+			clauses.push(`agent_id = $${i++}`);
+			args.push(filters.agentId);
+		}
+		if (filters.evalId) {
+			clauses.push(`eval_id = $${i++}`);
+			args.push(filters.evalId);
+		}
+		if (filters.datasetId) {
+			clauses.push(`dataset_id = $${i++}`);
+			args.push(filters.datasetId);
+		}
+		if (filters.resolvedAgentVersion !== undefined) {
+			clauses.push(`resolved_agent_version = $${i++}`);
+			args.push(filters.resolvedAgentVersion);
+		}
+		if (filters.status) {
+			clauses.push(`status = $${i++}`);
+			args.push(filters.status);
+		}
+		const { rows } = await this.pool.query(
+			`SELECT score FROM ${this.t("eval_latest_scores")}
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY updated_at DESC, started_at DESC, run_id DESC`,
+			args,
+		);
+		return rows.map((r) => r.score as EvalLatestScore);
+	}
+
+	async putEvalLatestScore(score: EvalLatestScore): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		await this.pool.query(
+			`INSERT INTO ${this.t("eval_latest_scores")}
+         (user_id, eval_id, dataset_id, agent_id, resolved_agent_version,
+          requested_agent_version, run_id, status, overall_score, passed,
+          score, started_at, ended_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       ON CONFLICT (user_id, eval_id, dataset_id, resolved_agent_version)
+       DO UPDATE SET
+         agent_id = EXCLUDED.agent_id,
+         requested_agent_version = EXCLUDED.requested_agent_version,
+         run_id = EXCLUDED.run_id,
+         status = EXCLUDED.status,
+         overall_score = EXCLUDED.overall_score,
+         passed = EXCLUDED.passed,
+         score = EXCLUDED.score,
+         started_at = EXCLUDED.started_at,
+         ended_at = EXCLUDED.ended_at,
+         updated_at = EXCLUDED.updated_at`,
+			[
+				u,
+				score.evalId,
+				score.datasetId,
+				score.agentId,
+				score.resolvedAgentVersion ?? "",
+				score.requestedAgentVersion ?? null,
+				score.runId,
+				score.status,
+				score.overallScore,
+				score.passed,
+				JSON.stringify(score),
+				score.startedAt,
+				score.endedAt ?? null,
+				score.updatedAt,
+			],
 		);
 	}
 
@@ -2401,6 +2564,20 @@ function rowToRun(r: {
 		) as InvokeResult;
 	}
 	return run;
+}
+
+function rowToEvalDataset(r: {
+	dataset: EvalDataset | string;
+	agent_id: string | null;
+}): EvalDataset {
+	const dataset =
+		typeof r.dataset === "string"
+			? (JSON.parse(r.dataset) as EvalDataset)
+			: r.dataset;
+	if (!dataset.agentId && r.agent_id) {
+		return { ...dataset, agentId: r.agent_id };
+	}
+	return dataset;
 }
 
 function pgRowToSpan(r: Record<string, unknown>): Span {

@@ -7,6 +7,7 @@ import type {
 	EvalCriterionResult,
 	EvalDataset,
 	EvalDefinition,
+	EvalLatestScore,
 	EvalRun,
 	EvalRunListFilters,
 	EvalRunListResult,
@@ -98,13 +99,16 @@ export function summarizeEvalRun(
 	caseResults: EvalCaseResult[],
 ): EvalRunSummary {
 	const completed = caseResults.filter((r) => r.status === "completed");
+	const scored = caseResults.filter(
+		(r) => r.status === "completed" || r.status === "failed",
+	);
 	const failed = caseResults.filter((r) => r.status === "failed");
 	const skipped = caseResults.filter(
 		(r) => r.status === "skipped" || r.status === "cancelled",
 	);
 	const overallScore =
-		completed.length > 0
-			? completed.reduce((sum, r) => sum + r.score, 0) / completed.length
+		scored.length > 0
+			? scored.reduce((sum, r) => sum + r.score, 0) / scored.length
 			: 0;
 	const passThreshold = normalizePassThreshold(definition.passThreshold);
 	const criteriaSummary: EvalRunSummary["criteria"] = {};
@@ -138,6 +142,25 @@ export function summarizeEvalRun(
 			completed.length === caseResults.length &&
 			overallScore >= passThreshold,
 		criteria: criteriaSummary,
+	};
+}
+
+export function latestScoreFromEvalRun(run: EvalRun): EvalLatestScore {
+	const summary = run.summary;
+	return {
+		evalId: run.evalId,
+		datasetId: run.datasetId,
+		agentId: run.agentId,
+		requestedAgentVersion: run.requestedAgentVersion,
+		resolvedAgentVersion: run.agentVersion,
+		runId: run.id,
+		status: run.status,
+		summary,
+		overallScore: summary?.overallScore ?? 0,
+		passed: Boolean(summary?.passed),
+		startedAt: run.startedAt,
+		endedAt: run.endedAt,
+		updatedAt: new Date().toISOString(),
 	};
 }
 
@@ -208,6 +231,11 @@ export async function runEval(
 	}
 	const dataset = await store.getDataset(datasetId);
 	if (!dataset) throw new Error(`Dataset "${datasetId}" not found`);
+	if (dataset.agentId !== definition.agentId) {
+		throw new Error(
+			`Dataset "${dataset.id}" belongs to agent "${dataset.agentId}", not "${definition.agentId}"`,
+		);
+	}
 
 	const target = await resolveEvalAgent(
 		runner,
@@ -273,6 +301,7 @@ export async function runEval(
 		run.status = options.signal?.aborted ? "cancelled" : "completed";
 		run.endedAt = new Date().toISOString();
 		await store.putEvalRun(run);
+		await store.putEvalLatestScore(latestScoreFromEvalRun(run));
 		return run;
 	} catch (error) {
 		run.status = "failed";
@@ -280,6 +309,7 @@ export async function runEval(
 		run.summary = summarizeEvalRun(definition, run.caseResults);
 		run.endedAt = new Date().toISOString();
 		await store.putEvalRun(run);
+		await store.putEvalLatestScore(latestScoreFromEvalRun(run));
 		return run;
 	}
 }
@@ -319,6 +349,7 @@ async function runCase(args: {
 		usage = result.usage;
 		invocationId = result.invocationId;
 	} catch (error) {
+		if (args.signal?.aborted) return cancelledCase(args.item);
 		return failedCase(args.item, {
 			error: `Target agent failed: ${formatError(error)}`,
 			duration: Date.now() - started,
@@ -369,6 +400,7 @@ async function runCase(args: {
 			reason: scored.reason,
 		};
 	} catch (error) {
+		if (args.signal?.aborted) return cancelledCase(args.item);
 		return failedCase(args.item, {
 			output: agentOutput,
 			invocationId,
@@ -377,6 +409,19 @@ async function runCase(args: {
 			duration: Date.now() - started,
 		});
 	}
+}
+
+function cancelledCase(item: EvalDataset["items"][number]): EvalCaseResult {
+	return {
+		itemId: item.id,
+		status: "cancelled",
+		input: item.input,
+		expected: item.expected,
+		criteria: {},
+		score: 0,
+		passed: false,
+		error: "Eval run cancelled.",
+	};
 }
 
 function failedCase(

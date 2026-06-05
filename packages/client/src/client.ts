@@ -9,7 +9,11 @@ import { parseSSE } from "./sse.js";
 import type {
 	AgntzClientOptions,
 	EvalDataset,
+	EvalDatasetListFilter,
 	EvalDefinition,
+	EvalLatestScore,
+	EvalLatestScoreKey,
+	EvalLatestScoreListFilter,
 	EvalListFilter,
 	EvalRun,
 	EvalRunInput,
@@ -125,11 +129,16 @@ export class AgentsResource {
 export class DatasetsResource {
 	constructor(private readonly client: AgntzClient) {}
 
-	async list(opts: { signal?: AbortSignal } = {}): Promise<EvalDataset[]> {
+	async list(
+		filter: EvalDatasetListFilter = {},
+		opts: { signal?: AbortSignal } = {},
+	): Promise<EvalDataset[]> {
 		const signal = this.client._composeSignal(opts.signal);
+		const params = new URLSearchParams();
+		if (filter.agentId) params.set("agentId", filter.agentId);
 		const res = await sendRequest({
 			baseUrl: this.client._baseUrl,
-			path: "/datasets",
+			path: params.toString() ? `/datasets?${params}` : "/datasets",
 			method: "GET",
 			apiKey: this.client._apiKey,
 			signal,
@@ -327,6 +336,22 @@ export class EvalsResource {
 		return (await res.json()) as EvalRun;
 	}
 
+	async cancelRun(
+		runId: string,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<EvalRun> {
+		const signal = this.client._composeSignal(opts.signal);
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/eval-runs/${encodeURIComponent(runId)}/cancel`,
+			method: "POST",
+			apiKey: this.client._apiKey,
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as EvalRun;
+	}
+
 	async listRuns(
 		filter: EvalRunListFilter = {},
 		opts: { signal?: AbortSignal } = {},
@@ -342,6 +367,40 @@ export class EvalsResource {
 			fetchImpl: this.client._fetchImpl,
 		});
 		return (await res.json()) as EvalRunListResult;
+	}
+
+	async getLatestScore(
+		key: EvalLatestScoreKey,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<EvalLatestScore | null> {
+		const signal = this.client._composeSignal(opts.signal);
+		const params = encodeEvalLatestScoreFilter(key);
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/eval-scores/latest?${params}`,
+			method: "GET",
+			apiKey: this.client._apiKey,
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as EvalLatestScore | null;
+	}
+
+	async listLatestScores(
+		filter: EvalLatestScoreListFilter = {},
+		opts: { signal?: AbortSignal } = {},
+	): Promise<EvalLatestScore[]> {
+		const signal = this.client._composeSignal(opts.signal);
+		const params = encodeEvalLatestScoreFilter(filter);
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: params ? `/eval-scores?${params}` : "/eval-scores",
+			method: "GET",
+			apiKey: this.client._apiKey,
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as EvalLatestScore[];
 	}
 }
 
@@ -512,6 +571,22 @@ function encodeEvalRunFilter(filter: EvalRunListFilter): string {
 		params.set("startedBefore", filter.startedBefore);
 	if (filter.limit !== undefined) params.set("limit", String(filter.limit));
 	if (filter.cursor !== undefined) params.set("cursor", filter.cursor);
+	return params.toString();
+}
+
+function encodeEvalLatestScoreFilter(
+	filter: EvalLatestScoreListFilter | EvalLatestScoreKey,
+): string {
+	const params = new URLSearchParams();
+	if ("agentId" in filter && filter.agentId !== undefined)
+		params.set("agentId", filter.agentId);
+	if (filter.evalId !== undefined) params.set("evalId", filter.evalId);
+	if (filter.datasetId !== undefined) params.set("datasetId", filter.datasetId);
+	if (filter.resolvedAgentVersion !== undefined) {
+		params.set("resolvedAgentVersion", filter.resolvedAgentVersion);
+	}
+	if ("status" in filter && filter.status !== undefined)
+		params.set("status", filter.status);
 	return params.toString();
 }
 
