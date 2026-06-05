@@ -1135,7 +1135,10 @@ def _json_loads(value: Any) -> Any:
         return value
     import json
 
-    return json.loads(value)
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return value
 
 
 def _row_to_run(row: Any) -> LocalRunRecord:
