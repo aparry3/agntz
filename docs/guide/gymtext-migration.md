@@ -133,11 +133,11 @@ export const workoutGenerator = defineAgent({
 ```typescript
 // runner.ts
 import { createRunner } from "agntz";
+import { SqliteStore } from "@agntz/store-sqlite";
 import { chatAgent, workoutGenerator, getWorkout, logWorkout } from "./agents";
 
 export const runner = createRunner({
-  // Use JsonFileStore for prototyping, switch to SQLite/Postgres later
-  store: new JsonFileStore("./data"),
+  store: new SqliteStore("./data.db"),
   tools: [getWorkout, logWorkout],
 });
 
@@ -190,14 +190,10 @@ Start simple, scale later:
 
 ```typescript
 // Development
-import { JsonFileStore } from "agntz";
-const store = new JsonFileStore("./data");
-
-// Production (single server)
 import { SqliteStore } from "@agntz/store-sqlite";
 const store = new SqliteStore("./agntz.db");
 
-// Production (multi-server)
+// Production / multi-server
 import { PostgresStore } from "@agntz/store-postgres";
 const store = new PostgresStore(pool);
 ```

@@ -266,14 +266,14 @@ runs, snapshots, and history.
 
 ## Storage
 
-The default store is in-memory. For persistence, use the built-in `JsonFileStore` or install a database adapter:
+The default store is in-memory. For persistence, install a database adapter:
 
 ```typescript
-import { createRunner, JsonFileStore } from "@agntz/core";
+import { createRunner } from "@agntz/core";
+import { SqliteStore } from "@agntz/store-sqlite";
 
-// JSON files — good for local dev
 const runner = createRunner({
-  store: new JsonFileStore("./data"),
+  store: new SqliteStore("./data.db"),
 });
 ```
 
@@ -325,7 +325,7 @@ Creates the central orchestrator. All options are optional:
 
 ```typescript
 const runner = createRunner({
-  store: new JsonFileStore("./data"),    // Storage backend
+  store: myStore,                       // Storage backend
   tools: [myTool1, myTool2],            // Inline tools
   mcp: { servers: { ... } },            // MCP server config
   session: {                              // Session trimming

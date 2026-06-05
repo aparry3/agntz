@@ -91,14 +91,15 @@ console.log(result.toolCalls); // Shows the tool calls made
 By default, agntz uses in-memory storage. For persistence:
 
 ```typescript
-import { createRunner, JsonFileStore } from "agntz";
+import { createRunner } from "agntz";
+import { SqliteStore } from "@agntz/store-sqlite";
 
 const runner = createRunner({
-  store: new JsonFileStore("./data"),
+  store: new SqliteStore("./data.db"),
 });
 ```
 
-This creates a `./data` directory with agents, sessions, context, and logs stored as JSON files.
+This creates a SQLite database for agents, sessions, context, and logs.
 
 ## Sessions (Conversations)
 

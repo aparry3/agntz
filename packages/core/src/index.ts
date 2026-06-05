@@ -61,7 +61,6 @@ export type {
 
 // Stores
 export { MemoryStore } from "./stores/memory.js";
-export { JsonFileStore } from "./stores/json-file.js";
 
 // ID utilities — exposed so workers/SDKs can pre-allocate session/run ids
 // before invoking the runner (e.g. to include them in immediate responses).

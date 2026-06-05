@@ -1,8 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { JsonFileStore } from "../../src/stores/json-file.js";
 import { MemoryStore } from "../../src/stores/memory.js";
 import type { SkillDefinition, SkillStore } from "../../src/types.js";
 
@@ -205,15 +201,5 @@ runSkillStoreConformance("MemoryStore", async () => {
 		storeA: admin.forUser("u1"),
 		storeB: admin.forUser("u2"),
 		cleanup: () => {},
-	};
-});
-
-runSkillStoreConformance("JsonFileStore", async () => {
-	const dir = mkdtempSync(join(tmpdir(), "agntz-skillstore-"));
-	const admin = new JsonFileStore(dir);
-	return {
-		storeA: admin.forUser("u1"),
-		storeB: admin.forUser("u2"),
-		cleanup: () => rmSync(dir, { recursive: true, force: true }),
 	};
 });

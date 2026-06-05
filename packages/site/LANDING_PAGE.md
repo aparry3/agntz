@@ -456,7 +456,7 @@ The landing page makes claims that depend on the following engineering work. Eac
 
 ### 1. Separate save from activate
 
-Today, `AgentStore.putAgent()` auto-sets `activatedAt: now` (see `packages/core/src/stores/json-file.ts:178-182` and equivalents in `postgres-store.ts`, `sqlite-store.ts`). For the "save creates a version, pin chooses what ships" copy to be honest, saves must create *inactive* versions and pinning must be a deliberate second action.
+Today, `AgentStore.putAgent()` auto-sets `activatedAt: now` in the concrete store implementations (`memory.ts`, `postgres-store.ts`, and `sqlite-store.ts`). For the "save creates a version, pin chooses what ships" copy to be honest, saves must create *inactive* versions and pinning must be a deliberate second action.
 
 **Change:** `putAgent` writes a new version with `activatedAt: null`. A separate `activateAgentVersion(id, createdAt)` call (already exists in the interface) is the explicit pin. The UI gets a distinct "Pin this version" action.
 

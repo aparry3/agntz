@@ -55,15 +55,6 @@ const store = new MemoryStore();
 
 Implements all four interfaces. Data is lost on process exit.
 
-### JsonFileStore
-
-```typescript
-import { JsonFileStore } from "agntz";
-const store = new JsonFileStore("./data");
-```
-
-Implements all four interfaces. Stores data as JSON files.
-
 ### SqliteStore
 
 ```typescript
@@ -72,3 +63,12 @@ const store = new SqliteStore("./data.db");
 ```
 
 Implements all four interfaces. Uses WAL mode, auto-migrates.
+
+### PostgresStore
+
+```typescript
+import { PostgresStore } from "@agntz/store-postgres";
+const store = new PostgresStore(process.env.DATABASE_URL!);
+```
+
+Implements the full unified store for multi-server deployments.

@@ -54,9 +54,11 @@ No classes. No inheritance. No decorators. Just data you can store anywhere.
 Every persistence concern has its own interface. Use the built-in stores or bring your own:
 
 ```typescript
-// Simple: JSON files for everything
+import { SqliteStore } from "@agntz/store-sqlite";
+
+// Simple persistent store
 const runner = createRunner({
-  store: new JsonFileStore("./data"),
+  store: new SqliteStore("./data.db"),
 });
 
 // Advanced: split by concern

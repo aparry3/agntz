@@ -7,7 +7,6 @@ agntz uses pluggable storage interfaces. Every persistence concern — agents, s
 | Store | Package | Use Case |
 |-------|---------|----------|
 | `MemoryStore` | `agntz` | Testing, ephemeral usage |
-| `JsonFileStore` | `agntz` | Local development, prototyping |
 | `SqliteStore` | `@agntz/store-sqlite` | Single-server production |
 | `PostgresStore` | `@agntz/store-postgres` | Multi-server / hosted production |
 
@@ -17,30 +16,6 @@ agntz uses pluggable storage interfaces. Every persistence concern — agents, s
 
 ```typescript
 const runner = createRunner(); // Uses MemoryStore
-```
-
-### JSON Files
-
-```typescript
-import { JsonFileStore } from "agntz";
-
-const runner = createRunner({
-  store: new JsonFileStore("./data"),
-});
-```
-
-Creates a directory structure:
-```
-./data/
-├── agents/
-│   └── support.json
-├── sessions/
-│   └── sess_abc123.json
-├── context/
-│   └── project-alpha.json
-└── logs/
-    └── 2026-03-05/
-        └── inv_xyz789.json
 ```
 
 ### SQLite
@@ -79,7 +54,7 @@ const runner = createRunner({
 
 ```typescript
 const runner = createRunner({
-  agentStore: new JsonFileStore("./data"),
+  agentStore: myPostgresStore,
   sessionStore: new SqliteStore("./sessions.db"),
   logStore: new SqliteStore("./logs.db"),
 });

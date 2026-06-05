@@ -176,10 +176,9 @@ The store creates the following tables automatically:
 ### Local Development
 
 ```typescript
-import { createRunner, defineAgent, JsonFileStore } from "@agntz/core";
+import { createRunner, defineAgent } from "@agntz/core";
 import { SqliteStore } from "@agntz/store-sqlite";
 
-// Upgrade from JsonFileStore to SQLite — same API
 const runner = createRunner({
   store: new SqliteStore("./dev.db"),
 });

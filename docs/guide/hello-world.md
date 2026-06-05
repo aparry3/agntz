@@ -53,13 +53,14 @@ Tokens: 87 | Time: 412ms
 ## 3. Add Persistence
 
 ```typescript
-import { createRunner, defineAgent, JsonFileStore } from "agntz";
+import { createRunner, defineAgent } from "agntz";
+import { SqliteStore } from "@agntz/store-sqlite";
 
 const runner = createRunner({
-  store: new JsonFileStore("./data"),
+  store: new SqliteStore("./data.db"),
 });
 
-// Agent definition is now saved to ./data/agents/poet.json
+// Agent definition is now saved to the configured database
 runner.registerAgent(defineAgent({
   id: "poet",
   name: "Haiku Poet",

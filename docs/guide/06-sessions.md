@@ -86,15 +86,9 @@ Sessions are stored via the `SessionStore` interface:
 // In-memory (default) — lost on restart
 const runner = createRunner();
 
-// JSON files — persisted
-const runner = createRunner({
-  store: new JsonFileStore("./data"),
-});
-
-// SQLite — production-ready
-import { SqliteStore } from "@agntz/store-sqlite";
-const runner = createRunner({
-  store: new SqliteStore("./data.db"),
+// SQLite — persisted
+const persistentRunner = createRunner({
+  store: persistentStore,
 });
 ```
 

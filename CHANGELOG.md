@@ -26,7 +26,7 @@ First complete release of agntz — a TypeScript SDK for defining and running AI
 - **Graceful shutdown** — Clean up MCP connections and flush stores
 - **Typed errors** — AgentNotFoundError, ToolNotFoundError, ToolExecutionError, etc.
 - **Model provider layer** — BYOK via `ai` package (40+ providers) or custom `ModelProvider`
-- **Stores** — `MemoryStore` (testing), `JsonFileStore` (local dev)
+- **Stores** — `MemoryStore` (testing), SQLite and Postgres adapters for persistence
 
 ### Studio (`@agntz/studio`)
 

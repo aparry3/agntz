@@ -231,14 +231,15 @@ const parsed = JSON.parse(output);
 
 ## Storage
 
-The default store is in-memory (great for testing). For persistence:
+The default store is in-memory (great for testing). For persistence, use a database adapter:
 
 ```typescript
-import { createRunner, JsonFileStore } from "agntz";
+import { createRunner } from "agntz";
+import { SqliteStore } from "@agntz/store-sqlite";
 
-// JSON files — good for local dev
+// SQLite — good for local dev and single-instance deployments
 const runner = createRunner({
-  store: new JsonFileStore("./data"),
+  store: new SqliteStore("./data.db"),
 });
 
 // Or split stores by concern
@@ -247,16 +248,6 @@ const runner = createRunner({
   sessionStore: myRedisStore,
   logStore: myElasticsearchStore,
 });
-```
-
-### Store Layout (JSON)
-
-```
-./data/
-├── agents/       # Agent definitions
-├── sessions/     # Conversation histories
-├── context/      # Shared context buckets
-└── logs/         # Invocation logs
 ```
 
 ### Custom Stores
@@ -346,7 +337,7 @@ The `stream()` method returns an async iterable of typed events:
 ```typescript
 const runner = createRunner({
   // Storage
-  store: new JsonFileStore("./data"),
+  store: myStore,
 
   // Inline tools
   tools: [myTool1, myTool2],

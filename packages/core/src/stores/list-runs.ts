@@ -29,10 +29,8 @@ function parseISO(s: string | undefined): number | null {
 }
 
 /**
- * Pure, in-process filter+sort+paginate over a Run array. Used by both
- * MemoryStore (in-memory map) and JsonFileStore (per-call directory scan)
- * to share filter/sort/cursor logic. SQL backends compute these in the DB
- * and do not use this helper.
+ * Pure, in-process filter+sort+paginate over a Run array. MemoryStore uses
+ * this helper; SQL backends compute these in the DB and do not use it.
  */
 export function listRunsInProcess(
 	allRuns: Run[],

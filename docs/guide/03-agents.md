@@ -149,10 +149,10 @@ const runner = createRunner();
 runner.registerAgent(agent);
 
 // Or use a store — agents persist across restarts
-const runner = createRunner({
-  store: new JsonFileStore("./data"),
+const persistentRunner = createRunner({
+  store: persistentStore,
 });
-runner.registerAgent(agent); // Saved to ./data/agents/support.json
+persistentRunner.registerAgent(agent); // Saved to the configured store
 ```
 
 ## Portability

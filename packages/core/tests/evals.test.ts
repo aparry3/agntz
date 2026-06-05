@@ -1,9 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-	JsonFileStore,
 	MemoryStore,
 	createRunner,
 	runEval,
@@ -92,16 +88,6 @@ describe("EvalStore conformance", () => {
 	it("MemoryStore stores eval definitions, datasets, and run history", async () => {
 		const store = new MemoryStore().forUser("u1");
 		await exerciseEvalStore(store);
-	});
-
-	it("JsonFileStore stores eval definitions, datasets, and run history", async () => {
-		const dir = mkdtempSync(join(tmpdir(), "agntz-evals-"));
-		try {
-			const store = new JsonFileStore(join(dir, "store.json")).forUser("u1");
-			await exerciseEvalStore(store);
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
-		}
 	});
 });
 

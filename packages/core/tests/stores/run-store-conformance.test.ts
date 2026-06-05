@@ -1,8 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { JsonFileStore } from "../../src/stores/json-file.js";
 import { MemoryStore } from "../../src/stores/memory.js";
 import type { Run, RunListFilters, RunStatus } from "../../src/types.js";
 
@@ -161,14 +157,4 @@ runRunStoreListConformance("MemoryStore", async () => {
 	const admin = new MemoryStore();
 	const store = admin.forUser("u1");
 	return { store, cleanup: () => {} };
-});
-
-runRunStoreListConformance("JsonFileStore", async () => {
-	const dir = mkdtempSync(join(tmpdir(), "agntz-runstore-"));
-	const admin = new JsonFileStore(join(dir, "store.json"));
-	const store = admin.forUser("u1");
-	return {
-		store,
-		cleanup: () => rmSync(dir, { recursive: true, force: true }),
-	};
 });

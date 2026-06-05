@@ -121,10 +121,9 @@ interface InvokeResult {
 ## Example
 
 ```typescript
-import { createRunner, defineAgent, JsonFileStore } from "agntz";
+import { createRunner, defineAgent } from "agntz";
 
 const runner = createRunner({
-  store: new JsonFileStore("./data"),
   defaults: {
     model: { provider: "openai", name: "gpt-5.4-mini" },
   },
