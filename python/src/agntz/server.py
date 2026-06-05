@@ -8,10 +8,9 @@ import json
 import time
 from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, NoReturn
 
 from agntz.client.models import (
-    EvalCaseResult,
     EvalDefinition,
     EvalRun,
     EvalRunSnapshots,
@@ -20,18 +19,20 @@ from agntz.core import ModelProvider, ResourceProvider, ToolDefinition
 from agntz.core.ids import nanoid
 from agntz.core.ids import session_id as new_session_id
 from agntz.evals import (
-    cancelled_eval_case,
-    failed_eval_case,
-    latest_score_from_eval_run,
-    output_to_string,
-    score_judge_envelope,
-    summarize_eval_run,
+    TargetInvocation,
+    build_judge_prompt,
+    create_eval_judge_agent,
+    execute_eval_run,
+)
+from agntz.evals import (
+    cancel_eval_run as cancel_stored_eval_run,
 )
 from agntz.sdk.local import (
     LocalClient,
     _agent_from_payload,
     _dataset_from_payload,
     _eval_from_payload,
+    _manifest_from_stored_agent,
 )
 from agntz.stores import MemoryStore, RunStore
 from agntz.stores.memory import LocalRunRecord
@@ -100,6 +101,11 @@ def create_app(
             resources=resources,
             store=scoped(user_id),
         )
+
+    def eval_http_error(exc: Exception) -> NoReturn:
+        detail = str(exc)
+        status = 404 if "not found" in detail.lower() else 400
+        raise HTTPException(status_code=status, detail=detail)
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -360,8 +366,11 @@ def create_app(
 
     @app.post("/evals")
     async def create_eval(request: Request, user_id: str = Depends(user_id_from_auth)) -> Any:
-        definition = _eval_from_payload(await _json_body(request))
-        await _assert_eval_dataset_scope(scoped(user_id), definition)
+        try:
+            definition = _eval_from_payload(await _json_body(request))
+            await _assert_eval_dataset_scope(scoped(user_id), definition)
+        except (KeyError, ValueError) as exc:
+            eval_http_error(exc)
         row = await _call(scoped(user_id).put_eval, definition)
         return JSONResponse(_dump(row), status_code=201)
 
@@ -385,8 +394,11 @@ def create_app(
         payload = existing.model_dump(by_alias=True, exclude_none=True)
         payload.update(await _json_body(request))
         payload["id"] = eval_id
-        definition = _eval_from_payload(payload)
-        await _assert_eval_dataset_scope(scoped_store, definition)
+        try:
+            definition = _eval_from_payload(payload)
+            await _assert_eval_dataset_scope(scoped_store, definition)
+        except (KeyError, ValueError) as exc:
+            eval_http_error(exc)
         row = await _call(scoped_store.put_eval, definition)
         return _dump(row)
 
@@ -405,13 +417,16 @@ def create_app(
         eval_id = body.get("evalId")
         if not isinstance(eval_id, str):
             raise HTTPException(status_code=400, detail="Missing required field: evalId")
-        run = await _create_eval_run(
-            scoped(user_id),
-            local_client(user_id),
-            eval_id=eval_id,
-            dataset_id=body.get("datasetId"),
-            agent_version=body.get("agentVersion"),
-        )
+        try:
+            run = await _create_eval_run(
+                scoped(user_id),
+                local_client(user_id),
+                eval_id=eval_id,
+                dataset_id=body.get("datasetId"),
+                agent_version=body.get("agentVersion"),
+            )
+        except (KeyError, ValueError) as exc:
+            eval_http_error(exc)
         background.add_task(
             _execute_eval_run,
             scoped(user_id),
@@ -444,12 +459,7 @@ def create_app(
         run = await _call(scoped_store.get_eval_run, run_id)
         if run is None:
             raise HTTPException(status_code=404, detail="Eval run not found")
-        run.status = "cancelled"
-        run.ended_at = _iso_now()
-        run.summary = summarize_eval_run(run.snapshots.eval, run.case_results)
-        await _call(scoped_store.put_eval_run, run)
-        await _call(scoped_store.put_eval_latest_score, latest_score_from_eval_run(run))
-        return _dump(run)
+        return _dump(await _call(cancel_stored_eval_run, scoped_store, run))
 
     @app.get("/eval-scores")
     async def list_scores(
@@ -597,75 +607,42 @@ async def _execute_eval_run(
     if run is None:
         return
     definition = run.snapshots.eval
-    dataset = run.snapshots.dataset
-    agent_ref = (
-        f"{run.agent_id}@{run.requested_agent_version}"
-        if run.requested_agent_version
-        else run.agent_id
+    judge_id = f"__agntz_eval_judge_{run.id}"
+    judge_agent = create_eval_judge_agent(judge_id, definition)
+    client.manifests[judge_id] = _manifest_from_stored_agent(
+        judge_agent,
+        prompt="{{userQuery}}",
     )
+
+    async def invoke_target(agent_ref: str, input_value: Any) -> TargetInvocation:
+        outcome = await client._execute_with_metadata(agent_id=agent_ref, input=input_value)
+        return TargetInvocation(
+            output=outcome.result.output,
+            usage=outcome.usage,
+            invocation_id=outcome.invocation_id,
+            run_id=outcome.run_id,
+        )
+
+    async def invoke_judge(
+        eval_definition: EvalDefinition,
+        dataset: Any,
+        item: Any,
+        output: Any,
+    ) -> Any:
+        judge_prompt = build_judge_prompt(eval_definition, dataset, item, output)
+        judged = await client._execute_with_metadata(agent_id=judge_id, input=judge_prompt)
+        return judged.result.output
+
     try:
-        for item in dataset.items:
-            if run_id in cancelled:
-                run.case_results.append(cancelled_eval_case(item))
-                run.status = "cancelled"
-                store.put_eval_run(run)
-                continue
-            started = time.time()
-            try:
-                result = await client._execute(agent_id=agent_ref, input=item.input)
-                output = result.output
-            except Exception as exc:
-                run.case_results.append(
-                    failed_eval_case(
-                        item,
-                        error=f"Target agent failed: {exc}",
-                        duration=int((time.time() - started) * 1000),
-                    )
-                )
-                store.put_eval_run(run)
-                continue
-            scored = score_judge_envelope(
-                definition.criteria,
-                definition.pass_threshold,
-                {
-                    "criteria": {
-                        criterion.id: {
-                            "score": 1,
-                            "passed": True,
-                            "reason": "No judge configured.",
-                        }
-                        for criterion in definition.criteria
-                    }
-                },
-            )
-            run.case_results.append(
-                EvalCaseResult(
-                    itemId=item.id,
-                    status="completed",
-                    input=item.input,
-                    expected=item.expected,
-                    output=output_to_string(output),
-                    duration=int((time.time() - started) * 1000),
-                    criteria=scored["criteria"],
-                    score=scored["overall_score"],
-                    passed=scored["passed"],
-                    reason=scored.get("reason"),
-                )
-            )
-            store.put_eval_run(run)
-        run.summary = summarize_eval_run(definition, run.case_results)
-        run.status = "cancelled" if run_id in cancelled else "completed"
-        run.ended_at = _iso_now()
-        store.put_eval_run(run)
-        store.put_eval_latest_score(latest_score_from_eval_run(run))
-    except Exception as exc:
-        run.status = "failed"
-        run.error = str(exc)
-        run.summary = summarize_eval_run(definition, run.case_results)
-        run.ended_at = _iso_now()
-        store.put_eval_run(run)
-        store.put_eval_latest_score(latest_score_from_eval_run(run))
+        await execute_eval_run(
+            store,
+            run_id,
+            invoke_target=invoke_target,
+            invoke_judge=invoke_judge,
+            cancel=lambda: run_id in cancelled,
+        )
     finally:
+        client.manifests.pop(judge_id, None)
         cancelled.discard(run_id)
 
 

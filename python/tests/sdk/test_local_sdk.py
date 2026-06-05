@@ -42,10 +42,29 @@ class FakeProvider:
         tools: list[ModelTool] | None = None,
         tool_results: list[ToolResult] | None = None,
     ) -> GenerateTextResult:
+        if manifest.id.startswith("__agntz_eval_judge_"):
+            return GenerateTextResult(
+                output=json.dumps(
+                    {
+                        "overallScore": 0.8,
+                        "passed": True,
+                        "criteria": {
+                            "helpful": {
+                                "score": 0.8,
+                                "passed": True,
+                                "reason": "Useful answer.",
+                            }
+                        },
+                        "reason": "Useful answer.",
+                    }
+                ),
+                usage={"promptTokens": 3, "completionTokens": 2, "totalTokens": 5},
+            )
         if manifest.id == "support":
             return GenerateTextResult(
                 output='{"answer":"Use the refund workflow.","confidence":0.82}',
                 text='{"answer":"Use the refund workflow.","confidence":0.82}',
+                usage={"promptTokens": 10, "completionTokens": 8, "totalTokens": 18},
             )
         if manifest.id == "summarizer":
             return GenerateTextResult(output="Use the refund workflow.")
@@ -793,6 +812,16 @@ def test_local_sdk_runs_eval_and_updates_latest_score(tmp_path: Path) -> None:
     assert run.summary is not None
     assert run.summary.total_cases == 1
     assert run.summary.passed is True
+    assert run.summary.overall_score == 0.8
+    assert run.case_results[0].score == 0.8
+    assert run.case_results[0].reason == "Useful answer."
+    assert run.case_results[0].agent_run_id is not None
+    assert run.case_results[0].invocation_id is not None
+    assert run.case_results[0].usage == {
+        "promptTokens": 10,
+        "completionTokens": 8,
+        "totalTokens": 18,
+    }
     assert latest is not None
     assert latest.run_id == run.id
-    assert latest.overall_score == 1
+    assert latest.overall_score == 0.8

@@ -264,7 +264,8 @@ latest = client.evals.get_latest_score(
 
 Hosted eval runs return immediately with `running` status. Poll
 `client.evals.get_run(run.id)` or use `client.evals.cancel_run(run.id)` to stop a
-run that is still queued or executing.
+run. Pending cases are marked `cancelled`; in-flight provider calls are
+best-effort and may finish before the background runner observes cancellation.
 
 ## Hosted Python service
 

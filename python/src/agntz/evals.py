@@ -26,10 +26,16 @@ from agntz.client.models import (
     EvalRunSnapshots,
     EvalRunSummary,
     EvalRunSummaryCriterion,
+    ModelConfig,
 )
 from agntz.core.ids import nanoid
 
 DEFAULT_PASS_THRESHOLD = 0.7
+DEFAULT_JUDGE_MODEL = ModelConfig(provider="openai", name="gpt-5.4-mini")
+JUDGE_SYSTEM_PROMPT = (
+    "You are the hidden Agntz eval judge. Score the target agent output against "
+    "each rubric criterion. Return only the requested structured JSON."
+)
 
 
 class EvalStoreLike(Protocol):
@@ -37,11 +43,11 @@ class EvalStoreLike(Protocol):
 
     def get_dataset(self, dataset_id: str) -> EvalDataset | None: ...
 
-    def put_eval_run(self, run: EvalRun) -> None: ...
+    def put_eval_run(self, run: EvalRun) -> Any: ...
 
     def get_eval_run(self, run_id: str) -> EvalRun | None: ...
 
-    def put_eval_latest_score(self, score: EvalLatestScore) -> None: ...
+    def put_eval_latest_score(self, score: EvalLatestScore) -> Any: ...
 
 
 @dataclass(frozen=True)
@@ -222,15 +228,101 @@ def parse_judge_output_text(text: str) -> Any:
     try:
         return json.loads(trimmed)
     except json.JSONDecodeError:
-        marker = "```"
-        start = trimmed.find(marker)
+        start = trimmed.find("```")
         if start == -1:
             raise ValueError("Judge did not return parseable JSON") from None
-        body_start = trimmed.find("\n", start + len(marker))
-        end = trimmed.find(marker, body_start + 1)
+        body_start = trimmed.find("\n", start + 3)
+        end = trimmed.find("```", body_start + 1)
         if body_start == -1 or end == -1:
             raise ValueError("Judge did not return parseable JSON") from None
-        return json.loads(trimmed[body_start:end].strip())
+        body = trimmed[body_start:end].strip()
+        if body.lower().startswith("json\n"):
+            body = body[5:].strip()
+        return json.loads(body)
+
+
+def create_eval_judge_agent(
+    judge_id: str,
+    definition: EvalDefinition,
+) -> AgentDefinition:
+    return AgentDefinition(
+        id=judge_id,
+        name="Agntz Eval Judge",
+        systemPrompt=JUDGE_SYSTEM_PROMPT,
+        model=definition.judge_model or DEFAULT_JUDGE_MODEL,
+        outputSchema=judge_output_schema(definition.criteria),
+    )
+
+
+def judge_output_schema(criteria: list[EvalCriterion]) -> dict[str, Any]:
+    criterion_properties: dict[str, Any] = {}
+    for criterion in criteria:
+        criterion_properties[criterion.id] = {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["score", "passed", "reason"],
+            "properties": {
+                "score": {"type": "number", "minimum": 0, "maximum": 1},
+                "passed": {"type": "boolean"},
+                "reason": {"type": "string"},
+            },
+        }
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["overallScore", "passed", "criteria", "reason"],
+        "properties": {
+            "overallScore": {"type": "number", "minimum": 0, "maximum": 1},
+            "passed": {"type": "boolean"},
+            "reason": {"type": "string"},
+            "criteria": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [criterion.id for criterion in criteria],
+                "properties": criterion_properties,
+            },
+        },
+    }
+
+
+def build_judge_prompt(
+    definition: EvalDefinition,
+    dataset: EvalDataset,
+    item: EvalDatasetItem,
+    actual: Any,
+) -> str:
+    return json.dumps(
+        {
+            "input": item.input,
+            "expected": item.expected if item.expected is not None else None,
+            "actual": output_to_string(actual),
+            "itemMetadata": item.metadata or {},
+            "datasetMetadata": dataset.metadata or {},
+            "criteria": [
+                {
+                    "id": criterion.id,
+                    "name": criterion.name,
+                    "description": criterion.description or "",
+                    **(
+                        {
+                            "threshold": (
+                                criterion.threshold
+                                if criterion.threshold is not None
+                                else definition.pass_threshold
+                            )
+                        }
+                        if criterion.threshold is not None
+                        or definition.pass_threshold is not None
+                        else {}
+                    ),
+                }
+                for criterion in definition.criteria
+            ],
+            "passThreshold": normalize_pass_threshold(definition.pass_threshold),
+        },
+        indent=2,
+        default=str,
+    )
 
 
 async def run_eval(
@@ -287,6 +379,36 @@ async def run_eval(
         caseResults=[],
     )
     store.put_eval_run(run)
+    completed = await execute_eval_run(
+        store,
+        run.id,
+        invoke_target=invoke_target,
+        invoke_judge=invoke_judge,
+        cancel=cancel,
+    )
+    if completed is None:
+        raise ValueError(f'Eval run "{run.id}" not found')
+    return completed
+
+
+async def execute_eval_run(
+    store: EvalStoreLike,
+    run_id: str,
+    *,
+    invoke_target: TargetInvoker,
+    invoke_judge: JudgeInvoker | None = None,
+    cancel: Callable[[], bool] | None = None,
+) -> EvalRun | None:
+    run = store.get_eval_run(run_id)
+    if run is None:
+        return None
+    definition = run.snapshots.eval
+    dataset = run.snapshots.dataset
+    agent_ref = (
+        format_agent_ref(parse_agent_ref(f"{run.agent_id}@{run.requested_agent_version}"))
+        if run.requested_agent_version
+        else run.agent_id
+    )
     try:
         for item in dataset.items:
             latest = store.get_eval_run(run.id)
@@ -298,6 +420,8 @@ async def run_eval(
                     run.case_results.append(cancelled_eval_case(item))
                 store.put_eval_run(run)
                 continue
+            if any(row.item_id == item.id for row in run.case_results):
+                continue
             result = await _run_case(
                 definition=definition,
                 dataset=dataset,
@@ -305,6 +429,7 @@ async def run_eval(
                 agent_ref=agent_ref,
                 invoke_target=invoke_target,
                 invoke_judge=invoke_judge,
+                cancel=cancel,
             )
             run.case_results.append(result)
             store.put_eval_run(run.model_copy(update={"case_results": list(run.case_results)}))
@@ -332,21 +457,30 @@ async def _run_case(
     agent_ref: str,
     invoke_target: TargetInvoker,
     invoke_judge: JudgeInvoker | None,
+    cancel: Callable[[], bool] | None,
 ) -> EvalCaseResult:
     started = time.time()
     try:
+        if cancel and cancel():
+            return cancelled_eval_case(item)
         target = await _maybe_await(invoke_target(agent_ref, item.input))
     except Exception as exc:
+        if cancel and cancel():
+            return cancelled_eval_case(item)
         return failed_eval_case(
             item,
             error=f"Target agent failed: {exc}",
             duration=_duration_ms(started),
         )
     try:
+        if cancel and cancel():
+            return cancelled_eval_case(item)
         if invoke_judge is None:
             envelope = _default_judge_envelope(definition)
         else:
             envelope = await _maybe_await(invoke_judge(definition, dataset, item, target.output))
+        if cancel and cancel():
+            return cancelled_eval_case(item)
         if isinstance(envelope, str):
             envelope = parse_judge_output_text(envelope)
         scored = score_judge_envelope(definition.criteria, definition.pass_threshold, envelope)
@@ -366,6 +500,8 @@ async def _run_case(
             reason=scored.get("reason"),
         )
     except Exception as exc:
+        if cancel and cancel():
+            return cancelled_eval_case(item)
         return failed_eval_case(
             item,
             output=output_to_string(target.output),
@@ -412,6 +548,31 @@ def failed_eval_case(
         passed=False,
         error=error,
     )
+
+
+def cancel_eval_run(store: EvalStoreLike, run: EvalRun) -> EvalRun:
+    if run.status not in {"pending", "running"}:
+        return run
+    seen = {result.item_id for result in run.case_results}
+    case_results = [
+        *run.case_results,
+        *[
+            cancelled_eval_case(item)
+            for item in run.snapshots.dataset.items
+            if item.id not in seen
+        ],
+    ]
+    cancelled = run.model_copy(
+        update={
+            "status": "cancelled",
+            "ended_at": run.ended_at or _iso_now(),
+            "case_results": case_results,
+            "summary": summarize_eval_run(run.snapshots.eval, case_results),
+        }
+    )
+    store.put_eval_run(cancelled)
+    store.put_eval_latest_score(latest_score_from_eval_run(cancelled))
+    return cancelled
 
 
 def output_to_string(value: Any) -> str:

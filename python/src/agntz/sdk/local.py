@@ -9,6 +9,7 @@ import json
 import time
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -55,7 +56,13 @@ from agntz.core.ids import nanoid
 from agntz.core.ids import run_id as new_run_id
 from agntz.core.ids import session_id as new_session_id
 from agntz.core.ids import trace_id as new_trace_id
-from agntz.evals import TargetInvocation, latest_score_from_eval_run, run_eval
+from agntz.evals import (
+    TargetInvocation,
+    build_judge_prompt,
+    cancel_eval_run,
+    create_eval_judge_agent,
+    run_eval,
+)
 from agntz.manifest import execute
 from agntz.manifest.parser import load_manifest_file, parse_manifest
 from agntz.manifest.types import (
@@ -63,6 +70,9 @@ from agntz.manifest.types import (
     AgentState,
     LLMAgentManifest,
     ToolCallConfig,
+)
+from agntz.manifest.types import (
+    ModelConfig as ManifestModelConfig,
 )
 from agntz.stores import (
     LocalMessageRecord,
@@ -73,6 +83,14 @@ from agntz.stores import (
     MemoryStore,
     RunStore,
 )
+
+
+@dataclass(frozen=True)
+class _ExecutionOutcome:
+    result: RunResult
+    run_id: str
+    invocation_id: str
+    usage: dict[str, int] | None
 
 
 class LocalClient:
@@ -109,6 +127,23 @@ class LocalClient:
         session_id: str | None = None,
         context: list[str] | None = None,
     ) -> RunResult:
+        return (
+            await self._execute_with_metadata(
+                agent_id=agent_id,
+                input=input,
+                session_id=session_id,
+                context=context,
+            )
+        ).result
+
+    async def _execute_with_metadata(
+        self,
+        *,
+        agent_id: str,
+        input: Any = None,
+        session_id: str | None = None,
+        context: list[str] | None = None,
+    ) -> _ExecutionOutcome:
         manifest, resolved_agent, _resolved_version = self._resolve_manifest(agent_id)
         base_agent_id = resolved_agent.id
         resolved_session_id = session_id or new_session_id()
@@ -220,7 +255,17 @@ class LocalClient:
                 output=result.output,
             )
         )
-        return RunResult(output=result.output, state=result.state, sessionId=resolved_session_id)
+        run_result = RunResult(
+            output=result.output,
+            state=result.state,
+            sessionId=resolved_session_id,
+        )
+        return _ExecutionOutcome(
+            result=run_result,
+            run_id=local_run_id,
+            invocation_id=ctx.invocation_id,
+            usage=ctx.usage,
+        )
 
     def _resolve_manifest(
         self,
@@ -519,11 +564,40 @@ class LocalEvalsResource:
         agent_version: str | None = None,
     ) -> EvalRun:
         async def invoke_target(agent_ref: str, input_value: Any) -> TargetInvocation:
-            result = await self._client._execute(agent_id=agent_ref, input=input_value)
-            ref = parse_agent_ref(agent_ref)
-            runs = self._client.store.list_runs(agent_id=ref.agent_id, status="completed")
-            linked_run_id = runs[-1].id if runs else None
-            return TargetInvocation(output=result.output, run_id=linked_run_id)
+            outcome = await self._client._execute_with_metadata(
+                agent_id=agent_ref,
+                input=input_value,
+            )
+            return TargetInvocation(
+                output=outcome.result.output,
+                usage=outcome.usage,
+                invocation_id=outcome.invocation_id,
+                run_id=outcome.run_id,
+            )
+
+        judge_id = f"__agntz_eval_judge_{nanoid()}"
+
+        async def invoke_judge(
+            definition: EvalDefinition,
+            dataset: EvalDataset,
+            item: Any,
+            output: Any,
+        ) -> Any:
+            judge_agent = create_eval_judge_agent(judge_id, definition)
+            manifest = _manifest_from_stored_agent(
+                judge_agent,
+                prompt="{{userQuery}}",
+            )
+            self._client.manifests[judge_id] = manifest
+            try:
+                prompt = build_judge_prompt(definition, dataset, item, output)
+                outcome = await self._client._execute_with_metadata(
+                    agent_id=judge_id,
+                    input=prompt,
+                )
+                return outcome.result.output
+            finally:
+                self._client.manifests.pop(judge_id, None)
 
         return await run_eval(
             self._client.store,
@@ -532,6 +606,7 @@ class LocalEvalsResource:
             agent_version=agent_version,
             resolve_agent=self._client._resolve_agent_definition,
             invoke_target=invoke_target,
+            invoke_judge=invoke_judge,
         )
 
     def get_run(self, run_id: str) -> EvalRun | None:
@@ -564,13 +639,7 @@ class LocalEvalsResource:
         run = self.get_run(run_id)
         if run is None:
             return None
-        if run.status in {"completed", "failed", "cancelled"}:
-            return run
-        run.status = "cancelled"
-        run.ended_at = _iso_now_z()
-        self._client.store.put_eval_run(run)
-        self._client.store.put_eval_latest_score(latest_score_from_eval_run(run))
-        return run
+        return cancel_eval_run(self._client.store, run)
 
     def get_latest_score(
         self,
@@ -729,6 +798,7 @@ class _LocalExecutionContext:
         self.trace_id = trace_id
         self.context = context
         self.invocation_id = f"inv_{nanoid()}"
+        self.usage: dict[str, int] | None = None
         self._parent_resource_modes_stack: list[dict[str, ResourceMode]] = []
 
     async def invoke_llm(
@@ -844,6 +914,7 @@ class _LocalExecutionContext:
         }
         if result.usage:
             attributes["usage"] = result.usage
+            self._record_usage(result.usage)
         self._record_span(
             name=manifest.id,
             kind="model",
@@ -853,6 +924,20 @@ class _LocalExecutionContext:
             attributes=attributes,
         )
         return result
+
+    def _record_usage(self, usage: dict[str, Any]) -> None:
+        normalized = _eval_usage_from_usage(usage)
+        if normalized is None:
+            return
+        if self.usage is None:
+            self.usage = normalized
+            return
+        self.usage = {
+            "promptTokens": self.usage["promptTokens"] + normalized["promptTokens"],
+            "completionTokens": self.usage["completionTokens"]
+            + normalized["completionTokens"],
+            "totalTokens": self.usage["totalTokens"] + normalized["totalTokens"],
+        }
 
     def _model_tools_for_manifest(
         self,
@@ -1318,6 +1403,32 @@ def _agent_definition_from_manifest(
     )
 
 
+def _manifest_from_stored_agent(
+    agent: StoredAgentDefinition,
+    *,
+    prompt: str | None = None,
+) -> LLMAgentManifest:
+    return LLMAgentManifest(
+        id=agent.id,
+        name=agent.name,
+        description=agent.description,
+        model=ManifestModelConfig(
+            provider=agent.model.provider,
+            name=agent.model.name,
+            temperature=agent.model.temperature,
+            maxTokens=agent.model.max_tokens,
+            topP=agent.model.top_p,
+        ),
+        instruction=agent.system_prompt,
+        prompt=prompt or agent.user_prompt_template,
+        tools=agent.tools,
+        outputSchema=agent.output_schema,
+        spawnable=agent.spawnable,
+        skills=agent.skills,
+        reply=agent.reply,
+    )
+
+
 def _merge_payload(value: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
     if value is None:
         payload: dict[str, Any] = {}
@@ -1417,6 +1528,29 @@ def _snake_to_camel(value: str) -> str:
 
 def _iso_now_z() -> str:
     return datetime.now(tz=UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _eval_usage_from_usage(usage: dict[str, Any]) -> dict[str, int] | None:
+    prompt_tokens = _int_from_usage(usage, "promptTokens", "prompt_tokens")
+    completion_tokens = _int_from_usage(usage, "completionTokens", "completion_tokens")
+    total_tokens = _int_from_usage(usage, "totalTokens", "total_tokens")
+    if total_tokens is None and prompt_tokens is not None and completion_tokens is not None:
+        total_tokens = prompt_tokens + completion_tokens
+    if prompt_tokens is None and completion_tokens is None and total_tokens is None:
+        return None
+    return {
+        "promptTokens": prompt_tokens or 0,
+        "completionTokens": completion_tokens or 0,
+        "totalTokens": total_tokens or 0,
+    }
+
+
+def _int_from_usage(usage: dict[str, Any], *keys: str) -> int | None:
+    for key in keys:
+        value = usage.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+    return None
 
 
 def _run_blocking(awaitable: Any) -> Any:

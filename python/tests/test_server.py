@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import textwrap
 from typing import Any
 
@@ -27,7 +28,31 @@ class ServerProvider:
         tools: list[ModelTool] | None = None,
         tool_results: list[ToolResult] | None = None,
     ) -> GenerateTextResult:
-        return GenerateTextResult(output={"ok": True}, text='{"ok":true}')
+        if manifest.id.startswith("__agntz_eval_judge_"):
+            assert prompt is not None
+            assert '"actual": "{\\"ok\\":true}"' in prompt
+            return GenerateTextResult(
+                output=json.dumps(
+                    {
+                        "overallScore": 0.6,
+                        "passed": False,
+                        "criteria": {
+                            "ok": {
+                                "score": 0.6,
+                                "passed": False,
+                                "reason": "Not good enough.",
+                            }
+                        },
+                        "reason": "Not good enough.",
+                    }
+                ),
+                usage={"promptTokens": 4, "completionTokens": 3, "totalTokens": 7},
+            )
+        return GenerateTextResult(
+            output={"ok": True},
+            text='{"ok":true}',
+            usage={"promptTokens": 2, "completionTokens": 1, "totalTokens": 3},
+        )
 
 
 @pytest.mark.asyncio
@@ -88,6 +113,15 @@ async def test_server_agent_run_eval_and_latest_score_flow() -> None:
         )
         assert started.status_code == 201
         completed = await _poll_eval_run(client, headers, started.json()["id"])
+        assert completed["summary"]["overallScore"] == 0.6
+        assert completed["summary"]["passed"] is False
+        assert completed["caseResults"][0]["agentRunId"]
+        assert completed["caseResults"][0]["invocationId"]
+        assert completed["caseResults"][0]["usage"] == {
+            "promptTokens": 2,
+            "completionTokens": 1,
+            "totalTokens": 3,
+        }
 
         latest = await client.get(
             "/eval-scores/latest",
@@ -100,6 +134,34 @@ async def test_server_agent_run_eval_and_latest_score_flow() -> None:
         )
         assert latest.status_code == 200
         assert latest.json()["runId"] == completed["id"]
+
+        missing_run = await client.post(
+            "/eval-runs",
+            headers=headers,
+            json={"evalId": "missing_eval"},
+        )
+        assert missing_run.status_code == 404
+
+        other_dataset = await client.post(
+            "/datasets",
+            headers=headers,
+            json={
+                "agentId": "other-agent",
+                "name": "other",
+                "items": [{"input": "hello"}],
+            },
+        )
+        cross_agent = await client.post(
+            "/evals",
+            headers=headers,
+            json={
+                "agentId": "support",
+                "name": "bad",
+                "defaultDatasetId": other_dataset.json()["id"],
+                "criteria": [{"id": "ok", "name": "OK"}],
+            },
+        )
+        assert cross_agent.status_code == 400
 
 
 async def _poll_eval_run(
