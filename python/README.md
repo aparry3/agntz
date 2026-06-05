@@ -19,6 +19,12 @@ For local LLM execution through LiteLLM:
 pip install "agntz[litellm]"
 ```
 
+For hosted Python deployments backed by Postgres:
+
+```bash
+pip install "agntz[server,postgres,litellm]"
+```
+
 ## Create an agent
 
 Save this as `agents/support.yaml`:
@@ -191,8 +197,110 @@ client = agntz(
 )
 ```
 
-SQLite persists local runs, trace spans, sessions, and messages across process
+SQLite persists local runs, trace spans, sessions, messages, agent versions,
+aliases, datasets, evals, eval runs, latest scores, and API keys across process
 restarts.
+
+## Versioned agents
+
+Agents loaded from YAML files are imported into the configured store as
+immutable versions. Unchanged files are deduped by content hash, so restarting a
+local process does not create duplicate versions.
+
+```python
+result = client.agents.run(
+    agent_id="support@latest",
+    input={"userQuery": "Help me debug this invoice"},
+)
+
+versions = client.agents.list_versions("support")
+client.agents.set_alias("support", "stable", versions[0].created_at)
+
+stable = client.agents.run(agent_id="support@stable", input={"userQuery": "Hello"})
+exact = client.agents.run(
+    agent_id=f"support@{versions[0].created_at}",
+    input={"userQuery": "Replay this exact version"},
+)
+```
+
+The same resource exposes `list`, `get`, `create`, `update`, `delete`,
+`get_version`, `activate_version`, `set_alias`, and `remove_alias` for local and
+hosted clients.
+
+## Datasets and evals
+
+Datasets are scoped to an agent, and eval definitions can point to a default
+dataset. Eval runs preserve immutable history and update the latest score for
+the eval, dataset, and resolved agent version.
+
+```python
+dataset = client.datasets.create(
+    agent_id="support",
+    name="Refund checks",
+    items=[
+        {
+            "id": "refund-1",
+            "input": {"userQuery": "How do I request a refund?"},
+            "expected": {"intent": "refund"},
+        }
+    ],
+)
+
+definition = client.evals.create(
+    agent_id="support",
+    name="Support quality",
+    default_dataset_id=dataset.id,
+    criteria=[{"id": "helpful", "name": "Helpful", "threshold": 0.7}],
+    pass_threshold=0.7,
+)
+
+run = client.evals.run(eval_id=definition.id, agent_version="latest")
+latest = client.evals.get_latest_score(
+    eval_id=definition.id,
+    dataset_id=dataset.id,
+    resolved_agent_version=run.agent_version,
+)
+```
+
+Hosted eval runs return immediately with `running` status. Poll
+`client.evals.get_run(run.id)` or use `client.evals.cancel_run(run.id)` to stop a
+run. Pending cases are marked `cancelled`; in-flight provider calls are
+best-effort and may finish before the background runner observes cancellation.
+
+## Hosted Python service
+
+The Python package can run as an ASGI backend with the same core hosted surfaces
+used by the TypeScript service: health, run, run stream, async runs, run cancel,
+traces, agents, versions, aliases, datasets, eval definitions, eval runs, eval
+cancel, and latest eval scores.
+
+Create `app.py`:
+
+```python
+import os
+
+from agntz import LiteLLMModelProvider
+from agntz.server import create_app
+from agntz.stores import PostgresStore
+
+store = PostgresStore(os.environ["DATABASE_URL"])
+
+app = create_app(
+    store=store,
+    internal_secret=os.environ["AGNTZ_INTERNAL_SECRET"],
+    model_provider=LiteLLMModelProvider(),
+)
+```
+
+Run it with uvicorn:
+
+```bash
+uvicorn app:app --host 0.0.0.0 --port 8000
+```
+
+Bearer API keys resolve to user ids through the configured store. Internal
+worker calls use `X-Internal-Secret` plus `X-User-Id` or a `userId` field in the
+JSON request body.
 
 ## Memrez
 
@@ -244,19 +352,26 @@ provider, or a Python store. The same YAML file can be loaded by both runtimes.
 
 Implemented in this package:
 
-- Hosted sync and async clients for run, run stream, runs, and traces.
+- Hosted sync and async clients for agents, versions, aliases, run, run stream,
+  async runs, traces, datasets, evals, eval runs, cancellation, and eval scores.
+- FastAPI/ASGI hosted service factory for Python deployments.
 - Local YAML execution for `llm`, `tool`, `sequential`, and `parallel` agents.
 - Local Python tools, HTTP tools, MCP JSON-RPC tools, and agent-as-tool calls.
+- Versioned local and hosted agent resolution for bare ids, `@latest`, exact
+  timestamps, and aliases.
+- First-class datasets, eval definitions, eval runs, and latest-score tracking.
 - Runtime namespace grants, resource providers, and the memrez memory provider.
 - Memrez in-memory, SQLite, and Postgres memory stores.
 - LiteLLM-backed model execution with tool-call loop support.
-- Memory and SQLite stores for runs, trace spans, sessions, and messages.
+- Memory, SQLite, and Postgres stores for hosted service data including runs,
+  traces, sessions, agent versions, aliases, eval data, latest scores, and API
+  keys.
 - Contract fixtures shared with the TypeScript manifest package.
 
 Still intentionally outside this first Python package slice:
 
-- The hosted app and worker remain TypeScript services.
-- First-class evals are being rebuilt outside the legacy manifest-level API.
+- The hosted product UI remains TypeScript.
+- Terminal eval commands remain in the Node CLI.
 - Streaming token deltas for local Python execution are not exposed yet.
 
 ## Development
