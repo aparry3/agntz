@@ -41,7 +41,7 @@ const OPTIONS: Option[] = [
 		tagline: "Skip the operations.",
 		bullets: [
 			"Visual agent builder + version history",
-			"Managed tracing, evals, and sessions",
+			"Managed tracing, sessions, and planned evals",
 			"Team collaboration & access control",
 			"Auto-scaled, monitored, backed up",
 		],

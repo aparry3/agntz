@@ -120,10 +120,6 @@ describe("SqliteStore", () => {
 				tools: [{ type: "inline", name: "test_tool" }],
 				tags: ["test", "example"],
 				metadata: { custom: "value" },
-				eval: {
-					rubric: "Be helpful",
-					testCases: [{ input: "test", expectedOutput: "response" }],
-				},
 			};
 
 			await store.putAgent(fullAgent);
@@ -131,7 +127,6 @@ describe("SqliteStore", () => {
 			expect(result?.examples).toEqual([{ input: "hello", output: "hi" }]);
 			expect(result?.tools).toEqual([{ type: "inline", name: "test_tool" }]);
 			expect(result?.tags).toEqual(["test", "example"]);
-			expect(result?.eval?.rubric).toBe("Be helpful");
 		});
 	});
 

@@ -1,6 +1,6 @@
 # What is agntz?
 
-**agntz** is an open-source TypeScript SDK for defining, running, and evaluating AI agents. It treats agents as portable, self-contained data structures — not code — that can be stored, versioned, shared, and loaded from any backing store.
+**agntz** is an open-source TypeScript SDK for defining and running AI agents. It treats agents as portable, self-contained data structures — not code — that can be stored, versioned, shared, and loaded from any backing store.
 
 ## The Problem
 
@@ -8,7 +8,7 @@ Building AI agents in TypeScript today requires choosing between:
 
 - **Heavy frameworks** (LangChain, Mastra) — opinionated, hard to debug, lock you into their abstractions
 - **Provider-specific SDKs** (OpenAI Agents SDK) — lightweight but tied to one provider
-- **UI-first platforms** (Vercel AI SDK) — great for streaming but not focused on agent definition or evaluation
+- **UI-first platforms** (Vercel AI SDK) — great for streaming but not focused on portable agent definitions
 - **Rolling your own** — maximum flexibility, zero reuse, no tooling
 
 None solve these problems simultaneously:
@@ -17,7 +17,7 @@ None solve these problems simultaneously:
 2. **Bring-your-own storage** — plug in your own persistence
 3. **MCP-native tooling** — first-class Model Context Protocol support
 4. **Shared context** — multi-agent systems with shared state
-5. **Built-in evaluation** — test your agents, not just your code
+5. **Observable runs** — trace, inspect, and replay agent behavior
 
 ## The Solution
 
@@ -27,9 +27,9 @@ agntz is organized around three activities:
 |----------|------|--------|
 | **Running** | `createRunner()` → `invoke()` | — |
 | **Defining** | `defineAgent()` + `defineTool()` | Agent Editor + Tool Catalog |
-| **Testing** | `runner.eval()` | Evals Dashboard + Playground |
+| **Observing** | `runs` + `traces` | Run History + Trace Viewer |
 
-Running is code-only. Defining and Testing work in both code and the Studio. This keeps the production runtime minimal while providing a rich development experience.
+Running is code-only. Defining and observing work in both code and the Studio. This keeps the production runtime minimal while providing a rich development experience.
 
 ## Key Principles
 
@@ -99,7 +99,7 @@ The same YAML can be loaded by service code through `@agntz/sdk`.
 | Agent-as-config | ✅ | ❌ | ❌ | ❌ |
 | Pluggable storage | ✅ | Partial | ❌ | ❌ |
 | MCP native | ✅ | Bolt-on | ❌ | ❌ |
-| Built-in evals | ✅ | ❌ | ❌ | ❌ |
+| First-class evals | Roadmap | ❌ | ❌ | ❌ |
 | Skills (mid-run instruction loading) | ✅ | ❌ | ❌ | ❌ |
 | Concurrent sub-agent spawning | ✅ | Partial | ❌ | ❌ |
 | Tracked Runs + replay | ✅ | ❌ | ❌ | ❌ |

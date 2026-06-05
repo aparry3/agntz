@@ -180,7 +180,7 @@ That's it. **5 files, clean separation, testable agents.**
 | Tool schemas | Hand-written JSON Schema per provider | Zod → auto-generated |
 | Context sharing | Custom global state / DB queries | Named context buckets, auto-injection |
 | Model switching | Rewrite tool schemas + API calls | Change one string (`model.provider`) |
-| Testing | Mock everything manually | `runner.eval()` with assertions |
+| Regression checks | Mock everything manually | Project-specific tests until first-class evals land |
 | CLI workflow | None | Generate YAML and run agents locally with `npx @agntz/sdk` |
 | Observability | Custom logging | Built-in logs + optional OpenTelemetry |
 
@@ -216,39 +216,11 @@ npx @agntz/sdk run ./agents/chat.yaml --input "Can I reschedule today's class?"
 Use service code when the agent needs GymText-specific local tools or resource
 providers.
 
-## Adding Evals
+## Regression Checks
 
-Test your agents like you test your code:
-
-```typescript
-const chatAgent = defineAgent({
-  id: "chat",
-  // ... agent config ...
-  eval: {
-    testCases: [
-      {
-        name: "generates workout on request",
-        input: "Give me a leg day workout",
-        assertions: [
-          { type: "contains", value: "squat" },
-          { type: "llm-rubric", value: "Response includes a structured workout with sets and reps" },
-        ],
-      },
-      {
-        name: "acknowledges logged workout",
-        input: "I just did 3 sets of bench press at 185lbs",
-        assertions: [
-          { type: "llm-rubric", value: "Response acknowledges the workout and is encouraging" },
-        ],
-      },
-    ],
-    passThreshold: 0.8,
-  },
-});
-```
-
-Run evals from code or a project-specific script until CLI eval execution is
-available again.
+Keep GymText-specific regression tests in your application test suite for now.
+The old manifest-level eval API has been removed while evals are rebuilt as
+first-class records with separate datasets, async runs, snapshots, and history.
 
 ## Key Differences from Custom Code
 
@@ -260,4 +232,4 @@ available again.
 
 4. **Sessions are automatic.** Pass a `sessionId` and agntz handles load, append, and trim.
 
-5. **Testing is built in.** No mocking the entire AI stack — `runner.eval()` runs your agent through test cases with real or mock models.
+5. **Runs are observable.** Tracked runs and traces let you inspect behavior without rebuilding your own logging layer.

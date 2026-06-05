@@ -133,14 +133,6 @@ export type {
 } from "./namespace.js";
 export { makeResourceToolName, resourceToolPrefix } from "./resource.js";
 
-// Eval
-export { runEval } from "./eval.js";
-export type {
-	AssertionResult,
-	EvalRunOptions,
-	CustomAssertionFn,
-} from "./eval.js";
-
 // Webhooks
 export {
 	createWebhookDispatcher,
@@ -232,11 +224,6 @@ export type {
 	// Logs
 	InvocationLog,
 	LogFilter,
-	// Evaluation
-	EvalConfig,
-	EvalTestCase,
-	EvalAssertion,
-	EvalResult,
 	// Configuration
 	RunnerConfig,
 	MCPServerConfig,

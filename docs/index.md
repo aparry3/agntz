@@ -3,7 +3,7 @@ layout: home
 hero:
   name: agntz
   text: AI Agents as Data
-  tagline: A TypeScript SDK for defining, running, and evaluating AI agents with first-class MCP support, pluggable storage, and a built-in Studio.
+  tagline: A TypeScript SDK for defining and running AI agents with first-class MCP support, pluggable storage, and a built-in Studio.
   actions:
     - theme: brand
       text: Get Started
@@ -29,8 +29,8 @@ features:
     title: CLI-first Authoring
     details: "Use @agntz/sdk's agntz executable to create YAML agents and run them locally before moving to hosted execution."
   - icon: ✅
-    title: Evals Built In
-    details: Define test cases with assertions (contains, regex, JSON schema, LLM-as-judge, semantic similarity) and run them from code.
+    title: Evals Roadmap
+    details: First-class eval records, datasets, async runs, and version comparisons are planned outside agent manifests.
   - icon: ⚡
     title: Five-Line Hello World
     details: createRunner → defineAgent → invoke → output. Zero config to start, infinite extensibility when you need it.

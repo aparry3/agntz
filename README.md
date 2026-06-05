@@ -1,6 +1,6 @@
 # agntz
 
-TypeScript and Python SDKs for defining, running, and evaluating AI agents. Agents are portable, JSON-serializable configurations — not code. Plug in any storage backend, any model provider, any tools.
+TypeScript and Python SDKs for defining and running AI agents. Agents are portable, JSON-serializable configurations — not code. Plug in any storage backend, any model provider, any tools.
 
 ```typescript
 import { createRunner, defineAgent } from "agntz";
@@ -26,7 +26,7 @@ console.log(result.output);
 | Agents are code, not portable config | Agent definitions are JSON-serializable data |
 | Locked into one storage backend | Pluggable stores (memory, JSON files, SQLite, Postgres) |
 | MCP bolted on as an afterthought | MCP is a first-class tool source |
-| No built-in testing | Eval system with assertions, LLM-as-judge, CI integration |
+| Testing belongs outside agent behavior | First-class eval records are being rebuilt separately from agent manifests |
 | No visual tooling | Bundled multi-tenant web UI (`packages/app`) |
 | Heavy framework overhead | Minimal library — import what you need |
 
@@ -408,36 +408,9 @@ const server = createMCPServer(runner);
 
 ## Evals
 
-Built-in evaluation with assertions, LLM-as-judge, and CI integration:
-
-```typescript
-runner.registerAgent(defineAgent({
-  id: "classifier",
-  name: "Classifier",
-  systemPrompt: "Classify support tickets...",
-  model: { provider: "openai", name: "gpt-5.4" },
-  eval: {
-    rubric: "Must correctly classify the ticket category",
-    testCases: [
-      {
-        name: "billing issue",
-        input: "I was charged twice",
-        assertions: [
-          { type: "contains", value: "billing" },
-          { type: "llm-rubric", value: "Response identifies this as a billing issue" },
-        ],
-      },
-    ],
-  },
-}));
-
-// Run evals programmatically
-const results = await runner.eval("classifier");
-console.log(results.summary);
-// → { total: 1, passed: 1, failed: 0, score: 1.0 }
-```
-
-Assertion types: `contains`, `not-contains`, `regex`, `json-schema`, `llm-rubric`, `semantic-similar`, plus custom assertion plugins.
+The previous manifest-level eval API has been removed. Evals are being rebuilt
+as first-class records with separate datasets, async runs, snapshots, and run
+history so agent definitions stay focused on behavior.
 
 ## Session Strategies
 

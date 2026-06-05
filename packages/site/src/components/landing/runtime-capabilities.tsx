@@ -63,7 +63,7 @@ const CAPS: Cap[] = [
 	},
 	{
 		title: "Evals",
-		body: "Score outputs against fixtures, regress on every change, and gate deploys. UI ships with the hosted plan.",
+		body: "Planned first-class eval records with reusable datasets, async runs, and version comparisons.",
 		icon: <CheckIcon />,
 		link: "evals",
 		tag: "planned",

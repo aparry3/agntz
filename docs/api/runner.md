@@ -55,8 +55,6 @@ interface RunnerOptions {
   // Retry config
   retry?: RetryConfig;
 
-  // Custom eval assertion plugins
-  evalPlugins?: Record<string, AssertionPlugin>;
 }
 ```
 
@@ -84,9 +82,6 @@ interface Runner {
     add(contextId: string, entry: Omit<ContextEntry, 'contextId'>): Promise<void>;
     clear(contextId: string): Promise<void>;
   };
-
-  // Run evals
-  eval(agentId: string, options?: EvalOptions): Promise<EvalResult>;
 
   // Graceful shutdown
   shutdown(): Promise<void>;

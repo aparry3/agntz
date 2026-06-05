@@ -25,7 +25,6 @@ Leftovers from the rename. Bundle these in a single PR.
 - [ ] 🤖 Fix remaining `aparryopenclaw` references in docs:
   - [ ] `CONTRIBUTING.md:9` (git clone URL)
   - [ ] `docs/index.md:13` (GitHub link)
-  - [ ] `docs/guide/ci-evals.md:44,54,67,101` (workflow references)
   - [ ] `docs/guide/templates.md:143` (`examples/gymtext` link — either repoint or remove)
 - [ ] 🤖 Update `CHANGELOG.md` lines 3 and 7 (`agent-runner` → `agntz`).
 - [ ] 🤖 Refresh `PUBLISH.md` — "Current State" table still lists unscoped `agntz` and a nonexistent `@agntz/studio`; update to reflect the 5 actual scoped packages.

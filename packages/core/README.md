@@ -5,7 +5,7 @@
 [![Node.js](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen.svg)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7+-blue.svg)](https://www.typescriptlang.org/)
 
-TypeScript SDK for defining, running, and evaluating AI agents. Agents are portable, JSON-serializable configurations — not code. Plug in any storage backend, any model provider, any tools.
+TypeScript SDK for defining and running AI agents. Agents are portable, JSON-serializable configurations — not code. Plug in any storage backend, any model provider, any tools.
 
 > This is the core package of the [agntz](https://github.com/aparry3/agntz) monorepo.
 
@@ -260,35 +260,9 @@ const server = createMCPServer(runner);
 
 ### Evals
 
-Built-in evaluation with assertions, LLM-as-judge, and CI integration:
-
-```typescript
-runner.registerAgent(defineAgent({
-  id: "classifier",
-  name: "Classifier",
-  systemPrompt: "Classify support tickets...",
-  model: { provider: "openai", name: "gpt-5.4" },
-  eval: {
-    rubric: "Must correctly classify the ticket category",
-    testCases: [
-      {
-        name: "billing issue",
-        input: "I was charged twice",
-        assertions: [
-          { type: "contains", value: "billing" },
-          { type: "llm-rubric", value: "Response identifies this as a billing issue" },
-        ],
-      },
-    ],
-  },
-}));
-
-const results = await runner.eval("classifier");
-console.log(results.summary);
-// → { total: 1, passed: 1, failed: 0, score: 1.0 }
-```
-
-**Assertion types:** `contains`, `not-contains`, `regex`, `json-schema`, `llm-rubric`, `semantic-similar`, plus custom assertion plugins.
+The previous manifest-level eval API has been removed. Evals are being rebuilt
+as first-class records outside `AgentDefinition`, with separate datasets, async
+runs, snapshots, and history.
 
 ## Storage
 
@@ -412,7 +386,6 @@ const tool = defineTool({
 | `runner.invoke(agentId, input, options?)` | Invoke an agent and get the result |
 | `runner.stream(agentId, input, options?)` | Stream an agent invocation |
 | `runner.registerAgent(agent)` | Register an agent definition |
-| `runner.eval(agentId, options?)` | Run evaluations for an agent |
 | `runner.shutdown()` | Clean up MCP connections and flush stores |
 
 ### Key Types

@@ -43,7 +43,6 @@ const agent = defineAgent({
 | `userPromptTemplate` | `string` | | Template with `{{input}}` placeholder; wraps user input |
 | `outputSchema` | `JsonSchema` | | Structured output constraint |
 | `contextWrite` | `boolean` | | Auto-write output to context |
-| `eval` | `EvalConfig` | | Evaluation configuration |
 | `tags` | `string[]` | | Categorization tags |
 | `metadata` | `Record<string, unknown>` | | Custom metadata |
 

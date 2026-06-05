@@ -131,4 +131,4 @@ application-specific runtime context.
 - [Agents](/guide/agents) — Deep dive into agent definitions
 - [Tools](/guide/tools) — Inline tools, MCP tools, and agent-as-tool
 - [Context](/guide/context) — Shared state across agents
-- [Evals](/guide/evals) — Test your agents
+- [Runs](/guide/runs) — Track and inspect agent executions

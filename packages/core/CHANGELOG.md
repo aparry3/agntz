@@ -54,7 +54,7 @@
 
 - [#5](https://github.com/aparry3/agntz/pull/5) [`5a6a2e5`](https://github.com/aparry3/agntz/commit/5a6a2e533246621319462f204f3e023f1458d678) Thanks [@aparry3](https://github.com/aparry3)! - First public release under the `@agntz/*` scope (renamed from `agent-runner`).
 
-  - `@agntz/core`: TypeScript SDK for defining, running, and evaluating AI agents with first-class MCP support and pluggable storage.
+  - `@agntz/core`: TypeScript SDK for defining and running AI agents with first-class MCP support and pluggable storage.
   - `@agntz/manifest`: YAML manifest engine — parser, template engine, state management, and pipeline execution.
   - `@agntz/sdk`: universal HTTP client for the agntz API (Node + browser, SSE streaming).
   - `@agntz/store-postgres`: PostgreSQL store adapter for multi-server deployments.

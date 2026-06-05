@@ -83,4 +83,4 @@ npx @agntz/sdk run ./agents/poet.yaml --input "Write about coffee"
 - Add [tools](/guide/tools) to give your agent capabilities
 - Use [sessions](/guide/sessions) for multi-turn conversations
 - Share state between agents with [context](/guide/context)
-- Test behavior with [evals](/guide/evals)
+- Inspect behavior with [runs](/guide/runs) and [traces](/guide/traces)

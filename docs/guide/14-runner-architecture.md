@@ -114,7 +114,6 @@ Key methods:
 | `invoke(agentId, input, opts)` | Synchronous run — returns `InvokeResult` once the loop terminates |
 | `stream(agentId, input, opts)` | Async iterable of `StreamEvent`s + a `result` promise |
 | `registerAgent(agent)` / `registerTool(tool)` | In-memory registration (vs. store-persisted) |
-| `eval(agentId, opts)` | Run an evaluation suite |
 | `shutdown()` | Tears down MCP clients |
 
 There are also `.agents`, `.sessions`, `.contexts`, `.logs`, `.providers`, `.connections`, `.model`, `.tools`, `.mcp` getters used by the Studio UI to introspect.

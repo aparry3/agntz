@@ -60,7 +60,7 @@ Each section advances a single thesis: **config + versioning + observability + p
 3. Agents your team can ship, change, and trust.
 
 **Subhead:**
-> Open-source agents you define once, version automatically, and run anywhere. Traces, evals, and debugging built in.
+> Open-source agents you define once, version automatically, and run anywhere. Traces, sessions, and debugging built in.
 
 **Subhead alt (if fewer claims read cleaner):**
 > The open-source agent framework with versioning and observability built in.
@@ -207,7 +207,7 @@ await agntz.agents.run({
 **Body:**
 > See the prompt. See the response. See every tool call. See the version that ran it. Built in, not bolted on.
 >
-> Every run captures the full execution graph — spans for model calls, tool calls, and child agents. Replay any trace. Compare runs. Score outputs against evals. No OpenTelemetry duct tape, no second vendor.
+> Every run captures the full execution graph — spans for model calls, tool calls, and child agents. Replay any trace. Compare runs. Debug regressions without bolting on a second vendor.
 
 **Inline link:** *Jump from any trace to the agent version that produced it. →*
 
@@ -218,7 +218,7 @@ await agntz.agents.run({
 
 ### Notes
 
-- "Score outputs against evals" — verify the evals product is real or roadmapped before shipping this line. If not, replace with "Replay them to debug regressions."
+- Evals are roadmap work; keep this section focused on shipped run and trace behavior until the first-class eval product lands.
 - The "jump from trace to version" link is the Path A integration that ties observability and versioning together; it's the strongest cross-feature story we have.
 
 ---
@@ -476,9 +476,9 @@ Today, `RunInput.agentId` is a plain string. The runner calls `agentStore.getAge
 
 Section 5 (versioning spotlight) claims this. If diff view doesn't exist yet in `packages/app`, either build it or remove the line from the copy.
 
-### 5. "Score outputs against evals"
+### 5. Evals copy
 
-Section 4 (observability spotlight) claims this. Confirm with engineering whether evals are real, roadmapped, or aspirational. If aspirational, swap for `"Replay them to debug regressions."`
+Keep eval claims out of shipped landing-page copy until the first-class eval product lands.
 
 ---
 

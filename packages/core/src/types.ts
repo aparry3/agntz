@@ -65,9 +65,6 @@ export interface AgentDefinition {
 	/** If true, output auto-writes to context */
 	contextWrite?: boolean;
 
-	/** Evaluation configuration */
-	eval?: EvalConfig;
-
 	/**
 	 * Resource limits this agent defaults to. Callers can tighten via
 	 * `InvokeOptions` but cannot raise above these ceilings — the runner takes
@@ -561,64 +558,6 @@ export interface LogFilter {
 	since?: string;
 	limit?: number;
 	offset?: number;
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// Evaluation
-// ═══════════════════════════════════════════════════════════════════════
-
-export interface EvalConfig {
-	rubric?: string;
-	evalModel?: string;
-	testCases?: EvalTestCase[];
-	autoEval?: boolean;
-	passThreshold?: number;
-}
-
-export interface EvalTestCase {
-	name?: string;
-	input: string;
-	expectedOutput?: string;
-	assertions?: EvalAssertion[];
-	context?: string;
-}
-
-export interface EvalAssertion {
-	type:
-		| "contains"
-		| "not-contains"
-		| "regex"
-		| "json-schema"
-		| "llm-rubric"
-		| "semantic-similar"
-		| "custom";
-	value: string | object;
-	weight?: number;
-}
-
-export interface EvalResult {
-	agentId: string;
-	timestamp: string;
-	duration: number;
-	testCases: Array<{
-		name: string;
-		input: string;
-		output: string;
-		assertions: Array<{
-			type: string;
-			passed: boolean;
-			score?: number;
-			reason?: string;
-		}>;
-		passed: boolean;
-		score: number;
-	}>;
-	summary: {
-		total: number;
-		passed: number;
-		failed: number;
-		score: number;
-	};
 }
 
 // ═══════════════════════════════════════════════════════════════════════

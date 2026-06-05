@@ -6,7 +6,7 @@ All notable changes to agntz will be documented in this file.
 
 ### 🎉 Initial Release
 
-First complete release of agntz — a TypeScript SDK for defining, running, and evaluating AI agents with first-class MCP support and pluggable storage.
+First complete release of agntz — a TypeScript SDK for defining and running AI agents with first-class MCP support and pluggable storage.
 
 ### Core SDK (`@agntz/core`)
 
@@ -15,7 +15,6 @@ First complete release of agntz — a TypeScript SDK for defining, running, and 
 - **`defineTool()`** — Type-safe tool definitions with Zod schemas and execution context
 - **`invoke()`** — Full agent execution loop (model → tool calls → repeat until done)
 - **`stream()`** — Streaming invocation with typed events (text-delta, tool-call-start/end, done)
-- **`eval()`** — Built-in evaluation with 6 assertion types + custom plugins
 - **Sessions** — Conversational continuity with sliding window, summary, and no-trim strategies
 - **Context** — Named shared-state buckets for multi-agent collaboration
 - **Agent-as-tool** — Agents can invoke other agents as tools (configurable recursion depth)
@@ -31,7 +30,7 @@ First complete release of agntz — a TypeScript SDK for defining, running, and 
 
 ### Studio (`@agntz/studio`)
 
-- **8 pages** — Agent Editor, Tool Catalog, MCP Servers, Playground, Evals Dashboard, Context Browser, Sessions, Logs
+- **7 pages** — Agent Editor, Tool Catalog, MCP Servers, Playground, Context Browser, Sessions, Logs
 - **Hono API server** — Full REST API auto-generated from runner stores
 - **React + Vite SPA** — Dark theme, 260KB bundle (80KB gzipped)
 - **Embeddable** — `createStudio(runner)` standalone or `studioMiddleware(runner)` for Express/Hono/Next.js

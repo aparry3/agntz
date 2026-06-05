@@ -256,7 +256,7 @@ Implemented in this package:
 Still intentionally outside this first Python package slice:
 
 - The hosted app and worker remain TypeScript services.
-- Python does not reimplement the TypeScript eval product yet.
+- First-class evals are being rebuilt outside the legacy manifest-level API.
 - Streaming token deltas for local Python execution are not exposed yet.
 
 ## Development
