@@ -11,6 +11,11 @@ from .memory import (
 )
 from .sqlite import SQLiteStore
 
+try:
+    from .postgres import PostgresStore
+except Exception:  # pragma: no cover - postgres extra may be absent.
+    PostgresStore = None  # type: ignore[assignment]
+
 __all__ = [
     "LocalMessageRecord",
     "LocalRunRecord",
@@ -18,6 +23,7 @@ __all__ = [
     "LocalTraceRecord",
     "LocalTraceSpanRecord",
     "MemoryStore",
+    "PostgresStore",
     "RunStore",
     "SQLiteStore",
 ]

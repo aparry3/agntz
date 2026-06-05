@@ -61,6 +61,20 @@ jobs:
   python:
     name: Python SDK
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: agntz
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d agntz"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
@@ -71,10 +85,12 @@ jobs:
 
       - name: Install Python SDK dependencies
         working-directory: python
-        run: python -m pip install -e '.[dev]'
+        run: python -m pip install -e '.[dev,postgres]'
 
       - name: Test Python SDK
         working-directory: python
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/agntz
         run: python -m pytest
 
       - name: Lint Python SDK

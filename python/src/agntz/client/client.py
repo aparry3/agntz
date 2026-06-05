@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator, Mapping
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import httpx
 
@@ -12,6 +12,13 @@ from ._sse import parse_sse, parse_sse_async
 from .errors import AgntzError, AuthenticationError, NotFoundError, StreamError
 from .events import normalize_agent_event, normalize_run_event, normalize_trace_event
 from .models import (
+    AgentDefinition,
+    AgentVersionSummary,
+    EvalDataset,
+    EvalDefinition,
+    EvalLatestScore,
+    EvalRun,
+    EvalRunListResult,
     Event,
     HealthResult,
     Run,
@@ -42,6 +49,8 @@ class AgntzClient:
         self._client = http_client or httpx.Client(timeout=timeout)
         self._owns_client = http_client is None
         self.agents = AgentsResource(self)
+        self.datasets = DatasetsResource(self)
+        self.evals = EvalsResource(self)
         self.runs = RunsResource(self)
         self.traces = TracesResource(self)
 
@@ -122,6 +131,8 @@ class AsyncAgntzClient:
         self._client = http_client or httpx.AsyncClient(timeout=timeout)
         self._owns_client = http_client is None
         self.agents = AsyncAgentsResource(self)
+        self.datasets = AsyncDatasetsResource(self)
+        self.evals = AsyncEvalsResource(self)
         self.runs = AsyncRunsResource(self)
         self.traces = AsyncTracesResource(self)
 
@@ -207,6 +218,68 @@ class AgentsResource:
         finally:
             stream_context.__exit__(None, None, None)
 
+    def list(self) -> list[dict[str, Any]]:
+        response = self._client._request("GET", "/agents")
+        return list(response.json())
+
+    def get(self, agent_id: str) -> AgentDefinition:
+        response = self._client._request("GET", f"/agents/{_q(agent_id)}")
+        return AgentDefinition.model_validate(response.json())
+
+    def create(
+        self,
+        agent: AgentDefinition | Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AgentDefinition:
+        response = self._client._request(
+            "POST",
+            "/agents",
+            json_body=_model_body(agent, kwargs),
+        )
+        return AgentDefinition.model_validate(response.json())
+
+    def update(
+        self,
+        agent_id: str,
+        patch: AgentDefinition | Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AgentDefinition:
+        response = self._client._request(
+            "PUT",
+            f"/agents/{_q(agent_id)}",
+            json_body=_model_body(patch, kwargs),
+        )
+        return AgentDefinition.model_validate(response.json())
+
+    def delete(self, agent_id: str) -> None:
+        self._client._request("DELETE", f"/agents/{_q(agent_id)}")
+
+    def list_versions(self, agent_id: str) -> list[AgentVersionSummary]:
+        response = self._client._request("GET", f"/agents/{_q(agent_id)}/versions")
+        return [AgentVersionSummary.model_validate(row) for row in response.json()]
+
+    def get_version(self, agent_id: str, created_at: str) -> AgentDefinition:
+        response = self._client._request(
+            "GET",
+            f"/agents/{_q(agent_id)}/versions/{_q(created_at)}",
+        )
+        return AgentDefinition.model_validate(response.json())
+
+    def activate_version(self, agent_id: str, created_at: str) -> None:
+        self._client._request("POST", f"/agents/{_q(agent_id)}/versions/{_q(created_at)}/activate")
+
+    def set_alias(self, agent_id: str, alias: str, created_at: str) -> dict[str, Any]:
+        response = self._client._request(
+            "PUT",
+            f"/agents/{_q(agent_id)}/aliases/{_q(alias)}",
+            json_body={"createdAt": created_at},
+        )
+        return dict(response.json())
+
+    def remove_alias(self, agent_id: str, alias: str) -> dict[str, Any]:
+        response = self._client._request("DELETE", f"/agents/{_q(agent_id)}/aliases/{_q(alias)}")
+        return dict(response.json())
+
 
 class AsyncAgentsResource:
     def __init__(self, client: AsyncAgntzClient) -> None:
@@ -254,6 +327,414 @@ class AsyncAgentsResource:
                     return
             if not saw_terminal:
                 raise StreamError("Stream closed before completion", code="STREAM_TRUNCATED")
+
+    async def list(self) -> list[dict[str, Any]]:
+        response = await self._client._request("GET", "/agents")
+        return list(response.json())
+
+    async def get(self, agent_id: str) -> AgentDefinition:
+        response = await self._client._request("GET", f"/agents/{_q(agent_id)}")
+        return AgentDefinition.model_validate(response.json())
+
+    async def create(
+        self,
+        agent: AgentDefinition | Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AgentDefinition:
+        response = await self._client._request(
+            "POST",
+            "/agents",
+            json_body=_model_body(agent, kwargs),
+        )
+        return AgentDefinition.model_validate(response.json())
+
+    async def update(
+        self,
+        agent_id: str,
+        patch: AgentDefinition | Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AgentDefinition:
+        response = await self._client._request(
+            "PUT",
+            f"/agents/{_q(agent_id)}",
+            json_body=_model_body(patch, kwargs),
+        )
+        return AgentDefinition.model_validate(response.json())
+
+    async def delete(self, agent_id: str) -> None:
+        await self._client._request("DELETE", f"/agents/{_q(agent_id)}")
+
+    async def list_versions(self, agent_id: str) -> list[AgentVersionSummary]:
+        response = await self._client._request("GET", f"/agents/{_q(agent_id)}/versions")
+        return [AgentVersionSummary.model_validate(row) for row in response.json()]
+
+    async def get_version(self, agent_id: str, created_at: str) -> AgentDefinition:
+        response = await self._client._request(
+            "GET",
+            f"/agents/{_q(agent_id)}/versions/{_q(created_at)}",
+        )
+        return AgentDefinition.model_validate(response.json())
+
+    async def activate_version(self, agent_id: str, created_at: str) -> None:
+        await self._client._request(
+            "POST",
+            f"/agents/{_q(agent_id)}/versions/{_q(created_at)}/activate",
+        )
+
+    async def set_alias(self, agent_id: str, alias: str, created_at: str) -> dict[str, Any]:
+        response = await self._client._request(
+            "PUT",
+            f"/agents/{_q(agent_id)}/aliases/{_q(alias)}",
+            json_body={"createdAt": created_at},
+        )
+        return dict(response.json())
+
+    async def remove_alias(self, agent_id: str, alias: str) -> dict[str, Any]:
+        response = await self._client._request(
+            "DELETE",
+            f"/agents/{_q(agent_id)}/aliases/{_q(alias)}",
+        )
+        return dict(response.json())
+
+
+class DatasetsResource:
+    def __init__(self, client: AgntzClient) -> None:
+        self._client = client
+
+    def list(self, *, agent_id: str | None = None) -> list[EvalDataset]:
+        response = self._client._request("GET", _with_query("/datasets", {"agentId": agent_id}))
+        return [EvalDataset.model_validate(row) for row in response.json()]
+
+    def create(
+        self,
+        dataset: EvalDataset | Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> EvalDataset:
+        response = self._client._request(
+            "POST",
+            "/datasets",
+            json_body=_model_body(dataset, kwargs),
+        )
+        return EvalDataset.model_validate(response.json())
+
+    def get(self, dataset_id: str) -> EvalDataset:
+        response = self._client._request("GET", f"/datasets/{_q(dataset_id)}")
+        return EvalDataset.model_validate(response.json())
+
+    def update(
+        self,
+        dataset_id: str,
+        patch: EvalDataset | Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> EvalDataset:
+        response = self._client._request(
+            "PUT",
+            f"/datasets/{_q(dataset_id)}",
+            json_body=_model_body(patch, kwargs),
+        )
+        return EvalDataset.model_validate(response.json())
+
+    def delete(self, dataset_id: str) -> None:
+        self._client._request("DELETE", f"/datasets/{_q(dataset_id)}")
+
+
+class AsyncDatasetsResource:
+    def __init__(self, client: AsyncAgntzClient) -> None:
+        self._client = client
+
+    async def list(self, *, agent_id: str | None = None) -> list[EvalDataset]:
+        response = await self._client._request(
+            "GET",
+            _with_query("/datasets", {"agentId": agent_id}),
+        )
+        return [EvalDataset.model_validate(row) for row in response.json()]
+
+    async def create(
+        self,
+        dataset: EvalDataset | Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> EvalDataset:
+        response = await self._client._request(
+            "POST",
+            "/datasets",
+            json_body=_model_body(dataset, kwargs),
+        )
+        return EvalDataset.model_validate(response.json())
+
+    async def get(self, dataset_id: str) -> EvalDataset:
+        response = await self._client._request("GET", f"/datasets/{_q(dataset_id)}")
+        return EvalDataset.model_validate(response.json())
+
+    async def update(
+        self,
+        dataset_id: str,
+        patch: EvalDataset | Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> EvalDataset:
+        response = await self._client._request(
+            "PUT",
+            f"/datasets/{_q(dataset_id)}",
+            json_body=_model_body(patch, kwargs),
+        )
+        return EvalDataset.model_validate(response.json())
+
+    async def delete(self, dataset_id: str) -> None:
+        await self._client._request("DELETE", f"/datasets/{_q(dataset_id)}")
+
+
+class EvalsResource:
+    def __init__(self, client: AgntzClient) -> None:
+        self._client = client
+
+    def list(self, *, agent_id: str | None = None) -> list[EvalDefinition]:
+        response = self._client._request("GET", _with_query("/evals", {"agentId": agent_id}))
+        return [EvalDefinition.model_validate(row) for row in response.json()]
+
+    def create(
+        self,
+        definition: EvalDefinition | Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> EvalDefinition:
+        response = self._client._request(
+            "POST",
+            "/evals",
+            json_body=_model_body(definition, kwargs),
+        )
+        return EvalDefinition.model_validate(response.json())
+
+    def get(self, eval_id: str) -> EvalDefinition:
+        response = self._client._request("GET", f"/evals/{_q(eval_id)}")
+        return EvalDefinition.model_validate(response.json())
+
+    def update(
+        self,
+        eval_id: str,
+        patch: EvalDefinition | Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> EvalDefinition:
+        response = self._client._request(
+            "PUT",
+            f"/evals/{_q(eval_id)}",
+            json_body=_model_body(patch, kwargs),
+        )
+        return EvalDefinition.model_validate(response.json())
+
+    def delete(self, eval_id: str) -> None:
+        self._client._request("DELETE", f"/evals/{_q(eval_id)}")
+
+    def run(
+        self,
+        *,
+        eval_id: str,
+        dataset_id: str | None = None,
+        agent_version: str | None = None,
+    ) -> EvalRun:
+        body: dict[str, Any] = {"evalId": eval_id}
+        _add_if_defined(body, "datasetId", dataset_id)
+        _add_if_defined(body, "agentVersion", agent_version)
+        response = self._client._request("POST", "/eval-runs", json_body=body)
+        return EvalRun.model_validate(response.json())
+
+    def get_run(self, run_id: str) -> EvalRun:
+        response = self._client._request("GET", f"/eval-runs/{_q(run_id)}")
+        return EvalRun.model_validate(response.json())
+
+    def list_runs(
+        self,
+        *,
+        agent_id: str | None = None,
+        eval_id: str | None = None,
+        dataset_id: str | None = None,
+        status: str | None = None,
+        started_after: str | None = None,
+        started_before: str | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> EvalRunListResult:
+        response = self._client._request(
+            "GET",
+            _with_query(
+                "/eval-runs",
+                {
+                    "agentId": agent_id,
+                    "evalId": eval_id,
+                    "datasetId": dataset_id,
+                    "status": status,
+                    "startedAfter": started_after,
+                    "startedBefore": started_before,
+                    "limit": limit,
+                    "cursor": cursor,
+                },
+            ),
+        )
+        return EvalRunListResult.model_validate(response.json())
+
+    def cancel_run(self, run_id: str) -> EvalRun:
+        response = self._client._request("POST", f"/eval-runs/{_q(run_id)}/cancel")
+        return EvalRun.model_validate(response.json())
+
+    def get_latest_score(
+        self,
+        *,
+        eval_id: str,
+        dataset_id: str,
+        resolved_agent_version: str | None = None,
+    ) -> EvalLatestScore | None:
+        response = self._client._request(
+            "GET",
+            _with_query(
+                "/eval-scores/latest",
+                {
+                    "evalId": eval_id,
+                    "datasetId": dataset_id,
+                    "resolvedAgentVersion": resolved_agent_version,
+                },
+            ),
+        )
+        body = response.json()
+        return EvalLatestScore.model_validate(body) if body is not None else None
+
+    def list_latest_scores(
+        self,
+        *,
+        agent_id: str | None = None,
+        eval_id: str | None = None,
+        dataset_id: str | None = None,
+        resolved_agent_version: str | None = None,
+        status: str | None = None,
+    ) -> list[EvalLatestScore]:
+        response = self._client._request(
+            "GET",
+            _with_query(
+                "/eval-scores",
+                {
+                    "agentId": agent_id,
+                    "evalId": eval_id,
+                    "datasetId": dataset_id,
+                    "resolvedAgentVersion": resolved_agent_version,
+                    "status": status,
+                },
+            ),
+        )
+        return [EvalLatestScore.model_validate(row) for row in response.json()]
+
+
+class AsyncEvalsResource:
+    def __init__(self, client: AsyncAgntzClient) -> None:
+        self._client = client
+
+    async def list(self, *, agent_id: str | None = None) -> list[EvalDefinition]:
+        response = await self._client._request("GET", _with_query("/evals", {"agentId": agent_id}))
+        return [EvalDefinition.model_validate(row) for row in response.json()]
+
+    async def create(
+        self,
+        definition: EvalDefinition | Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> EvalDefinition:
+        response = await self._client._request(
+            "POST",
+            "/evals",
+            json_body=_model_body(definition, kwargs),
+        )
+        return EvalDefinition.model_validate(response.json())
+
+    async def get(self, eval_id: str) -> EvalDefinition:
+        response = await self._client._request("GET", f"/evals/{_q(eval_id)}")
+        return EvalDefinition.model_validate(response.json())
+
+    async def update(
+        self,
+        eval_id: str,
+        patch: EvalDefinition | Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> EvalDefinition:
+        response = await self._client._request(
+            "PUT",
+            f"/evals/{_q(eval_id)}",
+            json_body=_model_body(patch, kwargs),
+        )
+        return EvalDefinition.model_validate(response.json())
+
+    async def delete(self, eval_id: str) -> None:
+        await self._client._request("DELETE", f"/evals/{_q(eval_id)}")
+
+    async def run(
+        self,
+        *,
+        eval_id: str,
+        dataset_id: str | None = None,
+        agent_version: str | None = None,
+    ) -> EvalRun:
+        body: dict[str, Any] = {"evalId": eval_id}
+        _add_if_defined(body, "datasetId", dataset_id)
+        _add_if_defined(body, "agentVersion", agent_version)
+        response = await self._client._request("POST", "/eval-runs", json_body=body)
+        return EvalRun.model_validate(response.json())
+
+    async def get_run(self, run_id: str) -> EvalRun:
+        response = await self._client._request("GET", f"/eval-runs/{_q(run_id)}")
+        return EvalRun.model_validate(response.json())
+
+    async def list_runs(self, **filters: Any) -> EvalRunListResult:
+        response = await self._client._request(
+            "GET",
+            _with_query(
+                "/eval-runs",
+                {
+                    "agentId": filters.get("agent_id"),
+                    "evalId": filters.get("eval_id"),
+                    "datasetId": filters.get("dataset_id"),
+                    "status": filters.get("status"),
+                    "startedAfter": filters.get("started_after"),
+                    "startedBefore": filters.get("started_before"),
+                    "limit": filters.get("limit"),
+                    "cursor": filters.get("cursor"),
+                },
+            ),
+        )
+        return EvalRunListResult.model_validate(response.json())
+
+    async def cancel_run(self, run_id: str) -> EvalRun:
+        response = await self._client._request("POST", f"/eval-runs/{_q(run_id)}/cancel")
+        return EvalRun.model_validate(response.json())
+
+    async def get_latest_score(
+        self,
+        *,
+        eval_id: str,
+        dataset_id: str,
+        resolved_agent_version: str | None = None,
+    ) -> EvalLatestScore | None:
+        response = await self._client._request(
+            "GET",
+            _with_query(
+                "/eval-scores/latest",
+                {
+                    "evalId": eval_id,
+                    "datasetId": dataset_id,
+                    "resolvedAgentVersion": resolved_agent_version,
+                },
+            ),
+        )
+        body = response.json()
+        return EvalLatestScore.model_validate(body) if body is not None else None
+
+    async def list_latest_scores(self, **filters: Any) -> list[EvalLatestScore]:
+        response = await self._client._request(
+            "GET",
+            _with_query(
+                "/eval-scores",
+                {
+                    "agentId": filters.get("agent_id"),
+                    "evalId": filters.get("eval_id"),
+                    "datasetId": filters.get("dataset_id"),
+                    "resolvedAgentVersion": filters.get("resolved_agent_version"),
+                    "status": filters.get("status"),
+                },
+            ),
+        )
+        return [EvalLatestScore.model_validate(row) for row in response.json()]
 
 
 class RunsResource:
@@ -522,6 +1003,33 @@ def _run_body(
 def _add_if_defined(body: dict[str, Any], key: str, value: Any) -> None:
     if value is not None:
         body[key] = value
+
+
+def _model_body(
+    value: Any,
+    kwargs: Mapping[str, Any],
+) -> dict[str, Any]:
+    if value is None:
+        body: dict[str, Any] = {}
+    elif hasattr(value, "model_dump"):
+        body = value.model_dump(by_alias=True, exclude_none=True)
+    else:
+        body = dict(value)
+    for key, item in kwargs.items():
+        if item is not None:
+            body[_snake_to_camel(key)] = item
+    return body
+
+
+def _snake_to_camel(value: str) -> str:
+    if "_" not in value:
+        return value
+    head, *tail = value.split("_")
+    return head + "".join(part[:1].upper() + part[1:] for part in tail)
+
+
+def _q(value: str) -> str:
+    return quote(value, safe="")
 
 
 def _headers(api_key: str | None, accept: str | None) -> dict[str, str]:

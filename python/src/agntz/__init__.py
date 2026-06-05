@@ -1,10 +1,24 @@
 """Python SDK and hosted client for Agntz."""
 
 from .client import (
+    AgentDefinition,
+    AgentListEntry,
+    AgentVersionSummary,
     AgntzClient,
     AgntzError,
+    ApiKeyRecord,
     AsyncAgntzClient,
     AuthenticationError,
+    EvalCaseResult,
+    EvalCriterion,
+    EvalCriterionResult,
+    EvalDataset,
+    EvalDatasetItem,
+    EvalDefinition,
+    EvalLatestScore,
+    EvalRun,
+    EvalRunListResult,
+    EvalRunSummary,
     NotFoundError,
     StreamError,
 )
@@ -42,6 +56,7 @@ from .stores import (
     LocalSessionSummary,
     LocalTraceSpanRecord,
     MemoryStore,
+    PostgresStore,
     SQLiteStore,
 )
 
@@ -50,8 +65,22 @@ __all__ = [
     "AgntzClient",
     "AgntzError",
     "AgntzReasoner",
+    "AgentDefinition",
+    "AgentListEntry",
+    "AgentVersionSummary",
     "AsyncAgntzClient",
     "AuthenticationError",
+    "ApiKeyRecord",
+    "EvalCaseResult",
+    "EvalCriterion",
+    "EvalCriterionResult",
+    "EvalDataset",
+    "EvalDatasetItem",
+    "EvalDefinition",
+    "EvalLatestScore",
+    "EvalRun",
+    "EvalRunListResult",
+    "EvalRunSummary",
     "GenerateTextResult",
     "LiteLLMModelProvider",
     "LocalClient",
@@ -68,6 +97,7 @@ __all__ = [
     "NamespaceGrantError",
     "NamespaceGrantPolicy",
     "NotFoundError",
+    "PostgresStore",
     "PostgresMemoryStore",
     "PostgresMemoryStoreOptions",
     "ProtectedNamespaceRule",
@@ -93,4 +123,4 @@ __all__ = [
     "tool",
 ]
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"

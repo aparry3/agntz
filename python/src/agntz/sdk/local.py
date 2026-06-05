@@ -3,18 +3,33 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import json
 import time
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, cast
 
 import httpx
 from pydantic import BaseModel
 
-from agntz.client.models import Event, RunResult
+from agntz.agent_ref import is_iso_timestamp, parse_agent_ref
+from agntz.client.models import AgentDefinition as StoredAgentDefinition
+from agntz.client.models import (
+    EvalDataset,
+    EvalDefinition,
+    EvalLatestScore,
+    EvalRun,
+    EvalRunListResult,
+    Event,
+    RunResult,
+)
+from agntz.client.models import (
+    ModelConfig as StoredModelConfig,
+)
 from agntz.context import NamespaceGrantPolicyLike, normalize_namespace_grants
 from agntz.core import (
     GenerateTextResult,
@@ -40,7 +55,9 @@ from agntz.core.ids import nanoid
 from agntz.core.ids import run_id as new_run_id
 from agntz.core.ids import session_id as new_session_id
 from agntz.core.ids import trace_id as new_trace_id
-from agntz.manifest import execute, load_manifests_from_dir
+from agntz.evals import TargetInvocation, latest_score_from_eval_run, run_eval
+from agntz.manifest import execute
+from agntz.manifest.parser import load_manifest_file, parse_manifest
 from agntz.manifest.types import (
     AgentManifest,
     AgentState,
@@ -75,9 +92,11 @@ class LocalClient:
         self.resource_providers = dict(resources or {})
         self.namespace_policy = namespace_policy
         self.model_provider = model_provider or MissingModelProvider()
-        self.store = store or MemoryStore()
+        self.store: Any = store or MemoryStore()
         self.http_client = http_client
         self.agents = LocalAgentsResource(self)
+        self.datasets = LocalDatasetsResource(self)
+        self.evals = LocalEvalsResource(self)
         self.runs = LocalRunsResource(self)
         self.sessions = LocalSessionsResource(self)
         self.traces = LocalTracesResource(self)
@@ -90,7 +109,8 @@ class LocalClient:
         session_id: str | None = None,
         context: list[str] | None = None,
     ) -> RunResult:
-        manifest = self.manifests[agent_id]
+        manifest, resolved_agent, _resolved_version = self._resolve_manifest(agent_id)
+        base_agent_id = resolved_agent.id
         resolved_session_id = session_id or new_session_id()
         normalized_context = normalize_namespace_grants(context, self.namespace_policy)
         local_run_id = new_run_id()
@@ -98,7 +118,7 @@ class LocalClient:
         started_at = time.time()
         ctx = _LocalExecutionContext(
             self,
-            agent_id=agent_id,
+            agent_id=base_agent_id,
             session_id=resolved_session_id,
             run_id=local_run_id,
             trace_id=local_trace_id,
@@ -109,19 +129,19 @@ class LocalClient:
             [
                 LocalMessageRecord(
                     session_id=resolved_session_id,
-                    agent_id=agent_id,
+                    agent_id=base_agent_id,
                     role="user",
                     content=_message_content(input),
                     timestamp=_iso_now(),
                 )
             ],
-            agent_id=agent_id,
+            agent_id=base_agent_id,
         )
         self.store.put_run(
             LocalRunRecord(
                 id=local_run_id,
                 root_id=local_run_id,
-                agent_id=agent_id,
+                agent_id=base_agent_id,
                 session_id=resolved_session_id,
                 status="running",
                 input=input,
@@ -131,7 +151,7 @@ class LocalClient:
             LocalTraceRecord(
                 trace_id=local_trace_id,
                 run_id=local_run_id,
-                agent_id=agent_id,
+                agent_id=base_agent_id,
                 session_id=resolved_session_id,
                 status="running",
                 started_at=started_at,
@@ -144,7 +164,7 @@ class LocalClient:
                 LocalRunRecord(
                     id=local_run_id,
                     root_id=local_run_id,
-                    agent_id=agent_id,
+                    agent_id=base_agent_id,
                     session_id=resolved_session_id,
                     status="failed",
                     input=input,
@@ -155,7 +175,7 @@ class LocalClient:
                 LocalTraceRecord(
                     trace_id=local_trace_id,
                     run_id=local_run_id,
-                    agent_id=agent_id,
+                    agent_id=base_agent_id,
                     session_id=resolved_session_id,
                     status="error",
                     started_at=started_at,
@@ -168,7 +188,7 @@ class LocalClient:
             LocalRunRecord(
                 id=local_run_id,
                 root_id=local_run_id,
-                agent_id=agent_id,
+                agent_id=base_agent_id,
                 session_id=resolved_session_id,
                 status="completed",
                 input=input,
@@ -180,19 +200,19 @@ class LocalClient:
             [
                 LocalMessageRecord(
                     session_id=resolved_session_id,
-                    agent_id=agent_id,
+                    agent_id=base_agent_id,
                     role="assistant",
                     content=_message_content(result.output),
                     timestamp=_iso_now(),
                 )
             ],
-            agent_id=agent_id,
+            agent_id=base_agent_id,
         )
         self.store.put_trace(
             LocalTraceRecord(
                 trace_id=local_trace_id,
                 run_id=local_run_id,
-                agent_id=agent_id,
+                agent_id=base_agent_id,
                 session_id=resolved_session_id,
                 status="ok",
                 started_at=started_at,
@@ -201,6 +221,81 @@ class LocalClient:
             )
         )
         return RunResult(output=result.output, state=result.state, sessionId=resolved_session_id)
+
+    def _resolve_manifest(
+        self,
+        agent_ref: str,
+    ) -> tuple[AgentManifest, StoredAgentDefinition, str | None]:
+        ref = parse_agent_ref(agent_ref)
+        version = ref.version
+        agent: StoredAgentDefinition | None = None
+        resolved_version: str | None = None
+        if version is None:
+            store: Any = self.store
+            getter = getattr(store, "get_agent", None)
+            agent = (
+                cast(StoredAgentDefinition | None, getter(ref.agent_id))
+                if callable(getter)
+                else None
+            )
+            resolved_version = agent.created_at if agent else None
+        elif version == "latest":
+            store = self.store
+            list_versions = getattr(store, "list_agent_versions", None)
+            get_version = getattr(store, "get_agent_version", None)
+            versions = cast(
+                list[Any],
+                list_versions(ref.agent_id) if callable(list_versions) else [],
+            )
+            resolved_version = versions[0].created_at if versions else None
+            agent = (
+                cast(StoredAgentDefinition | None, get_version(ref.agent_id, resolved_version))
+                if callable(get_version) and resolved_version
+                else None
+            )
+        elif is_iso_timestamp(version):
+            store = self.store
+            get_version = getattr(store, "get_agent_version", None)
+            resolved_version = version
+            agent = (
+                cast(StoredAgentDefinition | None, get_version(ref.agent_id, version))
+                if callable(get_version)
+                else None
+            )
+        else:
+            store = self.store
+            resolve_alias = getattr(store, "resolve_agent_alias", None)
+            get_version = getattr(store, "get_agent_version", None)
+            resolved_version = (
+                cast(str | None, resolve_alias(ref.agent_id, version))
+                if callable(resolve_alias)
+                else None
+            )
+            agent = (
+                cast(StoredAgentDefinition | None, get_version(ref.agent_id, resolved_version))
+                if callable(get_version) and resolved_version
+                else None
+            )
+        if agent is None:
+            manifest = self.manifests.get(ref.agent_id)
+            if manifest is None:
+                raise KeyError(agent_ref)
+            agent = _agent_definition_from_manifest(manifest, None)
+            resolved_version = None
+            return manifest, agent, resolved_version
+        manifest_source = (agent.metadata or {}).get("manifest")
+        if isinstance(manifest_source, str):
+            manifest = parse_manifest(manifest_source)
+        else:
+            manifest = self.manifests.get(agent.id)
+            if manifest is None:
+                raise KeyError(agent_ref)
+        self.manifests[agent.id] = manifest
+        return manifest, agent, resolved_version
+
+    def _resolve_agent_definition(self, agent_ref: str) -> tuple[StoredAgentDefinition, str | None]:
+        _manifest, agent, resolved_version = self._resolve_manifest(agent_ref)
+        return agent, resolved_version
 
 
 class LocalAgentsResource:
@@ -248,10 +343,10 @@ class LocalAgentsResource:
         context: list[str] | None = None,
     ) -> Iterator[Event]:
         resolved_session_id = session_id or new_session_id()
-        manifest = self._client.manifests[agent_id]
+        manifest, resolved_agent, _version = self._client._resolve_manifest(agent_id)
         yield Event(
             type="start",
-            agentId=agent_id,
+            agentId=resolved_agent.id,
             kind=manifest.kind,
             sessionId=resolved_session_id,
         )
@@ -266,6 +361,245 @@ class LocalAgentsResource:
             output=result.output,
             state=result.state,
             sessionId=result.session_id,
+        )
+
+    def list(self) -> list[dict[str, Any]]:
+        list_agents = self._client.store.list_agents
+        return list_agents()
+
+    def get(self, agent_id: str) -> StoredAgentDefinition | None:
+        ref = parse_agent_ref(agent_id)
+        getter = self._client.store.get_agent
+        return getter(ref.agent_id)
+
+    def create(
+        self,
+        agent: StoredAgentDefinition | dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> StoredAgentDefinition:
+        payload = _merge_payload(agent, kwargs)
+        stored = _agent_from_payload(payload)
+        result = self._client.store.put_agent(stored)
+        manifest_source = (result.metadata or {}).get("manifest")
+        if isinstance(manifest_source, str):
+            self._client.manifests[result.id] = parse_manifest(manifest_source)
+        return result
+
+    def update(
+        self,
+        agent_id: str,
+        patch: StoredAgentDefinition | dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> StoredAgentDefinition:
+        existing = self.get(agent_id)
+        if existing is None:
+            raise KeyError(agent_id)
+        payload = existing.model_dump(by_alias=True, exclude_none=True)
+        payload.update(_merge_payload(patch, kwargs))
+        payload["id"] = parse_agent_ref(agent_id).agent_id
+        return self.create(payload)
+
+    def delete(self, agent_id: str) -> None:
+        ref = parse_agent_ref(agent_id)
+        self._client.store.delete_agent(ref.agent_id)
+        self._client.manifests.pop(ref.agent_id, None)
+
+    def list_versions(self, agent_id: str) -> list[Any]:
+        return self._client.store.list_agent_versions(parse_agent_ref(agent_id).agent_id)
+
+    def get_version(self, agent_id: str, created_at: str) -> StoredAgentDefinition | None:
+        return self._client.store.get_agent_version(parse_agent_ref(agent_id).agent_id, created_at)
+
+    def activate_version(self, agent_id: str, created_at: str) -> None:
+        self._client.store.activate_agent_version(parse_agent_ref(agent_id).agent_id, created_at)
+
+    def set_alias(self, agent_id: str, alias: str, created_at: str) -> dict[str, str]:
+        base = parse_agent_ref(agent_id).agent_id
+        self._client.store.set_agent_version_alias(base, created_at, alias)
+        return {"agentId": base, "alias": alias, "createdAt": created_at}
+
+    def remove_alias(self, agent_id: str, alias: str) -> dict[str, Any]:
+        base = parse_agent_ref(agent_id).agent_id
+        self._client.store.remove_agent_version_alias(base, alias)
+        return {"agentId": base, "alias": alias, "removed": True}
+
+
+class LocalDatasetsResource:
+    def __init__(self, client: LocalClient) -> None:
+        self._client = client
+
+    def list(self, *, agent_id: str | None = None) -> list[EvalDataset]:
+        return self._client.store.list_datasets(agent_id=agent_id)
+
+    def create(
+        self,
+        dataset: EvalDataset | dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> EvalDataset:
+        normalized = _dataset_from_payload(_merge_payload(dataset, kwargs))
+        return self._client.store.put_dataset(normalized)
+
+    def get(self, dataset_id: str) -> EvalDataset | None:
+        return self._client.store.get_dataset(dataset_id)
+
+    def update(
+        self,
+        dataset_id: str,
+        patch: EvalDataset | dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> EvalDataset:
+        existing = self.get(dataset_id)
+        if existing is None:
+            raise KeyError(dataset_id)
+        payload = existing.model_dump(by_alias=True, exclude_none=True)
+        payload.update(_merge_payload(patch, kwargs))
+        payload["id"] = dataset_id
+        return self.create(payload)
+
+    def delete(self, dataset_id: str) -> None:
+        self._client.store.delete_dataset(dataset_id)
+
+
+class LocalEvalsResource:
+    def __init__(self, client: LocalClient) -> None:
+        self._client = client
+
+    def list(self, *, agent_id: str | None = None) -> list[EvalDefinition]:
+        return self._client.store.list_evals(agent_id=agent_id)
+
+    def create(
+        self,
+        definition: EvalDefinition | dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> EvalDefinition:
+        normalized = _eval_from_payload(_merge_payload(definition, kwargs))
+        _assert_eval_dataset_scope(self._client.store, normalized)
+        return self._client.store.put_eval(normalized)
+
+    def get(self, eval_id: str) -> EvalDefinition | None:
+        return self._client.store.get_eval(eval_id)
+
+    def update(
+        self,
+        eval_id: str,
+        patch: EvalDefinition | dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> EvalDefinition:
+        existing = self.get(eval_id)
+        if existing is None:
+            raise KeyError(eval_id)
+        payload = existing.model_dump(by_alias=True, exclude_none=True)
+        payload.update(_merge_payload(patch, kwargs))
+        payload["id"] = eval_id
+        return self.create(payload)
+
+    def delete(self, eval_id: str) -> None:
+        self._client.store.delete_eval(eval_id)
+
+    def run(
+        self,
+        *,
+        eval_id: str,
+        dataset_id: str | None = None,
+        agent_version: str | None = None,
+    ) -> EvalRun:
+        return _run_blocking(
+            self.arun(
+                eval_id=eval_id,
+                dataset_id=dataset_id,
+                agent_version=agent_version,
+            )
+        )
+
+    async def arun(
+        self,
+        *,
+        eval_id: str,
+        dataset_id: str | None = None,
+        agent_version: str | None = None,
+    ) -> EvalRun:
+        async def invoke_target(agent_ref: str, input_value: Any) -> TargetInvocation:
+            result = await self._client._execute(agent_id=agent_ref, input=input_value)
+            ref = parse_agent_ref(agent_ref)
+            runs = self._client.store.list_runs(agent_id=ref.agent_id, status="completed")
+            linked_run_id = runs[-1].id if runs else None
+            return TargetInvocation(output=result.output, run_id=linked_run_id)
+
+        return await run_eval(
+            self._client.store,
+            eval_id=eval_id,
+            dataset_id=dataset_id,
+            agent_version=agent_version,
+            resolve_agent=self._client._resolve_agent_definition,
+            invoke_target=invoke_target,
+        )
+
+    def get_run(self, run_id: str) -> EvalRun | None:
+        return self._client.store.get_eval_run(run_id)
+
+    def list_runs(
+        self,
+        *,
+        agent_id: str | None = None,
+        eval_id: str | None = None,
+        dataset_id: str | None = None,
+        status: str | None = None,
+        started_after: str | None = None,
+        started_before: str | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> EvalRunListResult:
+        return self._client.store.list_eval_runs(
+            agent_id=agent_id,
+            eval_id=eval_id,
+            dataset_id=dataset_id,
+            status=status,
+            started_after=started_after,
+            started_before=started_before,
+            limit=limit,
+            cursor=cursor,
+        )
+
+    def cancel_run(self, run_id: str) -> EvalRun | None:
+        run = self.get_run(run_id)
+        if run is None:
+            return None
+        if run.status in {"completed", "failed", "cancelled"}:
+            return run
+        run.status = "cancelled"
+        run.ended_at = _iso_now_z()
+        self._client.store.put_eval_run(run)
+        self._client.store.put_eval_latest_score(latest_score_from_eval_run(run))
+        return run
+
+    def get_latest_score(
+        self,
+        *,
+        eval_id: str,
+        dataset_id: str,
+        resolved_agent_version: str | None = None,
+    ) -> EvalLatestScore | None:
+        return self._client.store.get_eval_latest_score(
+            eval_id=eval_id,
+            dataset_id=dataset_id,
+            resolved_agent_version=resolved_agent_version,
+        )
+
+    def list_latest_scores(
+        self,
+        *,
+        agent_id: str | None = None,
+        eval_id: str | None = None,
+        dataset_id: str | None = None,
+        resolved_agent_version: str | None = None,
+        status: str | None = None,
+    ) -> list[EvalLatestScore]:
+        return self._client.store.list_eval_latest_scores(
+            agent_id=agent_id,
+            eval_id=eval_id,
+            dataset_id=dataset_id,
+            resolved_agent_version=resolved_agent_version,
+            status=status,
         )
 
 
@@ -575,7 +909,10 @@ class _LocalExecutionContext:
                         )
             elif kind == "agent":
                 agent_id = str(entry["agent"])
-                agent = self._client.manifests.get(agent_id)
+                try:
+                    agent, _stored, _version = self._client._resolve_manifest(agent_id)
+                except Exception:
+                    agent = None
                 if agent_id in seen_tool_names:
                     raise RuntimeError(f"Tool '{agent_id}' is registered more than once")
                 seen_tool_names.add(agent_id)
@@ -763,7 +1100,8 @@ class _LocalExecutionContext:
 
     async def resolve_agent(self, agent_id: str) -> AgentManifest:
         try:
-            return self._client.manifests[agent_id]
+            manifest, _agent, _version = self._client._resolve_manifest(agent_id)
+            return manifest
         except KeyError as exc:
             raise RuntimeError(f"Unknown agent '{agent_id}'") from exc
 
@@ -909,7 +1247,10 @@ def agntz(
     store: RunStore | None = None,
     http_client: httpx.AsyncClient | None = None,
 ) -> LocalClient:
-    manifests = load_manifests_from_dir(agents)
+    loaded = _load_manifests_with_sources(agents)
+    manifests = {agent_id: manifest for agent_id, (manifest, _source) in loaded.items()}
+    resolved_store = store or MemoryStore()
+    _import_manifests_into_store(resolved_store, loaded)
     tool_map = {definition.name: definition for definition in tools or []}
     return LocalClient(
         manifests=manifests,
@@ -917,9 +1258,165 @@ def agntz(
         resources=resources,
         namespace_policy=namespace_policy,
         model_provider=model_provider,
-        store=store,
+        store=resolved_store,
         http_client=http_client,
     )
+
+
+def _load_manifests_with_sources(path: str | Path) -> dict[str, tuple[AgentManifest, str]]:
+    root = Path(path)
+    output: dict[str, tuple[AgentManifest, str]] = {}
+    for manifest_path in sorted(
+        candidate
+        for candidate in root.rglob("*")
+        if candidate.suffix.lower() in {".yaml", ".yml"}
+    ):
+        source = manifest_path.read_text(encoding="utf-8")
+        manifest = load_manifest_file(manifest_path)
+        if manifest.id in output:
+            raise ValueError(f"Duplicate agent id '{manifest.id}' in {manifest_path}")
+        output[manifest.id] = (manifest, source)
+    return output
+
+
+def _import_manifests_into_store(
+    store: Any,
+    loaded: dict[str, tuple[AgentManifest, str]],
+) -> None:
+    for manifest, source in loaded.values():
+        content_hash = hashlib.sha256(source.encode()).hexdigest()
+        agent = _agent_definition_from_manifest(manifest, source)
+        put_if_changed = getattr(store, "put_agent_if_changed", None)
+        if callable(put_if_changed):
+            put_if_changed(agent, content_hash=content_hash)
+            continue
+        put_agent = getattr(store, "put_agent", None)
+        if callable(put_agent):
+            metadata = dict(agent.metadata or {})
+            metadata["contentHash"] = content_hash
+            put_agent(agent.model_copy(update={"metadata": metadata}))
+
+
+def _agent_definition_from_manifest(
+    manifest: AgentManifest,
+    source: str | None,
+) -> StoredAgentDefinition:
+    model = getattr(manifest, "model", None)
+    provider = getattr(model, "provider", "openai")
+    name = getattr(model, "name", "gpt-5.4")
+    metadata: dict[str, Any] = {"kind": manifest.kind}
+    if source is not None:
+        metadata["manifest"] = source
+    return StoredAgentDefinition(
+        id=manifest.id,
+        name=manifest.name or manifest.id,
+        description=manifest.description,
+        systemPrompt=getattr(manifest, "instruction", "") or "",
+        model=StoredModelConfig(provider=provider, name=name),
+        outputSchema=getattr(manifest, "output_schema", None),
+        metadata=metadata,
+    )
+
+
+def _merge_payload(value: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
+    if value is None:
+        payload: dict[str, Any] = {}
+    elif hasattr(value, "model_dump"):
+        payload = value.model_dump(by_alias=True, exclude_none=True)
+    elif isinstance(value, dict):
+        payload = dict(value)
+    else:
+        raise TypeError("Expected a Pydantic model, dict, or keyword arguments")
+    for key, item in kwargs.items():
+        payload[_snake_to_camel(key)] = item
+    return payload
+
+
+def _agent_from_payload(payload: dict[str, Any]) -> StoredAgentDefinition:
+    manifest_source = payload.get("manifest")
+    if isinstance(manifest_source, str):
+        manifest = parse_manifest(manifest_source)
+        agent = _agent_definition_from_manifest(manifest, manifest_source)
+        extra_metadata = {
+            key: value
+            for key, value in payload.items()
+            if key not in {"id", "name", "manifest"}
+        }
+        metadata = dict(agent.metadata or {})
+        metadata.update(extra_metadata)
+        return agent.model_copy(
+            update={
+                "id": payload.get("id") or manifest.id,
+                "name": payload.get("name") or manifest.name or manifest.id,
+                "metadata": metadata,
+            }
+        )
+    if "id" not in payload:
+        raise ValueError("Missing required field: id")
+    if "name" not in payload:
+        payload["name"] = payload["id"]
+    return StoredAgentDefinition.model_validate(payload)
+
+
+def _dataset_from_payload(payload: dict[str, Any]) -> EvalDataset:
+    if "id" not in payload:
+        payload["id"] = f"dataset_{nanoid()}"
+    if "agentId" not in payload:
+        raise ValueError("Missing required field: agent_id")
+    if "name" not in payload:
+        payload["name"] = payload["id"]
+    payload["items"] = [
+        {
+            **item,
+            "id": item.get("id") or f"case_{str(index + 1).zfill(3)}",
+        }
+        for index, item in enumerate(payload.get("items") or [])
+        if isinstance(item, dict)
+    ]
+    return EvalDataset.model_validate(payload)
+
+
+def _eval_from_payload(payload: dict[str, Any]) -> EvalDefinition:
+    if "id" not in payload:
+        payload["id"] = f"eval_{nanoid()}"
+    if "agentId" not in payload:
+        raise ValueError("Missing required field: agent_id")
+    if "name" not in payload:
+        payload["name"] = payload["id"]
+    payload["criteria"] = [
+        {
+            **criterion,
+            "id": criterion.get("id") or f"criterion_{str(index + 1).zfill(2)}",
+            "name": criterion.get("name") or f"Criterion {index + 1}",
+        }
+        for index, criterion in enumerate(payload.get("criteria") or [])
+        if isinstance(criterion, dict)
+    ]
+    return EvalDefinition.model_validate(payload)
+
+
+def _assert_eval_dataset_scope(store: Any, definition: EvalDefinition) -> None:
+    if not definition.default_dataset_id:
+        return
+    dataset = store.get_dataset(definition.default_dataset_id)
+    if dataset is None:
+        raise KeyError(definition.default_dataset_id)
+    if dataset.agent_id != definition.agent_id:
+        raise ValueError(
+            f'Dataset "{dataset.id}" belongs to agent "{dataset.agent_id}", '
+            f'not "{definition.agent_id}"'
+        )
+
+
+def _snake_to_camel(value: str) -> str:
+    if "_" not in value:
+        return value
+    head, *tail = value.split("_")
+    return head + "".join(part[:1].upper() + part[1:] for part in tail)
+
+
+def _iso_now_z() -> str:
+    return datetime.now(tz=UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _run_blocking(awaitable: Any) -> Any:

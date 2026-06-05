@@ -737,3 +737,62 @@ def test_local_sdk_can_persist_runs_to_sqlite(tmp_path: Path) -> None:
     assert sessions[0].message_count == 2
     assert [message.role for message in messages] == ["user", "assistant"]
     assert messages[0].content == '{"userQuery":"Refund request"}'
+
+
+def test_local_sdk_resolves_versioned_agent_refs_and_dedupes_sqlite_imports(
+    tmp_path: Path,
+) -> None:
+    agents_dir = _copy_agents(tmp_path)
+    db_path = tmp_path / "agntz.sqlite"
+    store = SQLiteStore(db_path)
+    client = agntz(agents=str(agents_dir), model_provider=FakeProvider(), store=store)
+
+    versions = client.agents.list_versions("support")
+    assert len(versions) == 1
+    created_at = versions[0].created_at
+    client.agents.set_alias("support", "stable", created_at)
+
+    assert client.agents.run(agent_id="support@latest", input={"userQuery": "x"}).output == {
+        "answer": "Use the refund workflow.",
+        "confidence": 0.82,
+    }
+    assert client.agents.run(agent_id=f"support@{created_at}", input={"userQuery": "x"}).output
+    assert client.agents.run(agent_id="support@stable", input={"userQuery": "x"}).output
+    store.close()
+
+    reopened = SQLiteStore(db_path)
+    try:
+        agntz(agents=str(agents_dir), model_provider=FakeProvider(), store=reopened)
+        assert len(reopened.list_agent_versions("support")) == 1
+    finally:
+        reopened.close()
+
+
+def test_local_sdk_runs_eval_and_updates_latest_score(tmp_path: Path) -> None:
+    client = agntz(agents=str(_copy_agents(tmp_path)), model_provider=FakeProvider())
+    dataset = client.datasets.create(
+        agent_id="support",
+        name="Support cases",
+        items=[{"input": {"userQuery": "Refund request"}, "expected": {"answer": "refund"}}],
+    )
+    definition = client.evals.create(
+        agent_id="support",
+        name="Support rubric",
+        default_dataset_id=dataset.id,
+        criteria=[{"id": "helpful", "name": "Helpful"}],
+    )
+
+    run = client.evals.run(eval_id=definition.id)
+    latest = client.evals.get_latest_score(
+        eval_id=definition.id,
+        dataset_id=dataset.id,
+        resolved_agent_version=run.agent_version,
+    )
+
+    assert run.status == "completed"
+    assert run.summary is not None
+    assert run.summary.total_cases == 1
+    assert run.summary.passed is True
+    assert latest is not None
+    assert latest.run_id == run.id
+    assert latest.overall_score == 1
