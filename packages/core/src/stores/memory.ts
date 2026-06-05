@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { listEvalRunsInProcess } from "../evals.js";
 import { defineSkill } from "../skill.js";
 import type {
 	AgentDefinition,
@@ -7,6 +8,12 @@ import type {
 	Connection,
 	ConnectionKind,
 	ContextEntry,
+	EvalDataset,
+	EvalDefinition,
+	EvalListFilters,
+	EvalRun,
+	EvalRunListFilters,
+	EvalRunListResult,
 	InvocationLog,
 	LogFilter,
 	Message,
@@ -81,6 +88,9 @@ interface MemoryBackend {
 	skills: Map<string, Map<string, SkillDefinition>>; // userId -> name -> skill
 	secrets: Map<string, Map<string, SecretRow>>; // userId -> name -> row
 	webhookDeliveries: Map<string, WebhookDelivery>; // id -> delivery
+	evals: Map<string, Map<string, EvalDefinition>>; // userId -> evalId -> eval
+	datasets: Map<string, Map<string, EvalDataset>>; // userId -> datasetId -> dataset
+	evalRuns: Map<string, EvalRun>; // `${userId}:${runId}` -> run
 }
 
 function createBackend(): MemoryBackend {
@@ -100,6 +110,9 @@ function createBackend(): MemoryBackend {
 		skills: new Map(),
 		secrets: new Map(),
 		webhookDeliveries: new Map(),
+		evals: new Map(),
+		datasets: new Map(),
+		evalRuns: new Map(),
 	};
 }
 
@@ -737,6 +750,108 @@ export class MemoryStore implements UnifiedStore {
 		return listRunsInProcess(this.scopedRunsArray(), filters);
 	}
 
+	// ═══ EvalStore ═══
+
+	private evalMap(): Map<string, EvalDefinition> {
+		const u = this.requireUser();
+		let m = this.backend.evals.get(u);
+		if (!m) {
+			m = new Map();
+			this.backend.evals.set(u, m);
+		}
+		return m;
+	}
+
+	private datasetMap(): Map<string, EvalDataset> {
+		const u = this.requireUser();
+		let m = this.backend.datasets.get(u);
+		if (!m) {
+			m = new Map();
+			this.backend.datasets.set(u, m);
+		}
+		return m;
+	}
+
+	private evalRunKey(userId: string, runId: string): string {
+		return `${userId}:${runId}`;
+	}
+
+	async listEvals(filters: EvalListFilters = {}): Promise<EvalDefinition[]> {
+		const rows = Array.from(this.evalMap().values()).map(cloneJson);
+		return rows
+			.filter((row) => !filters.agentId || row.agentId === filters.agentId)
+			.sort((a, b) => b.updatedAt?.localeCompare(a.updatedAt ?? "") ?? 0);
+	}
+
+	async getEval(evalId: string): Promise<EvalDefinition | null> {
+		const row = this.evalMap().get(evalId);
+		return row ? cloneJson(row) : null;
+	}
+
+	async putEval(definition: EvalDefinition): Promise<void> {
+		const map = this.evalMap();
+		const existing = map.get(definition.id);
+		const now = this.nextTimestamp();
+		map.set(definition.id, {
+			...cloneJson(definition),
+			createdAt: existing?.createdAt ?? definition.createdAt ?? now,
+			updatedAt: now,
+		});
+	}
+
+	async deleteEval(evalId: string): Promise<void> {
+		this.evalMap().delete(evalId);
+	}
+
+	async listDatasets(): Promise<EvalDataset[]> {
+		return Array.from(this.datasetMap().values())
+			.map(cloneJson)
+			.sort((a, b) => b.updatedAt?.localeCompare(a.updatedAt ?? "") ?? 0);
+	}
+
+	async getDataset(datasetId: string): Promise<EvalDataset | null> {
+		const row = this.datasetMap().get(datasetId);
+		return row ? cloneJson(row) : null;
+	}
+
+	async putDataset(dataset: EvalDataset): Promise<void> {
+		const map = this.datasetMap();
+		const existing = map.get(dataset.id);
+		const now = this.nextTimestamp();
+		map.set(dataset.id, {
+			...cloneJson(dataset),
+			createdAt: existing?.createdAt ?? dataset.createdAt ?? now,
+			updatedAt: now,
+		});
+	}
+
+	async deleteDataset(datasetId: string): Promise<void> {
+		this.datasetMap().delete(datasetId);
+	}
+
+	async putEvalRun(run: EvalRun): Promise<void> {
+		const u = this.requireUser();
+		this.backend.evalRuns.set(this.evalRunKey(u, run.id), cloneJson(run));
+	}
+
+	async getEvalRun(runId: string): Promise<EvalRun | null> {
+		const u = this.requireUser();
+		const row = this.backend.evalRuns.get(this.evalRunKey(u, runId));
+		return row ? cloneJson(row) : null;
+	}
+
+	async listEvalRuns(
+		filters: EvalRunListFilters = {},
+	): Promise<EvalRunListResult> {
+		const u = this.requireUser();
+		const prefix = `${u}:`;
+		const rows: EvalRun[] = [];
+		for (const [key, run] of this.backend.evalRuns) {
+			if (key.startsWith(prefix)) rows.push(cloneJson(run));
+		}
+		return listEvalRunsInProcess(rows, filters);
+	}
+
 	// ═══ TraceStore ═══
 	// Note: spans are shallow-copied on insert and read. Callers must not
 	// mutate `attributes`, `events`, or `scores` on a span after it crosses
@@ -929,6 +1044,10 @@ function rowToRecord(row: ApiKeyRow): ApiKeyRecord {
 		lastUsedAt: row.lastUsedAt,
 		revokedAt: row.revokedAt,
 	};
+}
+
+function cloneJson<T>(value: T): T {
+	return JSON.parse(JSON.stringify(value)) as T;
 }
 
 export function encodeTraceCursor(c: {

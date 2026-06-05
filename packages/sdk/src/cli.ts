@@ -53,12 +53,14 @@ Commands:
   login    Save hosted API credentials
   logout   Remove saved hosted API credentials
   whoami   Show resolved API URL and credential source
+  eval     Run and inspect hosted evals
   runs     List, inspect, stream, or cancel hosted runs
   traces   List, inspect, or delete hosted traces
 
 Help:
   agntz <command> --help
   agntz runs --help
+  agntz eval --help
   agntz traces --help
 
 Local vs hosted:
@@ -208,6 +210,25 @@ Output:
   JSON, suitable for piping to jq.
 `;
 
+const EVAL_HELP = `agntz eval — run and inspect hosted evals
+
+Usage:
+  agntz eval run  <evalId> [--dataset <id>] [--version <agentVersion>]
+  agntz eval runs [--agent <id>] [--eval <id>] [--dataset <id>] [--status <s>] [--limit <n>] [--cursor <c>]
+  agntz eval get  <evalId>
+
+Auth:
+  Requires AGNTZ_API_KEY or agntz login.
+
+Examples:
+  agntz eval run support-quality --dataset refund-cases
+  agntz eval runs --agent support --limit 10
+  agntz eval get support-quality
+
+Output:
+  JSON, suitable for piping to jq.
+`;
+
 const TRACES_HELP = `agntz traces — manage hosted traces
 
 Usage:
@@ -255,6 +276,9 @@ async function main(): Promise<void> {
 			return;
 		case "whoami":
 			await cmdWhoami(rest);
+			return;
+		case "eval":
+			await cmdEval(rest);
 			return;
 		case "runs":
 			await cmdRuns(rest);
@@ -571,6 +595,91 @@ function printStreamEvent(event: StreamEvent): void {
 		default:
 			return;
 	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// eval — hosted eval management
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function cmdEval(args: string[]): Promise<void> {
+	const [sub, ...rest] = args;
+	if (!sub || wantsHelp(args)) {
+		process.stdout.write(EVAL_HELP);
+		return;
+	}
+
+	switch (sub) {
+		case "run":
+			await evalRun(rest);
+			return;
+		case "runs":
+			await evalRuns(rest);
+			return;
+		case "get":
+			await evalGet(rest);
+			return;
+		default:
+			fail(`Unknown 'eval' subcommand: ${sub}`);
+	}
+}
+
+async function evalRun(args: string[]): Promise<void> {
+	const { values, positionals } = parseArgs({
+		args,
+		options: {
+			dataset: { type: "string" },
+			version: { type: "string" },
+		},
+		allowPositionals: true,
+		strict: true,
+	});
+	const [evalId] = positionals;
+	if (!evalId) {
+		fail(
+			"Usage: agntz eval run <evalId> [--dataset <id>] [--version <agentVersion>]",
+		);
+	}
+	const client = await requireHostedClient();
+	const run = await client.evals.run({
+		evalId,
+		datasetId: values.dataset,
+		agentVersion: values.version,
+	});
+	process.stdout.write(`${formatJson(run)}\n`);
+}
+
+async function evalRuns(args: string[]): Promise<void> {
+	const { values } = parseArgs({
+		args,
+		options: {
+			agent: { type: "string" },
+			eval: { type: "string" },
+			dataset: { type: "string" },
+			status: { type: "string" },
+			limit: { type: "string" },
+			cursor: { type: "string" },
+		},
+		allowPositionals: false,
+		strict: true,
+	});
+	const client = await requireHostedClient();
+	const result = await client.evals.listRuns({
+		agentId: values.agent,
+		evalId: values.eval,
+		datasetId: values.dataset,
+		status: values.status as never,
+		limit: values.limit ? Number(values.limit) : undefined,
+		cursor: values.cursor,
+	});
+	process.stdout.write(`${formatJson(result)}\n`);
+}
+
+async function evalGet(args: string[]): Promise<void> {
+	const [evalId] = args;
+	if (!evalId) fail("Usage: agntz eval get <evalId>");
+	const client = await requireHostedClient();
+	const definition = await client.evals.get(evalId);
+	process.stdout.write(`${formatJson(definition)}\n`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

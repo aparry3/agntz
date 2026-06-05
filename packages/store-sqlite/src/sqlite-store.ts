@@ -5,6 +5,7 @@ import {
 	defineSkill,
 	encryptSecret,
 	getLastFour,
+	listEvalRunsInProcess,
 } from "@agntz/core";
 import type {
 	AgentDefinition,
@@ -15,6 +16,12 @@ import type {
 	ConnectionKind,
 	ContentBlock,
 	ContextEntry,
+	EvalDataset,
+	EvalDefinition,
+	EvalListFilters,
+	EvalRun,
+	EvalRunListFilters,
+	EvalRunListResult,
 	InvocationLog,
 	InvokeResult,
 	LogFilter,
@@ -333,6 +340,54 @@ const MIGRATIONS = [
     ON agent_aliases(user_id, agent_id, version_created_at);
 
   UPDATE schema_version SET version = 9;
+  `,
+	// v10: Evals — first-class rubric definitions, reusable datasets, and
+	// immutable eval run history.
+	`
+  CREATE TABLE IF NOT EXISTS evals (
+    user_id    TEXT NOT NULL,
+    id         TEXT NOT NULL,
+    agent_id   TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    definition TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_evals_user_agent ON evals(user_id, agent_id);
+  CREATE INDEX IF NOT EXISTS idx_evals_user_updated ON evals(user_id, updated_at DESC);
+
+  CREATE TABLE IF NOT EXISTS eval_datasets (
+    user_id    TEXT NOT NULL,
+    id         TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    dataset    TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_eval_datasets_user_updated ON eval_datasets(user_id, updated_at DESC);
+
+  CREATE TABLE IF NOT EXISTS eval_runs (
+    user_id                 TEXT NOT NULL,
+    id                      TEXT NOT NULL,
+    eval_id                 TEXT NOT NULL,
+    dataset_id              TEXT NOT NULL,
+    agent_id                TEXT NOT NULL,
+    agent_version           TEXT,
+    requested_agent_version TEXT,
+    status                  TEXT NOT NULL,
+    run                     TEXT NOT NULL,
+    started_at              TEXT NOT NULL,
+    ended_at                TEXT,
+    PRIMARY KEY (user_id, id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_eval_runs_user_started ON eval_runs(user_id, started_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_eval_runs_user_agent ON eval_runs(user_id, agent_id, started_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_eval_runs_user_eval ON eval_runs(user_id, eval_id, started_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_eval_runs_user_dataset ON eval_runs(user_id, dataset_id, started_at DESC);
+
+  UPDATE schema_version SET version = 10;
   `,
 ];
 
@@ -1249,6 +1304,180 @@ export class SqliteStore implements UnifiedStore {
 			cursor = encodeRunCursor({ startedAt: last.startedAt, id: last.id });
 		}
 		return { rows, cursor };
+	}
+
+	// ═══ EvalStore ═══
+
+	async listEvals(filters: EvalListFilters = {}): Promise<EvalDefinition[]> {
+		const u = this.requireUser();
+		if (filters.agentId) {
+			const rows = this.db
+				.prepare(
+					`SELECT definition FROM evals
+           WHERE user_id = ? AND agent_id = ?
+           ORDER BY updated_at DESC, id DESC`,
+				)
+				.all(u, filters.agentId) as Array<{ definition: string }>;
+			return rows.map((r) => JSON.parse(r.definition) as EvalDefinition);
+		}
+		const rows = this.db
+			.prepare(
+				`SELECT definition FROM evals
+         WHERE user_id = ?
+         ORDER BY updated_at DESC, id DESC`,
+			)
+			.all(u) as Array<{ definition: string }>;
+		return rows.map((r) => JSON.parse(r.definition) as EvalDefinition);
+	}
+
+	async getEval(evalId: string): Promise<EvalDefinition | null> {
+		const u = this.requireUser();
+		const row = this.db
+			.prepare("SELECT definition FROM evals WHERE user_id = ? AND id = ?")
+			.get(u, evalId) as { definition: string } | undefined;
+		return row ? (JSON.parse(row.definition) as EvalDefinition) : null;
+	}
+
+	async putEval(definition: EvalDefinition): Promise<void> {
+		const u = this.requireUser();
+		const existing = await this.getEval(definition.id);
+		const now = this.nextTimestamp();
+		const row: EvalDefinition = {
+			...definition,
+			createdAt: existing?.createdAt ?? definition.createdAt ?? now,
+			updatedAt: now,
+		};
+		this.db
+			.prepare(
+				`INSERT INTO evals
+           (user_id, id, agent_id, name, definition, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, id) DO UPDATE SET
+           agent_id = excluded.agent_id,
+           name = excluded.name,
+           definition = excluded.definition,
+           updated_at = excluded.updated_at`,
+			)
+			.run(
+				u,
+				row.id,
+				row.agentId,
+				row.name,
+				JSON.stringify(row),
+				row.createdAt,
+				now,
+			);
+	}
+
+	async deleteEval(evalId: string): Promise<void> {
+		const u = this.requireUser();
+		this.db
+			.prepare("DELETE FROM evals WHERE user_id = ? AND id = ?")
+			.run(u, evalId);
+	}
+
+	async listDatasets(): Promise<EvalDataset[]> {
+		const u = this.requireUser();
+		const rows = this.db
+			.prepare(
+				`SELECT dataset FROM eval_datasets
+         WHERE user_id = ?
+         ORDER BY updated_at DESC, id DESC`,
+			)
+			.all(u) as Array<{ dataset: string }>;
+		return rows.map((r) => JSON.parse(r.dataset) as EvalDataset);
+	}
+
+	async getDataset(datasetId: string): Promise<EvalDataset | null> {
+		const u = this.requireUser();
+		const row = this.db
+			.prepare("SELECT dataset FROM eval_datasets WHERE user_id = ? AND id = ?")
+			.get(u, datasetId) as { dataset: string } | undefined;
+		return row ? (JSON.parse(row.dataset) as EvalDataset) : null;
+	}
+
+	async putDataset(dataset: EvalDataset): Promise<void> {
+		const u = this.requireUser();
+		const existing = await this.getDataset(dataset.id);
+		const now = this.nextTimestamp();
+		const row: EvalDataset = {
+			...dataset,
+			createdAt: existing?.createdAt ?? dataset.createdAt ?? now,
+			updatedAt: now,
+		};
+		this.db
+			.prepare(
+				`INSERT INTO eval_datasets
+           (user_id, id, name, dataset, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, id) DO UPDATE SET
+           name = excluded.name,
+           dataset = excluded.dataset,
+           updated_at = excluded.updated_at`,
+			)
+			.run(u, row.id, row.name, JSON.stringify(row), row.createdAt, now);
+	}
+
+	async deleteDataset(datasetId: string): Promise<void> {
+		const u = this.requireUser();
+		this.db
+			.prepare("DELETE FROM eval_datasets WHERE user_id = ? AND id = ?")
+			.run(u, datasetId);
+	}
+
+	async putEvalRun(run: EvalRun): Promise<void> {
+		const u = this.requireUser();
+		this.db
+			.prepare(
+				`INSERT INTO eval_runs
+           (user_id, id, eval_id, dataset_id, agent_id, agent_version,
+            requested_agent_version, status, run, started_at, ended_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, id) DO UPDATE SET
+           eval_id = excluded.eval_id,
+           dataset_id = excluded.dataset_id,
+           agent_id = excluded.agent_id,
+           agent_version = excluded.agent_version,
+           requested_agent_version = excluded.requested_agent_version,
+           status = excluded.status,
+           run = excluded.run,
+           started_at = excluded.started_at,
+           ended_at = excluded.ended_at`,
+			)
+			.run(
+				u,
+				run.id,
+				run.evalId,
+				run.datasetId,
+				run.agentId,
+				run.agentVersion ?? null,
+				run.requestedAgentVersion ?? null,
+				run.status,
+				JSON.stringify(run),
+				run.startedAt,
+				run.endedAt ?? null,
+			);
+	}
+
+	async getEvalRun(runId: string): Promise<EvalRun | null> {
+		const u = this.requireUser();
+		const row = this.db
+			.prepare("SELECT run FROM eval_runs WHERE user_id = ? AND id = ?")
+			.get(u, runId) as { run: string } | undefined;
+		return row ? (JSON.parse(row.run) as EvalRun) : null;
+	}
+
+	async listEvalRuns(
+		filters: EvalRunListFilters = {},
+	): Promise<EvalRunListResult> {
+		const u = this.requireUser();
+		const rows = this.db
+			.prepare("SELECT run FROM eval_runs WHERE user_id = ?")
+			.all(u) as Array<{ run: string }>;
+		return listEvalRunsInProcess(
+			rows.map((r) => JSON.parse(r.run) as EvalRun),
+			filters,
+		);
 	}
 
 	// ═══ TraceStore ═══

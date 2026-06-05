@@ -1,6 +1,7 @@
 "use client";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { EvalPanel } from "@/components/evals/eval-panel";
 import { Playground } from "@/components/playground/playground";
 import { EditorShell } from "@/components/v3/editor/editor-shell";
 import {
@@ -37,7 +38,7 @@ export default function AgentEditorPage() {
 	const [status, setStatus] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [view, setView] = useState<SingleViewMode | PipelineViewMode>("build");
-	const [mode, setMode] = useState<"edit" | "play">(() =>
+	const [mode, setMode] = useState<"edit" | "play" | "evals">(() =>
 		searchParams.get("mode") === "play" ? "play" : "edit",
 	);
 	const [updatedAt, setUpdatedAt] = useState<string | null>(null);
@@ -181,11 +182,34 @@ export default function AgentEditorPage() {
 					>
 						History
 					</Btn>
-					{mode === "edit" ? (
+					{mode === "evals" ? (
+						<Btn
+							variant="secondary"
+							icon={<I.X size={11} style={{ marginRight: 6 }} />}
+							onClick={() => setMode("edit")}
+						>
+							Close evals
+						</Btn>
+					) : (
+						<Btn
+							variant="secondary"
+							icon={<I.Check size={11} style={{ marginRight: 6 }} />}
+							onClick={() => {
+								setMode("evals");
+								if (view === "yaml") setView("build");
+							}}
+						>
+							Evals
+						</Btn>
+					)}
+					{mode !== "play" ? (
 						<Btn
 							variant="secondary"
 							icon={<I.Play size={11} style={{ marginRight: 6 }} />}
-							onClick={() => setMode("play")}
+							onClick={() => {
+								setMode("play");
+								if (view === "yaml") setView("build");
+							}}
 						>
 							Playground
 						</Btn>
@@ -246,6 +270,8 @@ export default function AgentEditorPage() {
 								dirty={dirty}
 								onSaveAndRun={handleSave}
 							/>
+						) : mode === "evals" ? (
+							<EvalPanel agentId={manifestId} />
 						) : undefined
 					}
 				/>
@@ -274,6 +300,8 @@ export default function AgentEditorPage() {
 								dirty={dirty}
 								onSaveAndRun={handleSave}
 							/>
+						) : mode === "evals" ? (
+							<EvalPanel agentId={manifestId} />
 						) : undefined
 					}
 				/>

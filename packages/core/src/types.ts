@@ -1111,6 +1111,157 @@ export interface RunStore {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// Evals — reusable datasets, rubric definitions, and scored run history
+// ═══════════════════════════════════════════════════════════════════════
+
+export interface EvalCriterion {
+	/** Stable machine key used in judge output and stored results. */
+	id: string;
+	name: string;
+	description?: string;
+	/** Defaults to 1. Weighted average uses score * weight / sum(weight). */
+	weight?: number;
+	/** Optional per-criterion pass threshold. Defaults to the eval threshold. */
+	threshold?: number;
+}
+
+export interface EvalDefinition {
+	id: string;
+	agentId: string;
+	name: string;
+	description?: string;
+	criteria: EvalCriterion[];
+	defaultDatasetId?: string;
+	/** Defaults to 0.7. */
+	passThreshold?: number;
+	judgeModel?: ModelConfig;
+	metadata?: Record<string, unknown>;
+	createdAt?: string;
+	updatedAt?: string;
+}
+
+export interface EvalDatasetItem {
+	id: string;
+	input: string | ContentBlock[];
+	expected?: unknown;
+	metadata?: Record<string, unknown>;
+}
+
+export interface EvalDataset {
+	id: string;
+	name: string;
+	description?: string;
+	items: EvalDatasetItem[];
+	metadata?: Record<string, unknown>;
+	createdAt?: string;
+	updatedAt?: string;
+}
+
+export interface EvalCriterionResult {
+	score: number;
+	passed: boolean;
+	reason: string;
+}
+
+export type EvalCaseStatus = "completed" | "failed" | "skipped" | "cancelled";
+
+export interface EvalCaseResult {
+	itemId: string;
+	status: EvalCaseStatus;
+	input: string | ContentBlock[];
+	expected?: unknown;
+	output?: string;
+	agentRunId?: string;
+	invocationId?: string;
+	usage?: TokenUsage;
+	duration?: number;
+	criteria: Record<string, EvalCriterionResult>;
+	score: number;
+	passed: boolean;
+	reason?: string;
+	error?: string;
+}
+
+export type EvalRunStatus =
+	| "pending"
+	| "running"
+	| "completed"
+	| "failed"
+	| "cancelled";
+
+export interface EvalRunSummary {
+	totalCases: number;
+	completedCases: number;
+	failedCases: number;
+	skippedCases: number;
+	overallScore: number;
+	passed: boolean;
+	criteria: Record<
+		string,
+		{ score: number; passed: boolean; completedCases: number }
+	>;
+}
+
+export interface EvalRunSnapshots {
+	eval: EvalDefinition;
+	dataset: EvalDataset;
+	agent: AgentDefinition;
+	agentVersion?: string;
+	requestedAgentVersion?: string;
+}
+
+export interface EvalRun {
+	id: string;
+	evalId: string;
+	datasetId: string;
+	agentId: string;
+	agentVersion?: string;
+	requestedAgentVersion?: string;
+	status: EvalRunStatus;
+	startedAt: string;
+	endedAt?: string;
+	snapshots: EvalRunSnapshots;
+	caseResults: EvalCaseResult[];
+	summary?: EvalRunSummary;
+	error?: string;
+}
+
+export interface EvalListFilters {
+	agentId?: string;
+}
+
+export interface EvalRunListFilters {
+	agentId?: string;
+	evalId?: string;
+	datasetId?: string;
+	status?: EvalRunStatus;
+	startedAfter?: string;
+	startedBefore?: string;
+	/** Default 50, max 200. */
+	limit?: number;
+	cursor?: string;
+}
+
+export interface EvalRunListResult {
+	rows: EvalRun[];
+	cursor?: string;
+}
+
+export interface EvalStore {
+	listEvals(filters?: EvalListFilters): Promise<EvalDefinition[]>;
+	getEval(evalId: string): Promise<EvalDefinition | null>;
+	putEval(definition: EvalDefinition): Promise<void>;
+	deleteEval(evalId: string): Promise<void>;
+	listDatasets(): Promise<EvalDataset[]>;
+	getDataset(datasetId: string): Promise<EvalDataset | null>;
+	putDataset(dataset: EvalDataset): Promise<void>;
+	deleteDataset(datasetId: string): Promise<void>;
+	putEvalRun(run: EvalRun): Promise<void>;
+	getEvalRun(runId: string): Promise<EvalRun | null>;
+	listEvalRuns(filters?: EvalRunListFilters): Promise<EvalRunListResult>;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // Traces — persistent span trees for observability
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -1271,6 +1422,7 @@ export type UnifiedStore = AgentStore &
 	SkillStore &
 	SecretStore &
 	WebhookDeliveryStore &
+	EvalStore &
 	ScopableStore;
 
 // ═══════════════════════════════════════════════════════════════════════

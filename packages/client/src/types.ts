@@ -111,6 +111,152 @@ export interface HealthResult {
 	service: string;
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// /evals, /datasets, /eval-runs
+// ─────────────────────────────────────────────────────────────────────────
+
+export interface EvalCriterion {
+	id: string;
+	name: string;
+	description?: string;
+	weight?: number;
+	threshold?: number;
+}
+
+export interface EvalDefinition {
+	id: string;
+	agentId: string;
+	name: string;
+	description?: string;
+	criteria: EvalCriterion[];
+	defaultDatasetId?: string;
+	passThreshold?: number;
+	judgeModel?: {
+		provider: string;
+		name: string;
+		temperature?: number;
+		maxTokens?: number;
+		topP?: number;
+		options?: Record<string, unknown>;
+	};
+	metadata?: Record<string, unknown>;
+	createdAt?: string;
+	updatedAt?: string;
+}
+
+export interface EvalDatasetItem {
+	id: string;
+	input: string | ContentBlock[];
+	expected?: unknown;
+	metadata?: Record<string, unknown>;
+}
+
+export interface EvalDataset {
+	id: string;
+	name: string;
+	description?: string;
+	items: EvalDatasetItem[];
+	metadata?: Record<string, unknown>;
+	createdAt?: string;
+	updatedAt?: string;
+}
+
+export interface EvalCriterionResult {
+	score: number;
+	passed: boolean;
+	reason: string;
+}
+
+export type EvalCaseStatus = "completed" | "failed" | "skipped" | "cancelled";
+
+export interface EvalCaseResult {
+	itemId: string;
+	status: EvalCaseStatus;
+	input: string | ContentBlock[];
+	expected?: unknown;
+	output?: string;
+	agentRunId?: string;
+	invocationId?: string;
+	usage?: {
+		promptTokens: number;
+		completionTokens: number;
+		totalTokens: number;
+	};
+	duration?: number;
+	criteria: Record<string, EvalCriterionResult>;
+	score: number;
+	passed: boolean;
+	reason?: string;
+	error?: string;
+}
+
+export type EvalRunStatus =
+	| "pending"
+	| "running"
+	| "completed"
+	| "failed"
+	| "cancelled";
+
+export interface EvalRun {
+	id: string;
+	evalId: string;
+	datasetId: string;
+	agentId: string;
+	agentVersion?: string;
+	requestedAgentVersion?: string;
+	status: EvalRunStatus;
+	startedAt: string;
+	endedAt?: string;
+	snapshots: {
+		eval: EvalDefinition;
+		dataset: EvalDataset;
+		agent: unknown;
+		agentVersion?: string;
+		requestedAgentVersion?: string;
+	};
+	caseResults: EvalCaseResult[];
+	summary?: {
+		totalCases: number;
+		completedCases: number;
+		failedCases: number;
+		skippedCases: number;
+		overallScore: number;
+		passed: boolean;
+		criteria: Record<
+			string,
+			{ score: number; passed: boolean; completedCases: number }
+		>;
+	};
+	error?: string;
+}
+
+export interface EvalRunInput {
+	evalId: string;
+	datasetId?: string;
+	agentVersion?: string;
+	signal?: AbortSignal;
+}
+
+export interface EvalListFilter {
+	agentId?: string;
+}
+
+export interface EvalRunListFilter {
+	agentId?: string;
+	evalId?: string;
+	datasetId?: string;
+	status?: EvalRunStatus;
+	startedAfter?: string;
+	startedBefore?: string;
+	limit?: number;
+	cursor?: string;
+}
+
+export interface EvalRunListResult {
+	rows: EvalRun[];
+	cursor?: string;
+}
+
 /** @internal */
 export interface SseFrame {
 	event?: string;

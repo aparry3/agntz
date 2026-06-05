@@ -8,6 +8,7 @@ import {
 	writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
+import { listEvalRunsInProcess } from "../evals.js";
 import { defineSkill } from "../skill.js";
 import type {
 	AgentDefinition,
@@ -16,6 +17,12 @@ import type {
 	Connection,
 	ConnectionKind,
 	ContextEntry,
+	EvalDataset,
+	EvalDefinition,
+	EvalListFilters,
+	EvalRun,
+	EvalRunListFilters,
+	EvalRunListResult,
 	InvocationLog,
 	LogFilter,
 	Message,
@@ -104,6 +111,9 @@ export class JsonFileStore implements UnifiedStore {
 		await mkdir(join(root, "providers"), { recursive: true });
 		await mkdir(join(root, "connections"), { recursive: true });
 		await mkdir(join(root, "runs"), { recursive: true });
+		await mkdir(join(root, "evals"), { recursive: true });
+		await mkdir(join(root, "datasets"), { recursive: true });
+		await mkdir(join(root, "eval-runs"), { recursive: true });
 		await mkdir(join(root, "skills"), { recursive: true });
 		await mkdir(join(root, "secrets"), { recursive: true });
 	}
@@ -812,6 +822,133 @@ export class JsonFileStore implements UnifiedStore {
 			if (run) allRuns.push(run);
 		}
 		return listRunsInProcess(allRuns, filters);
+	}
+
+	// ═══ EvalStore ═══
+
+	private evalPath(evalId: string): string {
+		return join(
+			this.userRoot(),
+			"evals",
+			`${this.sanitizeFilename(evalId)}.json`,
+		);
+	}
+
+	private datasetPath(datasetId: string): string {
+		return join(
+			this.userRoot(),
+			"datasets",
+			`${this.sanitizeFilename(datasetId)}.json`,
+		);
+	}
+
+	private evalRunPath(runId: string): string {
+		return join(
+			this.userRoot(),
+			"eval-runs",
+			`${this.sanitizeFilename(runId)}.json`,
+		);
+	}
+
+	async listEvals(filters: EvalListFilters = {}): Promise<EvalDefinition[]> {
+		await this.ensureUserDirs();
+		const dir = join(this.userRoot(), "evals");
+		const files = await readdir(dir).catch(() => []);
+		const rows: EvalDefinition[] = [];
+		for (const file of files) {
+			if (!file.endsWith(".json")) continue;
+			const row = await this.readJson<EvalDefinition>(join(dir, file));
+			if (row && (!filters.agentId || row.agentId === filters.agentId)) {
+				rows.push(row);
+			}
+		}
+		return rows.sort((a, b) =>
+			(b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""),
+		);
+	}
+
+	async getEval(evalId: string): Promise<EvalDefinition | null> {
+		await this.ensureUserDirs();
+		return this.readJson<EvalDefinition>(this.evalPath(evalId));
+	}
+
+	async putEval(definition: EvalDefinition): Promise<void> {
+		await this.ensureUserDirs();
+		const path = this.evalPath(definition.id);
+		const existing = await this.readJson<EvalDefinition>(path);
+		const now = this.nextTimestamp();
+		await this.writeJson(path, {
+			...definition,
+			createdAt: existing?.createdAt ?? definition.createdAt ?? now,
+			updatedAt: now,
+		});
+	}
+
+	async deleteEval(evalId: string): Promise<void> {
+		await this.ensureUserDirs();
+		await unlink(this.evalPath(evalId)).catch(() => {});
+	}
+
+	async listDatasets(): Promise<EvalDataset[]> {
+		await this.ensureUserDirs();
+		const dir = join(this.userRoot(), "datasets");
+		const files = await readdir(dir).catch(() => []);
+		const rows: EvalDataset[] = [];
+		for (const file of files) {
+			if (!file.endsWith(".json")) continue;
+			const row = await this.readJson<EvalDataset>(join(dir, file));
+			if (row) rows.push(row);
+		}
+		return rows.sort((a, b) =>
+			(b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""),
+		);
+	}
+
+	async getDataset(datasetId: string): Promise<EvalDataset | null> {
+		await this.ensureUserDirs();
+		return this.readJson<EvalDataset>(this.datasetPath(datasetId));
+	}
+
+	async putDataset(dataset: EvalDataset): Promise<void> {
+		await this.ensureUserDirs();
+		const path = this.datasetPath(dataset.id);
+		const existing = await this.readJson<EvalDataset>(path);
+		const now = this.nextTimestamp();
+		await this.writeJson(path, {
+			...dataset,
+			createdAt: existing?.createdAt ?? dataset.createdAt ?? now,
+			updatedAt: now,
+		});
+	}
+
+	async deleteDataset(datasetId: string): Promise<void> {
+		await this.ensureUserDirs();
+		await unlink(this.datasetPath(datasetId)).catch(() => {});
+	}
+
+	async putEvalRun(run: EvalRun): Promise<void> {
+		await this.ensureUserDirs();
+		await this.writeJson(this.evalRunPath(run.id), run);
+	}
+
+	async getEvalRun(runId: string): Promise<EvalRun | null> {
+		await this.ensureUserDirs();
+		return this.readJson<EvalRun>(this.evalRunPath(runId));
+	}
+
+	async listEvalRuns(
+		filters: EvalRunListFilters = {},
+	): Promise<EvalRunListResult> {
+		await this.ensureUserDirs();
+		const dir = join(this.userRoot(), "eval-runs");
+		const files = await readdir(dir).catch(() => []);
+		const rows: EvalRun[] = [];
+		for (const file of files) {
+			if (!file.endsWith(".json")) continue;
+			const row = await this.readJson<EvalRun>(join(dir, file));
+			if (row) rows.push(row);
+		}
+		return listEvalRunsInProcess(rows, filters);
 	}
 
 	// ═══ TraceStore ═══

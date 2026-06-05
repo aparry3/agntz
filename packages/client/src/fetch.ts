@@ -3,7 +3,7 @@ import { AgntzError, AuthenticationError, NotFoundError } from "./errors.js";
 export interface RequestArgs {
 	baseUrl: string;
 	path: string;
-	method: "GET" | "POST" | "DELETE";
+	method: "GET" | "POST" | "PUT" | "DELETE";
 	apiKey?: string;
 	body?: unknown;
 	signal?: AbortSignal;

@@ -5,6 +5,7 @@ import {
 	defineSkill,
 	encryptSecret,
 	getLastFour,
+	listEvalRunsInProcess,
 } from "@agntz/core";
 import type {
 	AgentDefinition,
@@ -15,6 +16,12 @@ import type {
 	ConnectionKind,
 	ContentBlock,
 	ContextEntry,
+	EvalDataset,
+	EvalDefinition,
+	EvalListFilters,
+	EvalRun,
+	EvalRunListFilters,
+	EvalRunListResult,
 	InvocationLog,
 	InvokeResult,
 	LogFilter,
@@ -378,6 +385,61 @@ const MIGRATIONS: string[] = [
     ON ar_agent_aliases(user_id, agent_id, version_created_at);
 
   UPDATE ar_schema_version SET version = 10;
+  `,
+	// v11: Evals — first-class rubric definitions, reusable datasets, and
+	// immutable eval run history.
+	`
+  CREATE TABLE IF NOT EXISTS ar_evals (
+    user_id            TEXT NOT NULL,
+    id                 TEXT NOT NULL,
+    agent_id           TEXT NOT NULL,
+    name               TEXT NOT NULL,
+    definition         JSONB NOT NULL,
+    created_at         TIMESTAMPTZ NOT NULL,
+    updated_at         TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (user_id, id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ar_evals_user_agent
+    ON ar_evals(user_id, agent_id);
+  CREATE INDEX IF NOT EXISTS idx_ar_evals_user_updated
+    ON ar_evals(user_id, updated_at DESC);
+
+  CREATE TABLE IF NOT EXISTS ar_eval_datasets (
+    user_id            TEXT NOT NULL,
+    id                 TEXT NOT NULL,
+    name               TEXT NOT NULL,
+    dataset            JSONB NOT NULL,
+    created_at         TIMESTAMPTZ NOT NULL,
+    updated_at         TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (user_id, id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ar_eval_datasets_user_updated
+    ON ar_eval_datasets(user_id, updated_at DESC);
+
+  CREATE TABLE IF NOT EXISTS ar_eval_runs (
+    user_id                  TEXT NOT NULL,
+    id                       TEXT NOT NULL,
+    eval_id                  TEXT NOT NULL,
+    dataset_id               TEXT NOT NULL,
+    agent_id                 TEXT NOT NULL,
+    agent_version            TIMESTAMPTZ,
+    requested_agent_version  TEXT,
+    status                   TEXT NOT NULL,
+    run                      JSONB NOT NULL,
+    started_at               TIMESTAMPTZ NOT NULL,
+    ended_at                 TIMESTAMPTZ,
+    PRIMARY KEY (user_id, id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ar_eval_runs_user_started
+    ON ar_eval_runs(user_id, started_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_ar_eval_runs_user_agent
+    ON ar_eval_runs(user_id, agent_id, started_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_ar_eval_runs_user_eval
+    ON ar_eval_runs(user_id, eval_id, started_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_ar_eval_runs_user_dataset
+    ON ar_eval_runs(user_id, dataset_id, started_at DESC);
+
+  UPDATE ar_schema_version SET version = 11;
   `,
 ];
 
@@ -1344,6 +1406,188 @@ export class PostgresStore implements UnifiedStore {
 					})
 				: undefined,
 		};
+	}
+
+	// ═══ EvalStore ═══
+
+	async listEvals(filters: EvalListFilters = {}): Promise<EvalDefinition[]> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const args: unknown[] = [u];
+		let where = "WHERE user_id = $1";
+		if (filters.agentId) {
+			where += " AND agent_id = $2";
+			args.push(filters.agentId);
+		}
+		const { rows } = await this.pool.query(
+			`SELECT definition FROM ${this.t("evals")}
+       ${where}
+       ORDER BY updated_at DESC, id DESC`,
+			args,
+		);
+		return rows.map((r) => r.definition as EvalDefinition);
+	}
+
+	async getEval(evalId: string): Promise<EvalDefinition | null> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT definition FROM ${this.t("evals")} WHERE user_id = $1 AND id = $2`,
+			[u, evalId],
+		);
+		return rows[0]?.definition ?? null;
+	}
+
+	async putEval(definition: EvalDefinition): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const existing = await this.getEval(definition.id);
+		const now = this.nextTimestamp();
+		const row: EvalDefinition = {
+			...definition,
+			createdAt: existing?.createdAt ?? definition.createdAt ?? now,
+			updatedAt: now,
+		};
+		await this.pool.query(
+			`INSERT INTO ${this.t("evals")}
+         (user_id, id, agent_id, name, definition, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (user_id, id) DO UPDATE SET
+         agent_id = EXCLUDED.agent_id,
+         name = EXCLUDED.name,
+         definition = EXCLUDED.definition,
+         updated_at = EXCLUDED.updated_at`,
+			[
+				u,
+				row.id,
+				row.agentId,
+				row.name,
+				JSON.stringify(row),
+				row.createdAt,
+				now,
+			],
+		);
+	}
+
+	async deleteEval(evalId: string): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		await this.pool.query(
+			`DELETE FROM ${this.t("evals")} WHERE user_id = $1 AND id = $2`,
+			[u, evalId],
+		);
+	}
+
+	async listDatasets(): Promise<EvalDataset[]> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT dataset FROM ${this.t("eval_datasets")}
+       WHERE user_id = $1
+       ORDER BY updated_at DESC, id DESC`,
+			[u],
+		);
+		return rows.map((r) => r.dataset as EvalDataset);
+	}
+
+	async getDataset(datasetId: string): Promise<EvalDataset | null> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT dataset FROM ${this.t("eval_datasets")} WHERE user_id = $1 AND id = $2`,
+			[u, datasetId],
+		);
+		return rows[0]?.dataset ?? null;
+	}
+
+	async putDataset(dataset: EvalDataset): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const existing = await this.getDataset(dataset.id);
+		const now = this.nextTimestamp();
+		const row: EvalDataset = {
+			...dataset,
+			createdAt: existing?.createdAt ?? dataset.createdAt ?? now,
+			updatedAt: now,
+		};
+		await this.pool.query(
+			`INSERT INTO ${this.t("eval_datasets")}
+         (user_id, id, name, dataset, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (user_id, id) DO UPDATE SET
+         name = EXCLUDED.name,
+         dataset = EXCLUDED.dataset,
+         updated_at = EXCLUDED.updated_at`,
+			[u, row.id, row.name, JSON.stringify(row), row.createdAt, now],
+		);
+	}
+
+	async deleteDataset(datasetId: string): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		await this.pool.query(
+			`DELETE FROM ${this.t("eval_datasets")} WHERE user_id = $1 AND id = $2`,
+			[u, datasetId],
+		);
+	}
+
+	async putEvalRun(run: EvalRun): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		await this.pool.query(
+			`INSERT INTO ${this.t("eval_runs")}
+         (user_id, id, eval_id, dataset_id, agent_id, agent_version,
+          requested_agent_version, status, run, started_at, ended_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+       ON CONFLICT (user_id, id) DO UPDATE SET
+         eval_id = EXCLUDED.eval_id,
+         dataset_id = EXCLUDED.dataset_id,
+         agent_id = EXCLUDED.agent_id,
+         agent_version = EXCLUDED.agent_version,
+         requested_agent_version = EXCLUDED.requested_agent_version,
+         status = EXCLUDED.status,
+         run = EXCLUDED.run,
+         started_at = EXCLUDED.started_at,
+         ended_at = EXCLUDED.ended_at`,
+			[
+				u,
+				run.id,
+				run.evalId,
+				run.datasetId,
+				run.agentId,
+				run.agentVersion ?? null,
+				run.requestedAgentVersion ?? null,
+				run.status,
+				JSON.stringify(run),
+				run.startedAt,
+				run.endedAt ?? null,
+			],
+		);
+	}
+
+	async getEvalRun(runId: string): Promise<EvalRun | null> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT run FROM ${this.t("eval_runs")} WHERE user_id = $1 AND id = $2`,
+			[u, runId],
+		);
+		return rows[0]?.run ?? null;
+	}
+
+	async listEvalRuns(
+		filters: EvalRunListFilters = {},
+	): Promise<EvalRunListResult> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT run FROM ${this.t("eval_runs")} WHERE user_id = $1`,
+			[u],
+		);
+		return listEvalRunsInProcess(
+			rows.map((r) => r.run as EvalRun),
+			filters,
+		);
 	}
 
 	// ═══ TraceStore ═══

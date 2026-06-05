@@ -13,6 +13,17 @@ export type {
 	InMemoryRunRegistryOptions,
 } from "./run-registry.js";
 export {
+	createEvalJudgeAgent,
+	listEvalRunsInProcess,
+	normalizeCriterionWeight,
+	normalizePassThreshold,
+	parseJudgeOutputText,
+	runEval,
+	scoreJudgeEnvelope,
+	summarizeEvalRun,
+} from "./evals.js";
+export type { RunEvalOptions, JudgeEnvelope } from "./evals.js";
+export {
 	createSpawnAgentTool,
 	createCheckAgentsTool,
 	resolveSpawnable,
@@ -267,6 +278,22 @@ export type {
 	PendingChildResult,
 	MultiplexedEvent,
 	SpawnRunOptions,
+	// Evals
+	EvalCriterion,
+	EvalDefinition,
+	EvalDatasetItem,
+	EvalDataset,
+	EvalCriterionResult,
+	EvalCaseStatus,
+	EvalCaseResult,
+	EvalRunStatus,
+	EvalRunSummary,
+	EvalRunSnapshots,
+	EvalRun,
+	EvalListFilters,
+	EvalRunListFilters,
+	EvalRunListResult,
+	EvalStore,
 	// Traces
 	SpanKind,
 	SpanStatus,

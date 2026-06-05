@@ -1,5 +1,10 @@
 import { randomBytes } from "node:crypto";
 import {
+	type EvalCaseResult,
+	type EvalDataset,
+	type EvalDefinition,
+	type EvalRun,
+	type EvalRunListFilters,
 	InMemoryRunRegistry,
 	type InvokeResult,
 	MemoryStore,
@@ -16,9 +21,14 @@ import {
 	type UnifiedStore,
 	type WebhookDispatcher,
 	assertOutboundUrlAllowed,
+	createEvalJudgeAgent,
 	createRunner,
 	createWebhookDispatcher,
+	generateId,
 	generateSessionId,
+	parseJudgeOutputText,
+	scoreJudgeEnvelope,
+	summarizeEvalRun,
 } from "@agntz/core";
 import { execute, parseManifest, validateManifestFull } from "@agntz/manifest";
 import type { AgentManifest } from "@agntz/manifest";
@@ -246,6 +256,12 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 	app.use("/run/stream", workerAuth({ store, internalSecret }));
 	app.use("/runs", workerAuth({ store, internalSecret }));
 	app.use("/runs/*", workerAuth({ store, internalSecret }));
+	app.use("/evals", workerAuth({ store, internalSecret }));
+	app.use("/evals/*", workerAuth({ store, internalSecret }));
+	app.use("/datasets", workerAuth({ store, internalSecret }));
+	app.use("/datasets/*", workerAuth({ store, internalSecret }));
+	app.use("/eval-runs", workerAuth({ store, internalSecret }));
+	app.use("/eval-runs/*", workerAuth({ store, internalSecret }));
 	app.use("/traces", workerAuth({ store, internalSecret }));
 	app.use("/traces/*", workerAuth({ store, internalSecret }));
 	app.use("/validate", workerAuth({ store, internalSecret }));
@@ -864,6 +880,160 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 		return c.json(runToJSON(after));
 	});
 
+	// /evals, /datasets, /eval-runs — hosted eval management
+
+	app.get("/evals", async (c) => {
+		const userId = getUserId(c);
+		const rows = await store
+			.forUser(userId)
+			.listEvals({ agentId: c.req.query("agentId") });
+		return c.json(rows);
+	});
+
+	app.post("/evals", async (c) => {
+		const userId = getUserId(c);
+		const body = (getCachedBody(c) ?? (await c.req.json())) as Partial<
+			EvalDefinition & { id?: string }
+		>;
+		const definition = normalizeEvalDefinition(body);
+		await store.forUser(userId).putEval(definition);
+		return c.json(definition, 201);
+	});
+
+	app.get("/evals/:id", async (c) => {
+		const userId = getUserId(c);
+		const evalId = decodeURIComponent(c.req.param("id"));
+		const row = await store.forUser(userId).getEval(evalId);
+		if (!row) return c.json({ error: "Eval not found" }, 404);
+		return c.json(row);
+	});
+
+	app.put("/evals/:id", async (c) => {
+		const userId = getUserId(c);
+		const evalId = decodeURIComponent(c.req.param("id"));
+		const body = (getCachedBody(c) ??
+			(await c.req.json())) as Partial<EvalDefinition>;
+		const scoped = store.forUser(userId);
+		const existing = await scoped.getEval(evalId);
+		if (!existing) return c.json({ error: "Eval not found" }, 404);
+		const definition = normalizeEvalDefinition({
+			...existing,
+			...body,
+			id: evalId,
+		});
+		await scoped.putEval(definition);
+		return c.json(definition);
+	});
+
+	app.delete("/evals/:id", async (c) => {
+		const userId = getUserId(c);
+		const evalId = decodeURIComponent(c.req.param("id"));
+		await store.forUser(userId).deleteEval(evalId);
+		return c.body(null, 204);
+	});
+
+	app.get("/datasets", async (c) => {
+		const userId = getUserId(c);
+		return c.json(await store.forUser(userId).listDatasets());
+	});
+
+	app.post("/datasets", async (c) => {
+		const userId = getUserId(c);
+		const body = (getCachedBody(c) ?? (await c.req.json())) as Partial<
+			EvalDataset & { id?: string }
+		>;
+		const dataset = normalizeEvalDataset(body);
+		await store.forUser(userId).putDataset(dataset);
+		return c.json(dataset, 201);
+	});
+
+	app.get("/datasets/:id", async (c) => {
+		const userId = getUserId(c);
+		const datasetId = decodeURIComponent(c.req.param("id"));
+		const row = await store.forUser(userId).getDataset(datasetId);
+		if (!row) return c.json({ error: "Dataset not found" }, 404);
+		return c.json(row);
+	});
+
+	app.put("/datasets/:id", async (c) => {
+		const userId = getUserId(c);
+		const datasetId = decodeURIComponent(c.req.param("id"));
+		const body = (getCachedBody(c) ??
+			(await c.req.json())) as Partial<EvalDataset>;
+		const scoped = store.forUser(userId);
+		const existing = await scoped.getDataset(datasetId);
+		if (!existing) return c.json({ error: "Dataset not found" }, 404);
+		const dataset = normalizeEvalDataset({
+			...existing,
+			...body,
+			id: datasetId,
+		});
+		await scoped.putDataset(dataset);
+		return c.json(dataset);
+	});
+
+	app.delete("/datasets/:id", async (c) => {
+		const userId = getUserId(c);
+		const datasetId = decodeURIComponent(c.req.param("id"));
+		await store.forUser(userId).deleteDataset(datasetId);
+		return c.body(null, 204);
+	});
+
+	app.get("/eval-runs", async (c) => {
+		const userId = getUserId(c);
+		const limitRaw = c.req.query("limit");
+		const limit = limitRaw ? Number(limitRaw) : undefined;
+		if (limitRaw && !Number.isFinite(limit)) {
+			return c.json({ error: "Invalid `limit` query param" }, 400);
+		}
+		const filters: EvalRunListFilters = {
+			agentId: c.req.query("agentId"),
+			evalId: c.req.query("evalId"),
+			datasetId: c.req.query("datasetId"),
+			status: c.req.query("status") as EvalRunListFilters["status"],
+			startedAfter: c.req.query("startedAfter"),
+			startedBefore: c.req.query("startedBefore"),
+			cursor: c.req.query("cursor"),
+			limit,
+		};
+		return c.json(await store.forUser(userId).listEvalRuns(filters));
+	});
+
+	app.post("/eval-runs", async (c) => {
+		const userId = getUserId(c);
+		const body = (getCachedBody(c) ?? (await c.req.json())) as {
+			evalId?: string;
+			datasetId?: string;
+			agentVersion?: string;
+		};
+		if (!body.evalId) {
+			return c.json({ error: "Missing required field: evalId" }, 400);
+		}
+		try {
+			const run = await runHostedEval({
+				store,
+				userId,
+				evalId: body.evalId,
+				datasetId: body.datasetId,
+				agentVersion: body.agentVersion,
+				resolveRunnerAndManifest: resolveRunnerAndManifestImpl,
+				traceRegistry,
+			});
+			return c.json(run, 201);
+		} catch (error) {
+			const status = isNotFound(error) ? 404 : 500;
+			return c.json({ error: errorMessage(error) }, status);
+		}
+	});
+
+	app.get("/eval-runs/:id", async (c) => {
+		const userId = getUserId(c);
+		const runId = decodeURIComponent(c.req.param("id"));
+		const row = await store.forUser(userId).getEvalRun(runId);
+		if (!row) return c.json({ error: "Eval run not found" }, 404);
+		return c.json(row);
+	});
+
 	// ───────────────────────────────────────────────────────────────────────
 	// /webhook-secrets/* — server-generates HMAC signing keys and stores them
 	// in the unified SecretStore (AES-256-GCM at rest). The raw `value` field
@@ -1049,6 +1219,275 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 	});
 
 	return app;
+}
+
+async function runHostedEval(opts: {
+	store: UnifiedStore;
+	userId: string;
+	evalId: string;
+	datasetId?: string;
+	agentVersion?: string;
+	resolveRunnerAndManifest: (
+		store: UnifiedStore,
+		userId: string,
+		agentId: string,
+	) => Promise<{ runner: Runner; manifest: AgentManifest }>;
+	traceRegistry: InMemoryTraceRegistry;
+}): Promise<EvalRun> {
+	const scoped = opts.store.forUser(opts.userId);
+	const definition = await scoped.getEval(opts.evalId);
+	if (!definition) {
+		throw Object.assign(new Error(`Eval "${opts.evalId}" not found`), {
+			code: "NOT_FOUND",
+		});
+	}
+	if (definition.criteria.length === 0) {
+		throw new Error(
+			`Eval "${definition.id}" must define at least one criterion`,
+		);
+	}
+	const datasetId = opts.datasetId ?? definition.defaultDatasetId;
+	if (!datasetId) {
+		throw new Error(
+			`Eval "${definition.id}" does not specify a default dataset; pass datasetId`,
+		);
+	}
+	const dataset = await scoped.getDataset(datasetId);
+	if (!dataset) {
+		throw Object.assign(new Error(`Dataset "${datasetId}" not found`), {
+			code: "NOT_FOUND",
+		});
+	}
+
+	const agentRef = opts.agentVersion
+		? `${definition.agentId}@${opts.agentVersion}`
+		: definition.agentId;
+	const { runner, manifest } = await opts.resolveRunnerAndManifest(
+		opts.store,
+		opts.userId,
+		agentRef,
+	);
+	const agent = await runner.resolveAgentRef(agentRef);
+	if (!agent) {
+		throw Object.assign(new Error(`Agent "${agentRef}" not found`), {
+			code: "NOT_FOUND",
+		});
+	}
+
+	const run: EvalRun = {
+		id: generateId("evalrun"),
+		evalId: definition.id,
+		datasetId: dataset.id,
+		agentId: definition.agentId,
+		agentVersion: agent.createdAt,
+		requestedAgentVersion: opts.agentVersion,
+		status: "running",
+		startedAt: new Date().toISOString(),
+		snapshots: {
+			eval: cloneJson(definition),
+			dataset: cloneJson(dataset),
+			agent: cloneJson(agent),
+			agentVersion: agent.createdAt,
+			requestedAgentVersion: opts.agentVersion,
+		},
+		caseResults: [],
+	};
+	await scoped.putEvalRun(run);
+
+	const judgeId = `__agntz_eval_judge_${run.id}`;
+	runner.registerAgent(createEvalJudgeAgent(judgeId, definition));
+	try {
+		for (const item of dataset.items) {
+			const started = Date.now();
+			let output: unknown;
+			try {
+				const sessionId = generateSessionId();
+				const spanEmitter = new SpanEmitter({
+					traceSink: (event) => {
+						if (event.type === "span-start")
+							opts.traceRegistry.spanStart(event.span);
+						else if (event.type === "span-end")
+							opts.traceRegistry.spanEnd(event.spanId, event.patch);
+						else if (event.type === "trace-done")
+							opts.traceRegistry.traceDone(
+								event.summary.traceId,
+								event.summary.ownerId,
+								event.summary,
+							);
+					},
+					recordIO: false,
+				});
+				const ctx = createExecutionContext(runner, {
+					runRegistry: new InMemoryRunRegistry(),
+					spanEmitter,
+					ownerId: opts.userId,
+					userId: opts.userId,
+					sessionId,
+				});
+				const result = await execute(manifest, item.input ?? "", ctx);
+				output = result.output;
+			} catch (error) {
+				run.caseResults.push(
+					failedEvalCase(item, {
+						error: `Target agent failed: ${errorMessage(error)}`,
+						duration: Date.now() - started,
+					}),
+				);
+				await scoped.putEvalRun({ ...run, caseResults: [...run.caseResults] });
+				continue;
+			}
+
+			try {
+				const prompt = JSON.stringify(
+					{
+						input: item.input,
+						expected: item.expected ?? null,
+						actual: output,
+						itemMetadata: item.metadata ?? {},
+						datasetMetadata: dataset.metadata ?? {},
+						criteria: definition.criteria,
+						passThreshold: definition.passThreshold ?? 0.7,
+					},
+					null,
+					2,
+				);
+				const judged = await runner.invoke(judgeId, prompt);
+				const scored = scoreJudgeEnvelope(
+					definition.criteria,
+					definition.passThreshold,
+					parseJudgeOutputText(judged.output),
+				);
+				run.caseResults.push({
+					itemId: item.id,
+					status: "completed",
+					input: item.input,
+					expected: item.expected,
+					output: outputToString(output),
+					duration: Date.now() - started,
+					criteria: scored.criteria,
+					score: scored.overallScore,
+					passed: scored.passed,
+					reason: scored.reason,
+				});
+			} catch (error) {
+				run.caseResults.push(
+					failedEvalCase(item, {
+						output: outputToString(output),
+						error: `Judge failed: ${errorMessage(error)}`,
+						duration: Date.now() - started,
+					}),
+				);
+			}
+			await scoped.putEvalRun({ ...run, caseResults: [...run.caseResults] });
+		}
+	} finally {
+		runner.deregisterAgent(judgeId);
+	}
+
+	run.summary = summarizeEvalRun(definition, run.caseResults);
+	run.status = "completed";
+	run.endedAt = new Date().toISOString();
+	await scoped.putEvalRun(run);
+	return run;
+}
+
+function normalizeEvalDefinition(
+	body: Partial<EvalDefinition>,
+): EvalDefinition {
+	const id = stringOrUndefined(body.id) ?? generateId("eval");
+	const agentId = stringOrUndefined(body.agentId);
+	if (!agentId) throw new Error("Missing required field: agentId");
+	const name = stringOrUndefined(body.name) ?? id;
+	const criteria = Array.isArray(body.criteria)
+		? body.criteria.map((criterion, index) => ({
+				id:
+					stringOrUndefined(criterion?.id) ??
+					`criterion_${String(index + 1).padStart(2, "0")}`,
+				name: stringOrUndefined(criterion?.name) ?? `Criterion ${index + 1}`,
+				description: stringOrUndefined(criterion?.description),
+				weight:
+					typeof criterion?.weight === "number" ? criterion.weight : undefined,
+				threshold:
+					typeof criterion?.threshold === "number"
+						? criterion.threshold
+						: undefined,
+			}))
+		: [];
+	return {
+		id,
+		agentId,
+		name,
+		description: stringOrUndefined(body.description),
+		criteria,
+		defaultDatasetId: stringOrUndefined(body.defaultDatasetId),
+		passThreshold:
+			typeof body.passThreshold === "number" ? body.passThreshold : undefined,
+		judgeModel: body.judgeModel,
+		metadata: isRecord(body.metadata) ? body.metadata : undefined,
+		createdAt: body.createdAt,
+		updatedAt: body.updatedAt,
+	};
+}
+
+function normalizeEvalDataset(body: Partial<EvalDataset>): EvalDataset {
+	const id = stringOrUndefined(body.id) ?? generateId("dataset");
+	const name = stringOrUndefined(body.name) ?? id;
+	const items = Array.isArray(body.items)
+		? body.items.map((item, index) => ({
+				id:
+					stringOrUndefined(item?.id) ??
+					`case_${String(index + 1).padStart(3, "0")}`,
+				input:
+					typeof item?.input === "string" || Array.isArray(item?.input)
+						? item.input
+						: JSON.stringify(item?.input ?? ""),
+				expected: item?.expected,
+				metadata: isRecord(item?.metadata) ? item.metadata : undefined,
+			}))
+		: [];
+	return {
+		id,
+		name,
+		description: stringOrUndefined(body.description),
+		items,
+		metadata: isRecord(body.metadata) ? body.metadata : undefined,
+		createdAt: body.createdAt,
+		updatedAt: body.updatedAt,
+	};
+}
+
+function failedEvalCase(
+	item: EvalDataset["items"][number],
+	opts: { output?: string; duration: number; error: string },
+): EvalCaseResult {
+	return {
+		itemId: item.id,
+		status: "failed",
+		input: item.input,
+		expected: item.expected,
+		output: opts.output,
+		duration: opts.duration,
+		criteria: {},
+		score: 0,
+		passed: false,
+		error: opts.error,
+	};
+}
+
+function outputToString(output: unknown): string {
+	return typeof output === "string" ? output : JSON.stringify(output);
+}
+
+function stringOrUndefined(value: unknown): string | undefined {
+	return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function cloneJson<T>(value: T): T {
+	return JSON.parse(JSON.stringify(value)) as T;
 }
 
 /**

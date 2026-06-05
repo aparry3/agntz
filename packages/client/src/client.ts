@@ -8,6 +8,13 @@ import { composeSignal, sendRequest } from "./fetch.js";
 import { parseSSE } from "./sse.js";
 import type {
 	AgntzClientOptions,
+	EvalDataset,
+	EvalDefinition,
+	EvalListFilter,
+	EvalRun,
+	EvalRunInput,
+	EvalRunListFilter,
+	EvalRunListResult,
 	HealthResult,
 	MultiplexedRunEvent,
 	Run,
@@ -26,6 +33,8 @@ import type {
 
 export class AgntzClient {
 	readonly agents: AgentsResource;
+	readonly datasets: DatasetsResource;
+	readonly evals: EvalsResource;
 	readonly runs: RunsResource;
 	readonly traces: TracesResource;
 	private readonly apiKey: string;
@@ -41,6 +50,8 @@ export class AgntzClient {
 		this.fetchImpl = opts.fetch ?? fetch;
 		this.defaultSignal = opts.defaultSignal;
 		this.agents = new AgentsResource(this);
+		this.datasets = new DatasetsResource(this);
+		this.evals = new EvalsResource(this);
 		this.runs = new RunsResource(this);
 		this.traces = new TracesResource(this);
 	}
@@ -108,6 +119,229 @@ export class AgentsResource {
 
 	stream(input: RunInput): AsyncGenerator<StreamEvent, void, void> {
 		return streamAgentEvents(this.client, input);
+	}
+}
+
+export class DatasetsResource {
+	constructor(private readonly client: AgntzClient) {}
+
+	async list(opts: { signal?: AbortSignal } = {}): Promise<EvalDataset[]> {
+		const signal = this.client._composeSignal(opts.signal);
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: "/datasets",
+			method: "GET",
+			apiKey: this.client._apiKey,
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as EvalDataset[];
+	}
+
+	async create(
+		dataset: Partial<EvalDataset>,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<EvalDataset> {
+		const signal = this.client._composeSignal(opts.signal);
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: "/datasets",
+			method: "POST",
+			apiKey: this.client._apiKey,
+			body: dataset,
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as EvalDataset;
+	}
+
+	async get(
+		datasetId: string,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<EvalDataset> {
+		const signal = this.client._composeSignal(opts.signal);
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/datasets/${encodeURIComponent(datasetId)}`,
+			method: "GET",
+			apiKey: this.client._apiKey,
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as EvalDataset;
+	}
+
+	async update(
+		datasetId: string,
+		patch: Partial<EvalDataset>,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<EvalDataset> {
+		const signal = this.client._composeSignal(opts.signal);
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/datasets/${encodeURIComponent(datasetId)}`,
+			method: "PUT",
+			apiKey: this.client._apiKey,
+			body: patch,
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as EvalDataset;
+	}
+
+	async delete(
+		datasetId: string,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<void> {
+		const signal = this.client._composeSignal(opts.signal);
+		await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/datasets/${encodeURIComponent(datasetId)}`,
+			method: "DELETE",
+			apiKey: this.client._apiKey,
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
+	}
+}
+
+export class EvalsResource {
+	constructor(private readonly client: AgntzClient) {}
+
+	async list(
+		filter: EvalListFilter = {},
+		opts: { signal?: AbortSignal } = {},
+	): Promise<EvalDefinition[]> {
+		const signal = this.client._composeSignal(opts.signal);
+		const params = new URLSearchParams();
+		if (filter.agentId) params.set("agentId", filter.agentId);
+		const path = params.toString() ? `/evals?${params}` : "/evals";
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path,
+			method: "GET",
+			apiKey: this.client._apiKey,
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as EvalDefinition[];
+	}
+
+	async create(
+		definition: Partial<EvalDefinition>,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<EvalDefinition> {
+		const signal = this.client._composeSignal(opts.signal);
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: "/evals",
+			method: "POST",
+			apiKey: this.client._apiKey,
+			body: definition,
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as EvalDefinition;
+	}
+
+	async get(
+		evalId: string,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<EvalDefinition> {
+		const signal = this.client._composeSignal(opts.signal);
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/evals/${encodeURIComponent(evalId)}`,
+			method: "GET",
+			apiKey: this.client._apiKey,
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as EvalDefinition;
+	}
+
+	async update(
+		evalId: string,
+		patch: Partial<EvalDefinition>,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<EvalDefinition> {
+		const signal = this.client._composeSignal(opts.signal);
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/evals/${encodeURIComponent(evalId)}`,
+			method: "PUT",
+			apiKey: this.client._apiKey,
+			body: patch,
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as EvalDefinition;
+	}
+
+	async delete(
+		evalId: string,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<void> {
+		const signal = this.client._composeSignal(opts.signal);
+		await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/evals/${encodeURIComponent(evalId)}`,
+			method: "DELETE",
+			apiKey: this.client._apiKey,
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
+	}
+
+	async run(input: EvalRunInput): Promise<EvalRun> {
+		const signal = this.client._composeSignal(input.signal);
+		const body: Record<string, unknown> = { evalId: input.evalId };
+		if (input.datasetId !== undefined) body.datasetId = input.datasetId;
+		if (input.agentVersion !== undefined)
+			body.agentVersion = input.agentVersion;
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: "/eval-runs",
+			method: "POST",
+			apiKey: this.client._apiKey,
+			body,
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as EvalRun;
+	}
+
+	async getRun(
+		runId: string,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<EvalRun> {
+		const signal = this.client._composeSignal(opts.signal);
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/eval-runs/${encodeURIComponent(runId)}`,
+			method: "GET",
+			apiKey: this.client._apiKey,
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as EvalRun;
+	}
+
+	async listRuns(
+		filter: EvalRunListFilter = {},
+		opts: { signal?: AbortSignal } = {},
+	): Promise<EvalRunListResult> {
+		const signal = this.client._composeSignal(opts.signal);
+		const params = encodeEvalRunFilter(filter);
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: params ? `/eval-runs?${params}` : "/eval-runs",
+			method: "GET",
+			apiKey: this.client._apiKey,
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as EvalRunListResult;
 	}
 }
 
@@ -264,6 +498,21 @@ export class TracesResource {
 			fetchImpl: this.client._fetchImpl,
 		});
 	}
+}
+
+function encodeEvalRunFilter(filter: EvalRunListFilter): string {
+	const params = new URLSearchParams();
+	if (filter.agentId !== undefined) params.set("agentId", filter.agentId);
+	if (filter.evalId !== undefined) params.set("evalId", filter.evalId);
+	if (filter.datasetId !== undefined) params.set("datasetId", filter.datasetId);
+	if (filter.status !== undefined) params.set("status", filter.status);
+	if (filter.startedAfter !== undefined)
+		params.set("startedAfter", filter.startedAfter);
+	if (filter.startedBefore !== undefined)
+		params.set("startedBefore", filter.startedBefore);
+	if (filter.limit !== undefined) params.set("limit", String(filter.limit));
+	if (filter.cursor !== undefined) params.set("cursor", filter.cursor);
+	return params.toString();
 }
 
 function encodeTraceFilter(filter: TraceFilter): string {

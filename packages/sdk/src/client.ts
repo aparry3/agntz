@@ -1,4 +1,11 @@
 import type {
+	EvalDataset,
+	EvalDefinition,
+	EvalListFilter,
+	EvalRun,
+	EvalRunInput,
+	EvalRunListFilter,
+	EvalRunListResult,
 	Run,
 	RunInput,
 	RunListFilter,
@@ -9,7 +16,7 @@ import type {
 	TraceFilter,
 	TracesListResult,
 } from "@agntz/client";
-import { SpanEmitter, createRunner } from "@agntz/core";
+import { MemoryStore, SpanEmitter, createRunner, runEval } from "@agntz/core";
 import type { TokenCache } from "@agntz/core";
 import type {
 	StreamEvent as CoreStreamEvent,
@@ -44,6 +51,8 @@ export interface AgntzLocalOptions {
 	envProvider?: (name: string) => string | undefined;
 	modelProvider?: ModelProvider;
 	resources?: Record<string, ResourceProvider>;
+	evals?: EvalDefinition[];
+	datasets?: EvalDataset[];
 	runsCapacity?: number;
 	tracesCapacity?: number;
 	onEvent?: (event: CoreStreamEvent) => void;
@@ -59,6 +68,8 @@ export interface AgntzLocalOptions {
 
 export interface LocalClient {
 	readonly agents: LocalAgentsResource;
+	readonly datasets: LocalDatasetsResource;
+	readonly evals: LocalEvalsResource;
 	readonly runs: LocalRunsResource;
 	readonly traces: LocalTracesResource;
 	readonly manifests: ReadonlyMap<string, AgentManifest>;
@@ -68,6 +79,25 @@ export interface LocalClient {
 export interface LocalAgentsResource {
 	run(input: RunInput): Promise<RunResult>;
 	stream(input: RunInput): AsyncGenerator<StreamEvent, void, void>;
+}
+
+export interface LocalDatasetsResource {
+	list(): Promise<EvalDataset[]>;
+	create(dataset: EvalDataset): Promise<EvalDataset>;
+	get(id: string): Promise<EvalDataset | null>;
+	update(id: string, patch: Partial<EvalDataset>): Promise<EvalDataset>;
+	delete(id: string): Promise<void>;
+}
+
+export interface LocalEvalsResource {
+	list(filter?: EvalListFilter): Promise<EvalDefinition[]>;
+	create(definition: EvalDefinition): Promise<EvalDefinition>;
+	get(id: string): Promise<EvalDefinition | null>;
+	update(id: string, patch: Partial<EvalDefinition>): Promise<EvalDefinition>;
+	delete(id: string): Promise<void>;
+	run(input: EvalRunInput): Promise<EvalRun>;
+	getRun(id: string): Promise<EvalRun | null>;
+	listRuns(filter?: EvalRunListFilter): Promise<EvalRunListResult>;
 }
 
 export interface LocalRunsResource {
@@ -86,15 +116,23 @@ export async function agntz(opts: AgntzLocalOptions): Promise<LocalClient> {
 	const localToolNames = new Set(toolDefs.map((t) => t.name));
 
 	const envProvider = opts.envProvider ?? ((name: string) => process.env[name]);
+	const store = opts.store ?? new MemoryStore();
 
 	const runner = createRunner({
 		tools: toolDefs,
 		envProvider,
 		modelProvider: opts.modelProvider,
 		resources: opts.resources,
-		store: opts.store,
+		store,
 		tokenCache: opts.tokenCache,
 	});
+
+	for (const dataset of opts.datasets ?? []) {
+		await store.putDataset(dataset);
+	}
+	for (const definition of opts.evals ?? []) {
+		await store.putEval(definition);
+	}
 
 	// Register LLM agents up-front so spawn / agent-as-tool refs resolve. Non-
 	// LLM kinds are dispatched through the manifest executor at run time and
@@ -116,12 +154,15 @@ export async function agntz(opts: AgntzLocalOptions): Promise<LocalClient> {
 		manifests,
 		localToolsMap,
 		localToolNames,
+		store,
 		opts,
 	);
 }
 
 class LocalClientImpl implements LocalClient {
 	readonly agents: LocalAgentsResource;
+	readonly datasets: LocalDatasetsResource;
+	readonly evals: LocalEvalsResource;
 	readonly runs: LocalRunsResource;
 	readonly traces: LocalTracesResource;
 	constructor(
@@ -129,6 +170,7 @@ class LocalClientImpl implements LocalClient {
 		readonly manifests: ReadonlyMap<string, AgentManifest>,
 		localToolsMap: Map<string, ToolDefinition>,
 		localToolNames: Set<string>,
+		store: UnifiedStore,
 		opts: AgntzLocalOptions,
 	) {
 		const runsBuffer = new RunsBuffer({ capacity: opts.runsCapacity });
@@ -144,8 +186,86 @@ class LocalClientImpl implements LocalClient {
 			traceSink,
 			opts.onEvent,
 		);
+		this.datasets = new DatasetsResourceImpl(store);
+		this.evals = new EvalsResourceImpl(_runner, store);
 		this.runs = new RunsResourceImpl(runsBuffer);
 		this.traces = new TracesResourceImpl(tracesBuffer);
+	}
+}
+
+class DatasetsResourceImpl implements LocalDatasetsResource {
+	constructor(private readonly store: UnifiedStore) {}
+
+	async list(): Promise<EvalDataset[]> {
+		return this.store.listDatasets();
+	}
+
+	async create(dataset: EvalDataset): Promise<EvalDataset> {
+		await this.store.putDataset(dataset);
+		return (await this.store.getDataset(dataset.id)) ?? dataset;
+	}
+
+	async get(id: string): Promise<EvalDataset | null> {
+		return this.store.getDataset(id);
+	}
+
+	async update(id: string, patch: Partial<EvalDataset>): Promise<EvalDataset> {
+		const existing = await this.store.getDataset(id);
+		if (!existing) throw new Error(`Dataset not found: ${id}`);
+		const next = { ...existing, ...patch, id };
+		await this.store.putDataset(next);
+		return (await this.store.getDataset(id)) ?? next;
+	}
+
+	async delete(id: string): Promise<void> {
+		await this.store.deleteDataset(id);
+	}
+}
+
+class EvalsResourceImpl implements LocalEvalsResource {
+	constructor(
+		private readonly runner: Runner,
+		private readonly store: UnifiedStore,
+	) {}
+
+	async list(filter: EvalListFilter = {}): Promise<EvalDefinition[]> {
+		return this.store.listEvals(filter);
+	}
+
+	async create(definition: EvalDefinition): Promise<EvalDefinition> {
+		await this.store.putEval(definition);
+		return (await this.store.getEval(definition.id)) ?? definition;
+	}
+
+	async get(id: string): Promise<EvalDefinition | null> {
+		return this.store.getEval(id);
+	}
+
+	async update(
+		id: string,
+		patch: Partial<EvalDefinition>,
+	): Promise<EvalDefinition> {
+		const existing = await this.store.getEval(id);
+		if (!existing) throw new Error(`Eval not found: ${id}`);
+		const next = { ...existing, ...patch, id };
+		await this.store.putEval(next);
+		return (await this.store.getEval(id)) ?? next;
+	}
+
+	async delete(id: string): Promise<void> {
+		await this.store.deleteEval(id);
+	}
+
+	async run(input: EvalRunInput): Promise<EvalRun> {
+		return runEval(this.runner, this.store, input);
+	}
+
+	async getRun(id: string): Promise<EvalRun | null> {
+		return this.store.getEvalRun(id);
+	}
+
+	async listRuns(filter: EvalRunListFilter = {}): Promise<EvalRunListResult> {
+		return this.store.listEvalRuns(filter);
 	}
 }
 

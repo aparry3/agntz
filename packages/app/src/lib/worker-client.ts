@@ -1,3 +1,4 @@
+import type { EvalRun } from "@agntz/core";
 import type { AgentManifest, ValidationResult } from "@agntz/manifest";
 
 const WORKER_URL = process.env.WORKER_URL ?? "http://localhost:4001";
@@ -24,6 +25,13 @@ export interface RunResult {
 	state: Record<string, unknown>;
 }
 
+export interface EvalRunRequest {
+	userId: string;
+	evalId: string;
+	datasetId?: string;
+	agentVersion?: string;
+}
+
 /**
  * Call the worker's /run endpoint on behalf of a logged-in user. The worker
  * trusts X-Internal-Secret + the workspaceId in the body; external callers use
@@ -47,6 +55,26 @@ export async function workerRun(req: RunRequest): Promise<RunResult> {
 	}
 
 	return res.json() as Promise<RunResult>;
+}
+
+export async function workerEvalRun(req: EvalRunRequest): Promise<EvalRun> {
+	const res = await fetch(`${WORKER_URL}/eval-runs`, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			"X-Internal-Secret": internalSecret(),
+		},
+		body: JSON.stringify(req),
+	});
+
+	if (!res.ok) {
+		const body = await res.json().catch(() => ({}));
+		throw new Error(
+			(body as { error?: string }).error ?? `Worker error: ${res.status}`,
+		);
+	}
+
+	return res.json() as Promise<EvalRun>;
 }
 
 /**
