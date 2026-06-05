@@ -1,5 +1,12 @@
 # @agntz/manifest
 
+## 4.0.0
+
+### Patch Changes
+
+- Updated dependencies [2879d18]
+  - @agntz/core@1.3.0
+
 ## 3.0.0
 
 ### Patch Changes

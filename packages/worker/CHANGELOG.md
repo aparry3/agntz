@@ -1,5 +1,14 @@
 # @agntz/worker
 
+## 0.1.7
+
+### Patch Changes
+
+- Updated dependencies [2879d18]
+  - @agntz/core@1.3.0
+  - @agntz/store-postgres@4.0.0
+  - @agntz/manifest@4.0.0
+
 ## 0.1.6
 
 ### Patch Changes

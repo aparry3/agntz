@@ -1,6 +1,6 @@
 {
   "name": "@agntz/memrez",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Durable tagged memory layer for agntz agents",
   "type": "module",
   "main": "./dist/index.js",
@@ -48,7 +48,7 @@
     "zod": "^3.25.0"
   },
   "peerDependencies": {
-    "@agntz/core": ">=1.2.3"
+    "@agntz/core": ">=1.3.0"
   },
   "devDependencies": {
     "@agntz/core": "workspace:*",
