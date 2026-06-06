@@ -294,7 +294,6 @@ def build_judge_prompt(
     return json.dumps(
         {
             "input": item.input,
-            "expected": item.expected if item.expected is not None else None,
             "actual": output_to_string(actual),
             "itemMetadata": item.metadata or {},
             "datasetMetadata": dataset.metadata or {},
@@ -488,7 +487,6 @@ async def _run_case(
             itemId=item.id,
             status="completed",
             input=item.input,
-            expected=item.expected,
             output=output_to_string(target.output),
             agentRunId=target.run_id,
             invocationId=target.invocation_id,
@@ -517,7 +515,6 @@ def cancelled_eval_case(item: EvalDatasetItem) -> EvalCaseResult:
         itemId=item.id,
         status="cancelled",
         input=item.input,
-        expected=item.expected,
         criteria={},
         score=0,
         passed=False,
@@ -538,7 +535,6 @@ def failed_eval_case(
         itemId=item.id,
         status="failed",
         input=item.input,
-        expected=item.expected,
         output=output,
         invocationId=invocation_id,
         usage=usage,

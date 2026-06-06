@@ -40,8 +40,8 @@ def test_eval_judge_agent_schema_and_prompt_match_ts_shape() -> None:
             "items": [
                 {
                     "id": "case_1",
+                    "name": "Greeting",
                     "input": "hello",
-                    "expected": {"answer": "hi"},
                     "metadata": {"source": "unit"},
                 }
             ],
@@ -66,7 +66,6 @@ def test_eval_judge_agent_schema_and_prompt_match_ts_shape() -> None:
     )
     assert prompt == {
         "input": "hello",
-        "expected": {"answer": "hi"},
         "actual": '{"answer":"hi"}',
         "itemMetadata": {"source": "unit"},
         "datasetMetadata": {"suite": "smoke"},
@@ -103,7 +102,7 @@ def test_cancel_eval_run_marks_pending_cases_and_latest_score() -> None:
             "id": "dataset_1",
             "agentId": "support",
             "name": "Cases",
-            "items": [{"id": "case_1", "input": "hello"}],
+            "items": [{"id": "case_1", "name": "Greeting", "input": "hello"}],
         }
     )
     run = EvalRun.model_validate(

@@ -1172,12 +1172,8 @@ export interface EvalDefinition {
 
 export interface EvalDatasetItem {
 	id: string;
+	name?: string;
 	input: EvalInput;
-	reference?: unknown;
-	/** Deprecated alias for reference. */
-	expected?: unknown;
-	tags?: string[];
-	notes?: string;
 	metadata?: Record<string, unknown>;
 }
 
@@ -1208,10 +1204,6 @@ export interface EvalCaseResult {
 	itemId: string;
 	status: EvalCaseStatus;
 	input: EvalInput;
-	reference?: unknown;
-	/** Deprecated alias for reference. */
-	expected?: unknown;
-	tags?: string[];
 	output?: string;
 	agentRunId?: string;
 	invocationId?: string;
@@ -1249,28 +1241,6 @@ export interface EvalRunSummary {
 			passed: boolean;
 			completedCases: number;
 			gate?: { minimumScore: number; passed: boolean };
-		}
-	>;
-	tags?: Record<
-		string,
-		{
-			totalCases: number;
-			completedCases: number;
-			failedCases: number;
-			skippedCases: number;
-			overallScore: number;
-			passed: boolean;
-			outcome?: EvalOutcome;
-			gateFailures?: string[];
-			criteria: Record<
-				string,
-				{
-					score: number;
-					passed: boolean;
-					completedCases: number;
-					gate?: { minimumScore: number; passed: boolean };
-				}
-			>;
 		}
 	>;
 }

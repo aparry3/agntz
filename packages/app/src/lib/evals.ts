@@ -75,16 +75,13 @@ export function normalizeEvalDataset(
 				id:
 					stringOrUndefined(item?.id) ??
 					`case_${String(index + 1).padStart(3, "0")}`,
+				name: stringOrUndefined(item?.name),
 				input:
 					typeof item?.input === "string" ||
 					Array.isArray(item?.input) ||
 					isRecord(item?.input)
 						? item.input
 						: JSON.stringify(item?.input ?? ""),
-				reference: item?.reference ?? item?.expected,
-				expected: item?.expected ?? item?.reference,
-				tags: normalizeTags(item?.tags),
-				notes: stringOrUndefined(item?.notes),
 				metadata: isRecord(item?.metadata) ? item.metadata : undefined,
 			}))
 		: [];
@@ -203,12 +200,4 @@ function normalizeDefaultDataset(
 	}
 	const id = stringOrUndefined(body.defaultDatasetId);
 	return id ? { id } : undefined;
-}
-
-function normalizeTags(value: unknown): string[] | undefined {
-	if (!Array.isArray(value)) return undefined;
-	const tags = value
-		.map((tag) => (typeof tag === "string" ? tag.trim() : ""))
-		.filter(Boolean);
-	return tags.length > 0 ? tags : undefined;
 }

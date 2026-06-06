@@ -122,8 +122,8 @@ async function seedEval(store: MemoryStore) {
 		agentId: "support",
 		name: "Cases",
 		items: [
-			{ id: "case_001", input: "refund?", reference: "30 days" },
-			{ id: "case_002", input: "shipping?", reference: "2 days" },
+			{ id: "case_001", input: "refund?", name: "Refund question" },
+			{ id: "case_002", input: "shipping?", name: "Shipping question" },
 		],
 	});
 }

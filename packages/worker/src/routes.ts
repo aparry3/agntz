@@ -1704,9 +1704,6 @@ async function executeHostedEval(opts: {
 					itemId: item.id,
 					status: "completed",
 					input: item.input,
-					reference: item.reference ?? item.expected,
-					expected: item.expected ?? item.reference,
-					tags: item.tags,
 					output: outputToString(output),
 					duration: Date.now() - started,
 					criteria: criteriaResults,
@@ -1877,10 +1874,7 @@ function judgeCriterionPrompt(args: {
 			instruction:
 				"Score the target agent output for this one criterion. Return JSON with score and reason only.",
 			input: args.item.input,
-			reference: args.item.reference ?? args.item.expected ?? null,
 			actual: args.actual,
-			itemTags: args.item.tags ?? [],
-			itemNotes: args.item.notes ?? null,
 			itemMetadata: args.item.metadata ?? {},
 			datasetMetadata: args.dataset.metadata ?? {},
 			criterion: {
@@ -2034,16 +2028,13 @@ function normalizeEvalDataset(body: Partial<EvalDataset>): EvalDataset {
 				id:
 					stringOrUndefined(item?.id) ??
 					`case_${String(index + 1).padStart(3, "0")}`,
+				name: stringOrUndefined(item?.name),
 				input:
 					typeof item?.input === "string" ||
 					Array.isArray(item?.input) ||
 					isRecord(item?.input)
 						? item.input
 						: JSON.stringify(item?.input ?? ""),
-				reference: item?.reference ?? item?.expected,
-				expected: item?.expected ?? item?.reference,
-				tags: normalizeTags(item?.tags),
-				notes: stringOrUndefined(item?.notes),
 				metadata: isRecord(item?.metadata) ? item.metadata : undefined,
 			}))
 		: [];
@@ -2088,9 +2079,6 @@ function failedEvalCase(
 		itemId: item.id,
 		status: "failed",
 		input: item.input,
-		reference: item.reference ?? item.expected,
-		expected: item.expected ?? item.reference,
-		tags: item.tags,
 		output: opts.output,
 		duration: opts.duration,
 		criteria: {},
@@ -2107,9 +2095,6 @@ function cancelledEvalCase(item: EvalDataset["items"][number]): EvalCaseResult {
 		itemId: item.id,
 		status: "cancelled",
 		input: item.input,
-		reference: item.reference ?? item.expected,
-		expected: item.expected ?? item.reference,
-		tags: item.tags,
 		criteria: {},
 		score: 0,
 		passed: false,
@@ -2221,14 +2206,6 @@ function normalizeDefaultDataset(
 	}
 	const id = stringOrUndefined(body.defaultDatasetId);
 	return id ? { id } : undefined;
-}
-
-function normalizeTags(value: unknown): string[] | undefined {
-	if (!Array.isArray(value)) return undefined;
-	const tags = value
-		.map((tag) => (typeof tag === "string" ? tag.trim() : ""))
-		.filter(Boolean);
-	return tags.length > 0 ? tags : undefined;
 }
 
 function cloneJson<T>(value: T): T {

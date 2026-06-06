@@ -29,11 +29,11 @@ export function EvalPanel({ agentId }: { agentId: string }) {
 	const [evalName, setEvalName] = useState("Quality check");
 	const [criterionName, setCriterionName] = useState("Accuracy");
 	const [criterionDescription, setCriterionDescription] = useState(
-		"Output should answer the input correctly and match the expected result when one is provided.",
+		"Score whether the agent output satisfies the rubric for the input.",
 	);
 	const [datasetName, setDatasetName] = useState("Regression cases");
 	const [datasetLines, setDatasetLines] = useState(
-		"Question => Expected answer",
+		"Enter one agent input per line",
 	);
 
 	const load = async () => {
@@ -119,14 +119,10 @@ export function EvalPanel({ agentId }: { agentId: string }) {
 			.split("\n")
 			.map((line) => line.trim())
 			.filter(Boolean)
-			.map((line, index) => {
-				const [input, ...expectedParts] = line.split("=>");
-				return {
-					id: `case_${String(index + 1).padStart(3, "0")}`,
-					input: input.trim(),
-					expected: expectedParts.join("=>").trim() || undefined,
-				};
-			});
+			.map((input, index) => ({
+				id: `case_${String(index + 1).padStart(3, "0")}`,
+				input,
+			}));
 		const res = await fetch("/api/datasets", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -466,9 +462,6 @@ export function EvalPanel({ agentId }: { agentId: string }) {
 								</Tag>
 							</div>
 							<Snippet label="input" value={result.input} />
-							{result.expected !== undefined && (
-								<Snippet label="expected" value={result.expected} />
-							)}
 							{result.output && (
 								<Snippet label="output" value={result.output} />
 							)}

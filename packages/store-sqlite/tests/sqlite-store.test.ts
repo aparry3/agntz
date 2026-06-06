@@ -160,9 +160,9 @@ describe("SqliteStore", () => {
 			items: [
 				{
 					id: "case_001",
+					name: "Refund question",
 					input: { question: "refund?" },
-					reference: "30 days",
-					tags: ["happy-path"],
+					metadata: { category: "refunds" },
 				},
 			],
 		};
@@ -179,8 +179,8 @@ describe("SqliteStore", () => {
 			).toBe("Quality");
 			expect(
 				(await store.getDatasetVersion("cases", datasetV1.createdAt))?.items[0]
-					.reference,
-			).toBe("30 days");
+					.name,
+			).toBe("Refund question");
 
 			await store.setEvalVersionAlias("quality", evalV1.createdAt, "baseline");
 			await store.setDatasetVersionAlias(
@@ -198,7 +198,7 @@ describe("SqliteStore", () => {
 			await store.putEval({ ...evalDefinition, name: "Quality v2" });
 			await store.putDataset({
 				...dataset,
-				items: [{ ...dataset.items[0], reference: "45 days" }],
+				items: [{ ...dataset.items[0], name: "Refund question v2" }],
 			});
 			const [datasetV2] = await store.listDatasetVersions("cases");
 			expect(await store.listEvalVersions("quality")).toHaveLength(2);

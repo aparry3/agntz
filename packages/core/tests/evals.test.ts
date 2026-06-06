@@ -45,9 +45,9 @@ const dataset: EvalDataset = {
 	items: [
 		{
 			id: "case_001",
+			name: "Refund window",
 			input: { question: "What is the refund window?" },
-			reference: "30 days",
-			tags: ["happy-path", "refunds"],
+			metadata: { category: "refunds" },
 		},
 	],
 };
@@ -186,8 +186,7 @@ describe("runEval", () => {
 		expect(run.evalVersion).toBeTruthy();
 		expect(run.datasetVersion).toBeTruthy();
 		expect(run.snapshots.eval.id).toBe(definition.id);
-		expect(run.snapshots.dataset.items[0].reference).toBe("30 days");
-		expect(run.summary?.tags?.["happy-path"].overallScore).toBe(0.875);
+		expect(run.snapshots.dataset.items[0].name).toBe("Refund window");
 		expect(run.caseResults[0].criteria.accuracy.score).toBe(1);
 		expect((await store.getEvalRun(run.id))?.id).toBe(run.id);
 

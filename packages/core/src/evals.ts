@@ -161,7 +161,7 @@ export function summarizeEvalRun(
 	options: { criterionIds?: string[] } = {},
 ): EvalRunSummary {
 	const criteria = selectCriteria(definition.criteria, options.criterionIds);
-	return buildEvalSummary(definition, criteria, caseResults, true);
+	return buildEvalSummary(definition, criteria, caseResults);
 }
 
 export function latestScoreFromEvalRun(run: EvalRun): EvalLatestScore {
@@ -474,9 +474,6 @@ async function runCase(args: {
 		itemId: args.item.id,
 		status: "completed",
 		input: args.item.input,
-		reference: args.item.reference ?? args.item.expected,
-		expected: args.item.expected ?? args.item.reference,
-		tags: args.item.tags,
 		output: agentOutput,
 		invocationId,
 		usage,
@@ -494,9 +491,6 @@ function cancelledCase(item: EvalDataset["items"][number]): EvalCaseResult {
 		itemId: item.id,
 		status: "cancelled",
 		input: item.input,
-		reference: item.reference ?? item.expected,
-		expected: item.expected ?? item.reference,
-		tags: item.tags,
 		criteria: {},
 		score: 0,
 		passed: false,
@@ -520,9 +514,6 @@ function failedCase(
 		itemId: item.id,
 		status: "failed",
 		input: item.input,
-		reference: item.reference ?? item.expected,
-		expected: item.expected ?? item.reference,
-		tags: item.tags,
 		output: opts.output,
 		invocationId: opts.invocationId,
 		usage: opts.usage,
@@ -726,10 +717,7 @@ function judgeCriterionPrompt(args: {
 			instruction:
 				"Score the target agent output for this one criterion. Return JSON with score and reason only.",
 			input: args.item.input,
-			reference: args.item.reference ?? args.item.expected ?? null,
 			actual: args.actual,
-			itemTags: args.item.tags ?? [],
-			itemNotes: args.item.notes ?? null,
 			itemMetadata: args.item.metadata ?? {},
 			datasetMetadata: args.dataset.metadata ?? {},
 			criterion: {
@@ -764,7 +752,6 @@ function buildEvalSummary(
 	definition: EvalDefinition,
 	criteria: EvalCriterion[],
 	caseResults: EvalCaseResult[],
-	includeTags: boolean,
 ): EvalRunSummary {
 	const completed = caseResults.filter((r) => r.status === "completed");
 	const scored = caseResults.filter(
@@ -817,7 +804,7 @@ function buildEvalSummary(
 		caseFailureCount: failed.length,
 		incompleteCaseCount: skipped.length,
 	});
-	const summary: EvalRunSummary = {
+	return {
 		totalCases: caseResults.length,
 		completedCases: completed.length,
 		failedCases: failed.length,
@@ -828,35 +815,6 @@ function buildEvalSummary(
 		gateFailures: derived.gateFailures,
 		criteria: criteriaSummary,
 	};
-	if (includeTags) {
-		const tagNames = new Set<string>();
-		for (const result of caseResults) {
-			for (const tag of result.tags ?? []) tagNames.add(tag);
-		}
-		if (tagNames.size > 0) {
-			summary.tags = {};
-			for (const tag of Array.from(tagNames).sort()) {
-				const tagSummary = buildEvalSummary(
-					definition,
-					criteria,
-					caseResults.filter((result) => result.tags?.includes(tag)),
-					false,
-				);
-				summary.tags[tag] = {
-					totalCases: tagSummary.totalCases,
-					completedCases: tagSummary.completedCases,
-					failedCases: tagSummary.failedCases,
-					skippedCases: tagSummary.skippedCases,
-					overallScore: tagSummary.overallScore,
-					passed: tagSummary.passed,
-					outcome: tagSummary.outcome,
-					gateFailures: tagSummary.gateFailures,
-					criteria: tagSummary.criteria,
-				};
-			}
-		}
-	}
-	return summary;
 }
 
 function deriveOutcome(args: {

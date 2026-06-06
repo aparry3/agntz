@@ -203,9 +203,11 @@ class EvalDefinition(AgntzModel):
 
 
 class EvalDatasetItem(AgntzModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
     id: str
+    name: str | None = None
     input: Any
-    expected: Any = None
     metadata: dict[str, Any] | None = None
 
 
@@ -227,10 +229,11 @@ class EvalCriterionResult(AgntzModel):
 
 
 class EvalCaseResult(AgntzModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
     item_id: str = Field(alias="itemId")
     status: str
     input: Any
-    expected: Any = None
     output: str | None = None
     agent_run_id: str | None = Field(default=None, alias="agentRunId")
     invocation_id: str | None = Field(default=None, alias="invocationId")
