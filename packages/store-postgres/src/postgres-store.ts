@@ -18,6 +18,7 @@ import type {
 	ContextEntry,
 	EvalDataset,
 	EvalDatasetListFilters,
+	EvalDatasetVersionSummary,
 	EvalDefinition,
 	EvalLatestScore,
 	EvalLatestScoreKey,
@@ -26,6 +27,7 @@ import type {
 	EvalRun,
 	EvalRunListFilters,
 	EvalRunListResult,
+	EvalVersionSummary,
 	InvocationLog,
 	InvokeResult,
 	LogFilter,
@@ -495,6 +497,99 @@ const MIGRATIONS: string[] = [
     ON ar_eval_latest_scores(user_id, eval_id, dataset_id);
 
   UPDATE ar_schema_version SET version = 12;
+  `,
+	// v13: Versioned evals/datasets and latest-score keys pinned by eval,
+	// dataset, and agent versions.
+	`
+  CREATE TABLE IF NOT EXISTS ar_eval_versions (
+    user_id      TEXT NOT NULL,
+    eval_id      TEXT NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL,
+    activated_at TIMESTAMPTZ,
+    definition   JSONB NOT NULL,
+    PRIMARY KEY (user_id, eval_id, created_at)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ar_eval_versions_user_eval
+    ON ar_eval_versions(user_id, eval_id, created_at DESC);
+
+  INSERT INTO ar_eval_versions
+    (user_id, eval_id, created_at, activated_at, definition)
+  SELECT user_id,
+         id,
+         created_at,
+         updated_at,
+         jsonb_set(definition, '{version}', to_jsonb(created_at::text), true)
+    FROM ar_evals
+  ON CONFLICT DO NOTHING;
+
+  CREATE TABLE IF NOT EXISTS ar_eval_aliases (
+    user_id            TEXT NOT NULL,
+    eval_id            TEXT NOT NULL,
+    alias              TEXT NOT NULL,
+    version_created_at TIMESTAMPTZ NOT NULL,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, eval_id, alias)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ar_eval_aliases_version
+    ON ar_eval_aliases(user_id, eval_id, version_created_at);
+
+  CREATE TABLE IF NOT EXISTS ar_eval_dataset_versions (
+    user_id      TEXT NOT NULL,
+    dataset_id   TEXT NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL,
+    activated_at TIMESTAMPTZ,
+    dataset      JSONB NOT NULL,
+    PRIMARY KEY (user_id, dataset_id, created_at)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ar_eval_dataset_versions_user_dataset
+    ON ar_eval_dataset_versions(user_id, dataset_id, created_at DESC);
+
+  INSERT INTO ar_eval_dataset_versions
+    (user_id, dataset_id, created_at, activated_at, dataset)
+  SELECT user_id,
+         id,
+         created_at,
+         updated_at,
+         jsonb_set(dataset, '{version}', to_jsonb(created_at::text), true)
+    FROM ar_eval_datasets
+  ON CONFLICT DO NOTHING;
+
+  CREATE TABLE IF NOT EXISTS ar_eval_dataset_aliases (
+    user_id            TEXT NOT NULL,
+    dataset_id         TEXT NOT NULL,
+    alias              TEXT NOT NULL,
+    version_created_at TIMESTAMPTZ NOT NULL,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, dataset_id, alias)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ar_eval_dataset_aliases_version
+    ON ar_eval_dataset_aliases(user_id, dataset_id, version_created_at);
+
+  ALTER TABLE ar_eval_latest_scores ADD COLUMN IF NOT EXISTS eval_version TEXT;
+  ALTER TABLE ar_eval_latest_scores ADD COLUMN IF NOT EXISTS dataset_version TEXT;
+
+  UPDATE ar_eval_latest_scores
+     SET eval_version = COALESCE(score->>'evalVersion', ''),
+         dataset_version = COALESCE(score->>'datasetVersion', '')
+   WHERE eval_version IS NULL OR dataset_version IS NULL;
+
+  ALTER TABLE ar_eval_latest_scores ALTER COLUMN eval_version SET NOT NULL;
+  ALTER TABLE ar_eval_latest_scores ALTER COLUMN dataset_version SET NOT NULL;
+  ALTER TABLE ar_eval_latest_scores DROP CONSTRAINT IF EXISTS ar_eval_latest_scores_pkey;
+  ALTER TABLE ar_eval_latest_scores
+    ADD PRIMARY KEY (
+      user_id,
+      eval_id,
+      eval_version,
+      dataset_id,
+      dataset_version,
+      resolved_agent_version
+    );
+
+  CREATE INDEX IF NOT EXISTS idx_ar_eval_latest_scores_user_eval_version
+    ON ar_eval_latest_scores(user_id, eval_id, eval_version, dataset_id, dataset_version);
+
+  UPDATE ar_schema_version SET version = 13;
   `,
 ];
 
@@ -1475,22 +1570,22 @@ export class PostgresStore implements UnifiedStore {
 			args.push(filters.agentId);
 		}
 		const { rows } = await this.pool.query(
-			`SELECT definition FROM ${this.t("evals")}
+			`SELECT definition, created_at FROM ${this.t("evals")}
        ${where}
        ORDER BY updated_at DESC, id DESC`,
 			args,
 		);
-		return rows.map((r) => r.definition as EvalDefinition);
+		return rows.map((r) => rowToEvalDefinition(r));
 	}
 
 	async getEval(evalId: string): Promise<EvalDefinition | null> {
 		await this.ensureMigrated();
 		const u = this.requireUser();
 		const { rows } = await this.pool.query(
-			`SELECT definition FROM ${this.t("evals")} WHERE user_id = $1 AND id = $2`,
+			`SELECT definition, created_at FROM ${this.t("evals")} WHERE user_id = $1 AND id = $2`,
 			[u, evalId],
 		);
-		return rows[0]?.definition ?? null;
+		return rows[0] ? rowToEvalDefinition(rows[0]) : null;
 	}
 
 	async putEval(definition: EvalDefinition): Promise<void> {
@@ -1501,10 +1596,14 @@ export class PostgresStore implements UnifiedStore {
 		const row: EvalDefinition = {
 			...definition,
 			createdAt: existing?.createdAt ?? definition.createdAt ?? now,
+			version: now,
 			updatedAt: now,
 		};
-		await this.pool.query(
-			`INSERT INTO ${this.t("evals")}
+		const client = await this.pool.connect();
+		try {
+			await client.query("BEGIN");
+			await client.query(
+				`INSERT INTO ${this.t("evals")}
          (user_id, id, agent_id, name, definition, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (user_id, id) DO UPDATE SET
@@ -1512,16 +1611,29 @@ export class PostgresStore implements UnifiedStore {
          name = EXCLUDED.name,
          definition = EXCLUDED.definition,
          updated_at = EXCLUDED.updated_at`,
-			[
-				u,
-				row.id,
-				row.agentId,
-				row.name,
-				JSON.stringify(row),
-				row.createdAt,
-				now,
-			],
-		);
+				[
+					u,
+					row.id,
+					row.agentId,
+					row.name,
+					JSON.stringify(row),
+					row.createdAt,
+					now,
+				],
+			);
+			await client.query(
+				`INSERT INTO ${this.t("eval_versions")}
+           (user_id, eval_id, created_at, activated_at, definition)
+         VALUES ($1, $2, $3, $4, $5)`,
+				[u, row.id, now, now, JSON.stringify(row)],
+			);
+			await client.query("COMMIT");
+		} catch (error) {
+			await client.query("ROLLBACK");
+			throw error;
+		} finally {
+			client.release();
+		}
 	}
 
 	async deleteEval(evalId: string): Promise<void> {
@@ -1530,6 +1642,159 @@ export class PostgresStore implements UnifiedStore {
 		await this.pool.query(
 			`DELETE FROM ${this.t("evals")} WHERE user_id = $1 AND id = $2`,
 			[u, evalId],
+		);
+		await this.pool.query(
+			`DELETE FROM ${this.t("eval_versions")} WHERE user_id = $1 AND eval_id = $2`,
+			[u, evalId],
+		);
+		await this.pool.query(
+			`DELETE FROM ${this.t("eval_aliases")} WHERE user_id = $1 AND eval_id = $2`,
+			[u, evalId],
+		);
+	}
+
+	async listEvalVersions(evalId: string): Promise<EvalVersionSummary[]> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT created_at, activated_at
+         FROM ${this.t("eval_versions")}
+        WHERE user_id = $1 AND eval_id = $2
+        ORDER BY created_at DESC`,
+			[u, evalId],
+		);
+		const aliasRows = await this.pool.query(
+			`SELECT alias, version_created_at
+         FROM ${this.t("eval_aliases")}
+        WHERE user_id = $1 AND eval_id = $2`,
+			[u, evalId],
+		);
+		const aliasesByVersion = new Map<string, string[]>();
+		for (const row of aliasRows.rows) {
+			const createdAt = toIsoString(row.version_created_at);
+			const list = aliasesByVersion.get(createdAt) ?? [];
+			list.push(row.alias as string);
+			aliasesByVersion.set(createdAt, list);
+		}
+		return rows.map((row) => {
+			const createdAt = toIsoString(row.created_at);
+			return {
+				createdAt,
+				activatedAt:
+					row.activated_at == null ? null : toIsoString(row.activated_at),
+				aliases: (aliasesByVersion.get(createdAt) ?? []).sort(),
+			};
+		});
+	}
+
+	async getEvalVersion(
+		evalId: string,
+		createdAt: string,
+	): Promise<EvalDefinition | null> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT definition, created_at
+         FROM ${this.t("eval_versions")}
+        WHERE user_id = $1 AND eval_id = $2 AND created_at = $3`,
+			[u, evalId, createdAt],
+		);
+		return rows[0] ? rowToEvalDefinition(rows[0]) : null;
+	}
+
+	async activateEvalVersion(evalId: string, createdAt: string): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const version = await this.getEvalVersion(evalId, createdAt);
+		if (!version)
+			throw new Error(`Eval version not found: ${evalId}@${createdAt}`);
+		const existing = await this.getEval(evalId);
+		const now = this.nextTimestamp();
+		const row: EvalDefinition = {
+			...version,
+			createdAt: existing?.createdAt ?? version.createdAt ?? createdAt,
+			version: createdAt,
+			updatedAt: now,
+		};
+		const client = await this.pool.connect();
+		try {
+			await client.query("BEGIN");
+			await client.query(
+				`INSERT INTO ${this.t("evals")}
+           (user_id, id, agent_id, name, definition, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (user_id, id) DO UPDATE SET
+           agent_id = EXCLUDED.agent_id,
+           name = EXCLUDED.name,
+           definition = EXCLUDED.definition,
+           updated_at = EXCLUDED.updated_at`,
+				[
+					u,
+					row.id,
+					row.agentId,
+					row.name,
+					JSON.stringify(row),
+					row.createdAt,
+					now,
+				],
+			);
+			await client.query(
+				`UPDATE ${this.t("eval_versions")}
+            SET activated_at = $1
+          WHERE user_id = $2 AND eval_id = $3 AND created_at = $4`,
+				[now, u, evalId, createdAt],
+			);
+			await client.query("COMMIT");
+		} catch (error) {
+			await client.query("ROLLBACK");
+			throw error;
+		} finally {
+			client.release();
+		}
+	}
+
+	async resolveEvalVersionAlias(
+		evalId: string,
+		alias: string,
+	): Promise<string | null> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT version_created_at
+         FROM ${this.t("eval_aliases")}
+        WHERE user_id = $1 AND eval_id = $2 AND alias = $3`,
+			[u, evalId, alias],
+		);
+		return rows[0] ? toIsoString(rows[0].version_created_at) : null;
+	}
+
+	async setEvalVersionAlias(
+		evalId: string,
+		createdAt: string,
+		alias: string,
+	): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		if (!(await this.getEvalVersion(evalId, createdAt))) {
+			throw new Error(`Eval version not found: ${evalId}@${createdAt}`);
+		}
+		await this.pool.query(
+			`INSERT INTO ${this.t("eval_aliases")}
+         (user_id, eval_id, alias, version_created_at)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (user_id, eval_id, alias) DO UPDATE SET
+         version_created_at = EXCLUDED.version_created_at`,
+			[u, evalId, alias, createdAt],
+		);
+	}
+
+	async removeEvalVersionAlias(evalId: string, alias: string): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		await this.pool.query(
+			`DELETE FROM ${this.t("eval_aliases")}
+        WHERE user_id = $1 AND eval_id = $2 AND alias = $3`,
+			[u, evalId, alias],
 		);
 	}
 
@@ -1545,7 +1810,7 @@ export class PostgresStore implements UnifiedStore {
 			args.push(filters.agentId);
 		}
 		const { rows } = await this.pool.query(
-			`SELECT dataset, agent_id FROM ${this.t("eval_datasets")}
+			`SELECT dataset, agent_id, created_at FROM ${this.t("eval_datasets")}
        ${where}
        ORDER BY updated_at DESC, id DESC`,
 			args,
@@ -1557,7 +1822,7 @@ export class PostgresStore implements UnifiedStore {
 		await this.ensureMigrated();
 		const u = this.requireUser();
 		const { rows } = await this.pool.query(
-			`SELECT dataset, agent_id FROM ${this.t("eval_datasets")} WHERE user_id = $1 AND id = $2`,
+			`SELECT dataset, agent_id, created_at FROM ${this.t("eval_datasets")} WHERE user_id = $1 AND id = $2`,
 			[u, datasetId],
 		);
 		return rows[0] ? rowToEvalDataset(rows[0]) : null;
@@ -1571,10 +1836,14 @@ export class PostgresStore implements UnifiedStore {
 		const row: EvalDataset = {
 			...dataset,
 			createdAt: existing?.createdAt ?? dataset.createdAt ?? now,
+			version: now,
 			updatedAt: now,
 		};
-		await this.pool.query(
-			`INSERT INTO ${this.t("eval_datasets")}
+		const client = await this.pool.connect();
+		try {
+			await client.query("BEGIN");
+			await client.query(
+				`INSERT INTO ${this.t("eval_datasets")}
          (user_id, id, agent_id, name, dataset, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (user_id, id) DO UPDATE SET
@@ -1582,16 +1851,29 @@ export class PostgresStore implements UnifiedStore {
          name = EXCLUDED.name,
          dataset = EXCLUDED.dataset,
          updated_at = EXCLUDED.updated_at`,
-			[
-				u,
-				row.id,
-				row.agentId,
-				row.name,
-				JSON.stringify(row),
-				row.createdAt,
-				now,
-			],
-		);
+				[
+					u,
+					row.id,
+					row.agentId,
+					row.name,
+					JSON.stringify(row),
+					row.createdAt,
+					now,
+				],
+			);
+			await client.query(
+				`INSERT INTO ${this.t("eval_dataset_versions")}
+           (user_id, dataset_id, created_at, activated_at, dataset)
+         VALUES ($1, $2, $3, $4, $5)`,
+				[u, row.id, now, now, JSON.stringify(row)],
+			);
+			await client.query("COMMIT");
+		} catch (error) {
+			await client.query("ROLLBACK");
+			throw error;
+		} finally {
+			client.release();
+		}
 	}
 
 	async deleteDataset(datasetId: string): Promise<void> {
@@ -1600,6 +1882,168 @@ export class PostgresStore implements UnifiedStore {
 		await this.pool.query(
 			`DELETE FROM ${this.t("eval_datasets")} WHERE user_id = $1 AND id = $2`,
 			[u, datasetId],
+		);
+		await this.pool.query(
+			`DELETE FROM ${this.t("eval_dataset_versions")} WHERE user_id = $1 AND dataset_id = $2`,
+			[u, datasetId],
+		);
+		await this.pool.query(
+			`DELETE FROM ${this.t("eval_dataset_aliases")} WHERE user_id = $1 AND dataset_id = $2`,
+			[u, datasetId],
+		);
+	}
+
+	async listDatasetVersions(
+		datasetId: string,
+	): Promise<EvalDatasetVersionSummary[]> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT created_at, activated_at
+         FROM ${this.t("eval_dataset_versions")}
+        WHERE user_id = $1 AND dataset_id = $2
+        ORDER BY created_at DESC`,
+			[u, datasetId],
+		);
+		const aliasRows = await this.pool.query(
+			`SELECT alias, version_created_at
+         FROM ${this.t("eval_dataset_aliases")}
+        WHERE user_id = $1 AND dataset_id = $2`,
+			[u, datasetId],
+		);
+		const aliasesByVersion = new Map<string, string[]>();
+		for (const row of aliasRows.rows) {
+			const createdAt = toIsoString(row.version_created_at);
+			const list = aliasesByVersion.get(createdAt) ?? [];
+			list.push(row.alias as string);
+			aliasesByVersion.set(createdAt, list);
+		}
+		return rows.map((row) => {
+			const createdAt = toIsoString(row.created_at);
+			return {
+				createdAt,
+				activatedAt:
+					row.activated_at == null ? null : toIsoString(row.activated_at),
+				aliases: (aliasesByVersion.get(createdAt) ?? []).sort(),
+			};
+		});
+	}
+
+	async getDatasetVersion(
+		datasetId: string,
+		createdAt: string,
+	): Promise<EvalDataset | null> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT dataset, NULL AS agent_id, created_at
+         FROM ${this.t("eval_dataset_versions")}
+        WHERE user_id = $1 AND dataset_id = $2 AND created_at = $3`,
+			[u, datasetId, createdAt],
+		);
+		return rows[0] ? rowToEvalDataset(rows[0]) : null;
+	}
+
+	async activateDatasetVersion(
+		datasetId: string,
+		createdAt: string,
+	): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const version = await this.getDatasetVersion(datasetId, createdAt);
+		if (!version) {
+			throw new Error(`Dataset version not found: ${datasetId}@${createdAt}`);
+		}
+		const existing = await this.getDataset(datasetId);
+		const now = this.nextTimestamp();
+		const row: EvalDataset = {
+			...version,
+			createdAt: existing?.createdAt ?? version.createdAt ?? createdAt,
+			version: createdAt,
+			updatedAt: now,
+		};
+		const client = await this.pool.connect();
+		try {
+			await client.query("BEGIN");
+			await client.query(
+				`INSERT INTO ${this.t("eval_datasets")}
+           (user_id, id, agent_id, name, dataset, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (user_id, id) DO UPDATE SET
+           agent_id = EXCLUDED.agent_id,
+           name = EXCLUDED.name,
+           dataset = EXCLUDED.dataset,
+           updated_at = EXCLUDED.updated_at`,
+				[
+					u,
+					row.id,
+					row.agentId,
+					row.name,
+					JSON.stringify(row),
+					row.createdAt,
+					now,
+				],
+			);
+			await client.query(
+				`UPDATE ${this.t("eval_dataset_versions")}
+            SET activated_at = $1
+          WHERE user_id = $2 AND dataset_id = $3 AND created_at = $4`,
+				[now, u, datasetId, createdAt],
+			);
+			await client.query("COMMIT");
+		} catch (error) {
+			await client.query("ROLLBACK");
+			throw error;
+		} finally {
+			client.release();
+		}
+	}
+
+	async resolveDatasetVersionAlias(
+		datasetId: string,
+		alias: string,
+	): Promise<string | null> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT version_created_at
+         FROM ${this.t("eval_dataset_aliases")}
+        WHERE user_id = $1 AND dataset_id = $2 AND alias = $3`,
+			[u, datasetId, alias],
+		);
+		return rows[0] ? toIsoString(rows[0].version_created_at) : null;
+	}
+
+	async setDatasetVersionAlias(
+		datasetId: string,
+		createdAt: string,
+		alias: string,
+	): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		if (!(await this.getDatasetVersion(datasetId, createdAt))) {
+			throw new Error(`Dataset version not found: ${datasetId}@${createdAt}`);
+		}
+		await this.pool.query(
+			`INSERT INTO ${this.t("eval_dataset_aliases")}
+         (user_id, dataset_id, alias, version_created_at)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (user_id, dataset_id, alias) DO UPDATE SET
+         version_created_at = EXCLUDED.version_created_at`,
+			[u, datasetId, alias, createdAt],
+		);
+	}
+
+	async removeDatasetVersionAlias(
+		datasetId: string,
+		alias: string,
+	): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		await this.pool.query(
+			`DELETE FROM ${this.t("eval_dataset_aliases")}
+        WHERE user_id = $1 AND dataset_id = $2 AND alias = $3`,
+			[u, datasetId, alias],
 		);
 	}
 
@@ -1669,9 +2113,17 @@ export class PostgresStore implements UnifiedStore {
 		const u = this.requireUser();
 		const { rows } = await this.pool.query(
 			`SELECT score FROM ${this.t("eval_latest_scores")}
-       WHERE user_id = $1 AND eval_id = $2 AND dataset_id = $3
-         AND resolved_agent_version = $4`,
-			[u, key.evalId, key.datasetId, key.resolvedAgentVersion ?? ""],
+       WHERE user_id = $1 AND eval_id = $2 AND eval_version = $3
+         AND dataset_id = $4 AND dataset_version = $5
+         AND resolved_agent_version = $6`,
+			[
+				u,
+				key.evalId,
+				key.evalVersion ?? "",
+				key.datasetId,
+				key.datasetVersion ?? "",
+				key.resolvedAgentVersion ?? "",
+			],
 		);
 		return rows[0]?.score ?? null;
 	}
@@ -1692,9 +2144,17 @@ export class PostgresStore implements UnifiedStore {
 			clauses.push(`eval_id = $${i++}`);
 			args.push(filters.evalId);
 		}
+		if (filters.evalVersion) {
+			clauses.push(`eval_version = $${i++}`);
+			args.push(filters.evalVersion);
+		}
 		if (filters.datasetId) {
 			clauses.push(`dataset_id = $${i++}`);
 			args.push(filters.datasetId);
+		}
+		if (filters.datasetVersion) {
+			clauses.push(`dataset_version = $${i++}`);
+			args.push(filters.datasetVersion);
 		}
 		if (filters.resolvedAgentVersion !== undefined) {
 			clauses.push(`resolved_agent_version = $${i++}`);
@@ -1718,11 +2178,18 @@ export class PostgresStore implements UnifiedStore {
 		const u = this.requireUser();
 		await this.pool.query(
 			`INSERT INTO ${this.t("eval_latest_scores")}
-         (user_id, eval_id, dataset_id, agent_id, resolved_agent_version,
-          requested_agent_version, run_id, status, overall_score, passed,
-          score, started_at, ended_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-       ON CONFLICT (user_id, eval_id, dataset_id, resolved_agent_version)
+         (user_id, eval_id, eval_version, dataset_id, dataset_version, agent_id,
+          resolved_agent_version, requested_agent_version, run_id, status,
+          overall_score, passed, score, started_at, ended_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+       ON CONFLICT (
+         user_id,
+         eval_id,
+         eval_version,
+         dataset_id,
+         dataset_version,
+         resolved_agent_version
+       )
        DO UPDATE SET
          agent_id = EXCLUDED.agent_id,
          requested_agent_version = EXCLUDED.requested_agent_version,
@@ -1737,7 +2204,9 @@ export class PostgresStore implements UnifiedStore {
 			[
 				u,
 				score.evalId,
+				score.evalVersion ?? "",
 				score.datasetId,
+				score.datasetVersion ?? "",
 				score.agentId,
 				score.resolvedAgentVersion ?? "",
 				score.requestedAgentVersion ?? null,
@@ -2566,16 +3035,39 @@ function rowToRun(r: {
 	return run;
 }
 
+function toIsoString(value: Date | string): string {
+	return value instanceof Date ? value.toISOString() : String(value);
+}
+
+function rowToEvalDefinition(r: {
+	definition: EvalDefinition | string;
+	created_at?: Date | string | null;
+}): EvalDefinition {
+	const definition =
+		typeof r.definition === "string"
+			? (JSON.parse(r.definition) as EvalDefinition)
+			: r.definition;
+	if (!definition.version && r.created_at) {
+		return { ...definition, version: toIsoString(r.created_at) };
+	}
+	return definition;
+}
+
 function rowToEvalDataset(r: {
 	dataset: EvalDataset | string;
 	agent_id: string | null;
+	created_at?: Date | string | null;
 }): EvalDataset {
 	const dataset =
 		typeof r.dataset === "string"
 			? (JSON.parse(r.dataset) as EvalDataset)
 			: r.dataset;
-	if (!dataset.agentId && r.agent_id) {
-		return { ...dataset, agentId: r.agent_id };
+	if ((!dataset.agentId && r.agent_id) || (!dataset.version && r.created_at)) {
+		return {
+			...dataset,
+			agentId: dataset.agentId ?? r.agent_id ?? "",
+			version: dataset.version ?? toIsoString(r.created_at as Date | string),
+		};
 	}
 	return dataset;
 }

@@ -10,6 +10,7 @@ import type {
 	ContextEntry,
 	EvalDataset,
 	EvalDatasetListFilters,
+	EvalDatasetVersionSummary,
 	EvalDefinition,
 	EvalLatestScore,
 	EvalLatestScoreKey,
@@ -18,6 +19,7 @@ import type {
 	EvalRun,
 	EvalRunListFilters,
 	EvalRunListResult,
+	EvalVersionSummary,
 	InvocationLog,
 	LogFilter,
 	Message,
@@ -41,6 +43,18 @@ import { listRunsInProcess } from "./list-runs.js";
 
 interface AgentVersion {
 	agent: AgentDefinition;
+	createdAt: string;
+	activatedAt: string | null;
+}
+
+interface EvalVersion {
+	definition: EvalDefinition;
+	createdAt: string;
+	activatedAt: string | null;
+}
+
+interface EvalDatasetVersion {
+	dataset: EvalDataset;
 	createdAt: string;
 	activatedAt: string | null;
 }
@@ -93,9 +107,13 @@ interface MemoryBackend {
 	secrets: Map<string, Map<string, SecretRow>>; // userId -> name -> row
 	webhookDeliveries: Map<string, WebhookDelivery>; // id -> delivery
 	evals: Map<string, Map<string, EvalDefinition>>; // userId -> evalId -> eval
+	evalVersions: Map<string, Map<string, EvalVersion[]>>; // userId -> evalId -> versions
+	evalAliases: Map<string, Map<string, Map<string, string>>>; // userId -> evalId -> alias -> createdAt
 	datasets: Map<string, Map<string, EvalDataset>>; // userId -> datasetId -> dataset
+	datasetVersions: Map<string, Map<string, EvalDatasetVersion[]>>; // userId -> datasetId -> versions
+	datasetAliases: Map<string, Map<string, Map<string, string>>>; // userId -> datasetId -> alias -> createdAt
 	evalRuns: Map<string, EvalRun>; // `${userId}:${runId}` -> run
-	evalLatestScores: Map<string, EvalLatestScore>; // `${userId}:${evalId}:${datasetId}:${version}` -> score
+	evalLatestScores: Map<string, EvalLatestScore>; // `${userId}:${evalId}:${evalVersion}:${datasetId}:${datasetVersion}:${agentVersion}` -> score
 }
 
 function createBackend(): MemoryBackend {
@@ -116,7 +134,11 @@ function createBackend(): MemoryBackend {
 		secrets: new Map(),
 		webhookDeliveries: new Map(),
 		evals: new Map(),
+		evalVersions: new Map(),
+		evalAliases: new Map(),
 		datasets: new Map(),
+		datasetVersions: new Map(),
+		datasetAliases: new Map(),
 		evalRuns: new Map(),
 		evalLatestScores: new Map(),
 	};
@@ -768,12 +790,52 @@ export class MemoryStore implements UnifiedStore {
 		return m;
 	}
 
+	private evalVersionMap(): Map<string, EvalVersion[]> {
+		const u = this.requireUser();
+		let m = this.backend.evalVersions.get(u);
+		if (!m) {
+			m = new Map();
+			this.backend.evalVersions.set(u, m);
+		}
+		return m;
+	}
+
+	private evalAliasMap(): Map<string, Map<string, string>> {
+		const u = this.requireUser();
+		let m = this.backend.evalAliases.get(u);
+		if (!m) {
+			m = new Map();
+			this.backend.evalAliases.set(u, m);
+		}
+		return m;
+	}
+
 	private datasetMap(): Map<string, EvalDataset> {
 		const u = this.requireUser();
 		let m = this.backend.datasets.get(u);
 		if (!m) {
 			m = new Map();
 			this.backend.datasets.set(u, m);
+		}
+		return m;
+	}
+
+	private datasetVersionMap(): Map<string, EvalDatasetVersion[]> {
+		const u = this.requireUser();
+		let m = this.backend.datasetVersions.get(u);
+		if (!m) {
+			m = new Map();
+			this.backend.datasetVersions.set(u, m);
+		}
+		return m;
+	}
+
+	private datasetAliasMap(): Map<string, Map<string, string>> {
+		const u = this.requireUser();
+		let m = this.backend.datasetAliases.get(u);
+		if (!m) {
+			m = new Map();
+			this.backend.datasetAliases.set(u, m);
 		}
 		return m;
 	}
@@ -798,15 +860,98 @@ export class MemoryStore implements UnifiedStore {
 		const map = this.evalMap();
 		const existing = map.get(definition.id);
 		const now = this.nextTimestamp();
-		map.set(definition.id, {
+		const row: EvalDefinition = {
 			...cloneJson(definition),
 			createdAt: existing?.createdAt ?? definition.createdAt ?? now,
+			version: now,
 			updatedAt: now,
+		};
+		map.set(definition.id, row);
+		const versions = this.evalVersionMap().get(definition.id) ?? [];
+		versions.push({
+			definition: cloneJson(row),
+			createdAt: now,
+			activatedAt: now,
 		});
+		this.evalVersionMap().set(definition.id, versions);
 	}
 
 	async deleteEval(evalId: string): Promise<void> {
 		this.evalMap().delete(evalId);
+		this.evalVersionMap().delete(evalId);
+		this.evalAliasMap().delete(evalId);
+	}
+
+	async listEvalVersions(evalId: string): Promise<EvalVersionSummary[]> {
+		const aliasesByVersion = new Map<string, string[]>();
+		const aliases = this.evalAliasMap().get(evalId);
+		if (aliases) {
+			for (const [alias, createdAt] of aliases) {
+				const list = aliasesByVersion.get(createdAt) ?? [];
+				list.push(alias);
+				aliasesByVersion.set(createdAt, list);
+			}
+		}
+		return (this.evalVersionMap().get(evalId) ?? [])
+			.map((version) => ({
+				createdAt: version.createdAt,
+				activatedAt: version.activatedAt,
+				aliases: (aliasesByVersion.get(version.createdAt) ?? []).sort(),
+			}))
+			.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+	}
+
+	async getEvalVersion(
+		evalId: string,
+		createdAt: string,
+	): Promise<EvalDefinition | null> {
+		const found = (this.evalVersionMap().get(evalId) ?? []).find(
+			(version) => version.createdAt === createdAt,
+		);
+		return found ? cloneJson(found.definition) : null;
+	}
+
+	async activateEvalVersion(evalId: string, createdAt: string): Promise<void> {
+		const versions = this.evalVersionMap().get(evalId) ?? [];
+		const found = versions.find((version) => version.createdAt === createdAt);
+		if (!found)
+			throw new Error(`Eval version not found: ${evalId}@${createdAt}`);
+		const now = this.nextTimestamp();
+		found.activatedAt = now;
+		const existing = this.evalMap().get(evalId);
+		this.evalMap().set(evalId, {
+			...cloneJson(found.definition),
+			createdAt: existing?.createdAt ?? found.definition.createdAt ?? createdAt,
+			version: createdAt,
+			updatedAt: now,
+		});
+	}
+
+	async resolveEvalVersionAlias(
+		evalId: string,
+		alias: string,
+	): Promise<string | null> {
+		return this.evalAliasMap().get(evalId)?.get(alias) ?? null;
+	}
+
+	async setEvalVersionAlias(
+		evalId: string,
+		createdAt: string,
+		alias: string,
+	): Promise<void> {
+		if (!(await this.getEvalVersion(evalId, createdAt))) {
+			throw new Error(`Eval version not found: ${evalId}@${createdAt}`);
+		}
+		let perEval = this.evalAliasMap().get(evalId);
+		if (!perEval) {
+			perEval = new Map();
+			this.evalAliasMap().set(evalId, perEval);
+		}
+		perEval.set(alias, createdAt);
+	}
+
+	async removeEvalVersionAlias(evalId: string, alias: string): Promise<void> {
+		this.evalAliasMap().get(evalId)?.delete(alias);
 	}
 
 	async listDatasets(
@@ -827,15 +972,107 @@ export class MemoryStore implements UnifiedStore {
 		const map = this.datasetMap();
 		const existing = map.get(dataset.id);
 		const now = this.nextTimestamp();
-		map.set(dataset.id, {
+		const row: EvalDataset = {
 			...cloneJson(dataset),
 			createdAt: existing?.createdAt ?? dataset.createdAt ?? now,
+			version: now,
 			updatedAt: now,
+		};
+		map.set(dataset.id, row);
+		const versions = this.datasetVersionMap().get(dataset.id) ?? [];
+		versions.push({
+			dataset: cloneJson(row),
+			createdAt: now,
+			activatedAt: now,
 		});
+		this.datasetVersionMap().set(dataset.id, versions);
 	}
 
 	async deleteDataset(datasetId: string): Promise<void> {
 		this.datasetMap().delete(datasetId);
+		this.datasetVersionMap().delete(datasetId);
+		this.datasetAliasMap().delete(datasetId);
+	}
+
+	async listDatasetVersions(
+		datasetId: string,
+	): Promise<EvalDatasetVersionSummary[]> {
+		const aliasesByVersion = new Map<string, string[]>();
+		const aliases = this.datasetAliasMap().get(datasetId);
+		if (aliases) {
+			for (const [alias, createdAt] of aliases) {
+				const list = aliasesByVersion.get(createdAt) ?? [];
+				list.push(alias);
+				aliasesByVersion.set(createdAt, list);
+			}
+		}
+		return (this.datasetVersionMap().get(datasetId) ?? [])
+			.map((version) => ({
+				createdAt: version.createdAt,
+				activatedAt: version.activatedAt,
+				aliases: (aliasesByVersion.get(version.createdAt) ?? []).sort(),
+			}))
+			.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+	}
+
+	async getDatasetVersion(
+		datasetId: string,
+		createdAt: string,
+	): Promise<EvalDataset | null> {
+		const found = (this.datasetVersionMap().get(datasetId) ?? []).find(
+			(version) => version.createdAt === createdAt,
+		);
+		return found ? cloneJson(found.dataset) : null;
+	}
+
+	async activateDatasetVersion(
+		datasetId: string,
+		createdAt: string,
+	): Promise<void> {
+		const versions = this.datasetVersionMap().get(datasetId) ?? [];
+		const found = versions.find((version) => version.createdAt === createdAt);
+		if (!found) {
+			throw new Error(`Dataset version not found: ${datasetId}@${createdAt}`);
+		}
+		const now = this.nextTimestamp();
+		found.activatedAt = now;
+		const existing = this.datasetMap().get(datasetId);
+		this.datasetMap().set(datasetId, {
+			...cloneJson(found.dataset),
+			createdAt: existing?.createdAt ?? found.dataset.createdAt ?? createdAt,
+			version: createdAt,
+			updatedAt: now,
+		});
+	}
+
+	async resolveDatasetVersionAlias(
+		datasetId: string,
+		alias: string,
+	): Promise<string | null> {
+		return this.datasetAliasMap().get(datasetId)?.get(alias) ?? null;
+	}
+
+	async setDatasetVersionAlias(
+		datasetId: string,
+		createdAt: string,
+		alias: string,
+	): Promise<void> {
+		if (!(await this.getDatasetVersion(datasetId, createdAt))) {
+			throw new Error(`Dataset version not found: ${datasetId}@${createdAt}`);
+		}
+		let perDataset = this.datasetAliasMap().get(datasetId);
+		if (!perDataset) {
+			perDataset = new Map();
+			this.datasetAliasMap().set(datasetId, perDataset);
+		}
+		perDataset.set(alias, createdAt);
+	}
+
+	async removeDatasetVersionAlias(
+		datasetId: string,
+		alias: string,
+	): Promise<void> {
+		this.datasetAliasMap().get(datasetId)?.delete(alias);
 	}
 
 	async putEvalRun(run: EvalRun): Promise<void> {
@@ -862,7 +1099,14 @@ export class MemoryStore implements UnifiedStore {
 	}
 
 	private evalLatestScoreKey(userId: string, key: EvalLatestScoreKey): string {
-		return `${userId}:${key.evalId}:${key.datasetId}:${key.resolvedAgentVersion ?? ""}`;
+		return [
+			userId,
+			key.evalId,
+			key.evalVersion ?? "",
+			key.datasetId,
+			key.datasetVersion ?? "",
+			key.resolvedAgentVersion ?? "",
+		].join(":");
 	}
 
 	async getEvalLatestScore(
@@ -885,7 +1129,15 @@ export class MemoryStore implements UnifiedStore {
 			if (!key.startsWith(prefix)) continue;
 			if (filters.agentId && score.agentId !== filters.agentId) continue;
 			if (filters.evalId && score.evalId !== filters.evalId) continue;
+			if (filters.evalVersion && score.evalVersion !== filters.evalVersion)
+				continue;
 			if (filters.datasetId && score.datasetId !== filters.datasetId) continue;
+			if (
+				filters.datasetVersion &&
+				score.datasetVersion !== filters.datasetVersion
+			) {
+				continue;
+			}
 			if (
 				filters.resolvedAgentVersion !== undefined &&
 				score.resolvedAgentVersion !== filters.resolvedAgentVersion

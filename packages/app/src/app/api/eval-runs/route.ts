@@ -21,8 +21,11 @@ export async function POST(req: NextRequest) {
 		const { userId } = await requireUserContext();
 		const body = (await req.json()) as {
 			evalId?: string;
+			evalVersion?: string;
 			datasetId?: string;
+			datasetVersion?: string;
 			agentVersion?: string;
+			criterionIds?: string[];
 		};
 		if (!body.evalId) {
 			return NextResponse.json(
@@ -33,8 +36,11 @@ export async function POST(req: NextRequest) {
 		const run = await workerEvalRun({
 			userId,
 			evalId: body.evalId,
+			evalVersion: body.evalVersion,
 			datasetId: body.datasetId,
+			datasetVersion: body.datasetVersion,
 			agentVersion: body.agentVersion,
+			criterionIds: body.criterionIds,
 		});
 		return NextResponse.json(run, { status: 201 });
 	} catch (error) {

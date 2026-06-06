@@ -1114,14 +1114,38 @@ export interface RunStore {
 // Evals — reusable datasets, rubric definitions, and scored run history
 // ═══════════════════════════════════════════════════════════════════════
 
+export type EvalInput = string | Record<string, unknown> | ContentBlock[];
+
+export interface EvalCriterionGate {
+	minimumScore: number;
+}
+
+export interface EvalPassPolicy {
+	minimumScore?: number;
+}
+
+export interface EvalJudgeConfig {
+	model?: ModelConfig;
+}
+
+export interface EvalDefaultDatasetRef {
+	id: string;
+	version?: string;
+}
+
 export interface EvalCriterion {
 	/** Stable machine key used in judge output and stored results. */
 	id: string;
 	name: string;
+	/** Canonical scoring guidance for this criterion. */
+	rubric?: string;
+	/** Deprecated alias for rubric. Accepted for compatibility. */
 	description?: string;
 	/** Defaults to 1. Weighted average uses score * weight / sum(weight). */
 	weight?: number;
-	/** Optional per-criterion pass threshold. Defaults to the eval threshold. */
+	/** Optional hard criterion gate. */
+	gate?: EvalCriterionGate;
+	/** Deprecated alias for gate.minimumScore. */
 	threshold?: number;
 }
 
@@ -1131,19 +1155,29 @@ export interface EvalDefinition {
 	name: string;
 	description?: string;
 	criteria: EvalCriterion[];
+	defaultDataset?: EvalDefaultDatasetRef;
+	/** Deprecated alias for defaultDataset.id. */
 	defaultDatasetId?: string;
-	/** Defaults to 0.7. */
+	passPolicy?: EvalPassPolicy;
+	/** Deprecated alias for passPolicy.minimumScore. */
 	passThreshold?: number;
+	judge?: EvalJudgeConfig;
+	/** Deprecated alias for judge.model. */
 	judgeModel?: ModelConfig;
 	metadata?: Record<string, unknown>;
+	version?: string;
 	createdAt?: string;
 	updatedAt?: string;
 }
 
 export interface EvalDatasetItem {
 	id: string;
-	input: string | ContentBlock[];
+	input: EvalInput;
+	reference?: unknown;
+	/** Deprecated alias for reference. */
 	expected?: unknown;
+	tags?: string[];
+	notes?: string;
 	metadata?: Record<string, unknown>;
 }
 
@@ -1154,6 +1188,7 @@ export interface EvalDataset {
 	description?: string;
 	items: EvalDatasetItem[];
 	metadata?: Record<string, unknown>;
+	version?: string;
 	createdAt?: string;
 	updatedAt?: string;
 }
@@ -1162,15 +1197,21 @@ export interface EvalCriterionResult {
 	score: number;
 	passed: boolean;
 	reason: string;
+	gate?: { minimumScore: number; passed: boolean };
+	error?: string;
 }
 
 export type EvalCaseStatus = "completed" | "failed" | "skipped" | "cancelled";
+export type EvalOutcome = "passed" | "failed" | "score_only";
 
 export interface EvalCaseResult {
 	itemId: string;
 	status: EvalCaseStatus;
-	input: string | ContentBlock[];
+	input: EvalInput;
+	reference?: unknown;
+	/** Deprecated alias for reference. */
 	expected?: unknown;
+	tags?: string[];
 	output?: string;
 	agentRunId?: string;
 	invocationId?: string;
@@ -1179,6 +1220,8 @@ export interface EvalCaseResult {
 	criteria: Record<string, EvalCriterionResult>;
 	score: number;
 	passed: boolean;
+	outcome?: EvalOutcome;
+	gateFailures?: string[];
 	reason?: string;
 	error?: string;
 }
@@ -1197,9 +1240,38 @@ export interface EvalRunSummary {
 	skippedCases: number;
 	overallScore: number;
 	passed: boolean;
+	outcome?: EvalOutcome;
+	gateFailures?: string[];
 	criteria: Record<
 		string,
-		{ score: number; passed: boolean; completedCases: number }
+		{
+			score: number;
+			passed: boolean;
+			completedCases: number;
+			gate?: { minimumScore: number; passed: boolean };
+		}
+	>;
+	tags?: Record<
+		string,
+		{
+			totalCases: number;
+			completedCases: number;
+			failedCases: number;
+			skippedCases: number;
+			overallScore: number;
+			passed: boolean;
+			outcome?: EvalOutcome;
+			gateFailures?: string[];
+			criteria: Record<
+				string,
+				{
+					score: number;
+					passed: boolean;
+					completedCases: number;
+					gate?: { minimumScore: number; passed: boolean };
+				}
+			>;
+		}
 	>;
 }
 
@@ -1207,6 +1279,10 @@ export interface EvalRunSnapshots {
 	eval: EvalDefinition;
 	dataset: EvalDataset;
 	agent: AgentDefinition;
+	evalVersion?: string;
+	requestedEvalVersion?: string;
+	datasetVersion?: string;
+	requestedDatasetVersion?: string;
 	agentVersion?: string;
 	requestedAgentVersion?: string;
 }
@@ -1216,8 +1292,14 @@ export interface EvalRun {
 	evalId: string;
 	datasetId: string;
 	agentId: string;
+	evalVersion?: string;
+	requestedEvalVersion?: string;
+	datasetVersion?: string;
+	requestedDatasetVersion?: string;
 	agentVersion?: string;
 	requestedAgentVersion?: string;
+	criterionIds?: string[];
+	partial?: boolean;
 	status: EvalRunStatus;
 	startedAt: string;
 	endedAt?: string;
@@ -1238,7 +1320,10 @@ export interface EvalDatasetListFilters {
 export interface EvalRunListFilters {
 	agentId?: string;
 	evalId?: string;
+	evalVersion?: string;
 	datasetId?: string;
+	datasetVersion?: string;
+	agentVersion?: string;
 	status?: EvalRunStatus;
 	startedAfter?: string;
 	startedBefore?: string;
@@ -1254,21 +1339,27 @@ export interface EvalRunListResult {
 
 export interface EvalLatestScoreKey {
 	evalId: string;
+	evalVersion?: string;
 	datasetId: string;
+	datasetVersion?: string;
 	resolvedAgentVersion?: string;
 }
 
 export interface EvalLatestScoreListFilters {
 	agentId?: string;
 	evalId?: string;
+	evalVersion?: string;
 	datasetId?: string;
+	datasetVersion?: string;
 	resolvedAgentVersion?: string;
 	status?: EvalRunStatus;
 }
 
 export interface EvalLatestScore {
 	evalId: string;
+	evalVersion?: string;
 	datasetId: string;
+	datasetVersion?: string;
 	agentId: string;
 	requestedAgentVersion?: string;
 	resolvedAgentVersion?: string;
@@ -1282,15 +1373,59 @@ export interface EvalLatestScore {
 	updatedAt: string;
 }
 
+export interface EvalVersionSummary {
+	createdAt: string;
+	activatedAt?: string | null;
+	aliases: string[];
+}
+
+export interface EvalDatasetVersionSummary {
+	createdAt: string;
+	activatedAt?: string | null;
+	aliases: string[];
+}
+
 export interface EvalStore {
 	listEvals(filters?: EvalListFilters): Promise<EvalDefinition[]>;
 	getEval(evalId: string): Promise<EvalDefinition | null>;
 	putEval(definition: EvalDefinition): Promise<void>;
 	deleteEval(evalId: string): Promise<void>;
+	listEvalVersions(evalId: string): Promise<EvalVersionSummary[]>;
+	getEvalVersion(
+		evalId: string,
+		createdAt: string,
+	): Promise<EvalDefinition | null>;
+	activateEvalVersion(evalId: string, createdAt: string): Promise<void>;
+	resolveEvalVersionAlias(
+		evalId: string,
+		alias: string,
+	): Promise<string | null>;
+	setEvalVersionAlias(
+		evalId: string,
+		createdAt: string,
+		alias: string,
+	): Promise<void>;
+	removeEvalVersionAlias(evalId: string, alias: string): Promise<void>;
 	listDatasets(filters?: EvalDatasetListFilters): Promise<EvalDataset[]>;
 	getDataset(datasetId: string): Promise<EvalDataset | null>;
 	putDataset(dataset: EvalDataset): Promise<void>;
 	deleteDataset(datasetId: string): Promise<void>;
+	listDatasetVersions(datasetId: string): Promise<EvalDatasetVersionSummary[]>;
+	getDatasetVersion(
+		datasetId: string,
+		createdAt: string,
+	): Promise<EvalDataset | null>;
+	activateDatasetVersion(datasetId: string, createdAt: string): Promise<void>;
+	resolveDatasetVersionAlias(
+		datasetId: string,
+		alias: string,
+	): Promise<string | null>;
+	setDatasetVersionAlias(
+		datasetId: string,
+		createdAt: string,
+		alias: string,
+	): Promise<void>;
+	removeDatasetVersionAlias(datasetId: string, alias: string): Promise<void>;
 	putEvalRun(run: EvalRun): Promise<void>;
 	getEvalRun(runId: string): Promise<EvalRun | null>;
 	listEvalRuns(filters?: EvalRunListFilters): Promise<EvalRunListResult>;

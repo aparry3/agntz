@@ -28,8 +28,11 @@ export interface RunResult {
 export interface EvalRunRequest {
 	userId: string;
 	evalId: string;
+	evalVersion?: string;
 	datasetId?: string;
+	datasetVersion?: string;
 	agentVersion?: string;
+	criterionIds?: string[];
 }
 
 /**

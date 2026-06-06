@@ -2,12 +2,15 @@ import { formatAgentRef, isAliasName, isIsoTimestamp } from "./agent-ref.js";
 import type { Runner } from "./runner.js";
 import type {
 	AgentDefinition,
+	ContentBlock,
 	EvalCaseResult,
 	EvalCriterion,
 	EvalCriterionResult,
 	EvalDataset,
 	EvalDefinition,
+	EvalInput,
 	EvalLatestScore,
+	EvalOutcome,
 	EvalRun,
 	EvalRunListFilters,
 	EvalRunListResult,
@@ -26,12 +29,16 @@ const DEFAULT_JUDGE_MODEL: ModelConfig = {
 
 export interface RunEvalOptions {
 	evalId: string;
+	evalVersion?: string;
 	datasetId?: string;
+	datasetVersion?: string;
 	agentVersion?: string;
+	criterionIds?: string[];
 	signal?: AbortSignal;
 }
 
 export interface JudgeEnvelope {
+	score?: unknown;
 	overallScore?: unknown;
 	passed?: unknown;
 	criteria?: unknown;
@@ -47,6 +54,65 @@ export function normalizeCriterionWeight(criterion: EvalCriterion): number {
 	return Number.isFinite(weight) && weight > 0 ? weight : 1;
 }
 
+export function evalPassPolicyMinimum(
+	definition: Pick<EvalDefinition, "passPolicy" | "passThreshold">,
+): number | undefined {
+	const value =
+		typeof definition.passPolicy?.minimumScore === "number"
+			? definition.passPolicy.minimumScore
+			: typeof definition.passThreshold === "number"
+				? definition.passThreshold
+				: undefined;
+	return value === undefined ? undefined : clampScore(value);
+}
+
+export function criterionGateMinimum(
+	criterion: Pick<EvalCriterion, "gate" | "threshold">,
+): number | undefined {
+	const value =
+		typeof criterion.gate?.minimumScore === "number"
+			? criterion.gate.minimumScore
+			: typeof criterion.threshold === "number"
+				? criterion.threshold
+				: undefined;
+	return value === undefined ? undefined : clampScore(value);
+}
+
+export function criterionRubric(criterion: EvalCriterion): string {
+	return criterion.rubric ?? criterion.description ?? "";
+}
+
+export function evalJudgeModel(definition: EvalDefinition): ModelConfig {
+	return (
+		definition.judge?.model ?? definition.judgeModel ?? DEFAULT_JUDGE_MODEL
+	);
+}
+
+export function scoreCriterionJudgeOutput(
+	criterion: EvalCriterion,
+	envelope: unknown,
+): EvalCriterionResult {
+	const input = isRecord(envelope) ? envelope : {};
+	const criteria = isRecord(input.criteria) ? input.criteria : undefined;
+	const raw = criteria?.[criterion.id];
+	const row = isRecord(raw) ? raw : input;
+	const score = clampScore(asNumber(row.score, 0));
+	const minimumScore = criterionGateMinimum(criterion);
+	const gate =
+		minimumScore === undefined
+			? undefined
+			: { minimumScore, passed: score >= minimumScore };
+	return {
+		score,
+		passed: gate ? gate.passed : true,
+		reason:
+			typeof row.reason === "string" && row.reason.trim()
+				? row.reason
+				: "No judge reason returned.",
+		gate,
+	};
+}
+
 export function scoreJudgeEnvelope(
 	criteria: EvalCriterion[],
 	passThreshold: number | undefined,
@@ -54,29 +120,16 @@ export function scoreJudgeEnvelope(
 ): {
 	overallScore: number;
 	passed: boolean;
+	outcome: EvalOutcome;
+	gateFailures: string[];
 	criteria: Record<string, EvalCriterionResult>;
 	reason?: string;
 } {
 	const input = isRecord(envelope) ? (envelope as JudgeEnvelope) : {};
-	const rawCriteria = isRecord(input.criteria) ? input.criteria : {};
-	const normalizedThreshold = normalizePassThreshold(passThreshold);
 	const results: Record<string, EvalCriterionResult> = {};
-
 	for (const criterion of criteria) {
-		const raw = rawCriteria[criterion.id];
-		const row = isRecord(raw) ? raw : {};
-		const score = clampScore(asNumber(row.score, 0));
-		const threshold = clampScore(criterion.threshold ?? normalizedThreshold);
-		results[criterion.id] = {
-			score,
-			passed: typeof row.passed === "boolean" ? row.passed : score >= threshold,
-			reason:
-				typeof row.reason === "string" && row.reason.trim()
-					? row.reason
-					: "No judge reason returned.",
-		};
+		results[criterion.id] = scoreCriterionJudgeOutput(criterion, input);
 	}
-
 	const overallScore =
 		criteria.length > 0
 			? weightedAverage(
@@ -84,11 +137,19 @@ export function scoreJudgeEnvelope(
 					(criterion) => results[criterion.id]?.score ?? 0,
 				)
 			: clampScore(asNumber(input.overallScore, 0));
-	const passed = overallScore >= normalizedThreshold;
-
+	const passMinimum =
+		typeof passThreshold === "number" ? clampScore(passThreshold) : undefined;
+	const derived = deriveOutcome({
+		score: overallScore,
+		passMinimum,
+		criteria,
+		results,
+	});
 	return {
 		overallScore,
-		passed,
+		passed: derived.passed,
+		outcome: derived.outcome,
+		gateFailures: derived.gateFailures,
 		criteria: results,
 		reason: typeof input.reason === "string" ? input.reason : undefined,
 	};
@@ -97,59 +158,19 @@ export function scoreJudgeEnvelope(
 export function summarizeEvalRun(
 	definition: EvalDefinition,
 	caseResults: EvalCaseResult[],
+	options: { criterionIds?: string[] } = {},
 ): EvalRunSummary {
-	const completed = caseResults.filter((r) => r.status === "completed");
-	const scored = caseResults.filter(
-		(r) => r.status === "completed" || r.status === "failed",
-	);
-	const failed = caseResults.filter((r) => r.status === "failed");
-	const skipped = caseResults.filter(
-		(r) => r.status === "skipped" || r.status === "cancelled",
-	);
-	const overallScore =
-		scored.length > 0
-			? scored.reduce((sum, r) => sum + r.score, 0) / scored.length
-			: 0;
-	const passThreshold = normalizePassThreshold(definition.passThreshold);
-	const criteriaSummary: EvalRunSummary["criteria"] = {};
-
-	for (const criterion of definition.criteria) {
-		const rows = completed
-			.map((result) => result.criteria[criterion.id])
-			.filter((result): result is EvalCriterionResult => Boolean(result));
-		const score =
-			rows.length > 0
-				? rows.reduce((sum, result) => sum + result.score, 0) / rows.length
-				: 0;
-		const threshold = normalizePassThreshold(
-			criterion.threshold ?? definition.passThreshold,
-		);
-		criteriaSummary[criterion.id] = {
-			score,
-			passed: rows.length > 0 && score >= threshold,
-			completedCases: rows.length,
-		};
-	}
-
-	return {
-		totalCases: caseResults.length,
-		completedCases: completed.length,
-		failedCases: failed.length,
-		skippedCases: skipped.length,
-		overallScore,
-		passed:
-			caseResults.length > 0 &&
-			completed.length === caseResults.length &&
-			overallScore >= passThreshold,
-		criteria: criteriaSummary,
-	};
+	const criteria = selectCriteria(definition.criteria, options.criterionIds);
+	return buildEvalSummary(definition, criteria, caseResults, true);
 }
 
 export function latestScoreFromEvalRun(run: EvalRun): EvalLatestScore {
 	const summary = run.summary;
 	return {
 		evalId: run.evalId,
+		evalVersion: run.evalVersion,
 		datasetId: run.datasetId,
+		datasetVersion: run.datasetVersion,
 		agentId: run.agentId,
 		requestedAgentVersion: run.requestedAgentVersion,
 		resolvedAgentVersion: run.agentVersion,
@@ -157,7 +178,7 @@ export function latestScoreFromEvalRun(run: EvalRun): EvalLatestScore {
 		status: run.status,
 		summary,
 		overallScore: summary?.overallScore ?? 0,
-		passed: Boolean(summary?.passed),
+		passed: summary?.passed ?? false,
 		startedAt: run.startedAt,
 		endedAt: run.endedAt,
 		updatedAt: new Date().toISOString(),
@@ -172,7 +193,13 @@ export function listEvalRunsInProcess(
 	let rows = runs.filter((run) => {
 		if (filters.agentId && run.agentId !== filters.agentId) return false;
 		if (filters.evalId && run.evalId !== filters.evalId) return false;
+		if (filters.evalVersion && run.evalVersion !== filters.evalVersion)
+			return false;
 		if (filters.datasetId && run.datasetId !== filters.datasetId) return false;
+		if (filters.datasetVersion && run.datasetVersion !== filters.datasetVersion)
+			return false;
+		if (filters.agentVersion && run.agentVersion !== filters.agentVersion)
+			return false;
 		if (filters.status && run.status !== filters.status) return false;
 		if (filters.startedAfter && run.startedAt < filters.startedAfter)
 			return false;
@@ -216,21 +243,39 @@ export async function runEval(
 	store: EvalStore,
 	options: RunEvalOptions,
 ): Promise<EvalRun> {
-	const definition = await store.getEval(options.evalId);
-	if (!definition) throw new Error(`Eval "${options.evalId}" not found`);
+	const resolvedEval = await resolveEvalDefinition(
+		store,
+		options.evalId,
+		options.evalVersion,
+	);
+	const definition = resolvedEval.definition;
 	if (!definition.criteria.length) {
 		throw new Error(
 			`Eval "${definition.id}" must define at least one criterion`,
 		);
 	}
-	const datasetId = options.datasetId ?? definition.defaultDatasetId;
-	if (!datasetId) {
+	const criteria = selectCriteria(definition.criteria, options.criterionIds);
+	if (criteria.length === 0) {
+		throw new Error(`Eval "${definition.id}" did not match any criterionIds`);
+	}
+	const defaultDatasetId =
+		options.datasetId ??
+		definition.defaultDataset?.id ??
+		definition.defaultDatasetId;
+	if (!defaultDatasetId) {
 		throw new Error(
 			`Eval "${definition.id}" does not specify a default dataset; pass datasetId`,
 		);
 	}
-	const dataset = await store.getDataset(datasetId);
-	if (!dataset) throw new Error(`Dataset "${datasetId}" not found`);
+	const requestedDatasetVersion =
+		options.datasetVersion ??
+		(options.datasetId ? undefined : definition.defaultDataset?.version);
+	const resolvedDataset = await resolveEvalDataset(
+		store,
+		defaultDatasetId,
+		requestedDatasetVersion,
+	);
+	const dataset = resolvedDataset.dataset;
 	if (dataset.agentId !== definition.agentId) {
 		throw new Error(
 			`Dataset "${dataset.id}" belongs to agent "${dataset.agentId}", not "${definition.agentId}"`,
@@ -243,19 +288,33 @@ export async function runEval(
 		options.agentVersion,
 	);
 	const startedAt = new Date().toISOString();
+	const criterionIds = criteria.map((criterion) => criterion.id);
+	const partial =
+		Boolean(options.criterionIds?.length) &&
+		criterionIds.length !== definition.criteria.length;
 	const run: EvalRun = {
 		id: generateId("evalrun"),
 		evalId: definition.id,
+		requestedEvalVersion: resolvedEval.requestedVersion,
+		evalVersion: resolvedEval.resolvedVersion,
 		datasetId: dataset.id,
+		requestedDatasetVersion: resolvedDataset.requestedVersion,
+		datasetVersion: resolvedDataset.resolvedVersion,
 		agentId: definition.agentId,
 		agentVersion: target.resolvedVersion,
 		requestedAgentVersion: target.requestedVersion,
+		criterionIds,
+		partial,
 		status: "running",
 		startedAt,
 		snapshots: {
 			eval: cloneJson(definition),
 			dataset: cloneJson(dataset),
 			agent: cloneJson(target.agent),
+			evalVersion: resolvedEval.resolvedVersion,
+			requestedEvalVersion: resolvedEval.requestedVersion,
+			datasetVersion: resolvedDataset.resolvedVersion,
+			requestedDatasetVersion: resolvedDataset.requestedVersion,
 			agentVersion: target.resolvedVersion,
 			requestedAgentVersion: target.requestedVersion,
 		},
@@ -269,16 +328,7 @@ export async function runEval(
 		try {
 			for (const item of dataset.items) {
 				if (options.signal?.aborted) {
-					run.caseResults.push({
-						itemId: item.id,
-						status: "cancelled",
-						input: item.input,
-						expected: item.expected,
-						criteria: {},
-						score: 0,
-						passed: false,
-						error: "Eval run cancelled.",
-					});
+					run.caseResults.push(cancelledCase(item));
 					continue;
 				}
 				const result = await runCase({
@@ -288,6 +338,7 @@ export async function runEval(
 					definition,
 					dataset,
 					item,
+					criteria,
 					signal: options.signal,
 				});
 				run.caseResults.push(result);
@@ -297,19 +348,25 @@ export async function runEval(
 			runner.deregisterAgent(judgeId);
 		}
 
-		run.summary = summarizeEvalRun(definition, run.caseResults);
+		run.summary = summarizeEvalRun(definition, run.caseResults, {
+			criterionIds,
+		});
 		run.status = options.signal?.aborted ? "cancelled" : "completed";
 		run.endedAt = new Date().toISOString();
 		await store.putEvalRun(run);
-		await store.putEvalLatestScore(latestScoreFromEvalRun(run));
+		if (!run.partial)
+			await store.putEvalLatestScore(latestScoreFromEvalRun(run));
 		return run;
 	} catch (error) {
 		run.status = "failed";
 		run.error = error instanceof Error ? error.message : String(error);
-		run.summary = summarizeEvalRun(definition, run.caseResults);
+		run.summary = summarizeEvalRun(definition, run.caseResults, {
+			criterionIds,
+		});
 		run.endedAt = new Date().toISOString();
 		await store.putEvalRun(run);
-		await store.putEvalLatestScore(latestScoreFromEvalRun(run));
+		if (!run.partial)
+			await store.putEvalLatestScore(latestScoreFromEvalRun(run));
 		return run;
 	}
 }
@@ -322,9 +379,9 @@ export function createEvalJudgeAgent(
 		id,
 		name: "Agntz Eval Judge",
 		systemPrompt:
-			"You are the hidden Agntz eval judge. Score the target agent output against each rubric criterion. Return only the requested structured JSON.",
-		model: definition.judgeModel ?? DEFAULT_JUDGE_MODEL,
-		outputSchema: judgeOutputSchema(definition.criteria),
+			"You are the hidden Agntz eval judge. Score the target agent output against one rubric criterion. Return only the requested structured JSON.",
+		model: evalJudgeModel(definition),
+		outputSchema: judgeOutputSchema(),
 	};
 }
 
@@ -335,6 +392,7 @@ async function runCase(args: {
 	definition: EvalDefinition;
 	dataset: EvalDataset;
 	item: EvalDataset["items"][number];
+	criteria: EvalCriterion[];
 	signal?: AbortSignal;
 }): Promise<EvalCaseResult> {
 	const started = Date.now();
@@ -342,9 +400,13 @@ async function runCase(args: {
 	let usage: TokenUsage | undefined;
 	let invocationId: string | undefined;
 	try {
-		const result = await args.runner.invoke(args.agentRef, args.item.input, {
-			signal: args.signal,
-		});
+		const result = await args.runner.invoke(
+			args.agentRef,
+			toRunnerInput(args.item.input),
+			{
+				signal: args.signal,
+			},
+		);
 		agentOutput = result.output;
 		usage = result.usage;
 		invocationId = result.invocationId;
@@ -356,59 +418,75 @@ async function runCase(args: {
 		});
 	}
 
-	try {
-		const judgePrompt = JSON.stringify(
-			{
-				input: args.item.input,
-				expected: args.item.expected ?? null,
-				actual: agentOutput,
-				itemMetadata: args.item.metadata ?? {},
-				datasetMetadata: args.dataset.metadata ?? {},
-				criteria: args.definition.criteria.map((criterion) => ({
-					id: criterion.id,
-					name: criterion.name,
-					description: criterion.description ?? "",
-					threshold:
-						criterion.threshold ?? args.definition.passThreshold ?? undefined,
-				})),
-				passThreshold: normalizePassThreshold(args.definition.passThreshold),
-			},
-			null,
-			2,
-		);
-		const judged = await args.runner.invoke(args.judgeId, judgePrompt, {
-			signal: args.signal,
-		});
-		const parsed = parseJudgeOutputText(judged.output);
-		const scored = scoreJudgeEnvelope(
-			args.definition.criteria,
-			args.definition.passThreshold,
-			parsed,
-		);
-		return {
-			itemId: args.item.id,
-			status: "completed",
-			input: args.item.input,
-			expected: args.item.expected,
-			output: agentOutput,
-			invocationId,
-			usage,
-			duration: Date.now() - started,
-			criteria: scored.criteria,
-			score: scored.overallScore,
-			passed: scored.passed,
-			reason: scored.reason,
-		};
-	} catch (error) {
-		if (args.signal?.aborted) return cancelledCase(args.item);
-		return failedCase(args.item, {
-			output: agentOutput,
-			invocationId,
-			usage,
-			error: `Judge failed: ${formatError(error)}`,
-			duration: Date.now() - started,
-		});
-	}
+	const pairs = await Promise.all(
+		args.criteria.map(async (criterion) => {
+			try {
+				const judged = await args.runner.invoke(
+					args.judgeId,
+					judgeCriterionPrompt({
+						definition: args.definition,
+						dataset: args.dataset,
+						item: args.item,
+						criterion,
+						actual: agentOutput,
+					}),
+					{ signal: args.signal },
+				);
+				return [
+					criterion.id,
+					scoreCriterionJudgeOutput(
+						criterion,
+						parseJudgeOutputText(judged.output),
+					),
+				] as const;
+			} catch (error) {
+				if (args.signal?.aborted) throw error;
+				return [
+					criterion.id,
+					failedCriterionResult(
+						criterion,
+						`Judge failed: ${formatError(error)}`,
+					),
+				] as const;
+			}
+		}),
+	).catch((error) => {
+		if (args.signal?.aborted) return null;
+		throw error;
+	});
+	if (pairs === null) return cancelledCase(args.item);
+
+	const criteria = Object.fromEntries(pairs) as Record<
+		string,
+		EvalCriterionResult
+	>;
+	const score = weightedAverage(
+		args.criteria,
+		(criterion) => criteria[criterion.id]?.score ?? 0,
+	);
+	const derived = deriveOutcome({
+		score,
+		passMinimum: evalPassPolicyMinimum(args.definition),
+		criteria: args.criteria,
+		results: criteria,
+	});
+	return {
+		itemId: args.item.id,
+		status: "completed",
+		input: args.item.input,
+		reference: args.item.reference ?? args.item.expected,
+		expected: args.item.expected ?? args.item.reference,
+		tags: args.item.tags,
+		output: agentOutput,
+		invocationId,
+		usage,
+		duration: Date.now() - started,
+		criteria,
+		score,
+		passed: derived.passed,
+		outcome: derived.outcome,
+		gateFailures: derived.gateFailures,
+	};
 }
 
 function cancelledCase(item: EvalDataset["items"][number]): EvalCaseResult {
@@ -416,10 +494,14 @@ function cancelledCase(item: EvalDataset["items"][number]): EvalCaseResult {
 		itemId: item.id,
 		status: "cancelled",
 		input: item.input,
-		expected: item.expected,
+		reference: item.reference ?? item.expected,
+		expected: item.expected ?? item.reference,
+		tags: item.tags,
 		criteria: {},
 		score: 0,
 		passed: false,
+		outcome: "failed",
+		gateFailures: ["case cancelled before scoring"],
 		error: "Eval run cancelled.",
 	};
 }
@@ -438,7 +520,9 @@ function failedCase(
 		itemId: item.id,
 		status: "failed",
 		input: item.input,
-		expected: item.expected,
+		reference: item.reference ?? item.expected,
+		expected: item.expected ?? item.reference,
+		tags: item.tags,
 		output: opts.output,
 		invocationId: opts.invocationId,
 		usage: opts.usage,
@@ -446,8 +530,99 @@ function failedCase(
 		criteria: {},
 		score: 0,
 		passed: false,
+		outcome: "failed",
+		gateFailures: ["case failed before scoring"],
 		error: opts.error,
 	};
+}
+
+async function resolveEvalDefinition(
+	store: EvalStore,
+	evalId: string,
+	version: string | undefined,
+): Promise<{
+	definition: EvalDefinition;
+	requestedVersion?: string;
+	resolvedVersion?: string;
+}> {
+	if (!version) {
+		const definition = await store.getEval(evalId);
+		if (!definition) throw new Error(`Eval "${evalId}" not found`);
+		return {
+			definition,
+			resolvedVersion:
+				definition.version ?? definition.updatedAt ?? definition.createdAt,
+		};
+	}
+	const resolvedVersion = await resolveEvalVersionRef(store, evalId, version);
+	const definition = await store.getEvalVersion(evalId, resolvedVersion);
+	if (!definition) throw new Error(`Eval "${evalId}@${version}" not found`);
+	return { definition, requestedVersion: version, resolvedVersion };
+}
+
+async function resolveEvalDataset(
+	store: EvalStore,
+	datasetId: string,
+	version: string | undefined,
+): Promise<{
+	dataset: EvalDataset;
+	requestedVersion?: string;
+	resolvedVersion?: string;
+}> {
+	if (!version) {
+		const dataset = await store.getDataset(datasetId);
+		if (!dataset) throw new Error(`Dataset "${datasetId}" not found`);
+		return {
+			dataset,
+			resolvedVersion:
+				dataset.version ?? dataset.updatedAt ?? dataset.createdAt,
+		};
+	}
+	const resolvedVersion = await resolveDatasetVersionRef(
+		store,
+		datasetId,
+		version,
+	);
+	const dataset = await store.getDatasetVersion(datasetId, resolvedVersion);
+	if (!dataset) throw new Error(`Dataset "${datasetId}@${version}" not found`);
+	return { dataset, requestedVersion: version, resolvedVersion };
+}
+
+async function resolveEvalVersionRef(
+	store: EvalStore,
+	evalId: string,
+	version: string,
+): Promise<string> {
+	if (version === "latest") {
+		const latest = (await store.listEvalVersions(evalId))[0]?.createdAt;
+		if (!latest) throw new Error(`Eval "${evalId}@latest" not found`);
+		return latest;
+	}
+	if (!isIsoTimestamp(version) && isAliasName(version)) {
+		const resolved = await store.resolveEvalVersionAlias(evalId, version);
+		if (!resolved) throw new Error(`Eval "${evalId}@${version}" not found`);
+		return resolved;
+	}
+	return version;
+}
+
+async function resolveDatasetVersionRef(
+	store: EvalStore,
+	datasetId: string,
+	version: string,
+): Promise<string> {
+	if (version === "latest") {
+		const latest = (await store.listDatasetVersions(datasetId))[0]?.createdAt;
+		if (!latest) throw new Error(`Dataset "${datasetId}@latest" not found`);
+		return latest;
+	}
+	if (!isIsoTimestamp(version) && isAliasName(version)) {
+		const resolved = await store.resolveDatasetVersionAlias(datasetId, version);
+		if (!resolved)
+			throw new Error(`Dataset "${datasetId}@${version}" not found`);
+		return resolved;
+	}
+	return version;
 }
 
 async function resolveEvalAgent(
@@ -527,36 +702,51 @@ async function resolveEvalAgent(
 	};
 }
 
-function judgeOutputSchema(criteria: EvalCriterion[]): Record<string, unknown> {
-	const criterionProperties: Record<string, unknown> = {};
-	for (const criterion of criteria) {
-		criterionProperties[criterion.id] = {
-			type: "object",
-			additionalProperties: false,
-			required: ["score", "passed", "reason"],
-			properties: {
-				score: { type: "number", minimum: 0, maximum: 1 },
-				passed: { type: "boolean" },
-				reason: { type: "string" },
-			},
-		};
-	}
+function judgeOutputSchema(): Record<string, unknown> {
 	return {
 		type: "object",
 		additionalProperties: false,
-		required: ["overallScore", "passed", "criteria", "reason"],
+		required: ["score", "reason"],
 		properties: {
-			overallScore: { type: "number", minimum: 0, maximum: 1 },
-			passed: { type: "boolean" },
+			score: { type: "number", minimum: 0, maximum: 1 },
 			reason: { type: "string" },
-			criteria: {
-				type: "object",
-				additionalProperties: false,
-				required: criteria.map((c) => c.id),
-				properties: criterionProperties,
-			},
 		},
 	};
+}
+
+function judgeCriterionPrompt(args: {
+	definition: EvalDefinition;
+	dataset: EvalDataset;
+	item: EvalDataset["items"][number];
+	criterion: EvalCriterion;
+	actual: string;
+}): string {
+	return JSON.stringify(
+		{
+			instruction:
+				"Score the target agent output for this one criterion. Return JSON with score and reason only.",
+			input: args.item.input,
+			reference: args.item.reference ?? args.item.expected ?? null,
+			actual: args.actual,
+			itemTags: args.item.tags ?? [],
+			itemNotes: args.item.notes ?? null,
+			itemMetadata: args.item.metadata ?? {},
+			datasetMetadata: args.dataset.metadata ?? {},
+			criterion: {
+				id: args.criterion.id,
+				name: args.criterion.name,
+				rubric: criterionRubric(args.criterion),
+				weight: normalizeCriterionWeight(args.criterion),
+				gate: args.criterion.gate ?? undefined,
+			},
+			eval: {
+				id: args.definition.id,
+				name: args.definition.name,
+			},
+		},
+		null,
+		2,
+	);
 }
 
 export function parseJudgeOutputText(text: string): unknown {
@@ -568,6 +758,176 @@ export function parseJudgeOutputText(text: string): unknown {
 		if (match) return JSON.parse(match[1]);
 		throw new Error("Judge did not return parseable JSON");
 	}
+}
+
+function buildEvalSummary(
+	definition: EvalDefinition,
+	criteria: EvalCriterion[],
+	caseResults: EvalCaseResult[],
+	includeTags: boolean,
+): EvalRunSummary {
+	const completed = caseResults.filter((r) => r.status === "completed");
+	const scored = caseResults.filter(
+		(r) => r.status === "completed" || r.status === "failed",
+	);
+	const failed = caseResults.filter((r) => r.status === "failed");
+	const skipped = caseResults.filter(
+		(r) => r.status === "skipped" || r.status === "cancelled",
+	);
+	const overallScore =
+		scored.length > 0
+			? scored.reduce((sum, r) => sum + r.score, 0) / scored.length
+			: 0;
+	const criteriaSummary: EvalRunSummary["criteria"] = {};
+	const summaryResults: Record<string, EvalCriterionResult> = {};
+
+	for (const criterion of criteria) {
+		const rows = scored
+			.map((result) => result.criteria[criterion.id])
+			.filter((result): result is EvalCriterionResult => Boolean(result));
+		const score =
+			rows.length > 0
+				? rows.reduce((sum, result) => sum + result.score, 0) / rows.length
+				: 0;
+		const minimumScore = criterionGateMinimum(criterion);
+		const gate =
+			minimumScore === undefined
+				? undefined
+				: { minimumScore, passed: rows.length > 0 && score >= minimumScore };
+		const passed = gate ? gate.passed : true;
+		criteriaSummary[criterion.id] = {
+			score,
+			passed,
+			completedCases: rows.length,
+			gate,
+		};
+		summaryResults[criterion.id] = {
+			score,
+			passed,
+			reason: "",
+			gate,
+		};
+	}
+
+	const derived = deriveOutcome({
+		score: overallScore,
+		passMinimum: evalPassPolicyMinimum(definition),
+		criteria,
+		results: summaryResults,
+		caseFailureCount: failed.length,
+		incompleteCaseCount: skipped.length,
+	});
+	const summary: EvalRunSummary = {
+		totalCases: caseResults.length,
+		completedCases: completed.length,
+		failedCases: failed.length,
+		skippedCases: skipped.length,
+		overallScore,
+		passed: derived.passed,
+		outcome: derived.outcome,
+		gateFailures: derived.gateFailures,
+		criteria: criteriaSummary,
+	};
+	if (includeTags) {
+		const tagNames = new Set<string>();
+		for (const result of caseResults) {
+			for (const tag of result.tags ?? []) tagNames.add(tag);
+		}
+		if (tagNames.size > 0) {
+			summary.tags = {};
+			for (const tag of Array.from(tagNames).sort()) {
+				const tagSummary = buildEvalSummary(
+					definition,
+					criteria,
+					caseResults.filter((result) => result.tags?.includes(tag)),
+					false,
+				);
+				summary.tags[tag] = {
+					totalCases: tagSummary.totalCases,
+					completedCases: tagSummary.completedCases,
+					failedCases: tagSummary.failedCases,
+					skippedCases: tagSummary.skippedCases,
+					overallScore: tagSummary.overallScore,
+					passed: tagSummary.passed,
+					outcome: tagSummary.outcome,
+					gateFailures: tagSummary.gateFailures,
+					criteria: tagSummary.criteria,
+				};
+			}
+		}
+	}
+	return summary;
+}
+
+function deriveOutcome(args: {
+	score: number;
+	passMinimum?: number;
+	criteria: EvalCriterion[];
+	results: Record<string, EvalCriterionResult>;
+	caseFailureCount?: number;
+	incompleteCaseCount?: number;
+}): { outcome: EvalOutcome; passed: boolean; gateFailures: string[] } {
+	const gateFailures: string[] = [];
+	if (args.caseFailureCount) {
+		gateFailures.push(`${args.caseFailureCount} case(s) failed before scoring`);
+	}
+	if (args.incompleteCaseCount) {
+		gateFailures.push(`${args.incompleteCaseCount} case(s) did not complete`);
+	}
+	if (args.passMinimum !== undefined && args.score < args.passMinimum) {
+		gateFailures.push(
+			`overall score ${formatScore(args.score)} below pass policy ${formatScore(args.passMinimum)}`,
+		);
+	}
+	for (const criterion of args.criteria) {
+		const minimumScore = criterionGateMinimum(criterion);
+		if (minimumScore === undefined) continue;
+		const score = args.results[criterion.id]?.score ?? 0;
+		if (score < minimumScore) {
+			gateFailures.push(
+				`${criterion.id} score ${formatScore(score)} below gate ${formatScore(minimumScore)}`,
+			);
+		}
+	}
+	const hasConfiguredChecks =
+		args.passMinimum !== undefined ||
+		args.criteria.some(
+			(criterion) => criterionGateMinimum(criterion) !== undefined,
+		);
+	const outcome =
+		gateFailures.length > 0
+			? "failed"
+			: hasConfiguredChecks
+				? "passed"
+				: "score_only";
+	return { outcome, passed: outcome !== "failed", gateFailures };
+}
+
+function failedCriterionResult(
+	criterion: EvalCriterion,
+	reason: string,
+): EvalCriterionResult {
+	const minimumScore = criterionGateMinimum(criterion);
+	const gate =
+		minimumScore === undefined
+			? undefined
+			: { minimumScore, passed: 0 >= minimumScore };
+	return {
+		score: 0,
+		passed: gate ? gate.passed : true,
+		reason,
+		gate,
+		error: reason,
+	};
+}
+
+function selectCriteria(
+	criteria: EvalCriterion[],
+	criterionIds: string[] | undefined,
+): EvalCriterion[] {
+	if (!criterionIds?.length) return criteria;
+	const requested = new Set(criterionIds);
+	return criteria.filter((criterion) => requested.has(criterion.id));
 }
 
 function weightedAverage(
@@ -584,6 +944,11 @@ function weightedAverage(
 	return totalWeight > 0 ? weighted / totalWeight : 0;
 }
 
+function toRunnerInput(input: EvalInput): string | ContentBlock[] {
+	if (typeof input === "string" || Array.isArray(input)) return input;
+	return JSON.stringify(input);
+}
+
 function asNumber(value: unknown, fallback: number): number {
 	return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
@@ -594,7 +959,7 @@ function clampScore(value: number): number {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function cloneJson<T>(value: T): T {
@@ -603,6 +968,10 @@ function cloneJson<T>(value: T): T {
 
 function formatError(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+function formatScore(score: number): string {
+	return clampScore(score).toFixed(2);
 }
 
 function encodeEvalRunCursor(cursor: {

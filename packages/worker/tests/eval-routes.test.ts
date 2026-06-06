@@ -38,7 +38,9 @@ describe("eval routes", () => {
 
 		const latest = await store.forUser("u1").getEvalLatestScore({
 			evalId: "quality",
+			evalVersion: completed.evalVersion,
 			datasetId: "cases",
+			datasetVersion: completed.datasetVersion,
 			resolvedAgentVersion: "2026-01-01T00:00:00.000Z",
 		});
 		expect(latest?.runId).toBe(started.id);
@@ -109,17 +111,19 @@ async function seedEval(store: MemoryStore) {
 		id: "quality",
 		agentId: "support",
 		name: "Quality",
-		defaultDatasetId: "cases",
-		passThreshold: 0.7,
-		criteria: [{ id: "accuracy", name: "Accuracy" }],
+		defaultDataset: { id: "cases" },
+		passPolicy: { minimumScore: 0.7 },
+		criteria: [
+			{ id: "accuracy", name: "Accuracy", rubric: "Score correctness." },
+		],
 	});
 	await scoped.putDataset({
 		id: "cases",
 		agentId: "support",
 		name: "Cases",
 		items: [
-			{ id: "case_001", input: "refund?", expected: "30 days" },
-			{ id: "case_002", input: "shipping?", expected: "2 days" },
+			{ id: "case_001", input: "refund?", reference: "30 days" },
+			{ id: "case_002", input: "shipping?", reference: "2 days" },
 		],
 	});
 }
@@ -147,12 +151,8 @@ class EvalProvider implements ModelProvider {
 		if (options.outputSchema) {
 			return {
 				text: JSON.stringify({
-					overallScore: 1,
-					passed: true,
+					score: 1,
 					reason: "matches",
-					criteria: {
-						accuracy: { score: 1, passed: true, reason: "matches" },
-					},
 				}),
 				usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
 				finishReason: "stop",

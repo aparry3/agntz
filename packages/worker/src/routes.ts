@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
 import {
 	type EvalCaseResult,
+	type EvalCriterion,
+	type EvalCriterionResult,
 	type EvalDataset,
 	type EvalDefinition,
 	type EvalRun,
@@ -24,11 +26,15 @@ import {
 	createEvalJudgeAgent,
 	createRunner,
 	createWebhookDispatcher,
+	criterionGateMinimum,
+	criterionRubric,
+	evalPassPolicyMinimum,
 	generateId,
 	generateSessionId,
 	latestScoreFromEvalRun,
+	normalizeCriterionWeight,
 	parseJudgeOutputText,
-	scoreJudgeEnvelope,
+	scoreCriterionJudgeOutput,
 	summarizeEvalRun,
 } from "@agntz/core";
 import { execute, parseManifest, validateManifestFull } from "@agntz/manifest";
@@ -939,6 +945,64 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 		return c.body(null, 204);
 	});
 
+	app.get("/evals/:id/versions", async (c) => {
+		const userId = getUserId(c);
+		const evalId = decodeURIComponent(c.req.param("id"));
+		return c.json(await store.forUser(userId).listEvalVersions(evalId));
+	});
+
+	app.get("/evals/:id/versions/:version", async (c) => {
+		const userId = getUserId(c);
+		const evalId = decodeURIComponent(c.req.param("id"));
+		const version = decodeURIComponent(c.req.param("version"));
+		const scoped = store.forUser(userId);
+		const resolvedVersion = await resolveHostedEvalVersionRef(
+			scoped,
+			evalId,
+			version,
+		);
+		const row = await scoped.getEvalVersion(evalId, resolvedVersion);
+		if (!row) return c.json({ error: "Eval version not found" }, 404);
+		return c.json(row);
+	});
+
+	app.post("/evals/:id/versions/:version/activate", async (c) => {
+		const userId = getUserId(c);
+		const evalId = decodeURIComponent(c.req.param("id"));
+		const version = decodeURIComponent(c.req.param("version"));
+		const scoped = store.forUser(userId);
+		const resolvedVersion = await resolveHostedEvalVersionRef(
+			scoped,
+			evalId,
+			version,
+		);
+		await scoped.activateEvalVersion(evalId, resolvedVersion);
+		return c.json(await scoped.getEval(evalId));
+	});
+
+	app.put("/evals/:id/aliases/:alias", async (c) => {
+		const userId = getUserId(c);
+		const evalId = decodeURIComponent(c.req.param("id"));
+		const alias = decodeURIComponent(c.req.param("alias"));
+		const body = (getCachedBody(c) ?? (await c.req.json())) as {
+			version?: string;
+			createdAt?: string;
+		};
+		const version = body.version ?? body.createdAt;
+		if (!version)
+			return c.json({ error: "Missing required field: version" }, 400);
+		await store.forUser(userId).setEvalVersionAlias(evalId, version, alias);
+		return c.json({ alias, version });
+	});
+
+	app.delete("/evals/:id/aliases/:alias", async (c) => {
+		const userId = getUserId(c);
+		const evalId = decodeURIComponent(c.req.param("id"));
+		const alias = decodeURIComponent(c.req.param("alias"));
+		await store.forUser(userId).removeEvalVersionAlias(evalId, alias);
+		return c.json({ alias, deleted: true });
+	});
+
 	app.get("/datasets", async (c) => {
 		const userId = getUserId(c);
 		return c.json(
@@ -990,6 +1054,66 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 		return c.body(null, 204);
 	});
 
+	app.get("/datasets/:id/versions", async (c) => {
+		const userId = getUserId(c);
+		const datasetId = decodeURIComponent(c.req.param("id"));
+		return c.json(await store.forUser(userId).listDatasetVersions(datasetId));
+	});
+
+	app.get("/datasets/:id/versions/:version", async (c) => {
+		const userId = getUserId(c);
+		const datasetId = decodeURIComponent(c.req.param("id"));
+		const version = decodeURIComponent(c.req.param("version"));
+		const scoped = store.forUser(userId);
+		const resolvedVersion = await resolveHostedDatasetVersionRef(
+			scoped,
+			datasetId,
+			version,
+		);
+		const row = await scoped.getDatasetVersion(datasetId, resolvedVersion);
+		if (!row) return c.json({ error: "Dataset version not found" }, 404);
+		return c.json(row);
+	});
+
+	app.post("/datasets/:id/versions/:version/activate", async (c) => {
+		const userId = getUserId(c);
+		const datasetId = decodeURIComponent(c.req.param("id"));
+		const version = decodeURIComponent(c.req.param("version"));
+		const scoped = store.forUser(userId);
+		const resolvedVersion = await resolveHostedDatasetVersionRef(
+			scoped,
+			datasetId,
+			version,
+		);
+		await scoped.activateDatasetVersion(datasetId, resolvedVersion);
+		return c.json(await scoped.getDataset(datasetId));
+	});
+
+	app.put("/datasets/:id/aliases/:alias", async (c) => {
+		const userId = getUserId(c);
+		const datasetId = decodeURIComponent(c.req.param("id"));
+		const alias = decodeURIComponent(c.req.param("alias"));
+		const body = (getCachedBody(c) ?? (await c.req.json())) as {
+			version?: string;
+			createdAt?: string;
+		};
+		const version = body.version ?? body.createdAt;
+		if (!version)
+			return c.json({ error: "Missing required field: version" }, 400);
+		await store
+			.forUser(userId)
+			.setDatasetVersionAlias(datasetId, version, alias);
+		return c.json({ alias, version });
+	});
+
+	app.delete("/datasets/:id/aliases/:alias", async (c) => {
+		const userId = getUserId(c);
+		const datasetId = decodeURIComponent(c.req.param("id"));
+		const alias = decodeURIComponent(c.req.param("alias"));
+		await store.forUser(userId).removeDatasetVersionAlias(datasetId, alias);
+		return c.json({ alias, deleted: true });
+	});
+
 	app.get("/eval-runs", async (c) => {
 		const userId = getUserId(c);
 		const limitRaw = c.req.query("limit");
@@ -1014,8 +1138,11 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 		const userId = getUserId(c);
 		const body = (getCachedBody(c) ?? (await c.req.json())) as {
 			evalId?: string;
+			evalVersion?: string;
 			datasetId?: string;
+			datasetVersion?: string;
 			agentVersion?: string;
+			criterionIds?: string[];
 		};
 		if (!body.evalId) {
 			return c.json({ error: "Missing required field: evalId" }, 400);
@@ -1025,8 +1152,11 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 				store,
 				userId,
 				evalId: body.evalId,
+				evalVersion: body.evalVersion,
 				datasetId: body.datasetId,
+				datasetVersion: body.datasetVersion,
 				agentVersion: body.agentVersion,
+				criterionIds: body.criterionIds,
 				resolveRunnerAndManifest: resolveRunnerAndManifestImpl,
 				traceRegistry,
 				controllers: evalRunControllers,
@@ -1064,7 +1194,9 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			await store.forUser(userId).listEvalLatestScores({
 				agentId: c.req.query("agentId"),
 				evalId: c.req.query("evalId"),
+				evalVersion: c.req.query("evalVersion"),
 				datasetId: c.req.query("datasetId"),
+				datasetVersion: c.req.query("datasetVersion"),
 				resolvedAgentVersion: c.req.query("resolvedAgentVersion"),
 				status: c.req.query("status") as never,
 			}),
@@ -1084,7 +1216,9 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 		return c.json(
 			await store.forUser(userId).getEvalLatestScore({
 				evalId,
+				evalVersion: c.req.query("evalVersion"),
 				datasetId,
+				datasetVersion: c.req.query("datasetVersion"),
 				resolvedAgentVersion: c.req.query("resolvedAgentVersion"),
 			}),
 		);
@@ -1281,8 +1415,11 @@ async function startHostedEval(opts: {
 	store: UnifiedStore;
 	userId: string;
 	evalId: string;
+	evalVersion?: string;
 	datasetId?: string;
+	datasetVersion?: string;
 	agentVersion?: string;
+	criterionIds?: string[];
 	resolveRunnerAndManifest: (
 		store: UnifiedStore,
 		userId: string,
@@ -1292,29 +1429,37 @@ async function startHostedEval(opts: {
 	controllers: Map<string, AbortController>;
 }): Promise<EvalRun> {
 	const scoped = opts.store.forUser(opts.userId);
-	const definition = await scoped.getEval(opts.evalId);
-	if (!definition) {
-		throw Object.assign(new Error(`Eval "${opts.evalId}" not found`), {
-			code: "NOT_FOUND",
-		});
-	}
+	const resolvedEval = await resolveHostedEvalDefinition(
+		scoped,
+		opts.evalId,
+		opts.evalVersion,
+	);
+	const definition = resolvedEval.definition;
 	if (definition.criteria.length === 0) {
 		throw new Error(
 			`Eval "${definition.id}" must define at least one criterion`,
 		);
 	}
-	const datasetId = opts.datasetId ?? definition.defaultDatasetId;
+	const criteria = selectEvalCriteria(definition.criteria, opts.criterionIds);
+	if (criteria.length === 0) {
+		throw new Error(`Eval "${definition.id}" did not match any criterionIds`);
+	}
+	const datasetId =
+		opts.datasetId ??
+		definition.defaultDataset?.id ??
+		definition.defaultDatasetId;
 	if (!datasetId) {
 		throw new Error(
 			`Eval "${definition.id}" does not specify a default dataset; pass datasetId`,
 		);
 	}
-	const dataset = await scoped.getDataset(datasetId);
-	if (!dataset) {
-		throw Object.assign(new Error(`Dataset "${datasetId}" not found`), {
-			code: "NOT_FOUND",
-		});
-	}
+	const resolvedDataset = await resolveHostedDataset(
+		scoped,
+		datasetId,
+		opts.datasetVersion ??
+			(opts.datasetId ? undefined : definition.defaultDataset?.version),
+	);
+	const dataset = resolvedDataset.dataset;
 	if (dataset.agentId !== definition.agentId) {
 		throw new Error(
 			`Dataset "${dataset.id}" belongs to agent "${dataset.agentId}", not "${definition.agentId}"`,
@@ -1335,20 +1480,34 @@ async function startHostedEval(opts: {
 			code: "NOT_FOUND",
 		});
 	}
+	const criterionIds = criteria.map((criterion) => criterion.id);
+	const partial =
+		Boolean(opts.criterionIds?.length) &&
+		criterionIds.length !== definition.criteria.length;
 
 	const run: EvalRun = {
 		id: generateId("evalrun"),
 		evalId: definition.id,
+		requestedEvalVersion: resolvedEval.requestedVersion,
+		evalVersion: resolvedEval.resolvedVersion,
 		datasetId: dataset.id,
+		requestedDatasetVersion: resolvedDataset.requestedVersion,
+		datasetVersion: resolvedDataset.resolvedVersion,
 		agentId: definition.agentId,
 		agentVersion: agent.createdAt,
 		requestedAgentVersion: opts.agentVersion,
+		criterionIds,
+		partial,
 		status: "running",
 		startedAt: new Date().toISOString(),
 		snapshots: {
 			eval: cloneJson(definition),
 			dataset: cloneJson(dataset),
 			agent: cloneJson(agent),
+			evalVersion: resolvedEval.resolvedVersion,
+			requestedEvalVersion: resolvedEval.requestedVersion,
+			datasetVersion: resolvedDataset.resolvedVersion,
+			requestedDatasetVersion: resolvedDataset.requestedVersion,
 			agentVersion: agent.createdAt,
 			requestedAgentVersion: opts.agentVersion,
 		},
@@ -1365,6 +1524,7 @@ async function startHostedEval(opts: {
 		manifest,
 		definition,
 		dataset,
+		criteria,
 		traceRegistry: opts.traceRegistry,
 		userId: opts.userId,
 		signal: controller.signal,
@@ -1372,10 +1532,14 @@ async function startHostedEval(opts: {
 		.catch(async (error) => {
 			run.status = "failed";
 			run.error = errorMessage(error);
-			run.summary = summarizeEvalRun(definition, run.caseResults);
+			run.summary = summarizeEvalRun(definition, run.caseResults, {
+				criterionIds,
+			});
 			run.endedAt = new Date().toISOString();
 			await scoped.putEvalRun(run);
-			await scoped.putEvalLatestScore(latestScoreFromEvalRun(run));
+			if (!run.partial) {
+				await scoped.putEvalLatestScore(latestScoreFromEvalRun(run));
+			}
 		})
 		.finally(() => {
 			opts.controllers.delete(run.id);
@@ -1391,6 +1555,7 @@ async function executeHostedEval(opts: {
 	manifest: AgentManifest;
 	definition: EvalDefinition;
 	dataset: EvalDataset;
+	criteria: EvalCriterion[];
 	traceRegistry: InMemoryTraceRegistry;
 	userId: string;
 	signal: AbortSignal;
@@ -1402,6 +1567,7 @@ async function executeHostedEval(opts: {
 		manifest,
 		definition,
 		dataset,
+		criteria,
 		traceRegistry,
 		userId,
 		signal,
@@ -1487,36 +1653,67 @@ async function executeHostedEval(opts: {
 			}
 
 			try {
-				const prompt = JSON.stringify(
-					{
-						input: item.input,
-						expected: item.expected ?? null,
-						actual: output,
-						itemMetadata: item.metadata ?? {},
-						datasetMetadata: dataset.metadata ?? {},
-						criteria: definition.criteria,
-						passThreshold: definition.passThreshold ?? 0.7,
-					},
-					null,
-					2,
+				const pairs = await Promise.all(
+					criteria.map(async (criterion) => {
+						try {
+							const judged = await runner.invoke(
+								judgeId,
+								judgeCriterionPrompt({
+									definition,
+									dataset,
+									item,
+									criterion,
+									actual: output,
+								}),
+								{ signal },
+							);
+							return [
+								criterion.id,
+								scoreCriterionJudgeOutput(
+									criterion,
+									parseJudgeOutputText(judged.output),
+								),
+							] as const;
+						} catch (error) {
+							if (signal.aborted) throw error;
+							return [
+								criterion.id,
+								failedCriterionResult(
+									criterion,
+									`Judge failed: ${errorMessage(error)}`,
+								),
+							] as const;
+						}
+					}),
 				);
-				const judged = await runner.invoke(judgeId, prompt, { signal });
-				const scored = scoreJudgeEnvelope(
-					definition.criteria,
-					definition.passThreshold,
-					parseJudgeOutputText(judged.output),
+				const criteriaResults = Object.fromEntries(pairs) as Record<
+					string,
+					EvalCriterionResult
+				>;
+				const score = weightedAverage(
+					criteria,
+					(criterion) => criteriaResults[criterion.id]?.score ?? 0,
+				);
+				const derived = deriveEvalCaseOutcome(
+					definition,
+					criteria,
+					criteriaResults,
+					score,
 				);
 				run.caseResults.push({
 					itemId: item.id,
 					status: "completed",
 					input: item.input,
-					expected: item.expected,
+					reference: item.reference ?? item.expected,
+					expected: item.expected ?? item.reference,
+					tags: item.tags,
 					output: outputToString(output),
 					duration: Date.now() - started,
-					criteria: scored.criteria,
-					score: scored.overallScore,
-					passed: scored.passed,
-					reason: scored.reason,
+					criteria: criteriaResults,
+					score,
+					passed: derived.passed,
+					outcome: derived.outcome,
+					gateFailures: derived.gateFailures,
 				});
 			} catch (error) {
 				if (signal.aborted) {
@@ -1544,11 +1741,239 @@ async function executeHostedEval(opts: {
 		runner.deregisterAgent(judgeId);
 	}
 
-	run.summary = summarizeEvalRun(definition, run.caseResults);
+	run.summary = summarizeEvalRun(definition, run.caseResults, {
+		criterionIds: run.criterionIds,
+	});
 	run.status = signal.aborted ? "cancelled" : "completed";
 	run.endedAt = new Date().toISOString();
 	await scoped.putEvalRun(run);
-	await scoped.putEvalLatestScore(latestScoreFromEvalRun(run));
+	if (!run.partial)
+		await scoped.putEvalLatestScore(latestScoreFromEvalRun(run));
+}
+
+async function resolveHostedEvalDefinition(
+	store: UnifiedStore,
+	evalId: string,
+	version: string | undefined,
+): Promise<{
+	definition: EvalDefinition;
+	requestedVersion?: string;
+	resolvedVersion?: string;
+}> {
+	if (!version) {
+		const definition = await store.getEval(evalId);
+		if (!definition) {
+			throw Object.assign(new Error(`Eval "${evalId}" not found`), {
+				code: "NOT_FOUND",
+			});
+		}
+		return {
+			definition,
+			resolvedVersion:
+				definition.version ?? definition.updatedAt ?? definition.createdAt,
+		};
+	}
+	const resolvedVersion = await resolveHostedEvalVersionRef(
+		store,
+		evalId,
+		version,
+	);
+	const definition = await store.getEvalVersion(evalId, resolvedVersion);
+	if (!definition) {
+		throw Object.assign(new Error(`Eval "${evalId}@${version}" not found`), {
+			code: "NOT_FOUND",
+		});
+	}
+	return { definition, requestedVersion: version, resolvedVersion };
+}
+
+async function resolveHostedDataset(
+	store: UnifiedStore,
+	datasetId: string,
+	version: string | undefined,
+): Promise<{
+	dataset: EvalDataset;
+	requestedVersion?: string;
+	resolvedVersion?: string;
+}> {
+	if (!version) {
+		const dataset = await store.getDataset(datasetId);
+		if (!dataset) {
+			throw Object.assign(new Error(`Dataset "${datasetId}" not found`), {
+				code: "NOT_FOUND",
+			});
+		}
+		return {
+			dataset,
+			resolvedVersion:
+				dataset.version ?? dataset.updatedAt ?? dataset.createdAt,
+		};
+	}
+	const resolvedVersion = await resolveHostedDatasetVersionRef(
+		store,
+		datasetId,
+		version,
+	);
+	const dataset = await store.getDatasetVersion(datasetId, resolvedVersion);
+	if (!dataset) {
+		throw Object.assign(
+			new Error(`Dataset "${datasetId}@${version}" not found`),
+			{
+				code: "NOT_FOUND",
+			},
+		);
+	}
+	return { dataset, requestedVersion: version, resolvedVersion };
+}
+
+async function resolveHostedEvalVersionRef(
+	store: UnifiedStore,
+	evalId: string,
+	version: string,
+): Promise<string> {
+	if (version === "latest") {
+		const latest = (await store.listEvalVersions(evalId))[0]?.createdAt;
+		if (!latest) throw new Error(`Eval "${evalId}@latest" not found`);
+		return latest;
+	}
+	const alias = await store.resolveEvalVersionAlias(evalId, version);
+	if (alias) return alias;
+	return version;
+}
+
+async function resolveHostedDatasetVersionRef(
+	store: UnifiedStore,
+	datasetId: string,
+	version: string,
+): Promise<string> {
+	if (version === "latest") {
+		const latest = (await store.listDatasetVersions(datasetId))[0]?.createdAt;
+		if (!latest) throw new Error(`Dataset "${datasetId}@latest" not found`);
+		return latest;
+	}
+	const alias = await store.resolveDatasetVersionAlias(datasetId, version);
+	if (alias) return alias;
+	return version;
+}
+
+function selectEvalCriteria(
+	criteria: EvalCriterion[],
+	criterionIds: string[] | undefined,
+): EvalCriterion[] {
+	if (!criterionIds?.length) return criteria;
+	const requested = new Set(criterionIds);
+	return criteria.filter((criterion) => requested.has(criterion.id));
+}
+
+function judgeCriterionPrompt(args: {
+	definition: EvalDefinition;
+	dataset: EvalDataset;
+	item: EvalDataset["items"][number];
+	criterion: EvalCriterion;
+	actual: unknown;
+}): string {
+	return JSON.stringify(
+		{
+			instruction:
+				"Score the target agent output for this one criterion. Return JSON with score and reason only.",
+			input: args.item.input,
+			reference: args.item.reference ?? args.item.expected ?? null,
+			actual: args.actual,
+			itemTags: args.item.tags ?? [],
+			itemNotes: args.item.notes ?? null,
+			itemMetadata: args.item.metadata ?? {},
+			datasetMetadata: args.dataset.metadata ?? {},
+			criterion: {
+				id: args.criterion.id,
+				name: args.criterion.name,
+				rubric: criterionRubric(args.criterion),
+				weight: normalizeCriterionWeight(args.criterion),
+				gate: args.criterion.gate ?? undefined,
+			},
+			eval: {
+				id: args.definition.id,
+				name: args.definition.name,
+			},
+		},
+		null,
+		2,
+	);
+}
+
+function failedCriterionResult(
+	criterion: EvalCriterion,
+	reason: string,
+): EvalCriterionResult {
+	const minimumScore = criterionGateMinimum(criterion);
+	const gate =
+		minimumScore === undefined
+			? undefined
+			: { minimumScore, passed: 0 >= minimumScore };
+	return {
+		score: 0,
+		passed: gate ? gate.passed : true,
+		reason,
+		gate,
+		error: reason,
+	};
+}
+
+function deriveEvalCaseOutcome(
+	definition: EvalDefinition,
+	criteria: EvalCriterion[],
+	results: Record<string, EvalCriterionResult>,
+	score: number,
+): {
+	passed: boolean;
+	outcome: "passed" | "failed" | "score_only";
+	gateFailures: string[];
+} {
+	const gateFailures: string[] = [];
+	const minimum = evalPassPolicyMinimum(definition);
+	if (minimum !== undefined && score < minimum) {
+		gateFailures.push(
+			`overall score ${formatEvalScore(score)} below pass policy ${formatEvalScore(minimum)}`,
+		);
+	}
+	for (const criterion of criteria) {
+		const criterionMinimum = criterionGateMinimum(criterion);
+		if (criterionMinimum === undefined) continue;
+		const criterionScore = results[criterion.id]?.score ?? 0;
+		if (criterionScore < criterionMinimum) {
+			gateFailures.push(
+				`${criterion.id} score ${formatEvalScore(criterionScore)} below gate ${formatEvalScore(criterionMinimum)}`,
+			);
+		}
+	}
+	const hasChecks =
+		minimum !== undefined ||
+		criteria.some((criterion) => criterionGateMinimum(criterion) !== undefined);
+	const outcome =
+		gateFailures.length > 0 ? "failed" : hasChecks ? "passed" : "score_only";
+	return { passed: outcome !== "failed", outcome, gateFailures };
+}
+
+function weightedAverage(
+	criteria: EvalCriterion[],
+	readScore: (criterion: EvalCriterion) => number,
+): number {
+	let weighted = 0;
+	let totalWeight = 0;
+	for (const criterion of criteria) {
+		const weight = normalizeCriterionWeight(criterion);
+		weighted += clampScore(readScore(criterion)) * weight;
+		totalWeight += weight;
+	}
+	return totalWeight > 0 ? weighted / totalWeight : 0;
+}
+
+function clampScore(value: number): number {
+	if (!Number.isFinite(value)) return 0;
+	return Math.min(1, Math.max(0, value));
+}
+
+function formatEvalScore(score: number): string {
+	return clampScore(score).toFixed(2);
 }
 
 function normalizeEvalDefinition(
@@ -1564,9 +1989,13 @@ function normalizeEvalDefinition(
 					stringOrUndefined(criterion?.id) ??
 					`criterion_${String(index + 1).padStart(2, "0")}`,
 				name: stringOrUndefined(criterion?.name) ?? `Criterion ${index + 1}`,
+				rubric:
+					stringOrUndefined(criterion?.rubric) ??
+					stringOrUndefined(criterion?.description),
 				description: stringOrUndefined(criterion?.description),
 				weight:
 					typeof criterion?.weight === "number" ? criterion.weight : undefined,
+				gate: normalizeGate(criterion?.gate, criterion?.threshold),
 				threshold:
 					typeof criterion?.threshold === "number"
 						? criterion.threshold
@@ -1579,11 +2008,17 @@ function normalizeEvalDefinition(
 		name,
 		description: stringOrUndefined(body.description),
 		criteria,
-		defaultDatasetId: stringOrUndefined(body.defaultDatasetId),
+		defaultDataset: normalizeDefaultDataset(body),
+		defaultDatasetId:
+			normalizeDefaultDataset(body)?.id ??
+			stringOrUndefined(body.defaultDatasetId),
+		passPolicy: normalizePassPolicy(body),
 		passThreshold:
 			typeof body.passThreshold === "number" ? body.passThreshold : undefined,
+		judge: normalizeJudge(body),
 		judgeModel: body.judgeModel,
 		metadata: isRecord(body.metadata) ? body.metadata : undefined,
+		version: body.version,
 		createdAt: body.createdAt,
 		updatedAt: body.updatedAt,
 	};
@@ -1600,10 +2035,15 @@ function normalizeEvalDataset(body: Partial<EvalDataset>): EvalDataset {
 					stringOrUndefined(item?.id) ??
 					`case_${String(index + 1).padStart(3, "0")}`,
 				input:
-					typeof item?.input === "string" || Array.isArray(item?.input)
+					typeof item?.input === "string" ||
+					Array.isArray(item?.input) ||
+					isRecord(item?.input)
 						? item.input
 						: JSON.stringify(item?.input ?? ""),
-				expected: item?.expected,
+				reference: item?.reference ?? item?.expected,
+				expected: item?.expected ?? item?.reference,
+				tags: normalizeTags(item?.tags),
+				notes: stringOrUndefined(item?.notes),
 				metadata: isRecord(item?.metadata) ? item.metadata : undefined,
 			}))
 		: [];
@@ -1614,6 +2054,7 @@ function normalizeEvalDataset(body: Partial<EvalDataset>): EvalDataset {
 		description: stringOrUndefined(body.description),
 		items,
 		metadata: isRecord(body.metadata) ? body.metadata : undefined,
+		version: body.version,
 		createdAt: body.createdAt,
 		updatedAt: body.updatedAt,
 	};
@@ -1623,13 +2064,14 @@ async function assertEvalDatasetScope(
 	store: UnifiedStore,
 	definition: EvalDefinition,
 ): Promise<void> {
-	if (!definition.defaultDatasetId) return;
-	const dataset = await store.getDataset(definition.defaultDatasetId);
+	const datasetId =
+		definition.defaultDataset?.id ?? definition.defaultDatasetId;
+	if (!datasetId) return;
+	const dataset = await store.getDataset(datasetId);
 	if (!dataset) {
-		throw Object.assign(
-			new Error(`Dataset "${definition.defaultDatasetId}" not found`),
-			{ code: "NOT_FOUND" },
-		);
+		throw Object.assign(new Error(`Dataset "${datasetId}" not found`), {
+			code: "NOT_FOUND",
+		});
 	}
 	if (dataset.agentId !== definition.agentId) {
 		throw new Error(
@@ -1646,12 +2088,16 @@ function failedEvalCase(
 		itemId: item.id,
 		status: "failed",
 		input: item.input,
-		expected: item.expected,
+		reference: item.reference ?? item.expected,
+		expected: item.expected ?? item.reference,
+		tags: item.tags,
 		output: opts.output,
 		duration: opts.duration,
 		criteria: {},
 		score: 0,
 		passed: false,
+		outcome: "failed",
+		gateFailures: ["case failed before scoring"],
 		error: opts.error,
 	};
 }
@@ -1661,10 +2107,14 @@ function cancelledEvalCase(item: EvalDataset["items"][number]): EvalCaseResult {
 		itemId: item.id,
 		status: "cancelled",
 		input: item.input,
-		expected: item.expected,
+		reference: item.reference ?? item.expected,
+		expected: item.expected ?? item.reference,
+		tags: item.tags,
 		criteria: {},
 		score: 0,
 		passed: false,
+		outcome: "failed",
+		gateFailures: ["case cancelled before scoring"],
 		error: "Eval run cancelled.",
 	};
 }
@@ -1686,10 +2136,13 @@ async function cancelStoredEvalRun(
 		status: "cancelled",
 		endedAt: run.endedAt ?? new Date().toISOString(),
 		caseResults,
-		summary: summarizeEvalRun(run.snapshots.eval, caseResults),
+		summary: summarizeEvalRun(run.snapshots.eval, caseResults, {
+			criterionIds: run.criterionIds,
+		}),
 	};
 	await store.putEvalRun(next);
-	await store.putEvalLatestScore(latestScoreFromEvalRun(next));
+	if (!next.partial)
+		await store.putEvalLatestScore(latestScoreFromEvalRun(next));
 	return next;
 }
 
@@ -1713,7 +2166,69 @@ function stringOrUndefined(value: unknown): string | undefined {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeGate(
+	gate: unknown,
+	threshold: unknown,
+): { minimumScore: number } | undefined {
+	if (isRecord(gate) && typeof gate.minimumScore === "number") {
+		return { minimumScore: gate.minimumScore };
+	}
+	if (typeof threshold === "number") return { minimumScore: threshold };
+	return undefined;
+}
+
+function normalizePassPolicy(
+	body: Partial<EvalDefinition>,
+): { minimumScore?: number } | undefined {
+	if (
+		isRecord(body.passPolicy) &&
+		typeof body.passPolicy.minimumScore === "number"
+	) {
+		return { minimumScore: body.passPolicy.minimumScore };
+	}
+	if (typeof body.passThreshold === "number") {
+		return { minimumScore: body.passThreshold };
+	}
+	return undefined;
+}
+
+function normalizeJudge(
+	body: Partial<EvalDefinition>,
+): EvalDefinition["judge"] {
+	if (isRecord(body.judge) && isRecord(body.judge.model)) {
+		return {
+			model: body.judge.model as unknown as EvalDefinition["judgeModel"],
+		};
+	}
+	if (body.judgeModel) return { model: body.judgeModel };
+	return undefined;
+}
+
+function normalizeDefaultDataset(
+	body: Partial<EvalDefinition>,
+): EvalDefinition["defaultDataset"] {
+	if (isRecord(body.defaultDataset)) {
+		const id = stringOrUndefined(body.defaultDataset.id);
+		if (id) {
+			return {
+				id,
+				version: stringOrUndefined(body.defaultDataset.version),
+			};
+		}
+	}
+	const id = stringOrUndefined(body.defaultDatasetId);
+	return id ? { id } : undefined;
+}
+
+function normalizeTags(value: unknown): string[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const tags = value
+		.map((tag) => (typeof tag === "string" ? tag.trim() : ""))
+		.filter(Boolean);
+	return tags.length > 0 ? tags : undefined;
 }
 
 function cloneJson<T>(value: T): T {

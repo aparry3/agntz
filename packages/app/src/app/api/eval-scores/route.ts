@@ -8,7 +8,9 @@ export async function GET(req: NextRequest) {
 		const rows = await store.listEvalLatestScores({
 			agentId: search.get("agentId") ?? undefined,
 			evalId: search.get("evalId") ?? undefined,
+			evalVersion: search.get("evalVersion") ?? undefined,
 			datasetId: search.get("datasetId") ?? undefined,
+			datasetVersion: search.get("datasetVersion") ?? undefined,
 			resolvedAgentVersion: search.get("resolvedAgentVersion") ?? undefined,
 			status: (search.get("status") as never) ?? undefined,
 		});

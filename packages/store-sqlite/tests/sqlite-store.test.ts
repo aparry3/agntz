@@ -2,6 +2,9 @@ import { _resetCryptoKeyCache } from "@agntz/core";
 import type {
 	AgentDefinition,
 	ContextEntry,
+	EvalDataset,
+	EvalDefinition,
+	EvalLatestScore,
 	InvocationLog,
 	Message,
 	SecretDefinition,
@@ -127,6 +130,125 @@ describe("SqliteStore", () => {
 			expect(result?.examples).toEqual([{ input: "hello", output: "hi" }]);
 			expect(result?.tools).toEqual([{ type: "inline", name: "test_tool" }]);
 			expect(result?.tags).toEqual(["test", "example"]);
+		});
+	});
+
+	// ═══════════════════════════════════════════════════════════════════
+	// EvalStore
+	// ═══════════════════════════════════════════════════════════════════
+
+	describe("EvalStore", () => {
+		const evalDefinition: EvalDefinition = {
+			id: "quality",
+			agentId: "support",
+			name: "Quality",
+			defaultDataset: { id: "cases" },
+			passPolicy: { minimumScore: 0.7 },
+			criteria: [
+				{
+					id: "accuracy",
+					name: "Accuracy",
+					rubric: "Score correctness.",
+					gate: { minimumScore: 0.8 },
+				},
+			],
+		};
+		const dataset: EvalDataset = {
+			id: "cases",
+			agentId: "support",
+			name: "Cases",
+			items: [
+				{
+					id: "case_001",
+					input: { question: "refund?" },
+					reference: "30 days",
+					tags: ["happy-path"],
+				},
+			],
+		};
+
+		it("stores eval/dataset versions, aliases, activation, and version-aware latest scores", async () => {
+			await store.putEval(evalDefinition);
+			await store.putDataset(dataset);
+			const [evalV1] = await store.listEvalVersions("quality");
+			const [datasetV1] = await store.listDatasetVersions("cases");
+			expect(evalV1.createdAt).toBeTruthy();
+			expect(datasetV1.createdAt).toBeTruthy();
+			expect(
+				(await store.getEvalVersion("quality", evalV1.createdAt))?.name,
+			).toBe("Quality");
+			expect(
+				(await store.getDatasetVersion("cases", datasetV1.createdAt))?.items[0]
+					.reference,
+			).toBe("30 days");
+
+			await store.setEvalVersionAlias("quality", evalV1.createdAt, "baseline");
+			await store.setDatasetVersionAlias(
+				"cases",
+				datasetV1.createdAt,
+				"baseline",
+			);
+			expect(await store.resolveEvalVersionAlias("quality", "baseline")).toBe(
+				evalV1.createdAt,
+			);
+			expect(await store.resolveDatasetVersionAlias("cases", "baseline")).toBe(
+				datasetV1.createdAt,
+			);
+
+			await store.putEval({ ...evalDefinition, name: "Quality v2" });
+			await store.putDataset({
+				...dataset,
+				items: [{ ...dataset.items[0], reference: "45 days" }],
+			});
+			const [datasetV2] = await store.listDatasetVersions("cases");
+			expect(await store.listEvalVersions("quality")).toHaveLength(2);
+			expect(await store.listDatasetVersions("cases")).toHaveLength(2);
+			await store.activateEvalVersion("quality", evalV1.createdAt);
+			expect((await store.getEval("quality"))?.version).toBe(evalV1.createdAt);
+
+			const now = new Date().toISOString();
+			const baseScore: EvalLatestScore = {
+				evalId: "quality",
+				evalVersion: evalV1.createdAt,
+				datasetId: "cases",
+				datasetVersion: datasetV1.createdAt,
+				agentId: "support",
+				resolvedAgentVersion: "agent-v1",
+				runId: "run-v1",
+				status: "completed",
+				overallScore: 0.9,
+				passed: true,
+				startedAt: now,
+				updatedAt: now,
+			};
+			await store.putEvalLatestScore(baseScore);
+			await store.putEvalLatestScore({
+				...baseScore,
+				evalVersion: (await store.listEvalVersions("quality"))[0].createdAt,
+				datasetVersion: datasetV2.createdAt,
+				runId: "run-v2",
+				overallScore: 0.6,
+			});
+
+			expect(
+				(
+					await store.getEvalLatestScore({
+						evalId: "quality",
+						evalVersion: evalV1.createdAt,
+						datasetId: "cases",
+						datasetVersion: datasetV1.createdAt,
+						resolvedAgentVersion: "agent-v1",
+					})
+				)?.runId,
+			).toBe("run-v1");
+			expect(
+				await store.listEvalLatestScores({ evalVersion: evalV1.createdAt }),
+			).toHaveLength(1);
+			expect(
+				await store.listEvalLatestScores({
+					datasetVersion: datasetV2.createdAt,
+				}),
+			).toHaveLength(1);
 		});
 	});
 

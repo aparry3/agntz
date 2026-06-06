@@ -22,26 +22,38 @@ export function normalizeEvalDefinition(
 					stringOrUndefined(criterion?.id) ??
 					`criterion_${String(index + 1).padStart(2, "0")}`,
 				name: stringOrUndefined(criterion?.name) ?? `Criterion ${index + 1}`,
+				rubric:
+					stringOrUndefined(criterion?.rubric) ??
+					stringOrUndefined(criterion?.description),
 				description: stringOrUndefined(criterion?.description),
 				weight:
 					typeof criterion?.weight === "number" ? criterion.weight : undefined,
+				gate: normalizeGate(criterion?.gate, criterion?.threshold),
 				threshold:
 					typeof criterion?.threshold === "number"
 						? criterion.threshold
 						: undefined,
 			}))
 		: [];
+	const defaultDataset = normalizeDefaultDataset(body);
+	const passPolicy = normalizePassPolicy(body);
+	const judge = normalizeJudge(body);
 	return {
 		id,
 		agentId,
 		name,
 		description: stringOrUndefined(body.description),
 		criteria,
-		defaultDatasetId: stringOrUndefined(body.defaultDatasetId),
+		defaultDataset,
+		defaultDatasetId:
+			defaultDataset?.id ?? stringOrUndefined(body.defaultDatasetId),
+		passPolicy,
 		passThreshold:
 			typeof body.passThreshold === "number" ? body.passThreshold : undefined,
+		judge,
 		judgeModel: body.judgeModel,
 		metadata: isRecord(body.metadata) ? body.metadata : undefined,
+		version: body.version,
 		createdAt: body.createdAt,
 		updatedAt: body.updatedAt,
 	};
@@ -64,10 +76,15 @@ export function normalizeEvalDataset(
 					stringOrUndefined(item?.id) ??
 					`case_${String(index + 1).padStart(3, "0")}`,
 				input:
-					typeof item?.input === "string" || Array.isArray(item?.input)
+					typeof item?.input === "string" ||
+					Array.isArray(item?.input) ||
+					isRecord(item?.input)
 						? item.input
 						: JSON.stringify(item?.input ?? ""),
-				expected: item?.expected,
+				reference: item?.reference ?? item?.expected,
+				expected: item?.expected ?? item?.reference,
+				tags: normalizeTags(item?.tags),
+				notes: stringOrUndefined(item?.notes),
 				metadata: isRecord(item?.metadata) ? item.metadata : undefined,
 			}))
 		: [];
@@ -78,6 +95,7 @@ export function normalizeEvalDataset(
 		description: stringOrUndefined(body.description),
 		items,
 		metadata: isRecord(body.metadata) ? body.metadata : undefined,
+		version: body.version,
 		createdAt: body.createdAt,
 		updatedAt: body.updatedAt,
 	};
@@ -89,10 +107,12 @@ export async function assertEvalDatasetScope(
 	},
 	definition: EvalDefinition,
 ): Promise<void> {
-	if (!definition.defaultDatasetId) return;
-	const dataset = await store.getDataset(definition.defaultDatasetId);
+	const datasetId =
+		definition.defaultDataset?.id ?? definition.defaultDatasetId;
+	if (!datasetId) return;
+	const dataset = await store.getDataset(datasetId);
 	if (!dataset) {
-		throw new Error(`Dataset "${definition.defaultDatasetId}" not found`);
+		throw new Error(`Dataset "${datasetId}" not found`);
 	}
 	if (dataset.agentId !== definition.agentId) {
 		throw new Error(
@@ -109,7 +129,10 @@ export function evalRunFiltersFromSearch(
 	return {
 		agentId: searchParams.get("agentId") ?? undefined,
 		evalId: searchParams.get("evalId") ?? undefined,
+		evalVersion: searchParams.get("evalVersion") ?? undefined,
 		datasetId: searchParams.get("datasetId") ?? undefined,
+		datasetVersion: searchParams.get("datasetVersion") ?? undefined,
+		agentVersion: searchParams.get("agentVersion") ?? undefined,
 		status:
 			(searchParams.get("status") as EvalRunListFilters["status"] | null) ??
 			undefined,
@@ -125,5 +148,67 @@ function stringOrUndefined(value: unknown): string | undefined {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeGate(
+	gate: unknown,
+	threshold: unknown,
+): { minimumScore: number } | undefined {
+	if (isRecord(gate) && typeof gate.minimumScore === "number") {
+		return { minimumScore: gate.minimumScore };
+	}
+	if (typeof threshold === "number") return { minimumScore: threshold };
+	return undefined;
+}
+
+function normalizePassPolicy(
+	body: Partial<EvalDefinition>,
+): { minimumScore?: number } | undefined {
+	if (
+		isRecord(body.passPolicy) &&
+		typeof body.passPolicy.minimumScore === "number"
+	) {
+		return { minimumScore: body.passPolicy.minimumScore };
+	}
+	if (typeof body.passThreshold === "number") {
+		return { minimumScore: body.passThreshold };
+	}
+	return undefined;
+}
+
+function normalizeJudge(
+	body: Partial<EvalDefinition>,
+): EvalDefinition["judge"] {
+	if (isRecord(body.judge) && isRecord(body.judge.model)) {
+		return {
+			model: body.judge.model as unknown as EvalDefinition["judgeModel"],
+		};
+	}
+	if (body.judgeModel) return { model: body.judgeModel };
+	return undefined;
+}
+
+function normalizeDefaultDataset(
+	body: Partial<EvalDefinition>,
+): EvalDefinition["defaultDataset"] {
+	if (isRecord(body.defaultDataset)) {
+		const id = stringOrUndefined(body.defaultDataset.id);
+		if (id) {
+			return {
+				id,
+				version: stringOrUndefined(body.defaultDataset.version),
+			};
+		}
+	}
+	const id = stringOrUndefined(body.defaultDatasetId);
+	return id ? { id } : undefined;
+}
+
+function normalizeTags(value: unknown): string[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const tags = value
+		.map((tag) => (typeof tag === "string" ? tag.trim() : ""))
+		.filter(Boolean);
+	return tags.length > 0 ? tags : undefined;
 }

@@ -18,6 +18,7 @@ import type {
 	ContextEntry,
 	EvalDataset,
 	EvalDatasetListFilters,
+	EvalDatasetVersionSummary,
 	EvalDefinition,
 	EvalLatestScore,
 	EvalLatestScoreKey,
@@ -26,6 +27,7 @@ import type {
 	EvalRun,
 	EvalRunListFilters,
 	EvalRunListResult,
+	EvalVersionSummary,
 	InvocationLog,
 	InvokeResult,
 	LogFilter,
@@ -443,6 +445,133 @@ const MIGRATIONS = [
     ON eval_latest_scores(user_id, eval_id, dataset_id);
 
   UPDATE schema_version SET version = 11;
+  `,
+	// v12: Versioned evals/datasets and latest-score keys pinned by eval,
+	// dataset, and agent versions.
+	`
+  CREATE TABLE IF NOT EXISTS eval_versions (
+    user_id      TEXT NOT NULL,
+    eval_id      TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    activated_at TEXT,
+    definition   TEXT NOT NULL,
+    PRIMARY KEY (user_id, eval_id, created_at)
+  );
+  CREATE INDEX IF NOT EXISTS idx_eval_versions_user_eval
+    ON eval_versions(user_id, eval_id, created_at DESC);
+
+  INSERT OR IGNORE INTO eval_versions
+    (user_id, eval_id, created_at, activated_at, definition)
+  SELECT user_id,
+         id,
+         created_at,
+         updated_at,
+         json_set(definition, '$.version', created_at)
+    FROM evals;
+
+  CREATE TABLE IF NOT EXISTS eval_aliases (
+    user_id            TEXT NOT NULL,
+    eval_id            TEXT NOT NULL,
+    alias              TEXT NOT NULL,
+    version_created_at TEXT NOT NULL,
+    created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, eval_id, alias)
+  );
+  CREATE INDEX IF NOT EXISTS idx_eval_aliases_version
+    ON eval_aliases(user_id, eval_id, version_created_at);
+
+  CREATE TABLE IF NOT EXISTS eval_dataset_versions (
+    user_id      TEXT NOT NULL,
+    dataset_id   TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    activated_at TEXT,
+    dataset      TEXT NOT NULL,
+    PRIMARY KEY (user_id, dataset_id, created_at)
+  );
+  CREATE INDEX IF NOT EXISTS idx_eval_dataset_versions_user_dataset
+    ON eval_dataset_versions(user_id, dataset_id, created_at DESC);
+
+  INSERT OR IGNORE INTO eval_dataset_versions
+    (user_id, dataset_id, created_at, activated_at, dataset)
+  SELECT user_id,
+         id,
+         created_at,
+         updated_at,
+         json_set(dataset, '$.version', created_at)
+    FROM eval_datasets;
+
+  CREATE TABLE IF NOT EXISTS eval_dataset_aliases (
+    user_id            TEXT NOT NULL,
+    dataset_id         TEXT NOT NULL,
+    alias              TEXT NOT NULL,
+    version_created_at TEXT NOT NULL,
+    created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, dataset_id, alias)
+  );
+  CREATE INDEX IF NOT EXISTS idx_eval_dataset_aliases_version
+    ON eval_dataset_aliases(user_id, dataset_id, version_created_at);
+
+  CREATE TABLE IF NOT EXISTS eval_latest_scores_new (
+    user_id                 TEXT NOT NULL,
+    eval_id                 TEXT NOT NULL,
+    eval_version            TEXT NOT NULL,
+    dataset_id              TEXT NOT NULL,
+    dataset_version         TEXT NOT NULL,
+    agent_id                TEXT NOT NULL,
+    resolved_agent_version  TEXT NOT NULL,
+    requested_agent_version TEXT,
+    run_id                  TEXT NOT NULL,
+    status                  TEXT NOT NULL,
+    overall_score           REAL NOT NULL,
+    passed                  INTEGER NOT NULL,
+    score                   TEXT NOT NULL,
+    started_at              TEXT NOT NULL,
+    ended_at                TEXT,
+    updated_at              TEXT NOT NULL,
+    PRIMARY KEY (
+      user_id,
+      eval_id,
+      eval_version,
+      dataset_id,
+      dataset_version,
+      resolved_agent_version
+    )
+  );
+  CREATE INDEX IF NOT EXISTS idx_eval_latest_scores_new_user_agent
+    ON eval_latest_scores_new(user_id, agent_id, updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_eval_latest_scores_new_user_eval
+    ON eval_latest_scores_new(user_id, eval_id, eval_version, dataset_id, dataset_version);
+
+  INSERT OR REPLACE INTO eval_latest_scores_new
+    (user_id, eval_id, eval_version, dataset_id, dataset_version, agent_id,
+     resolved_agent_version, requested_agent_version, run_id, status,
+     overall_score, passed, score, started_at, ended_at, updated_at)
+  SELECT user_id,
+         eval_id,
+         COALESCE(json_extract(score, '$.evalVersion'), ''),
+         dataset_id,
+         COALESCE(json_extract(score, '$.datasetVersion'), ''),
+         agent_id,
+         resolved_agent_version,
+         requested_agent_version,
+         run_id,
+         status,
+         overall_score,
+         passed,
+         score,
+         started_at,
+         ended_at,
+         updated_at
+    FROM eval_latest_scores;
+
+  DROP TABLE eval_latest_scores;
+  ALTER TABLE eval_latest_scores_new RENAME TO eval_latest_scores;
+  CREATE INDEX IF NOT EXISTS idx_eval_latest_scores_user_agent
+    ON eval_latest_scores(user_id, agent_id, updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_eval_latest_scores_user_eval
+    ON eval_latest_scores(user_id, eval_id, eval_version, dataset_id, dataset_version);
+
+  UPDATE schema_version SET version = 12;
   `,
 ];
 
@@ -1368,29 +1497,31 @@ export class SqliteStore implements UnifiedStore {
 		if (filters.agentId) {
 			const rows = this.db
 				.prepare(
-					`SELECT definition FROM evals
+					`SELECT definition, created_at FROM evals
            WHERE user_id = ? AND agent_id = ?
            ORDER BY updated_at DESC, id DESC`,
 				)
 				.all(u, filters.agentId) as Array<{ definition: string }>;
-			return rows.map((r) => JSON.parse(r.definition) as EvalDefinition);
+			return rows.map((r) => rowToEvalDefinition(r));
 		}
 		const rows = this.db
 			.prepare(
-				`SELECT definition FROM evals
+				`SELECT definition, created_at FROM evals
          WHERE user_id = ?
          ORDER BY updated_at DESC, id DESC`,
 			)
 			.all(u) as Array<{ definition: string }>;
-		return rows.map((r) => JSON.parse(r.definition) as EvalDefinition);
+		return rows.map((r) => rowToEvalDefinition(r));
 	}
 
 	async getEval(evalId: string): Promise<EvalDefinition | null> {
 		const u = this.requireUser();
 		const row = this.db
-			.prepare("SELECT definition FROM evals WHERE user_id = ? AND id = ?")
+			.prepare(
+				"SELECT definition, created_at FROM evals WHERE user_id = ? AND id = ?",
+			)
 			.get(u, evalId) as { definition: string } | undefined;
-		return row ? (JSON.parse(row.definition) as EvalDefinition) : null;
+		return row ? rowToEvalDefinition(row) : null;
 	}
 
 	async putEval(definition: EvalDefinition): Promise<void> {
@@ -1400,11 +1531,11 @@ export class SqliteStore implements UnifiedStore {
 		const row: EvalDefinition = {
 			...definition,
 			createdAt: existing?.createdAt ?? definition.createdAt ?? now,
+			version: now,
 			updatedAt: now,
 		};
-		this.db
-			.prepare(
-				`INSERT INTO evals
+		const insertHead = this.db.prepare(
+			`INSERT INTO evals
            (user_id, id, agent_id, name, definition, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(user_id, id) DO UPDATE SET
@@ -1412,8 +1543,14 @@ export class SqliteStore implements UnifiedStore {
            name = excluded.name,
            definition = excluded.definition,
            updated_at = excluded.updated_at`,
-			)
-			.run(
+		);
+		const insertVersion = this.db.prepare(
+			`INSERT INTO eval_versions
+           (user_id, eval_id, created_at, activated_at, definition)
+         VALUES (?, ?, ?, ?, ?)`,
+		);
+		const tx = this.db.transaction(() => {
+			insertHead.run(
 				u,
 				row.id,
 				row.agentId,
@@ -1422,6 +1559,9 @@ export class SqliteStore implements UnifiedStore {
 				row.createdAt,
 				now,
 			);
+			insertVersion.run(u, row.id, now, now, JSON.stringify(row));
+		});
+		tx();
 	}
 
 	async deleteEval(evalId: string): Promise<void> {
@@ -1429,6 +1569,154 @@ export class SqliteStore implements UnifiedStore {
 		this.db
 			.prepare("DELETE FROM evals WHERE user_id = ? AND id = ?")
 			.run(u, evalId);
+		this.db
+			.prepare("DELETE FROM eval_versions WHERE user_id = ? AND eval_id = ?")
+			.run(u, evalId);
+		this.db
+			.prepare("DELETE FROM eval_aliases WHERE user_id = ? AND eval_id = ?")
+			.run(u, evalId);
+	}
+
+	async listEvalVersions(evalId: string): Promise<EvalVersionSummary[]> {
+		const u = this.requireUser();
+		const rows = this.db
+			.prepare(
+				`SELECT created_at, activated_at
+           FROM eval_versions
+          WHERE user_id = ? AND eval_id = ?
+          ORDER BY created_at DESC`,
+			)
+			.all(u, evalId) as Array<{
+			created_at: string;
+			activated_at: string | null;
+		}>;
+		const aliases = this.db
+			.prepare(
+				`SELECT alias, version_created_at
+           FROM eval_aliases
+          WHERE user_id = ? AND eval_id = ?`,
+			)
+			.all(u, evalId) as Array<{
+			alias: string;
+			version_created_at: string;
+		}>;
+		const aliasesByVersion = new Map<string, string[]>();
+		for (const row of aliases) {
+			const list = aliasesByVersion.get(row.version_created_at) ?? [];
+			list.push(row.alias);
+			aliasesByVersion.set(row.version_created_at, list);
+		}
+		return rows.map((row) => ({
+			createdAt: row.created_at,
+			activatedAt: row.activated_at,
+			aliases: (aliasesByVersion.get(row.created_at) ?? []).sort(),
+		}));
+	}
+
+	async getEvalVersion(
+		evalId: string,
+		createdAt: string,
+	): Promise<EvalDefinition | null> {
+		const u = this.requireUser();
+		const row = this.db
+			.prepare(
+				`SELECT definition, created_at
+           FROM eval_versions
+          WHERE user_id = ? AND eval_id = ? AND created_at = ?`,
+			)
+			.get(u, evalId, createdAt) as
+			| { definition: string; created_at: string }
+			| undefined;
+		return row ? rowToEvalDefinition(row) : null;
+	}
+
+	async activateEvalVersion(evalId: string, createdAt: string): Promise<void> {
+		const u = this.requireUser();
+		const version = await this.getEvalVersion(evalId, createdAt);
+		if (!version)
+			throw new Error(`Eval version not found: ${evalId}@${createdAt}`);
+		const existing = await this.getEval(evalId);
+		const now = this.nextTimestamp();
+		const row: EvalDefinition = {
+			...version,
+			createdAt: existing?.createdAt ?? version.createdAt ?? createdAt,
+			version: createdAt,
+			updatedAt: now,
+		};
+		const tx = this.db.transaction(() => {
+			this.db
+				.prepare(
+					`INSERT INTO evals
+             (user_id, id, agent_id, name, definition, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(user_id, id) DO UPDATE SET
+             agent_id = excluded.agent_id,
+             name = excluded.name,
+             definition = excluded.definition,
+             updated_at = excluded.updated_at`,
+				)
+				.run(
+					u,
+					row.id,
+					row.agentId,
+					row.name,
+					JSON.stringify(row),
+					row.createdAt,
+					now,
+				);
+			this.db
+				.prepare(
+					`UPDATE eval_versions
+              SET activated_at = ?
+            WHERE user_id = ? AND eval_id = ? AND created_at = ?`,
+				)
+				.run(now, u, evalId, createdAt);
+		});
+		tx();
+	}
+
+	async resolveEvalVersionAlias(
+		evalId: string,
+		alias: string,
+	): Promise<string | null> {
+		const u = this.requireUser();
+		const row = this.db
+			.prepare(
+				`SELECT version_created_at
+           FROM eval_aliases
+          WHERE user_id = ? AND eval_id = ? AND alias = ?`,
+			)
+			.get(u, evalId, alias) as { version_created_at: string } | undefined;
+		return row?.version_created_at ?? null;
+	}
+
+	async setEvalVersionAlias(
+		evalId: string,
+		createdAt: string,
+		alias: string,
+	): Promise<void> {
+		const u = this.requireUser();
+		if (!(await this.getEvalVersion(evalId, createdAt))) {
+			throw new Error(`Eval version not found: ${evalId}@${createdAt}`);
+		}
+		this.db
+			.prepare(
+				`INSERT INTO eval_aliases
+           (user_id, eval_id, alias, version_created_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(user_id, eval_id, alias) DO UPDATE SET
+           version_created_at = excluded.version_created_at`,
+			)
+			.run(u, evalId, alias, createdAt);
+	}
+
+	async removeEvalVersionAlias(evalId: string, alias: string): Promise<void> {
+		const u = this.requireUser();
+		this.db
+			.prepare(
+				"DELETE FROM eval_aliases WHERE user_id = ? AND eval_id = ? AND alias = ?",
+			)
+			.run(u, evalId, alias);
 	}
 
 	async listDatasets(
@@ -1438,7 +1726,7 @@ export class SqliteStore implements UnifiedStore {
 		if (filters.agentId) {
 			const rows = this.db
 				.prepare(
-					`SELECT dataset, agent_id FROM eval_datasets
+					`SELECT dataset, agent_id, created_at FROM eval_datasets
          WHERE user_id = ? AND agent_id = ?
          ORDER BY updated_at DESC, id DESC`,
 				)
@@ -1450,7 +1738,7 @@ export class SqliteStore implements UnifiedStore {
 		}
 		const rows = this.db
 			.prepare(
-				`SELECT dataset, agent_id FROM eval_datasets
+				`SELECT dataset, agent_id, created_at FROM eval_datasets
          WHERE user_id = ?
          ORDER BY updated_at DESC, id DESC`,
 			)
@@ -1462,7 +1750,7 @@ export class SqliteStore implements UnifiedStore {
 		const u = this.requireUser();
 		const row = this.db
 			.prepare(
-				"SELECT dataset, agent_id FROM eval_datasets WHERE user_id = ? AND id = ?",
+				"SELECT dataset, agent_id, created_at FROM eval_datasets WHERE user_id = ? AND id = ?",
 			)
 			.get(u, datasetId) as
 			| { dataset: string; agent_id: string | null }
@@ -1477,11 +1765,11 @@ export class SqliteStore implements UnifiedStore {
 		const row: EvalDataset = {
 			...dataset,
 			createdAt: existing?.createdAt ?? dataset.createdAt ?? now,
+			version: now,
 			updatedAt: now,
 		};
-		this.db
-			.prepare(
-				`INSERT INTO eval_datasets
+		const insertHead = this.db.prepare(
+			`INSERT INTO eval_datasets
            (user_id, id, agent_id, name, dataset, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(user_id, id) DO UPDATE SET
@@ -1489,8 +1777,14 @@ export class SqliteStore implements UnifiedStore {
            name = excluded.name,
            dataset = excluded.dataset,
            updated_at = excluded.updated_at`,
-			)
-			.run(
+		);
+		const insertVersion = this.db.prepare(
+			`INSERT INTO eval_dataset_versions
+           (user_id, dataset_id, created_at, activated_at, dataset)
+         VALUES (?, ?, ?, ?, ?)`,
+		);
+		const tx = this.db.transaction(() => {
+			insertHead.run(
 				u,
 				row.id,
 				row.agentId,
@@ -1499,6 +1793,9 @@ export class SqliteStore implements UnifiedStore {
 				row.createdAt,
 				now,
 			);
+			insertVersion.run(u, row.id, now, now, JSON.stringify(row));
+		});
+		tx();
 	}
 
 	async deleteDataset(datasetId: string): Promise<void> {
@@ -1506,6 +1803,167 @@ export class SqliteStore implements UnifiedStore {
 		this.db
 			.prepare("DELETE FROM eval_datasets WHERE user_id = ? AND id = ?")
 			.run(u, datasetId);
+		this.db
+			.prepare(
+				"DELETE FROM eval_dataset_versions WHERE user_id = ? AND dataset_id = ?",
+			)
+			.run(u, datasetId);
+		this.db
+			.prepare(
+				"DELETE FROM eval_dataset_aliases WHERE user_id = ? AND dataset_id = ?",
+			)
+			.run(u, datasetId);
+	}
+
+	async listDatasetVersions(
+		datasetId: string,
+	): Promise<EvalDatasetVersionSummary[]> {
+		const u = this.requireUser();
+		const rows = this.db
+			.prepare(
+				`SELECT created_at, activated_at
+           FROM eval_dataset_versions
+          WHERE user_id = ? AND dataset_id = ?
+          ORDER BY created_at DESC`,
+			)
+			.all(u, datasetId) as Array<{
+			created_at: string;
+			activated_at: string | null;
+		}>;
+		const aliases = this.db
+			.prepare(
+				`SELECT alias, version_created_at
+           FROM eval_dataset_aliases
+          WHERE user_id = ? AND dataset_id = ?`,
+			)
+			.all(u, datasetId) as Array<{
+			alias: string;
+			version_created_at: string;
+		}>;
+		const aliasesByVersion = new Map<string, string[]>();
+		for (const row of aliases) {
+			const list = aliasesByVersion.get(row.version_created_at) ?? [];
+			list.push(row.alias);
+			aliasesByVersion.set(row.version_created_at, list);
+		}
+		return rows.map((row) => ({
+			createdAt: row.created_at,
+			activatedAt: row.activated_at,
+			aliases: (aliasesByVersion.get(row.created_at) ?? []).sort(),
+		}));
+	}
+
+	async getDatasetVersion(
+		datasetId: string,
+		createdAt: string,
+	): Promise<EvalDataset | null> {
+		const u = this.requireUser();
+		const row = this.db
+			.prepare(
+				`SELECT dataset, created_at, NULL AS agent_id
+           FROM eval_dataset_versions
+          WHERE user_id = ? AND dataset_id = ? AND created_at = ?`,
+			)
+			.get(u, datasetId, createdAt) as
+			| { dataset: string; created_at: string; agent_id: string | null }
+			| undefined;
+		return row ? rowToEvalDataset(row) : null;
+	}
+
+	async activateDatasetVersion(
+		datasetId: string,
+		createdAt: string,
+	): Promise<void> {
+		const u = this.requireUser();
+		const version = await this.getDatasetVersion(datasetId, createdAt);
+		if (!version) {
+			throw new Error(`Dataset version not found: ${datasetId}@${createdAt}`);
+		}
+		const existing = await this.getDataset(datasetId);
+		const now = this.nextTimestamp();
+		const row: EvalDataset = {
+			...version,
+			createdAt: existing?.createdAt ?? version.createdAt ?? createdAt,
+			version: createdAt,
+			updatedAt: now,
+		};
+		const tx = this.db.transaction(() => {
+			this.db
+				.prepare(
+					`INSERT INTO eval_datasets
+             (user_id, id, agent_id, name, dataset, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(user_id, id) DO UPDATE SET
+             agent_id = excluded.agent_id,
+             name = excluded.name,
+             dataset = excluded.dataset,
+             updated_at = excluded.updated_at`,
+				)
+				.run(
+					u,
+					row.id,
+					row.agentId,
+					row.name,
+					JSON.stringify(row),
+					row.createdAt,
+					now,
+				);
+			this.db
+				.prepare(
+					`UPDATE eval_dataset_versions
+              SET activated_at = ?
+            WHERE user_id = ? AND dataset_id = ? AND created_at = ?`,
+				)
+				.run(now, u, datasetId, createdAt);
+		});
+		tx();
+	}
+
+	async resolveDatasetVersionAlias(
+		datasetId: string,
+		alias: string,
+	): Promise<string | null> {
+		const u = this.requireUser();
+		const row = this.db
+			.prepare(
+				`SELECT version_created_at
+           FROM eval_dataset_aliases
+          WHERE user_id = ? AND dataset_id = ? AND alias = ?`,
+			)
+			.get(u, datasetId, alias) as { version_created_at: string } | undefined;
+		return row?.version_created_at ?? null;
+	}
+
+	async setDatasetVersionAlias(
+		datasetId: string,
+		createdAt: string,
+		alias: string,
+	): Promise<void> {
+		const u = this.requireUser();
+		if (!(await this.getDatasetVersion(datasetId, createdAt))) {
+			throw new Error(`Dataset version not found: ${datasetId}@${createdAt}`);
+		}
+		this.db
+			.prepare(
+				`INSERT INTO eval_dataset_aliases
+           (user_id, dataset_id, alias, version_created_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(user_id, dataset_id, alias) DO UPDATE SET
+           version_created_at = excluded.version_created_at`,
+			)
+			.run(u, datasetId, alias, createdAt);
+	}
+
+	async removeDatasetVersionAlias(
+		datasetId: string,
+		alias: string,
+	): Promise<void> {
+		const u = this.requireUser();
+		this.db
+			.prepare(
+				"DELETE FROM eval_dataset_aliases WHERE user_id = ? AND dataset_id = ? AND alias = ?",
+			)
+			.run(u, datasetId, alias);
 	}
 
 	async putEvalRun(run: EvalRun): Promise<void> {
@@ -1570,12 +2028,18 @@ export class SqliteStore implements UnifiedStore {
 		const row = this.db
 			.prepare(
 				`SELECT score FROM eval_latest_scores
-         WHERE user_id = ? AND eval_id = ? AND dataset_id = ?
+         WHERE user_id = ? AND eval_id = ? AND eval_version = ?
+           AND dataset_id = ? AND dataset_version = ?
            AND resolved_agent_version = ?`,
 			)
-			.get(u, key.evalId, key.datasetId, key.resolvedAgentVersion ?? "") as
-			| { score: string }
-			| undefined;
+			.get(
+				u,
+				key.evalId,
+				key.evalVersion ?? "",
+				key.datasetId,
+				key.datasetVersion ?? "",
+				key.resolvedAgentVersion ?? "",
+			) as { score: string } | undefined;
 		return row ? (JSON.parse(row.score) as EvalLatestScore) : null;
 	}
 
@@ -1593,9 +2057,17 @@ export class SqliteStore implements UnifiedStore {
 			clauses.push("eval_id = ?");
 			args.push(filters.evalId);
 		}
+		if (filters.evalVersion) {
+			clauses.push("eval_version = ?");
+			args.push(filters.evalVersion);
+		}
 		if (filters.datasetId) {
 			clauses.push("dataset_id = ?");
 			args.push(filters.datasetId);
+		}
+		if (filters.datasetVersion) {
+			clauses.push("dataset_version = ?");
+			args.push(filters.datasetVersion);
 		}
 		if (filters.resolvedAgentVersion !== undefined) {
 			clauses.push("resolved_agent_version = ?");
@@ -1621,11 +2093,19 @@ export class SqliteStore implements UnifiedStore {
 		this.db
 			.prepare(
 				`INSERT INTO eval_latest_scores
-           (user_id, eval_id, dataset_id, agent_id, resolved_agent_version,
-            requested_agent_version, run_id, status, overall_score, passed,
-            score, started_at, ended_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(user_id, eval_id, dataset_id, resolved_agent_version)
+           (user_id, eval_id, eval_version, dataset_id, dataset_version,
+            agent_id, resolved_agent_version, requested_agent_version,
+            run_id, status, overall_score, passed, score, started_at, ended_at,
+            updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(
+           user_id,
+           eval_id,
+           eval_version,
+           dataset_id,
+           dataset_version,
+           resolved_agent_version
+         )
          DO UPDATE SET
            agent_id = excluded.agent_id,
            requested_agent_version = excluded.requested_agent_version,
@@ -1641,7 +2121,9 @@ export class SqliteStore implements UnifiedStore {
 			.run(
 				u,
 				score.evalId,
+				score.evalVersion ?? "",
 				score.datasetId,
+				score.datasetVersion ?? "",
 				score.agentId,
 				resolvedVersion,
 				score.requestedAgentVersion ?? null,
@@ -2441,13 +2923,29 @@ function sqliteRowToConnection(r: {
 	};
 }
 
+function rowToEvalDefinition(r: {
+	definition: string;
+	created_at?: string | null;
+}): EvalDefinition {
+	const definition = JSON.parse(r.definition) as EvalDefinition;
+	if (!definition.version && r.created_at) {
+		return { ...definition, version: r.created_at };
+	}
+	return definition;
+}
+
 function rowToEvalDataset(r: {
 	dataset: string;
 	agent_id: string | null;
+	created_at?: string | null;
 }): EvalDataset {
 	const dataset = JSON.parse(r.dataset) as EvalDataset;
-	if (!dataset.agentId && r.agent_id) {
-		return { ...dataset, agentId: r.agent_id };
+	if ((!dataset.agentId && r.agent_id) || (!dataset.version && r.created_at)) {
+		return {
+			...dataset,
+			agentId: dataset.agentId ?? r.agent_id ?? "",
+			version: dataset.version ?? r.created_at ?? undefined,
+		};
 	}
 	return dataset;
 }

@@ -15,7 +15,9 @@ export async function GET(req: NextRequest) {
 		}
 		const row = await store.getEvalLatestScore({
 			evalId,
+			evalVersion: search.get("evalVersion") ?? undefined,
 			datasetId,
+			datasetVersion: search.get("datasetVersion") ?? undefined,
 			resolvedAgentVersion: search.get("resolvedAgentVersion") ?? undefined,
 		});
 		return NextResponse.json(row);
