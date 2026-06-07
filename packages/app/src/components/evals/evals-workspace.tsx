@@ -50,7 +50,6 @@ const TABS: Array<{ key: TabKey; label: string }> = [
 	{ key: "compare", label: "Compare" },
 ];
 
-const EMPTY_EVAL_ID = "__new_eval__";
 const EMPTY_DATASET_ID = "__new_dataset__";
 
 export function EvalsWorkspace({ agentId }: { agentId: string }) {
@@ -71,9 +70,6 @@ export function EvalsWorkspace({ agentId }: { agentId: string }) {
 	const [datasetVersions, setDatasetVersions] = useState<EvalVersionSummary[]>(
 		[],
 	);
-	const [selectedEvalId, setSelectedEvalId] = useState(
-		() => searchParams.get("eval") ?? "",
-	);
 	const [selectedDatasetId, setSelectedDatasetId] = useState(
 		() => searchParams.get("dataset") ?? "",
 	);
@@ -83,7 +79,10 @@ export function EvalsWorkspace({ agentId }: { agentId: string }) {
 	const [tab, setTab] = useState<TabKey>(
 		() => asTab(searchParams.get("tab")) ?? "overview",
 	);
-	const [evalSearch, setEvalSearch] = useState("");
+	const [criteriaSearch, setCriteriaSearch] = useState("");
+	const [selectedCriterionId, setSelectedCriterionId] = useState(
+		() => searchParams.get("criterion") ?? "",
+	);
 	const [runEvalVersion, setRunEvalVersion] = useState("current");
 	const [runDatasetId, setRunDatasetId] = useState("");
 	const [runDatasetVersion, setRunDatasetVersion] = useState("current");
@@ -97,10 +96,7 @@ export function EvalsWorkspace({ agentId }: { agentId: string }) {
 	const [running, setRunning] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
-	const selectedEval = useMemo(
-		() => evals.find((row) => row.id === selectedEvalId) ?? evals[0] ?? null,
-		[evals, selectedEvalId],
-	);
+	const selectedEval = useMemo(() => evals[0] ?? null, [evals]);
 	const selectedDataset = useMemo(
 		() =>
 			datasets.find((row) => row.id === selectedDatasetId) ??
@@ -140,16 +136,33 @@ export function EvalsWorkspace({ agentId }: { agentId: string }) {
 		() => buildObjectVersionOptions(datasetVersions),
 		[datasetVersions],
 	);
-	const filteredEvals = useMemo(() => {
-		const q = evalSearch.trim().toLowerCase();
-		if (!q) return evals;
-		return evals.filter(
+	const filteredCriteria = useMemo(() => {
+		const criteria = draftEval?.criteria ?? selectedEval?.criteria ?? [];
+		const q = criteriaSearch.trim().toLowerCase();
+		if (!q) return criteria;
+		return criteria.filter(
 			(row) =>
 				row.id.toLowerCase().includes(q) ||
 				row.name.toLowerCase().includes(q) ||
-				(row.description ?? "").toLowerCase().includes(q),
+				(row.rubric ?? row.description ?? "").toLowerCase().includes(q),
 		);
-	}, [evals, evalSearch]);
+	}, [draftEval, selectedEval, criteriaSearch]);
+	const selectedCriterion = useMemo(() => {
+		const criteria = draftEval?.criteria ?? [];
+		return (
+			criteria.find((criterion) => criterion.id === selectedCriterionId) ??
+			criteria[0] ??
+			null
+		);
+	}, [draftEval, selectedCriterionId]);
+	const evalDirty = useMemo(() => {
+		if (!draftEval) return false;
+		if (!selectedEval) return true;
+		return (
+			JSON.stringify(cleanEval(draftEval)) !==
+			JSON.stringify(cleanEval(selectedEval))
+		);
+	}, [draftEval, selectedEval]);
 	const selectedCase = useMemo(() => {
 		if (!draftDataset) return null;
 		return (
@@ -220,13 +233,6 @@ export function EvalsWorkspace({ agentId }: { agentId: string }) {
 	}, [load]);
 
 	useEffect(() => {
-		if (!selectedEval && evals[0]) {
-			setSelectedEvalId(evals[0].id);
-			updateQuery({ eval: evals[0].id });
-		}
-	}, [selectedEval, evals, updateQuery]);
-
-	useEffect(() => {
 		const datasetId =
 			selectedEvalDatasetId(selectedEval) ?? selectedDataset?.id;
 		if (!runDatasetId && datasetId) setRunDatasetId(datasetId);
@@ -238,6 +244,16 @@ export function EvalsWorkspace({ agentId }: { agentId: string }) {
 			setDiagnosticIds([]);
 		}
 	}, [draftEval, selectedEval]);
+
+	useEffect(() => {
+		const criteria = draftEval?.criteria ?? [];
+		if (criteria.length === 0) return;
+		if (criteria.some((criterion) => criterion.id === selectedCriterionId))
+			return;
+		const nextId = criteria[0].id;
+		setSelectedCriterionId(nextId);
+		updateQuery({ criterion: nextId });
+	}, [draftEval, selectedCriterionId, updateQuery]);
 
 	useEffect(() => {
 		if (!draftDataset && selectedDataset) {
@@ -280,21 +296,6 @@ export function EvalsWorkspace({ agentId }: { agentId: string }) {
 		return () => window.clearInterval(timer);
 	}, [runs, load]);
 
-	const selectEval = (evalId: string) => {
-		const next = evals.find((row) => row.id === evalId) ?? null;
-		setSelectedEvalId(evalId);
-		setDraftEval(next ? clone(next) : null);
-		const datasetId = selectedEvalDatasetId(next) ?? "";
-		if (datasetId) {
-			const dataset = datasets.find((row) => row.id === datasetId) ?? null;
-			setSelectedDatasetId(datasetId);
-			setDraftDataset(dataset ? clone(dataset) : null);
-			setSelectedCaseId(dataset?.items[0]?.id ?? "");
-			setRunDatasetId(datasetId);
-		}
-		updateQuery({ eval: evalId, dataset: datasetId || null, run: null });
-	};
-
 	const selectDataset = (datasetId: string) => {
 		const dataset = datasets.find((row) => row.id === datasetId) ?? null;
 		setSelectedDatasetId(datasetId);
@@ -309,12 +310,43 @@ export function EvalsWorkspace({ agentId }: { agentId: string }) {
 		updateQuery({ tab: key });
 	};
 
-	const startNewEval = () => {
+	const initializeEval = () => {
 		const next = newEval(agentId, datasets[0]);
-		setSelectedEvalId(EMPTY_EVAL_ID);
 		setDraftEval(next);
+		setSelectedCriterionId(next.criteria[0]?.id ?? "");
 		setTab("rubric");
-		updateQuery({ eval: null, tab: "rubric", run: null });
+		updateQuery({
+			criterion: next.criteria[0]?.id ?? null,
+			tab: "rubric",
+			run: null,
+		});
+	};
+
+	const selectCriterion = (criterionId: string) => {
+		setSelectedCriterionId(criterionId);
+		setTab("rubric");
+		updateQuery({ criterion: criterionId, tab: "rubric" });
+	};
+
+	const addCriterion = () => {
+		const base = draftEval ?? selectedEval;
+		if (!base) {
+			initializeEval();
+			return;
+		}
+		const criterion: EvalCriterion = {
+			id: nextCriterionId(base.criteria ?? []),
+			name: "New criterion",
+			weight: 1,
+			rubric: "Score this criterion from 0 to 1.",
+		};
+		setDraftEval({
+			...base,
+			criteria: [...(base.criteria ?? []), criterion],
+		});
+		setSelectedCriterionId(criterion.id);
+		setTab("rubric");
+		updateQuery({ criterion: criterion.id, tab: "rubric" });
 	};
 
 	const startNewDataset = () => {
@@ -344,9 +376,10 @@ export function EvalsWorkspace({ agentId }: { agentId: string }) {
 			);
 			const saved = await readJson<EvalDefinition>(res);
 			await load();
-			setSelectedEvalId(saved.id);
 			setDraftEval(clone(saved));
-			updateQuery({ eval: saved.id });
+			updateQuery({
+				criterion: selectedCriterionId || saved.criteria[0]?.id || null,
+			});
 		} catch (err) {
 			setError(formatError(err));
 		} finally {
@@ -384,8 +417,11 @@ export function EvalsWorkspace({ agentId }: { agentId: string }) {
 	};
 
 	const runSelectedEval = async (criterionIds?: string[]) => {
-		const evalId = draftEval?.id ?? selectedEval?.id;
-		if (!evalId) return;
+		if (!selectedEval || evalDirty) {
+			setError("Save the eval before running it.");
+			return;
+		}
+		const evalId = selectedEval.id;
 		setRunning(true);
 		setError(null);
 		try {
@@ -447,8 +483,21 @@ export function EvalsWorkspace({ agentId }: { agentId: string }) {
 		if (!raw) return;
 		try {
 			const parsed = parseYAML(raw) as Partial<EvalDefinition>;
-			setDraftEval(cleanEval({ ...newEval(agentId), ...parsed, agentId }));
+			const existing = draftEval ?? selectedEval;
+			const base = existing ?? newEval(agentId, datasets[0]);
+			const next = cleanEval({
+				...base,
+				...parsed,
+				id: existing?.id ?? parsed.id ?? base.id,
+				agentId,
+			});
+			setDraftEval(next);
+			setSelectedCriterionId(next.criteria[0]?.id ?? "");
 			setTab("rubric");
+			updateQuery({
+				criterion: next.criteria[0]?.id ?? null,
+				tab: "rubric",
+			});
 		} catch (err) {
 			setError(`Invalid eval YAML: ${formatError(err)}`);
 		}
@@ -518,12 +567,6 @@ export function EvalsWorkspace({ agentId }: { agentId: string }) {
 						>
 							New Dataset
 						</Btn>
-						<Btn
-							icon={<I.Plus size={11} style={{ marginRight: 6 }} />}
-							onClick={startNewEval}
-						>
-							New Eval
-						</Btn>
 					</div>
 				</div>
 			</header>
@@ -536,18 +579,18 @@ export function EvalsWorkspace({ agentId }: { agentId: string }) {
 			)}
 
 			<div style={workspaceStyle}>
-				<EvalRail
-					evals={filteredEvals}
+				<CriteriaRail
+					evalDefinition={draftEval ?? selectedEval}
+					criteria={filteredCriteria}
 					datasets={datasets}
-					scores={scores}
-					runs={runs}
-					selectedEvalId={selectedEval?.id ?? ""}
+					latestScore={latestScore}
+					selectedCriterionId={selectedCriterion?.id ?? ""}
 					selectedDatasetId={selectedDataset?.id ?? ""}
-					search={evalSearch}
-					onSearch={setEvalSearch}
-					onSelectEval={selectEval}
+					search={criteriaSearch}
+					onSearch={setCriteriaSearch}
+					onSelectCriterion={selectCriterion}
 					onSelectDataset={selectDataset}
-					onNewEval={startNewEval}
+					onAddCriterion={addCriterion}
 					onNewDataset={startNewDataset}
 				/>
 
@@ -576,17 +619,24 @@ export function EvalsWorkspace({ agentId }: { agentId: string }) {
 								datasets={datasets}
 								saving={saving === "eval"}
 								versionOptions={evalVersionOptions}
+								selectedCriterion={selectedCriterion}
+								selectedCriterionId={selectedCriterionId}
 								onChange={setDraftEval}
+								onSelectCriterion={(criterionId) => {
+									setSelectedCriterionId(criterionId);
+									updateQuery({ criterion: criterionId || null });
+								}}
+								onAddCriterion={addCriterion}
 								onSave={saveEval}
 								onExport={exportEvalYaml}
 							/>
 						)}
 						{tab === "rubric" && !draftEval && (
 							<EmptyMain
-								title="No eval selected"
-								body="Create an eval to define criteria, pass policy, and judge model."
-								action="New Eval"
-								onAction={startNewEval}
+								title="No eval initialized"
+								body="Initialize the agent eval to define criteria, pass policy, and judge model."
+								action="Initialize Eval"
+								onAction={initializeEval}
 							/>
 						)}
 						{tab === "dataset" && draftDataset && (
@@ -635,6 +685,7 @@ export function EvalsWorkspace({ agentId }: { agentId: string }) {
 
 				<RunSetupPanel
 					evalDefinition={draftEval ?? selectedEval}
+					evalRunnable={Boolean(selectedEval && !evalDirty)}
 					datasets={datasets}
 					selectedRun={selectedRun}
 					evalVersion={runEvalVersion}
@@ -669,31 +720,31 @@ export function EvalsWorkspace({ agentId }: { agentId: string }) {
 	);
 }
 
-function EvalRail({
-	evals,
+function CriteriaRail({
+	evalDefinition,
+	criteria,
 	datasets,
-	scores,
-	runs,
-	selectedEvalId,
+	latestScore,
+	selectedCriterionId,
 	selectedDatasetId,
 	search,
 	onSearch,
-	onSelectEval,
+	onSelectCriterion,
 	onSelectDataset,
-	onNewEval,
+	onAddCriterion,
 	onNewDataset,
 }: {
-	evals: EvalDefinition[];
+	evalDefinition: EvalDefinition | null;
+	criteria: EvalCriterion[];
 	datasets: EvalDataset[];
-	scores: EvalLatestScore[];
-	runs: EvalRun[];
-	selectedEvalId: string;
+	latestScore: EvalLatestScore | null;
+	selectedCriterionId: string;
 	selectedDatasetId: string;
 	search: string;
 	onSearch: (value: string) => void;
-	onSelectEval: (evalId: string) => void;
+	onSelectCriterion: (criterionId: string) => void;
 	onSelectDataset: (datasetId: string) => void;
-	onNewEval: () => void;
+	onAddCriterion: () => void;
 	onNewDataset: () => void;
 }) {
 	return (
@@ -703,57 +754,76 @@ function EvalRail({
 				<input
 					value={search}
 					onChange={(event) => onSearch(event.target.value)}
-					placeholder="Search evals..."
+					placeholder="Search criteria..."
 					style={bareInputStyle}
 				/>
 			</div>
+			{evalDefinition && (
+				<div style={agentEvalSummaryStyle}>
+					<div style={railRowTitleStyle}>{evalDefinition.name}</div>
+					<Mono size={10.5} color={ag.muted}>
+						{evalDefinition.criteria.length} criteria ·{" "}
+						{selectedEvalDatasetId(evalDefinition) ?? "no dataset"}
+					</Mono>
+					<div style={{ marginTop: 7 }}>
+						{latestScore ? (
+							<OutcomeTag
+								outcome={latestScore.summary?.outcome}
+								passed={latestScore.passed}
+								score={latestScore.overallScore}
+							/>
+						) : (
+							<Tag bg="transparent" color={ag.muted}>
+								not run
+							</Tag>
+						)}
+					</div>
+				</div>
+			)}
 			<div style={railHeaderStyle}>
-				<SectionLabel>Evals</SectionLabel>
-				<button type="button" onClick={onNewEval} style={iconButtonStyle}>
+				<SectionLabel>Criteria</SectionLabel>
+				<button type="button" onClick={onAddCriterion} style={iconButtonStyle}>
 					<I.Plus size={11} />
 				</button>
 			</div>
 			<div style={{ display: "grid", gap: 7 }}>
-				{evals.map((definition) => {
-					const datasetId = selectedEvalDatasetId(definition);
-					const latest = latestScoreFor(scores, definition.id, datasetId);
-					const lastRun = runs.find((run) => run.evalId === definition.id);
+				{criteria.map((criterion) => {
+					const result = latestScore?.summary?.criteria[criterion.id];
 					return (
 						<button
-							key={definition.id}
+							key={criterion.id}
 							type="button"
-							onClick={() => onSelectEval(definition.id)}
+							onClick={() => onSelectCriterion(criterion.id)}
 							style={{
 								...railRowStyle,
 								background:
-									selectedEvalId === definition.id
+									selectedCriterionId === criterion.id
 										? ag.surface2
 										: "transparent",
 								borderColor:
-									selectedEvalId === definition.id ? ag.line : ag.line2,
+									selectedCriterionId === criterion.id ? ag.line : ag.line2,
 							}}
 						>
 							<div style={{ minWidth: 0, flex: 1 }}>
-								<div style={railRowTitleStyle}>{definition.name}</div>
+								<div style={railRowTitleStyle}>{criterion.name}</div>
 								<Mono size={10.5} color={ag.muted}>
-									{definition.criteria.length} criteria ·{" "}
-									{datasetId ?? "no dataset"}
+									{criterion.id} · weight {criterion.weight ?? 1}
 								</Mono>
 								<div style={{ marginTop: 7, display: "flex", gap: 5 }}>
-									{latest ? (
+									{result ? (
 										<OutcomeTag
-											outcome={latest.summary?.outcome}
-											passed={latest.passed}
-											score={latest.overallScore}
+											outcome={result.passed ? "passed" : "failed"}
+											passed={result.passed}
+											score={result.score}
 										/>
 									) : (
 										<Tag bg="transparent" color={ag.muted}>
-											not run
+											no score
 										</Tag>
 									)}
-									{lastRun?.partial && (
+									{criterion.gate?.minimumScore !== undefined && (
 										<Tag bg="transparent" color={ag.muted}>
-											partial
+											gate {percent(criterion.gate.minimumScore)}
 										</Tag>
 									)}
 								</div>
@@ -761,7 +831,10 @@ function EvalRail({
 						</button>
 					);
 				})}
-				{evals.length === 0 && <RailEmpty>No evals yet</RailEmpty>}
+				{!evalDefinition && <RailEmpty>No eval initialized</RailEmpty>}
+				{evalDefinition && criteria.length === 0 && (
+					<RailEmpty>No criteria match</RailEmpty>
+				)}
 			</div>
 
 			<div style={{ ...railHeaderStyle, marginTop: 18 }}>
@@ -820,9 +893,9 @@ function OverviewTab({
 	if (!evalDefinition) {
 		return (
 			<EmptyMain
-				title="No eval selected"
-				body="Create an eval to start tracking quality for this agent."
-				action="Run setup will appear after an eval exists"
+				title="No eval initialized"
+				body="Initialize the agent eval to start tracking quality for this agent."
+				action="Use the Rubric tab to initialize the eval"
 			/>
 		);
 	}
@@ -892,7 +965,11 @@ function RubricTab({
 	datasets,
 	saving,
 	versionOptions,
+	selectedCriterion,
+	selectedCriterionId,
 	onChange,
+	onSelectCriterion,
+	onAddCriterion,
 	onSave,
 	onExport,
 }: {
@@ -900,27 +977,101 @@ function RubricTab({
 	datasets: EvalDataset[];
 	saving: boolean;
 	versionOptions: VersionOption[];
+	selectedCriterion: EvalCriterion | null;
+	selectedCriterionId: string;
 	onChange: (next: EvalDefinition) => void;
+	onSelectCriterion: (criterionId: string) => void;
+	onAddCriterion: () => void;
 	onSave: () => void;
 	onExport: () => void;
 }) {
 	const patch = (patchValue: Partial<EvalDefinition>) =>
 		onChange({ ...value, ...patchValue });
 	const criteria = value.criteria ?? [];
+	const selectedIndex = criteria.findIndex(
+		(criterion) => criterion.id === selectedCriterionId,
+	);
 	return (
 		<div style={tabGridStyle}>
 			<Panel
-				title="Eval Definition"
+				title={selectedCriterion ? selectedCriterion.name : "Criterion"}
 				right={
 					<div style={{ display: "flex", gap: 8 }}>
 						<VersionBadge options={versionOptions} />
-						<Btn size="sm" variant="secondary" onClick={onExport}>
-							Export YAML
+						<Btn
+							size="sm"
+							variant="secondary"
+							icon={<I.Plus size={11} style={{ marginRight: 5 }} />}
+							onClick={onAddCriterion}
+						>
+							Add criterion
 						</Btn>
 						<Btn size="sm" onClick={onSave} disabled={saving}>
 							{saving ? "Saving" : "Save Eval"}
 						</Btn>
 					</div>
+				}
+			>
+				{selectedCriterion && selectedIndex >= 0 ? (
+					<CriterionEditor
+						criterion={selectedCriterion}
+						index={selectedIndex}
+						onChange={(next) => {
+							patch({
+								criteria: criteria.map((row, rowIndex) =>
+									rowIndex === selectedIndex ? next : row,
+								),
+							});
+							if (next.id !== selectedCriterion.id) onSelectCriterion(next.id);
+						}}
+						onDuplicate={() => {
+							const copy = {
+								...selectedCriterion,
+								id: `${selectedCriterion.id}_copy`,
+								name: `${selectedCriterion.name} copy`,
+							};
+							patch({
+								criteria: [
+									...criteria.slice(0, selectedIndex + 1),
+									copy,
+									...criteria.slice(selectedIndex + 1),
+								],
+							});
+							onSelectCriterion(copy.id);
+						}}
+						onDelete={() => {
+							const nextCriteria = criteria.filter(
+								(_, rowIndex) => rowIndex !== selectedIndex,
+							);
+							patch({ criteria: nextCriteria });
+							onSelectCriterion(
+								nextCriteria[Math.min(selectedIndex, nextCriteria.length - 1)]
+									?.id ?? "",
+							);
+						}}
+						onMove={(direction) => {
+							const target = selectedIndex + direction;
+							if (target < 0 || target >= criteria.length) return;
+							const nextCriteria = [...criteria];
+							[nextCriteria[selectedIndex], nextCriteria[target]] = [
+								nextCriteria[target],
+								nextCriteria[selectedIndex],
+							];
+							patch({ criteria: nextCriteria });
+							onSelectCriterion(selectedCriterion.id);
+						}}
+					/>
+				) : (
+					<div style={emptyBoxStyle}>Select or add a criterion.</div>
+				)}
+			</Panel>
+
+			<Panel
+				title="Eval Settings"
+				right={
+					<Btn size="sm" variant="secondary" onClick={onExport}>
+						Export YAML
+					</Btn>
 				}
 			>
 				<div style={formGridStyle}>
@@ -929,11 +1080,7 @@ function RubricTab({
 						value={value.name}
 						onChange={(name) => patch({ name })}
 					/>
-					<EditableText
-						label="ID"
-						value={value.id}
-						onChange={(id) => patch({ id: slug(id) || id })}
-					/>
+					<ReadonlyField label="ID" value={value.id} />
 					<EditableSelect
 						label="Default dataset"
 						value={selectedEvalDatasetId(value) ?? ""}
@@ -986,81 +1133,6 @@ function RubricTab({
 						multiline
 						rows={2}
 					/>
-				</div>
-			</Panel>
-
-			<Panel
-				title="Criteria"
-				right={
-					<Btn
-						size="sm"
-						variant="secondary"
-						icon={<I.Plus size={11} style={{ marginRight: 5 }} />}
-						onClick={() =>
-							patch({
-								criteria: [
-									...criteria,
-									{
-										id: nextCriterionId(criteria),
-										name: "New criterion",
-										weight: 1,
-										rubric: "Score this criterion from 0 to 1.",
-									},
-								],
-							})
-						}
-					>
-						Add criterion
-					</Btn>
-				}
-			>
-				<div style={{ display: "grid", gap: 12 }}>
-					{criteria.map((criterion, index) => (
-						<CriterionEditor
-							key={`${criterion.id}:${index}`}
-							criterion={criterion}
-							index={index}
-							onChange={(next) =>
-								patch({
-									criteria: criteria.map((row, rowIndex) =>
-										rowIndex === index ? next : row,
-									),
-								})
-							}
-							onDuplicate={() =>
-								patch({
-									criteria: [
-										...criteria.slice(0, index + 1),
-										{
-											...criterion,
-											id: `${criterion.id}_copy`,
-											name: `${criterion.name} copy`,
-										},
-										...criteria.slice(index + 1),
-									],
-								})
-							}
-							onDelete={() =>
-								patch({
-									criteria: criteria.filter(
-										(_, rowIndex) => rowIndex !== index,
-									),
-								})
-							}
-							onMove={(direction) => {
-								const next = [...criteria];
-								const target = index + direction;
-								if (target < 0 || target >= next.length) return;
-								[next[index], next[target]] = [next[target], next[index]];
-								patch({ criteria: next });
-							}}
-						/>
-					))}
-					{criteria.length === 0 && (
-						<div style={emptyBoxStyle}>
-							No criteria. Add one before running.
-						</div>
-					)}
 				</div>
 			</Panel>
 		</div>
@@ -1318,6 +1390,7 @@ function CompareTab({
 
 function RunSetupPanel({
 	evalDefinition,
+	evalRunnable,
 	datasets,
 	selectedRun,
 	evalVersion,
@@ -1339,6 +1412,7 @@ function RunSetupPanel({
 	onCancel,
 }: {
 	evalDefinition: EvalDefinition | null;
+	evalRunnable: boolean;
 	datasets: EvalDataset[];
 	selectedRun: EvalRun | null;
 	evalVersion: string;
@@ -1360,7 +1434,9 @@ function RunSetupPanel({
 	onCancel: (runId: string) => void;
 }) {
 	const hasDataset = Boolean(datasetId);
-	const canRun = Boolean(evalDefinition && hasDataset && !running);
+	const canRun = Boolean(
+		evalDefinition && evalRunnable && hasDataset && !running,
+	);
 	const selectedRunning =
 		selectedRun?.status === "running" || selectedRun?.status === "pending";
 	return (
@@ -1432,6 +1508,11 @@ function RunSetupPanel({
 			</div>
 
 			<div style={{ display: "grid", gap: 8, marginTop: 16 }}>
+				{evalDefinition && !evalRunnable && (
+					<Mono size={11} color={ag.muted}>
+						Save the eval before running it.
+					</Mono>
+				)}
 				<Btn
 					icon={<I.Play size={11} style={{ marginRight: 6 }} />}
 					disabled={!canRun}
@@ -1996,6 +2077,17 @@ function ModelFields({
 				onChange={(name) => onChange({ ...current, name })}
 			/>
 		</>
+	);
+}
+
+function ReadonlyField({ label, value }: { label: string; value: string }) {
+	return (
+		<div>
+			<SectionLabel>{label}</SectionLabel>
+			<div style={readonlyFieldStyle}>
+				<Mono size={11.5}>{value}</Mono>
+			</div>
+		</div>
 	);
 }
 
@@ -2640,11 +2732,32 @@ const bareInputStyle: CSSProperties = {
 	width: "100%",
 };
 
+const agentEvalSummaryStyle: CSSProperties = {
+	border: `1px solid ${ag.line2}`,
+	borderRadius: 5,
+	padding: 10,
+	background: ag.surface,
+	marginBottom: 14,
+};
+
 const railHeaderStyle: CSSProperties = {
 	display: "flex",
 	alignItems: "center",
 	justifyContent: "space-between",
 	marginBottom: 8,
+};
+
+const readonlyFieldStyle: CSSProperties = {
+	display: "block",
+	width: "100%",
+	marginTop: 5,
+	border: `1px solid ${ag.line}`,
+	borderRadius: 4,
+	padding: "8px 10px",
+	background: ag.surface,
+	boxSizing: "border-box",
+	color: ag.text2,
+	minHeight: 38,
 };
 
 const sectionLabelStyle: CSSProperties = {
