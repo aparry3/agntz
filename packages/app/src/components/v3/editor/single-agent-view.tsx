@@ -63,6 +63,7 @@ export function SingleAgentView({
 	rightExtras,
 	yamlPanel,
 	rightPaneOverride,
+	onEditRequest,
 }: {
 	manifest: SingleAgentManifest;
 	manifestId: string;
@@ -80,6 +81,7 @@ export function SingleAgentView({
 	 *  for every view mode except `yaml` (which has no right column). Used by
 	 *  the editor page to swap in the Playground panel in play mode. */
 	rightPaneOverride?: ReactNode;
+	onEditRequest?: (changeDescription: string) => Promise<void> | void;
 }) {
 	const inputs = parseInputSchema(manifest.inputSchema);
 	const outputs = parseSchema(manifest.outputSchema);
@@ -264,6 +266,7 @@ export function SingleAgentView({
 						outputs={outputs}
 						catalog={catalog}
 						onChange={onChange}
+						onEditRequest={onEditRequest}
 					/>
 				) : null}
 			</div>
@@ -286,6 +289,7 @@ function SingleAgentInspector({
 	outputs,
 	catalog,
 	onChange,
+	onEditRequest,
 }: {
 	manifest: SingleAgentManifest;
 	manifestId: string;
@@ -293,6 +297,7 @@ function SingleAgentInspector({
 	outputs: StepField[];
 	catalog?: Catalog;
 	onChange?: (next: SingleAgentManifest) => void;
+	onEditRequest?: (changeDescription: string) => Promise<void> | void;
 }) {
 	// Single patcher — every editable field calls patch({ field: value }) so the
 	// inspector never sees stale closure values.
@@ -366,6 +371,13 @@ function SingleAgentInspector({
 			</div>
 
 			<div style={{ flex: 1, overflow: "auto" }}>
+				{onEditRequest && (
+					<SingleAiEditBox
+						targetLabel={manifest.name ?? manifestId}
+						onSubmit={onEditRequest}
+					/>
+				)}
+
 				{allBrokenRefs.length > 0 && (
 					<div
 						style={{
@@ -646,6 +658,106 @@ function SingleAgentInspector({
 				{inputs.length === 1 ? "" : "s"} above.
 			</FooterHint>
 		</aside>
+	);
+}
+
+function SingleAiEditBox({
+	targetLabel,
+	onSubmit,
+}: {
+	targetLabel: string;
+	onSubmit: (description: string) => Promise<void> | void;
+}) {
+	const [description, setDescription] = useState("");
+	const [pending, setPending] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+
+	const handleApply = async () => {
+		const trimmed = description.trim();
+		if (!trimmed || pending) return;
+		setPending(true);
+		setError(null);
+		try {
+			await onSubmit(trimmed);
+			setDescription("");
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+		} finally {
+			setPending(false);
+		}
+	};
+
+	return (
+		<div
+			style={{
+				margin: "12px 16px 0",
+				padding: 10,
+				border: `1px solid ${ag.line}`,
+				borderRadius: 4,
+				background: ag.surface2,
+			}}
+		>
+			<div
+				style={{
+					display: "flex",
+					alignItems: "center",
+					justifyContent: "space-between",
+					gap: 8,
+					marginBottom: 6,
+				}}
+			>
+				<Mono size={10.5} color={ag.muted}>
+					Edit with AI · {targetLabel}
+				</Mono>
+				{pending && (
+					<Mono size={10.5} color={ag.muted}>
+						editing
+					</Mono>
+				)}
+			</div>
+			<textarea
+				value={description}
+				onChange={(e) => setDescription(e.target.value)}
+				placeholder="Describe the change"
+				rows={3}
+				spellCheck={false}
+				style={{
+					display: "block",
+					width: "100%",
+					border: `1px solid ${ag.line}`,
+					borderRadius: 4,
+					background: ag.bg,
+					padding: "7px 8px",
+					fontFamily: "inherit",
+					fontSize: 12,
+					lineHeight: 1.45,
+					resize: "vertical",
+					color: ag.ink,
+					outline: "none",
+				}}
+			/>
+			<div
+				style={{
+					display: "flex",
+					alignItems: "center",
+					gap: 8,
+					marginTop: 8,
+				}}
+			>
+				<Btn
+					variant="secondary"
+					size="sm"
+					icon={<I.Sparkle size={11} style={{ marginRight: 5 }} />}
+					onClick={handleApply}
+					disabled={pending || !description.trim()}
+				>
+					Apply draft
+				</Btn>
+				{error && (
+					<span style={{ color: ag.danger, fontSize: 11.5 }}>{error}</span>
+				)}
+			</div>
+		</div>
 	);
 }
 

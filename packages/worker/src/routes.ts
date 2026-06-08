@@ -37,11 +37,17 @@ import {
 	scoreCriterionJudgeOutput,
 	summarizeEvalRun,
 } from "@agntz/core";
-import { execute, parseManifest, validateManifestFull } from "@agntz/manifest";
-import type { AgentManifest } from "@agntz/manifest";
+import {
+	execute,
+	parseManifest,
+	selectManifestBlock,
+	validateManifestFull,
+} from "@agntz/manifest";
+import type { AgentManifest, ManifestSelection } from "@agntz/manifest";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
+import { stringify as stringifyYAML } from "yaml";
 import { createExecutionContext } from "./bridge.js";
 import {
 	getCachedBody,
@@ -68,6 +74,8 @@ import { buildValidationContext } from "./validation.js";
  * manifest + requested changes" payloads.
  */
 const BUILD_AGENT_MAX_DESCRIPTION_LENGTH = 4096;
+const EDIT_AGENT_MAX_DESCRIPTION_LENGTH = 4096;
+const EDIT_AGENT_MAX_MANIFEST_LENGTH = 64_000;
 
 export interface WorkerAPIOptions {
 	store: UnifiedStore;
@@ -260,8 +268,115 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 		}
 	});
 
+	app.use("/edit-agent", rateLimit({ windowMs: 60 * 60_000, max: 10 }));
+	app.post("/edit-agent", async (c) => {
+		const start = Date.now();
+		try {
+			const body = (await c.req.json().catch(() => ({}))) as {
+				currentManifest?: string;
+				changeDescription?: string;
+				selection?: unknown;
+			};
+			const { currentManifest, changeDescription } = body;
+
+			if (!currentManifest || typeof currentManifest !== "string") {
+				return c.json(
+					{ error: "Missing required field: currentManifest (string)" },
+					400,
+				);
+			}
+			if (!changeDescription || typeof changeDescription !== "string") {
+				return c.json(
+					{ error: "Missing required field: changeDescription (string)" },
+					400,
+				);
+			}
+			if (currentManifest.length > EDIT_AGENT_MAX_MANIFEST_LENGTH) {
+				return c.json({ error: "currentManifest exceeds max length" }, 413);
+			}
+			if (changeDescription.length > EDIT_AGENT_MAX_DESCRIPTION_LENGTH) {
+				return c.json(
+					{
+						error: `changeDescription exceeds max length of ${EDIT_AGENT_MAX_DESCRIPTION_LENGTH} characters`,
+					},
+					413,
+				);
+			}
+
+			const selection = normalizeManifestSelection(body.selection);
+			const selectedContext = buildSelectedContext(currentManifest, selection);
+			const manifest = await loadSystemAgent("system:agent-editor");
+			const ephemeralStore = new MemoryStore();
+			const ephemeralRunner = createRunner({
+				store: ephemeralStore,
+				tools: [...LOCAL_TOOLS],
+				defaults: {
+					model: {
+						provider: process.env.DEFAULT_MODEL_PROVIDER ?? "openai",
+						name: process.env.DEFAULT_MODEL_NAME ?? "gpt-5.4-mini",
+					},
+				},
+				outboundUrlPolicy: opts.outboundUrlPolicy,
+			});
+			const sessionId = generateSessionId();
+			const localRegistry = new InMemoryRunRegistry();
+			const spanEmitter = new SpanEmitter({
+				traceSink: (event) => {
+					if (event.type === "span-start") traceRegistry.spanStart(event.span);
+					else if (event.type === "span-end")
+						traceRegistry.spanEnd(event.spanId, event.patch);
+					else if (event.type === "trace-done")
+						traceRegistry.traceDone(
+							event.summary.traceId,
+							event.summary.ownerId,
+							event.summary,
+						);
+				},
+				recordIO: false,
+			});
+			const ctx = createExecutionContext(ephemeralRunner, {
+				runRegistry: localRegistry,
+				spanEmitter,
+				ownerId: "public:edit-agent",
+				userId: "public:edit-agent",
+				sessionId,
+			});
+
+			const result = await execute(
+				manifest,
+				{
+					currentManifest,
+					selectedContext,
+					changeDescription,
+				},
+				ctx,
+			);
+			const output = (result.output ?? {}) as Record<string, unknown>;
+
+			console.log(
+				`[edit-agent] ok ${Date.now() - start}ms yamlLen=${currentManifest.length} descLen=${changeDescription.length}`,
+			);
+
+			return c.json({
+				yaml: output.yaml ?? null,
+				explanation: output.explanation ?? null,
+				validation: output.validation ?? null,
+			});
+		} catch (error) {
+			console.error(
+				`[edit-agent] failed ${Date.now() - start}ms: ${errorMessage(error)}`,
+			);
+			return c.json(
+				{ error: errorMessage(error) },
+				isBadRequest(error) ? 400 : 500,
+			);
+		}
+	});
+
 	app.use("/run", workerAuth({ store, internalSecret }));
 	app.use("/run/stream", workerAuth({ store, internalSecret }));
+	app.use("/run/block", workerAuth({ store, internalSecret }));
+	app.use("/run/block/stream", workerAuth({ store, internalSecret }));
 	app.use("/runs", workerAuth({ store, internalSecret }));
 	app.use("/runs/*", workerAuth({ store, internalSecret }));
 	app.use("/evals", workerAuth({ store, internalSecret }));
@@ -420,6 +535,90 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			const status = isNotFound(error) ? 404 : 500;
 			console.error(
 				`[run] failed agent=${agentIdForLog} ${Date.now() - start}ms: ${errorMessage(error)}`,
+			);
+			return c.json({ error: errorMessage(error) }, status);
+		}
+	});
+
+	app.post("/run/block", async (c) => {
+		const start = Date.now();
+		let agentIdForLog: string | undefined;
+		try {
+			const userId = getUserId(c);
+			const body = (getCachedBody(c) ?? (await c.req.json())) as {
+				agentId?: string;
+				input?: unknown;
+				sessionId?: string;
+				context?: string[];
+				selection?: unknown;
+			};
+			const { agentId, input } = body;
+			agentIdForLog = agentId;
+
+			if (!agentId) {
+				return c.json({ error: "Missing required field: agentId" }, 400);
+			}
+
+			const selection = normalizeManifestSelection(body.selection);
+			const sessionId = body.sessionId ?? generateSessionId();
+
+			const { runner, manifest } = await resolveRunnerAndManifestImpl(
+				store,
+				userId,
+				agentId,
+			);
+			const selectedManifest = await resolveSelectedBlockManifest(
+				manifest,
+				selection,
+				runner,
+			);
+			const runRegistry = new InMemoryRunRegistry();
+			const spanEmitter = new SpanEmitter({
+				traceSink: (event) => {
+					if (event.type === "span-start") traceRegistry.spanStart(event.span);
+					else if (event.type === "span-end")
+						traceRegistry.spanEnd(event.spanId, event.patch);
+					else if (event.type === "trace-done")
+						traceRegistry.traceDone(
+							event.summary.traceId,
+							event.summary.ownerId,
+							event.summary,
+						);
+				},
+				recordIO: false,
+			});
+			const replyCollector: Reply[] = [];
+			const ctx = createExecutionContext(runner, {
+				runRegistry,
+				spanEmitter,
+				ownerId: userId,
+				userId,
+				sessionId,
+				context: body.context,
+				replyCollector,
+			});
+			const result = await execute(selectedManifest, input ?? "", ctx);
+
+			console.log(
+				`[run:block] done agent=${agentId} block=${selectedManifest.id} ${Date.now() - start}ms kind=${selectedManifest.kind} ` +
+					`outputKeys=${result.output && typeof result.output === "object" ? Object.keys(result.output).join(",") : typeof result.output} ` +
+					`replies=${replyCollector.length}`,
+			);
+
+			const responseBody: Record<string, unknown> = {
+				output: result.output,
+				state: result.state,
+				sessionId,
+				target: "block",
+				blockId: selectedManifest.id,
+				blockKind: selectedManifest.kind,
+			};
+			if (replyCollector.length > 0) responseBody.replies = replyCollector;
+			return c.json(responseBody);
+		} catch (error) {
+			const status = isBadRequest(error) ? 400 : isNotFound(error) ? 404 : 500;
+			console.error(
+				`[run:block] failed agent=${agentIdForLog} ${Date.now() - start}ms: ${errorMessage(error)}`,
 			);
 			return c.json({ error: errorMessage(error) }, status);
 		}
@@ -607,6 +806,184 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			});
 		} catch (error) {
 			return c.json({ error: errorMessage(error) }, 500);
+		}
+	});
+
+	app.post("/run/block/stream", async (c) => {
+		try {
+			const userId = getUserId(c);
+			const body = (getCachedBody(c) ?? (await c.req.json())) as {
+				agentId?: string;
+				input?: unknown;
+				sessionId?: string;
+				context?: string[];
+				selection?: unknown;
+			};
+			const { agentId, input } = body;
+
+			if (!agentId) {
+				return c.json({ error: "Missing required field: agentId" }, 400);
+			}
+
+			const selection = normalizeManifestSelection(body.selection);
+			const sessionId = body.sessionId ?? generateSessionId();
+			const traceId = `tr_${randomBytes(8).toString("hex")}`;
+
+			const { runner, manifest } = await resolveRunnerAndManifestImpl(
+				store,
+				userId,
+				agentId,
+			);
+			const selectedManifest = await resolveSelectedBlockManifest(
+				manifest,
+				selection,
+				runner,
+			);
+			traceRegistry.register(traceId, userId);
+			const baseRegistry = new InMemoryRunRegistry();
+			const spanEmitter = new SpanEmitter({
+				traceSink: (event) => {
+					if (event.type === "span-start") traceRegistry.spanStart(event.span);
+					else if (event.type === "span-end")
+						traceRegistry.spanEnd(event.spanId, event.patch);
+					else if (event.type === "trace-done")
+						traceRegistry.traceDone(
+							event.summary.traceId,
+							event.summary.ownerId,
+							event.summary,
+						);
+				},
+				recordIO: false,
+				traceId,
+			});
+			const replyCollector: Reply[] = [];
+			type QueuedReply = {
+				runId: string;
+				sessionId: string;
+				text: string;
+				ts: string;
+				seq: number;
+			};
+			const pendingReplies: QueuedReply[] = [];
+			let replyResolver: (() => void) | null = null;
+			let runComplete = false;
+
+			const seqForChannel = new Map<string, number>();
+			const runRegistry: RunRegistry = new Proxy(baseRegistry, {
+				get(target, prop, receiver) {
+					if (prop === "emit") {
+						return (
+							rootId: string,
+							event: Parameters<RunRegistry["emit"]>[1],
+						) => {
+							const next = (seqForChannel.get(rootId) ?? 0) + 1;
+							seqForChannel.set(rootId, next);
+							target.emit(rootId, event);
+							if (event.type === "reply") {
+								pendingReplies.push({
+									runId: event.runId,
+									sessionId: event.sessionId,
+									text: event.text,
+									ts: event.ts,
+									seq: next,
+								});
+								const r = replyResolver;
+								replyResolver = null;
+								r?.();
+							}
+						};
+					}
+					return Reflect.get(target, prop, receiver);
+				},
+			}) as unknown as RunRegistry;
+
+			const ctx = createExecutionContext(runner, {
+				runRegistry,
+				spanEmitter,
+				ownerId: userId,
+				userId,
+				sessionId,
+				context: body.context,
+				replyCollector,
+			});
+
+			return streamSSE(c, async (stream) => {
+				const forwarder = (async () => {
+					while (true) {
+						while (pendingReplies.length > 0) {
+							const ev = pendingReplies.shift();
+							if (!ev) continue;
+							await stream.writeSSE({
+								event: "reply",
+								data: JSON.stringify({
+									type: "reply",
+									runId: ev.runId,
+									sessionId: ev.sessionId,
+									text: ev.text,
+									ts: ev.ts,
+									seq: ev.seq,
+								}),
+								id: String(ev.seq),
+							});
+						}
+						if (runComplete) return;
+						await new Promise<void>((r) => {
+							replyResolver = r;
+						});
+					}
+				})();
+
+				try {
+					await stream.writeSSE({
+						event: "run-start",
+						data: JSON.stringify({
+							agentId,
+							kind: selectedManifest.kind,
+							sessionId,
+							traceId,
+							target: "block",
+							blockId: selectedManifest.id,
+						}),
+					});
+
+					const result = await execute(selectedManifest, input ?? "", ctx);
+
+					const completePayload: Record<string, unknown> = {
+						output: result.output,
+						state: result.state,
+						sessionId,
+						target: "block",
+						blockId: selectedManifest.id,
+						blockKind: selectedManifest.kind,
+					};
+					if (replyCollector.length > 0)
+						completePayload.replies = replyCollector;
+
+					runComplete = true;
+					const r = replyResolver;
+					replyResolver = null;
+					r?.();
+					await forwarder;
+
+					await stream.writeSSE({
+						event: "run-complete",
+						data: JSON.stringify(completePayload),
+					});
+				} catch (error) {
+					runComplete = true;
+					const r = replyResolver;
+					replyResolver = null;
+					r?.();
+					await forwarder.catch(() => {});
+					await stream.writeSSE({
+						event: "run-error",
+						data: JSON.stringify({ error: errorMessage(error) }),
+					});
+				}
+			});
+		} catch (error) {
+			const status = isBadRequest(error) ? 400 : isNotFound(error) ? 404 : 500;
+			return c.json({ error: errorMessage(error) }, status);
 		}
 	});
 
@@ -2240,6 +2617,106 @@ function runToJSON(run: Run): Run {
 	return run;
 }
 
+function normalizeManifestSelection(
+	selection: unknown,
+): ManifestSelection | undefined {
+	if (selection == null) return undefined;
+	if (!isRecord(selection)) {
+		throw badRequest("selection must be an object when provided");
+	}
+	if (!Array.isArray(selection.agentPath)) {
+		throw badRequest("selection.agentPath must be an array");
+	}
+	const agentPath = normalizePath(selection.agentPath, "selection.agentPath");
+	const stepPath =
+		selection.stepPath == null
+			? undefined
+			: Array.isArray(selection.stepPath)
+				? normalizePath(selection.stepPath, "selection.stepPath")
+				: undefined;
+	if (selection.stepPath != null && stepPath === undefined) {
+		throw badRequest("selection.stepPath must be an array when provided");
+	}
+	return stepPath ? { agentPath, stepPath } : { agentPath };
+}
+
+function normalizePath(
+	value: unknown[],
+	fieldName: string,
+): Array<string | number> {
+	return value.map((segment, index) => {
+		if (typeof segment === "string") return segment;
+		if (
+			typeof segment === "number" &&
+			Number.isInteger(segment) &&
+			segment >= 0
+		) {
+			return segment;
+		}
+		throw badRequest(
+			`${fieldName}[${index}] must be a string or non-negative integer`,
+		);
+	});
+}
+
+function buildSelectedContext(
+	currentManifest: string,
+	selection: ManifestSelection | undefined,
+): string {
+	const parsed = parseManifest(currentManifest);
+	if (!selection) {
+		return [
+			"Selection: whole manifest",
+			"Focus: no specific block was selected; edit the manifest as a whole.",
+		].join("\n");
+	}
+
+	const block = selectManifestBlock(parsed, selection);
+	if (!block.agent && !block.step) {
+		throw badRequest("selected block path was not found in currentManifest");
+	}
+
+	const selectedYaml = stringifyYAML(block.agent ?? block.step, {
+		lineWidth: 0,
+	}).trimEnd();
+	const lines = [
+		"Selection:",
+		`agentPath: ${JSON.stringify(block.selection.agentPath)}`,
+	];
+	if (block.selection.stepPath) {
+		lines.push(`stepPath: ${JSON.stringify(block.selection.stepPath)}`);
+	}
+	if (block.agent) {
+		lines.push(`id: ${block.agent.id}`, `kind: ${block.agent.kind}`);
+		if (block.agent.name) lines.push(`name: ${block.agent.name}`);
+	} else if (block.step?.ref) {
+		lines.push(`ref: ${block.step.ref}`);
+	}
+	lines.push(
+		"",
+		"Selected YAML focus:",
+		"```yaml",
+		selectedYaml,
+		"```",
+		"",
+		"The selected YAML is focus context, not an edit boundary. Update any related upstream or downstream YAML needed to keep the whole manifest valid.",
+	);
+	return lines.join("\n");
+}
+
+async function resolveSelectedBlockManifest(
+	root: AgentManifest,
+	selection: ManifestSelection | undefined,
+	runner: Runner,
+): Promise<AgentManifest> {
+	if (!selection) return root;
+	const block = selectManifestBlock(root, selection);
+	if (block.agent) return block.agent;
+	if (block.step?.agent) return block.step.agent;
+	if (block.step?.ref) return resolveStoredManifest(block.step.ref, runner);
+	throw badRequest("selected block path was not found in the agent manifest");
+}
+
 async function resolveRunnerAndManifest(
 	store: UnifiedStore,
 	userId: string,
@@ -2313,6 +2790,17 @@ async function resolveStoredManifest(
 function errorMessage(error: unknown): string {
 	if (error instanceof Error) return error.message;
 	return String(error);
+}
+
+function badRequest(message: string): Error {
+	return Object.assign(new Error(message), { code: "BAD_REQUEST" });
+}
+
+function isBadRequest(error: unknown): boolean {
+	return (
+		error instanceof Error &&
+		(error as Error & { code?: string }).code === "BAD_REQUEST"
+	);
 }
 
 function isNotFound(error: unknown): boolean {

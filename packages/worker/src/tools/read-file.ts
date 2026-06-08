@@ -9,9 +9,8 @@ import { z } from "zod";
 // up, or you end up outside dist/ (where nothing is copied).
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// The only caller today is the agent-builder system agent, whose prompt
-// assets (schema-reference.md, etc.) ship next to its manifest.yaml. If a
-// second system agent later needs its own bundled references, generalize
+// Bundled system agents share the agent-builder reference directory for the
+// manifest schema docs. If future system agents need private assets, generalize
 // this — e.g. resolve relative to the calling agent's YAML directory.
 const REFS_DIR = resolve(__dirname, "defaults/agents/agent-builder");
 

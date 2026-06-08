@@ -1,5 +1,9 @@
 import type { EvalRun } from "@agntz/core";
-import type { AgentManifest, ValidationResult } from "@agntz/manifest";
+import type {
+	AgentManifest,
+	ManifestSelection,
+	ValidationResult,
+} from "@agntz/manifest";
 
 const WORKER_URL = process.env.WORKER_URL ?? "http://localhost:4001";
 
@@ -18,11 +22,30 @@ export interface RunRequest {
 	agentId: string;
 	input: unknown;
 	sessionId?: string;
+	context?: string[];
+	selection?: ManifestSelection;
 }
 
 export interface RunResult {
 	output: unknown;
 	state: Record<string, unknown>;
+	sessionId?: string;
+	replies?: unknown[];
+	target?: "block";
+	blockId?: string;
+	blockKind?: string;
+}
+
+export interface EditAgentRequest {
+	currentManifest: string;
+	changeDescription: string;
+	selection?: ManifestSelection;
+}
+
+export interface EditAgentResponse {
+	yaml: string | null;
+	explanation: string | null;
+	validation: unknown;
 }
 
 export interface EvalRunRequest {
@@ -42,6 +65,26 @@ export interface EvalRunRequest {
  */
 export async function workerRun(req: RunRequest): Promise<RunResult> {
 	const res = await fetch(`${WORKER_URL}/run`, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			"X-Internal-Secret": internalSecret(),
+		},
+		body: JSON.stringify(req),
+	});
+
+	if (!res.ok) {
+		const body = await res.json().catch(() => ({}));
+		throw new Error(
+			(body as { error?: string }).error ?? `Worker error: ${res.status}`,
+		);
+	}
+
+	return res.json() as Promise<RunResult>;
+}
+
+export async function workerRunBlock(req: RunRequest): Promise<RunResult> {
+	const res = await fetch(`${WORKER_URL}/run/block`, {
 		method: "POST",
 		headers: {
 			"Content-Type": "application/json",
@@ -133,6 +176,54 @@ export async function workerRunStream(
 	}
 
 	return res.body;
+}
+
+export async function workerRunBlockStream(
+	req: RunRequest,
+): Promise<ReadableStream<Uint8Array>> {
+	const res = await fetch(`${WORKER_URL}/run/block/stream`, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			"X-Internal-Secret": internalSecret(),
+		},
+		body: JSON.stringify(req),
+	});
+
+	if (!res.ok) {
+		const body = await res.json().catch(() => ({}));
+		throw new Error(
+			(body as { error?: string }).error ?? `Worker error: ${res.status}`,
+		);
+	}
+
+	if (!res.body) {
+		throw new Error("Worker returned no stream body");
+	}
+
+	return res.body;
+}
+
+export async function workerEditAgent(
+	req: EditAgentRequest,
+): Promise<EditAgentResponse> {
+	const res = await fetch(`${WORKER_URL}/edit-agent`, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			"X-Internal-Secret": internalSecret(),
+		},
+		body: JSON.stringify(req),
+	});
+
+	if (!res.ok) {
+		const body = await res.json().catch(() => ({}));
+		throw new Error(
+			(body as { error?: string }).error ?? `Worker error: ${res.status}`,
+		);
+	}
+
+	return res.json() as Promise<EditAgentResponse>;
 }
 
 export interface SystemAgentSummary {

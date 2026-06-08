@@ -1,0 +1,132 @@
+# AgentEditor — revises an existing YAML manifest using a selected block as focus context.
+# Ships as a built-in agent. Returns a complete updated YAML draft.
+id: agent-editor
+name: Agent Editor
+description: Edits an existing agent YAML manifest from a natural language change request
+kind: sequential
+
+inputSchema:
+  currentManifest: string
+  selectedContext: string
+  changeDescription: string
+
+steps:
+  - agent:
+      id: load-schema
+      kind: tool
+      tool:
+        kind: local
+        name: read_file
+        params:
+          path: "schema-reference.md"
+
+  - agent:
+      id: edit-loop
+      kind: sequential
+      until: "{{validator.valid}} == true"
+      maxIterations: 3
+      inputSchema:
+        currentManifest: string
+        selectedContext: string
+        changeDescription: string
+        schema: string
+      output:
+        yaml: "{{editor.yaml}}"
+        explanation: "{{editor.explanation}}"
+        validation: "{{validator}}"
+      steps:
+        - agent:
+            id: editor
+            kind: llm
+            inputSchema:
+              currentManifest: string
+              selectedContext: string
+              changeDescription: string
+              schema: string
+              errors: object
+              previousYaml: string
+            model:
+              provider: openai
+              name: gpt-5.4
+              temperature: 0.2
+            instruction: |
+              You are an expert YAML editor for the agntz platform. Your job is to
+              revise an existing agent manifest according to a user's change request.
+
+              Return a COMPLETE updated YAML manifest, not a patch or excerpt.
+
+              Editing rules:
+              - Preserve the existing top-level `id` exactly unless the request explicitly
+                says to rename the agent id.
+              - Treat the selected block as focus context, not as an edit boundary.
+                If changing that block requires changing upstream inputs, downstream
+                `input:` maps, `stateKey`s, output schemas, or top-level `output`, update
+                those related sections too.
+              - Keep all unrelated behavior and wording as stable as practical.
+              - Every agent, including inline nested agents, must have an `id`.
+              - Use `ref` to reference existing agents and `agent` for inline definitions.
+              - Preserve valid template syntax, condition syntax, and state encapsulation.
+              - Do not inline secrets. Reference credentials through `{{secrets.NAME}}`
+                when credentials are needed.
+              - Make the smallest coherent change that satisfies the request while keeping
+                the whole manifest valid.
+
+              Schema reference:
+              ---
+              {{schema}}
+              ---
+            prompt: |
+              Current full YAML manifest:
+              ```yaml
+              {{currentManifest}}
+              ```
+
+              Selected focus context:
+              {{selectedContext}}
+
+              Requested change:
+              {{changeDescription}}
+
+              {{#if errors}}
+              YOUR PREVIOUS YAML HAD VALIDATION ERRORS. Fix all of them while
+              preserving the requested change and the existing top-level id:
+              {{errors}}
+
+              Previous YAML:
+              ```yaml
+              {{previousYaml}}
+              ```
+              {{/if}}
+            outputSchema:
+              yaml: string
+              explanation: string
+          input:
+            currentManifest: "{{currentManifest}}"
+            selectedContext: "{{selectedContext}}"
+            changeDescription: "{{changeDescription}}"
+            schema: "{{schema}}"
+            errors: "{{validator.errors}}"
+            previousYaml: "{{editor.yaml}}"
+
+        - agent:
+            id: validator
+            kind: tool
+            inputSchema:
+              yaml: string
+            tool:
+              kind: local
+              name: validate_manifest
+              params:
+                yaml: "{{yaml}}"
+          input:
+            yaml: "{{editor.yaml}}"
+    input:
+      currentManifest: "{{currentManifest}}"
+      selectedContext: "{{selectedContext}}"
+      changeDescription: "{{changeDescription}}"
+      schema: "{{loadSchema}}"
+
+output:
+  yaml: "{{editLoop.yaml}}"
+  explanation: "{{editLoop.explanation}}"
+  validation: "{{editLoop.validation}}"

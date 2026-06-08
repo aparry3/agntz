@@ -3,6 +3,7 @@
 import { EditableSelect } from "@/components/v3/editor/editable-fields";
 import { I } from "@/components/v3/icons";
 import { Btn, Mono, Spinner, ag } from "@/components/v3/primitives";
+import type { ManifestSelection } from "@agntz/manifest";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { InputForm } from "./input-form";
 import { LiveTrace } from "./live-trace";
@@ -30,6 +31,12 @@ interface RunResult {
 	replies?: ReplyEvent[];
 }
 
+export interface PlaygroundSelectedBlock {
+	label: string;
+	manifest: Record<string, unknown>;
+	selection: ManifestSelection;
+}
+
 const NEW_SESSION = "__new__";
 
 export function Playground({
@@ -37,14 +44,17 @@ export function Playground({
 	manifest,
 	dirty,
 	onSaveAndRun,
+	selectedBlock,
 }: {
 	agentId: string;
 	manifest: Record<string, unknown>;
 	dirty: boolean;
 	onSaveAndRun: () => Promise<void> | void;
+	selectedBlock?: PlaygroundSelectedBlock;
 }) {
 	const [input, setInput] = useState<unknown>("");
 	const [sessionId, setSessionId] = useState<string>(NEW_SESSION);
+	const [runTarget, setRunTarget] = useState<"agent" | "block">("agent");
 	const [sessions, setSessions] = useState<SessionSummary[]>([]);
 	const [running, setRunning] = useState(false);
 	const [runError, setRunError] = useState<string | null>(null);
@@ -70,6 +80,14 @@ export function Playground({
 	useEffect(() => {
 		loadSessions();
 	}, [loadSessions]);
+
+	const selectedBlockKey = selectedBlock
+		? JSON.stringify(selectedBlock.selection)
+		: "";
+	useEffect(() => {
+		setRunTarget(selectedBlock ? "block" : "agent");
+		setInput("");
+	}, [selectedBlockKey]);
 
 	const sessionOptions = useMemo(() => {
 		const base: ReadonlyArray<readonly [string, string]> = [
@@ -97,6 +115,13 @@ export function Playground({
 		};
 	}, []);
 
+	const activeManifest =
+		runTarget === "block" && selectedBlock ? selectedBlock.manifest : manifest;
+	const activeEndpoint =
+		runTarget === "block" && selectedBlock
+			? "/api/run/block/stream"
+			: "/api/run/stream";
+
 	const handleRun = useCallback(async () => {
 		if (running) return;
 		setRunError(null);
@@ -112,8 +137,11 @@ export function Playground({
 
 			const body: Record<string, unknown> = { agentId, input };
 			if (sessionId !== NEW_SESSION) body.sessionId = sessionId;
+			if (runTarget === "block" && selectedBlock) {
+				body.selection = selectedBlock.selection;
+			}
 
-			const res = await fetch("/api/run/stream", {
+			const res = await fetch(activeEndpoint, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify(body),
@@ -158,9 +186,27 @@ export function Playground({
 				loadSessions();
 			}
 		}
-	}, [running, dirty, onSaveAndRun, agentId, input, sessionId, loadSessions]);
+	}, [
+		running,
+		dirty,
+		onSaveAndRun,
+		agentId,
+		input,
+		sessionId,
+		runTarget,
+		selectedBlock,
+		activeEndpoint,
+		loadSessions,
+	]);
 
-	const runLabel = dirty ? "Save & Run" : "Run";
+	const runLabel =
+		runTarget === "block" && selectedBlock
+			? dirty
+				? "Save & Run block"
+				: "Run block"
+			: dirty
+				? "Save & Run"
+				: "Run";
 
 	return (
 		<div
@@ -206,7 +252,21 @@ export function Playground({
 				)}
 			</div>
 
-			<InputForm manifest={manifest} value={input} onChange={setInput} />
+			{selectedBlock && (
+				<EditableSelect
+					label="Target"
+					value={runTarget}
+					options={[
+						["block", selectedBlock.label],
+						["agent", "Whole agent"],
+					]}
+					onChange={(value) =>
+						setRunTarget(value === "block" ? "block" : "agent")
+					}
+				/>
+			)}
+
+			<InputForm manifest={activeManifest} value={input} onChange={setInput} />
 
 			<EditableSelect
 				label="Session"

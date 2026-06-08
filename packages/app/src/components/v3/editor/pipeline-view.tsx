@@ -2,9 +2,9 @@
 // graph shows each step (numbered), a loop badge when relevant, and the
 // inspector switches its contents based on the selected step.
 //
-// Phase 5 added step add/remove/move at the root level and interactive
-// input-map chips for child steps. Deeper-nested steps still navigate-only
-// and require YAML for structural edits.
+// Root-level add/remove/move is wired through the inspector. Nested steps are
+// rendered recursively and can be selected for inspection, AI edits, and
+// focused playground runs; deeper structural add/remove still goes through YAML.
 
 "use client";
 
@@ -27,6 +27,7 @@ import {
 	ag,
 } from "@/components/v3/primitives";
 import type { Catalog } from "@/lib/use-catalog";
+import type { ManifestSelection } from "@agntz/manifest";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
@@ -67,6 +68,13 @@ import {
 
 export type PipelineViewMode = "build" | "yaml" | "instruction" | "both";
 
+export interface PipelineSelectionContext {
+	root: PipelineNode;
+	selected: PipelineNode;
+	selection: ManifestSelection;
+	selectedManifest: Record<string, unknown>;
+}
+
 export function PipelineView({
 	rootManifest,
 	manifestId,
@@ -76,6 +84,7 @@ export function PipelineView({
 	catalog,
 	yamlPanel,
 	rightPaneOverride,
+	onEditRequest,
 }: {
 	rootManifest: Record<string, unknown>;
 	manifestId: string;
@@ -90,7 +99,11 @@ export function PipelineView({
 	/** When provided, replaces the inspector / instruction panel on the right
 	 *  for every view mode except `yaml`. Used by the editor page to swap in
 	 *  the Playground panel in play mode. */
-	rightPaneOverride?: ReactNode;
+	rightPaneOverride?: (ctx: PipelineSelectionContext) => ReactNode;
+	onEditRequest?: (
+		selection: ManifestSelection,
+		changeDescription: string,
+	) => Promise<void> | void;
 }) {
 	const root = useMemo<PipelineNode>(
 		() => nodeFromAgent(rootManifest, [], { isRoot: true }),
@@ -99,15 +112,34 @@ export function PipelineView({
 
 	// Default selection: the first child step, or root if there are none.
 	const firstStep = (root.steps ?? root.branches ?? [])[0];
-	const [selectedId, setSelectedId] = useState<string>(
-		firstStep?.id ?? root.id,
+	const [selectedKey, setSelectedKey] = useState<string>(
+		nodeSelectionKey(firstStep ?? root),
 	);
 
 	const flatSteps = useMemo(() => flatten(root), [root]);
-	const selectedNode = flatSteps.find((n) => n.id === selectedId) ?? root;
+	const selectedNode =
+		flatSteps.find((n) => nodeSelectionKey(n) === selectedKey) ?? root;
 	const availableState = useMemo(
 		() => computeAvailableStateAt(root, selectedNode.id),
 		[root, selectedNode.id],
+	);
+	const selectedManifest = useMemo(() => {
+		const value = getIn(rootManifest, selectedNode.agentPath);
+		if (isRecord(value)) return value;
+		return {
+			id: selectedNode.id,
+			name: selectedNode.name,
+			kind: selectedNode.isLoop ? "sequential" : selectedNode.kind,
+		};
+	}, [rootManifest, selectedNode]);
+	const selectedContext = useMemo<PipelineSelectionContext>(
+		() => ({
+			root,
+			selected: selectedNode,
+			selection: selectionForNode(selectedNode),
+			selectedManifest,
+		}),
+		[root, selectedNode, selectedManifest],
 	);
 
 	const handleAddStep = (payload: StepRefPayload) => {
@@ -126,7 +158,7 @@ export function PipelineView({
 			selectedNode.stepPath,
 		);
 		onChange(next);
-		setSelectedId(root.id);
+		setSelectedKey(nodeSelectionKey(root));
 	};
 
 	const handleMoveSelected = (delta: -1 | 1) => {
@@ -260,19 +292,19 @@ export function PipelineView({
 					<PipelineGraph
 						root={root}
 						rootManifest={rootManifest}
-						selectedId={selectedId}
-						onSelect={setSelectedId}
+						selectedKey={selectedKey}
+						onSelect={(node) => setSelectedKey(nodeSelectionKey(node))}
 						flatSteps={flatSteps}
 						catalog={catalog}
 						onAddStep={handleAddStep}
-						onSelectRoot={() => setSelectedId(root.id)}
+						onSelectRoot={() => setSelectedKey(nodeSelectionKey(root))}
 					/>
 				)}
 
 				{(view === "yaml" || view === "both") && yamlPanel}
 
 				{view !== "yaml" && rightPaneOverride ? (
-					rightPaneOverride
+					rightPaneOverride(selectedContext)
 				) : view === "instruction" ? (
 					selectedNode.kind === "llm" ? (
 						<PipelineInstructionPanel
@@ -306,6 +338,7 @@ export function PipelineView({
 						}
 						onPatchInputMap={onChange ? handleInputMap : undefined}
 						onPatchAgent={onChange ? handlePatchAgent : undefined}
+						onEditRequest={onEditRequest}
 						canMoveUp={canMove(rootManifest, selectedNode, -1)}
 						canMoveDown={canMove(rootManifest, selectedNode, 1)}
 					/>
@@ -320,6 +353,23 @@ function flatten(node: PipelineNode): PipelineNode[] {
 	const children = node.steps ?? node.branches ?? [];
 	for (const c of children) out.push(...flatten(c));
 	return out;
+}
+
+function selectionForNode(node: PipelineNode): ManifestSelection {
+	return node.stepPath
+		? { agentPath: node.agentPath, stepPath: node.stepPath }
+		: { agentPath: node.agentPath };
+}
+
+function selectionKey(selection: ManifestSelection): string {
+	return JSON.stringify({
+		agentPath: selection.agentPath,
+		stepPath: selection.stepPath,
+	});
+}
+
+function nodeSelectionKey(node: PipelineNode): string {
+	return selectionKey(selectionForNode(node));
 }
 
 function canMove(
@@ -345,7 +395,7 @@ function canMove(
 function PipelineGraph({
 	root,
 	rootManifest,
-	selectedId,
+	selectedKey,
 	onSelect,
 	flatSteps,
 	catalog,
@@ -354,8 +404,8 @@ function PipelineGraph({
 }: {
 	root: PipelineNode;
 	rootManifest: Record<string, unknown>;
-	selectedId: string;
-	onSelect: (id: string) => void;
+	selectedKey: string;
+	onSelect: (node: PipelineNode) => void;
 	flatSteps: PipelineNode[];
 	catalog?: Catalog;
 	onAddStep: (step: StepRefPayload) => void;
@@ -408,20 +458,21 @@ function PipelineGraph({
 				rootId={root.id}
 				loopUntil={root.loop?.until}
 				loopMax={root.loop?.maxIterations}
-				selected={selectedId === root.id}
+				selected={nodeSelectionKey(root) === selectedKey}
 				onSelect={onSelectRoot}
 			>
 				{children.length === 0 ? (
 					<EmptyContainerHint onAdd={() => setAddOpen(true)} />
 				) : (
 					children.map((step, i) => (
-						<StepWithEdge
-							key={step.id}
-							step={step}
+						<PipelineNodeGraph
+							key={nodeSelectionKey(step)}
+							node={step}
 							n={i + 1}
-							selected={step.id === selectedId}
-							onSelect={() => onSelect(step.id)}
+							selectedKey={selectedKey}
+							onSelect={onSelect}
 							isLast={i === children.length - 1}
+							showSiblingEdge={root.kind !== "parallel"}
 						/>
 					))
 				)}
@@ -487,7 +538,9 @@ function PipelineContainer({
 	return (
 		<div
 			style={{
-				width: 420,
+				width: kind === "parallel" ? "max-content" : 420,
+				minWidth: 420,
+				maxWidth: "100%",
 				border: `1.5px ${kind === "loop" ? "dashed" : "solid"} ${selected ? ag.ink : palette.fg}`,
 				borderRadius: 8,
 				background: ag.surface2,
@@ -558,8 +611,9 @@ function PipelineContainer({
 			<div
 				style={{
 					display: "flex",
-					flexDirection: "column",
-					alignItems: "center",
+					flexDirection: kind === "parallel" ? "row" : "column",
+					alignItems: kind === "parallel" ? "flex-start" : "center",
+					gap: kind === "parallel" ? 12 : 0,
 				}}
 			>
 				{children}
@@ -597,56 +651,91 @@ function EmptyContainerHint({ onAdd }: { onAdd: () => void }) {
 	);
 }
 
-function StepWithEdge({
-	step,
+function PipelineNodeGraph({
+	node,
 	n,
-	selected,
+	selectedKey,
 	onSelect,
 	isLast,
+	showSiblingEdge,
 }: {
-	step: PipelineNode;
+	node: PipelineNode;
 	n: number;
-	selected: boolean;
-	onSelect: () => void;
+	selectedKey: string;
+	onSelect: (node: PipelineNode) => void;
 	isLast?: boolean;
+	showSiblingEdge?: boolean;
 }) {
-	const inputs: StepField[] = (step.inputSchema ?? []).map((f) => ({
+	const inputs: StepField[] = (node.inputSchema ?? []).map((f) => ({
 		name: f.key,
 		type: f.type,
 		required: !f.nullable && f.default === undefined,
 	}));
-	const outputs: StepField[] = (step.outputSchemaKeys ?? []).map((f) => ({
+	const outputs: StepField[] = (node.outputSchemaKeys ?? []).map((f) => ({
 		name: f.key,
 		type: f.type,
 	}));
+	const children = node.steps ?? node.branches ?? [];
+	const isContainer = children.length > 0;
+	const containerKind: "sequential" | "parallel" | "loop" = node.isLoop
+		? "loop"
+		: node.kind === "parallel"
+			? "parallel"
+			: "sequential";
+	const selected = nodeSelectionKey(node) === selectedKey;
 	return (
 		<>
 			<PipelineStep
 				n={n}
-				id={step.id}
-				name={step.name}
+				id={node.id}
+				name={node.name}
 				kind={
-					step.kind === "tool"
+					node.kind === "tool"
 						? "tool"
-						: step.kind === "sequential"
+						: node.kind === "sequential"
 							? "sequential"
-							: step.kind === "parallel"
+							: node.kind === "parallel"
 								? "parallel"
 								: "llm"
 				}
 				selected={selected}
-				summary={step.description ?? step.instructionPreview}
+				summary={node.description ?? node.instructionPreview}
 				model={
-					step.model ? `${step.model.provider} · ${step.model.name}` : undefined
+					node.model ? `${node.model.provider} · ${node.model.name}` : undefined
 				}
 				inputs={inputs.length ? inputs : undefined}
 				outputs={outputs.length ? outputs : undefined}
 				onClick={(e) => {
 					e?.stopPropagation();
-					onSelect();
+					onSelect(node);
 				}}
 			/>
-			{!isLast && <Edge />}
+			{isContainer && (
+				<>
+					<Edge />
+					<PipelineContainer
+						kind={containerKind}
+						rootId={node.id}
+						loopUntil={node.loop?.until}
+						loopMax={node.loop?.maxIterations}
+						selected={selected}
+						onSelect={() => onSelect(node)}
+					>
+						{children.map((child, i) => (
+							<PipelineNodeGraph
+								key={nodeSelectionKey(child)}
+								node={child}
+								n={i + 1}
+								selectedKey={selectedKey}
+								onSelect={onSelect}
+								isLast={i === children.length - 1}
+								showSiblingEdge={node.kind !== "parallel"}
+							/>
+						))}
+					</PipelineContainer>
+				</>
+			)}
+			{showSiblingEdge && !isLast && <Edge />}
 		</>
 	);
 }
@@ -662,6 +751,7 @@ function PipelineInspector({
 	onMoveSelected,
 	onPatchInputMap,
 	onPatchAgent,
+	onEditRequest,
 	canMoveUp,
 	canMoveDown,
 }: {
@@ -681,6 +771,10 @@ function PipelineInspector({
 		agentPath: PipelinePath,
 		partial: Record<string, unknown>,
 	) => void;
+	onEditRequest?: (
+		selection: ManifestSelection,
+		changeDescription: string,
+	) => Promise<void> | void;
 	canMoveUp?: boolean;
 	canMoveDown?: boolean;
 }) {
@@ -791,6 +885,15 @@ function PipelineInspector({
 			</div>
 
 			<div style={{ flex: 1, overflow: "auto" }}>
+				{onEditRequest && (
+					<AiEditBox
+						targetLabel={selected.id === root.id ? "root agent" : selected.name}
+						onSubmit={(description) =>
+							onEditRequest(selectionForNode(selected), description)
+						}
+					/>
+				)}
+
 				{/* Input mapping (non-root) / Input schema (root) */}
 				<div style={{ padding: "16px 16px 8px" }}>
 					<div style={{ marginBottom: 4 }}>
@@ -1088,6 +1191,123 @@ function StepHeaderBtn({
 		>
 			{children}
 		</button>
+	);
+}
+
+function AiEditBox({
+	targetLabel,
+	onSubmit,
+}: {
+	targetLabel: string;
+	onSubmit: (description: string) => Promise<void> | void;
+}) {
+	const [description, setDescription] = useState("");
+	const [pending, setPending] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+
+	const handleApply = async () => {
+		const trimmed = description.trim();
+		if (!trimmed || pending) return;
+		setPending(true);
+		setError(null);
+		try {
+			await onSubmit(trimmed);
+			setDescription("");
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+		} finally {
+			setPending(false);
+		}
+	};
+
+	return (
+		<div
+			style={{
+				margin: "12px 16px 0",
+				padding: 10,
+				border: `1px solid ${ag.line}`,
+				borderRadius: 4,
+				background: ag.surface2,
+			}}
+		>
+			<div
+				style={{
+					display: "flex",
+					alignItems: "center",
+					justifyContent: "space-between",
+					gap: 8,
+					marginBottom: 6,
+				}}
+			>
+				<Mono size={10.5} color={ag.muted}>
+					Edit with AI · {targetLabel}
+				</Mono>
+				{pending && <SpinnerInline />}
+			</div>
+			<textarea
+				value={description}
+				onChange={(e) => setDescription(e.target.value)}
+				placeholder="Describe the change"
+				rows={3}
+				spellCheck={false}
+				style={{
+					display: "block",
+					width: "100%",
+					border: `1px solid ${ag.line}`,
+					borderRadius: 4,
+					background: ag.bg,
+					padding: "7px 8px",
+					fontFamily: "inherit",
+					fontSize: 12,
+					lineHeight: 1.45,
+					resize: "vertical",
+					color: ag.ink,
+					outline: "none",
+				}}
+			/>
+			<div
+				style={{
+					display: "flex",
+					alignItems: "center",
+					gap: 8,
+					marginTop: 8,
+				}}
+			>
+				<Btn
+					variant="secondary"
+					size="sm"
+					icon={<I.Sparkle size={11} style={{ marginRight: 5 }} />}
+					onClick={handleApply}
+					disabled={pending || !description.trim()}
+				>
+					Apply draft
+				</Btn>
+				{error && (
+					<span style={{ color: ag.danger, fontSize: 11.5 }}>{error}</span>
+				)}
+			</div>
+		</div>
+	);
+}
+
+function SpinnerInline() {
+	return (
+		<span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+			<span
+				style={{
+					width: 10,
+					height: 10,
+					border: `1.5px solid ${ag.line}`,
+					borderTopColor: ag.ink,
+					borderRadius: "50%",
+					display: "inline-block",
+					animation: "agntz-spin 0.7s linear infinite",
+				}}
+			/>
+			<Mono size={10.5} color={ag.muted}>
+				editing
+			</Mono>
+		</span>
 	);
 }
 

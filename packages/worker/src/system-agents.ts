@@ -19,6 +19,10 @@ const SYSTEM_AGENT_PATHS: Record<string, string> = {
 		__dirname,
 		"defaults/agents/agent-builder/manifest.yaml",
 	),
+	"agent-editor": resolve(
+		__dirname,
+		"defaults/agents/agent-editor/manifest.yaml",
+	),
 };
 
 const SYSTEM_PREFIX = "system:";

@@ -25,6 +25,10 @@ import { parseArgs } from "node:util";
 
 import { AgntzClient } from "@agntz/client";
 import type { MultiplexedRunEvent, StreamEvent } from "@agntz/client";
+import {
+	type ManifestSelection,
+	findSelectionsByAgentId,
+} from "@agntz/manifest";
 import { agntz } from "./client.js";
 import { loadManifestFromFile, parseManifestString } from "./loader.js";
 
@@ -49,6 +53,7 @@ Getting started locally:
 
 Commands:
   create   Generate a YAML manifest from a description (no auth required)
+  edit     Revise a local YAML manifest from a change request (no auth required)
   run      Execute a local YAML/dir or hosted agent id
   login    Save hosted API credentials
   logout   Remove saved hosted API credentials
@@ -137,6 +142,28 @@ Local runtime note:
   The CLI can load YAML from disk, but it cannot register arbitrary in-repo
   local tool handlers. For agents that need local tools or resource providers,
   call @agntz/sdk from your service code and pass tools/resources there.
+`;
+
+const EDIT_HELP = `agntz edit — revise a local agent YAML manifest
+
+Usage:
+  agntz edit <manifest.yaml> "<change request>" [options]
+
+Description:
+  Calls the hosted agent-editor with the current YAML draft. The editor returns
+  a complete updated YAML manifest. This command does not require login.
+
+Options:
+  -o, --output <path>    Write the edited YAML to a specific path
+      --write            Overwrite the input manifest
+      --select <agentId> Focus the edit on one block by agent id
+      --url <apiUrl>     Override the editor API URL for this call
+  -h, --help             Show this help
+
+Examples:
+  agntz edit ./agents/support.yaml "make the tone more concise" --write
+  agntz edit ./agents/pipeline.yaml "change the classifier output to include urgency" --select classifier -o ./agents/pipeline.yaml
+  agntz edit ./agents/support.yaml "add an input field for account id" > ./agents/support.next.yaml
 `;
 
 const LOGIN_HELP = `agntz login — save hosted API credentials
@@ -268,6 +295,9 @@ async function main(): Promise<void> {
 		case "create":
 			await cmdCreate(rest);
 			return;
+		case "edit":
+			await cmdEdit(rest);
+			return;
 		case "run":
 			await cmdRun(rest);
 			return;
@@ -336,6 +366,15 @@ async function cmdCreate(args: string[]): Promise<void> {
 	}
 
 	const apiUrl = resolveApiUrl(values.url);
+	const currentManifest = values["current-manifest"]
+		? await readFile(resolve(values["current-manifest"]), "utf8").catch(
+				(err) => {
+					fail(
+						`Could not read --current-manifest ${values["current-manifest"]}: ${formatError(err)}`,
+					);
+				},
+			)
+		: undefined;
 	const stopSpinner = startSpinner([
 		{ ms: 0, label: "Planning structure" },
 		{ ms: 6000, label: "Generating YAML" },
@@ -348,7 +387,7 @@ async function cmdCreate(args: string[]): Promise<void> {
 		response = await callBuildAgent({
 			apiUrl,
 			description,
-			currentManifest: values["current-manifest"],
+			currentManifest,
 		});
 	} catch (err) {
 		stopSpinner("fail");
@@ -420,6 +459,143 @@ async function callBuildAgent(opts: {
 		throw new Error(`Worker returned ${res.status} ${res.statusText}: ${text}`);
 	}
 	return (await res.json()) as BuildAgentResponse;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// edit — call the public /edit-agent endpoint with a local YAML draft
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function cmdEdit(args: string[]): Promise<void> {
+	if (wantsHelp(args)) {
+		process.stdout.write(EDIT_HELP);
+		return;
+	}
+
+	const { values, positionals } = parseArgs({
+		args,
+		options: {
+			output: { type: "string", short: "o" },
+			write: { type: "boolean", default: false },
+			select: { type: "string" },
+			url: { type: "string" },
+		},
+		allowPositionals: true,
+		strict: true,
+	});
+
+	const [manifestPathRaw, ...changeParts] = positionals;
+	const changeDescription = changeParts.join(" ").trim();
+	if (!manifestPathRaw || !changeDescription) {
+		fail('Usage: agntz edit <manifest.yaml> "<change request>"');
+	}
+	if (values.write && values.output) {
+		fail("Use either --write or --output, not both.");
+	}
+
+	const manifestPath = resolve(manifestPathRaw);
+	const currentManifest = await readFile(manifestPath, "utf8").catch((err) => {
+		fail(`Could not read ${manifestPathRaw}: ${formatError(err)}`);
+	});
+
+	let selection: ManifestSelection | undefined;
+	if (values.select) {
+		const manifest = parseManifestString(currentManifest);
+		const matches = findSelectionsByAgentId(manifest, values.select);
+		if (matches.length === 0) {
+			fail(
+				`No block with id or ref "${values.select}" found in ${manifestPathRaw}.`,
+			);
+		}
+		if (matches.length > 1) {
+			fail(
+				`Selection "${values.select}" matched ${matches.length} blocks. Use a unique agent id before running agntz edit --select.`,
+			);
+		}
+		selection = matches[0];
+	}
+
+	const apiUrl = resolveApiUrl(values.url);
+	const stopSpinner = startSpinner([
+		{ ms: 0, label: "Reading YAML" },
+		{ ms: 4000, label: "Editing draft" },
+		{ ms: 14000, label: "Validating" },
+		{ ms: 22000, label: "Finalizing" },
+	]);
+
+	let response: EditAgentResponse;
+	try {
+		response = await callEditAgent({
+			apiUrl,
+			currentManifest,
+			changeDescription,
+			selection,
+		});
+	} catch (err) {
+		stopSpinner("fail");
+		fail(formatError(err));
+	} finally {
+		stopSpinner();
+	}
+
+	if (!response.yaml) {
+		fail(
+			`Agent editor did not return a YAML manifest.${response.validation ? `\nValidation:\n${formatJson(response.validation)}` : ""}`,
+		);
+	}
+
+	if (values.write || values.output) {
+		const outPath = values.write ? manifestPath : resolve(values.output ?? "");
+		await mkdir(dirname(outPath), { recursive: true });
+		await writeFile(outPath, response.yaml);
+		log(`✓ Wrote ${relPath(outPath)}`);
+		if (response.explanation) log(`\n${response.explanation.trim()}`);
+		return;
+	}
+
+	process.stdout.write(response.yaml);
+	if (!response.yaml.endsWith("\n")) process.stdout.write("\n");
+}
+
+interface EditAgentResponse {
+	yaml: string | null;
+	explanation: string | null;
+	validation: unknown;
+}
+
+async function callEditAgent(opts: {
+	apiUrl: string;
+	currentManifest: string;
+	changeDescription: string;
+	selection?: ManifestSelection;
+}): Promise<EditAgentResponse> {
+	const url = joinUrl(opts.apiUrl, "/edit-agent");
+	const body: Record<string, unknown> = {
+		currentManifest: opts.currentManifest,
+		changeDescription: opts.changeDescription,
+	};
+	if (opts.selection) body.selection = opts.selection;
+
+	let res: Response;
+	try {
+		res = await fetch(url, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		});
+	} catch (e) {
+		throw new Error(`Network error reaching ${url}: ${(e as Error).message}`);
+	}
+	if (!res.ok) {
+		const text = await res.text().catch(() => "");
+		if (res.status === 429) {
+			const retry = res.headers.get("retry-after");
+			throw new Error(
+				`Rate limit exceeded${retry ? ` — retry in ${retry}s` : ""}. ${text}`,
+			);
+		}
+		throw new Error(`Worker returned ${res.status} ${res.statusText}: ${text}`);
+	}
+	return (await res.json()) as EditAgentResponse;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

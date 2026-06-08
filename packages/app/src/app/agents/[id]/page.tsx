@@ -16,6 +16,7 @@ import { I } from "@/components/v3/icons";
 import { Btn, Mono, Tag, ag } from "@/components/v3/primitives";
 import { YamlEditor } from "@/components/yaml-editor";
 import { useCatalog } from "@/lib/use-catalog";
+import type { ManifestSelection } from "@agntz/manifest";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { parse as parseYAML, stringify as stringifyYAML } from "yaml";
@@ -111,6 +112,44 @@ export default function AgentEditorPage() {
 			setSaving(false);
 		}
 	};
+
+	const handleAiEdit = useCallback(
+		async (selection: ManifestSelection, changeDescription: string) => {
+			setError(null);
+			setStatus("Editing draft…");
+			const res = await fetch(`/api/agents/${encodeURIComponent(id)}/edit`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					currentManifest: manifest,
+					changeDescription,
+					selection,
+				}),
+			});
+			const data = await res.json().catch(() => ({}));
+			if (!res.ok) {
+				const message =
+					(data as { error?: string }).error ??
+					`Edit failed: ${res.status} ${res.statusText}`;
+				setError(message);
+				setStatus(null);
+				throw new Error(message);
+			}
+			const yaml = (data as { yaml?: string }).yaml;
+			if (!yaml) {
+				const message = "Agent editor did not return YAML";
+				setError(message);
+				setStatus(null);
+				throw new Error(message);
+			}
+			setManifest(yaml);
+			setStatus(
+				(data as { explanation?: string }).explanation?.trim() ||
+					"Draft updated",
+			);
+		},
+		[id, manifest],
+	);
 
 	const handleDelete = async () => {
 		await fetch(`/api/agents/${id}`, { method: "DELETE" });
@@ -243,6 +282,7 @@ export default function AgentEditorPage() {
 					onChangeView={(v) => setView(v)}
 					onChange={handleManifestChange}
 					catalog={catalog}
+					onEditRequest={handleAiEdit}
 					yamlPanel={
 						<YamlPanel
 							manifest={manifest}
@@ -251,14 +291,25 @@ export default function AgentEditorPage() {
 						/>
 					}
 					rightPaneOverride={
-						mode === "play" ? (
-							<Playground
-								agentId={manifestId}
-								manifest={parsed ?? { id: manifestId }}
-								dirty={dirty}
-								onSaveAndRun={handleSave}
-							/>
-						) : undefined
+						mode === "play"
+							? (ctx) => (
+									<Playground
+										agentId={manifestId}
+										manifest={parsed ?? { id: manifestId }}
+										dirty={dirty}
+										onSaveAndRun={handleSave}
+										selectedBlock={
+											ctx.selected.isRoot
+												? undefined
+												: {
+														label: `Block · ${ctx.selected.name}`,
+														manifest: ctx.selectedManifest,
+														selection: ctx.selection,
+													}
+										}
+									/>
+								)
+							: undefined
 					}
 				/>
 			) : (
@@ -271,6 +322,9 @@ export default function AgentEditorPage() {
 						handleManifestChange(next as Record<string, unknown>)
 					}
 					catalog={catalog}
+					onEditRequest={(changeDescription) =>
+						handleAiEdit({ agentPath: [] }, changeDescription)
+					}
 					yamlPanel={
 						<YamlPanel
 							manifest={manifest}

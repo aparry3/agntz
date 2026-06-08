@@ -85,3 +85,16 @@ export {
 // HTTP tool URL parser + builder
 export type { Placeholder } from "./http-url.js";
 export { parseUrlPlaceholders, buildHttpUrl } from "./http-url.js";
+
+// Manifest selection helpers
+export type {
+	ManifestPath,
+	ManifestSelection,
+	SelectedManifestBlock,
+} from "./selection.js";
+export {
+	getAtPath,
+	selectionKey,
+	selectManifestBlock,
+	findSelectionsByAgentId,
+} from "./selection.js";

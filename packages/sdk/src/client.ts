@@ -214,24 +214,35 @@ class DatasetsResourceImpl implements LocalDatasetsResource {
 	constructor(private readonly store: UnifiedStore) {}
 
 	async list(filter: EvalDatasetListFilter = {}): Promise<EvalDataset[]> {
-		return this.store.listDatasets(filter);
+		return (await this.store.listDatasets(
+			filter as never,
+		)) as unknown as EvalDataset[];
 	}
 
 	async create(dataset: EvalDataset): Promise<EvalDataset> {
-		await this.store.putDataset(dataset);
-		return (await this.store.getDataset(dataset.id)) ?? dataset;
+		await this.store.putDataset(dataset as never);
+		return (
+			((await this.store.getDataset(
+				dataset.id,
+			)) as unknown as EvalDataset | null) ?? dataset
+		);
 	}
 
 	async get(id: string): Promise<EvalDataset | null> {
-		return this.store.getDataset(id);
+		return (await this.store.getDataset(id)) as unknown as EvalDataset | null;
 	}
 
 	async update(id: string, patch: Partial<EvalDataset>): Promise<EvalDataset> {
-		const existing = await this.store.getDataset(id);
+		const existing = (await this.store.getDataset(
+			id,
+		)) as unknown as EvalDataset | null;
 		if (!existing) throw new Error(`Dataset not found: ${id}`);
 		const next = { ...existing, ...patch, id };
-		await this.store.putDataset(next);
-		return (await this.store.getDataset(id)) ?? next;
+		await this.store.putDataset(next as never);
+		return (
+			((await this.store.getDataset(id)) as unknown as EvalDataset | null) ??
+			next
+		);
 	}
 
 	async delete(id: string): Promise<void> {
@@ -274,19 +285,25 @@ class EvalsResourceImpl implements LocalEvalsResource {
 	}
 
 	async run(input: EvalRunInput): Promise<EvalRun> {
-		return runEval(this.runner, this.store, input);
+		return (await runEval(
+			this.runner,
+			this.store,
+			input as never,
+		)) as unknown as EvalRun;
 	}
 
 	async getRun(id: string): Promise<EvalRun | null> {
-		return this.store.getEvalRun(id);
+		return (await this.store.getEvalRun(id)) as unknown as EvalRun | null;
 	}
 
 	async listRuns(filter: EvalRunListFilter = {}): Promise<EvalRunListResult> {
-		return this.store.listEvalRuns(filter);
+		return (await this.store.listEvalRuns(
+			filter as never,
+		)) as unknown as EvalRunListResult;
 	}
 
 	async cancelRun(id: string): Promise<EvalRun | null> {
-		const run = await this.store.getEvalRun(id);
+		const run = (await this.store.getEvalRun(id)) as unknown as EvalRun | null;
 		if (!run) return null;
 		if (run.status !== "running" && run.status !== "pending") return run;
 		const next: EvalRun = {
@@ -304,7 +321,6 @@ class EvalsResourceImpl implements LocalEvalsResource {
 						itemId: item.id,
 						status: "cancelled" as const,
 						input: item.input,
-						expected: item.expected,
 						criteria: {},
 						score: 0,
 						passed: false,
@@ -325,13 +341,17 @@ class EvalsResourceImpl implements LocalEvalsResource {
 	async getLatestScore(
 		key: EvalLatestScoreKey,
 	): Promise<EvalLatestScore | null> {
-		return this.store.getEvalLatestScore(key);
+		return (await this.store.getEvalLatestScore(
+			key as never,
+		)) as unknown as EvalLatestScore | null;
 	}
 
 	async listLatestScores(
 		filter: EvalLatestScoreListFilter = {},
 	): Promise<EvalLatestScore[]> {
-		return this.store.listEvalLatestScores(filter);
+		return (await this.store.listEvalLatestScores(
+			filter as never,
+		)) as unknown as EvalLatestScore[];
 	}
 }
 
