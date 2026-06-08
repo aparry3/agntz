@@ -1,5 +1,12 @@
 # @agntz/memrez
 
+## 2.0.0
+
+### Patch Changes
+
+- Updated dependencies [a357dd1]
+  - @agntz/core@1.4.0
+
 ## 1.0.0
 
 ### Patch Changes
