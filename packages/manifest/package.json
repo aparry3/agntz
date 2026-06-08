@@ -1,6 +1,6 @@
 {
   "name": "@agntz/manifest",
-  "version": "4.0.0",
+  "version": "5.0.0",
   "description": "YAML manifest engine for agntz: parser, template engine, state management, and pipeline execution",
   "type": "module",
   "main": "./dist/index.js",
@@ -35,7 +35,7 @@
     "yaml": "^2.8.0"
   },
   "peerDependencies": {
-    "@agntz/core": ">=1.3.0"
+    "@agntz/core": ">=1.4.0"
   },
   "devDependencies": {
     "@agntz/core": "workspace:*",

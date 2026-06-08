@@ -1,5 +1,19 @@
 # @agntz/sdk
 
+## 5.0.0
+
+### Minor Changes
+
+- 23d5cc9: Add manifest selection helpers and CLI support for AI-assisted agent edits.
+
+### Patch Changes
+
+- Updated dependencies [23d5cc9]
+- Updated dependencies [a357dd1]
+  - @agntz/manifest@5.0.0
+  - @agntz/core@1.4.0
+  - @agntz/store-sqlite@5.0.0
+
 ## 4.0.0
 
 ### Minor Changes
