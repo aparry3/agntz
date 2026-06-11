@@ -86,6 +86,7 @@ Leftovers from the rename. Bundle these in a single PR.
 - [ ] 🧑 Create account at https://railway.app (GitHub sign-in easiest).
 - [ ] 🧑 New project → **Add Service** → **Database** → **PostgreSQL**.
 - [ ] 🧑 In the Postgres service **Variables** tab, note the `DATABASE_URL` (format: `postgres://...@...railway.internal:5432/railway`).
+- [ ] 🧑 Also note the public TCP proxy URL for external clients. Vercel must use this public URL because it is outside Railway's private network.
 
 > Schema is initialized on worker boot — no manual migration. If that turns out wrong, the bootstrap code is in `packages/store-postgres/src/`.
 
@@ -166,10 +167,12 @@ Set for **Production** (and Preview if you want PR deploys to work):
 - [ ] `WORKER_URL` = Railway worker domain (from 3.4)
 - [ ] `WORKER_INTERNAL_SECRET` = **same value as worker** (from 3.2)
 - [ ] `STORE` = `postgres`
-- [ ] `DATABASE_URL` = **same** Railway Postgres URL as the worker (copy manually — Vercel can't reference Railway variables)
+- [ ] `DATABASE_URL` = Railway Postgres public TCP proxy URL
 - [ ] `DEFAULT_MODEL_PROVIDER` = `openai`
 - [ ] `DEFAULT_MODEL_NAME` = `gpt-4o`
 - [ ] `OPENAI_API_KEY` (and any other provider keys)
+
+> Do not set Vercel's app `DATABASE_URL` to Railway's private `*.railway.internal` URL. That hostname only works for services inside the same Railway project. The Railway worker should use `${{Postgres.DATABASE_URL}}`; the Vercel app should use the public TCP proxy URL.
 
 ### 4.4 Deploy and verify
 

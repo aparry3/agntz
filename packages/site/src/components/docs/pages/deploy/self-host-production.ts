@@ -16,7 +16,7 @@ The deployable surface is three packages:
 Railway → New Project → Add Service → Database → PostgreSQL
 \`\`\`
 
-Copy the \`DATABASE_URL\` from the Variables tab. Schema is initialized on worker boot — no manual migration step.
+Copy the private \`DATABASE_URL\` and the public TCP proxy URL from the Variables tab. The worker uses the private \`DATABASE_URL\`; the Vercel app uses the public TCP proxy URL as its \`DATABASE_URL\` because it is outside Railway's private network. Schema is initialized on worker boot — no manual migration step.
 
 ## 2. Deploy the worker on Railway
 
@@ -61,13 +61,15 @@ NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/agents
 WORKER_URL=https://<your-worker>.up.railway.app
 WORKER_INTERNAL_SECRET=...           # MUST match the worker
 STORE=postgres
-DATABASE_URL=...                     # same Postgres as the worker
+DATABASE_URL=...                     # Railway public TCP proxy URL
 DEFAULT_MODEL_PROVIDER=openai
 DEFAULT_MODEL_NAME=gpt-5.4
 OPENAI_API_KEY=sk-...
 \`\`\`
 
 \`WORKER_INTERNAL_SECRET\` must be identical on both sides — the app authenticates to the worker with it.
+
+Do not set Vercel's \`DATABASE_URL\` to a Railway \`*.railway.internal\` URL. That hostname only resolves inside Railway.
 
 ## 5. (Optional) Deploy the marketing site on Vercel
 
