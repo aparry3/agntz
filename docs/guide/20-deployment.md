@@ -57,7 +57,7 @@ External developers install the npm packages to embed agntz in their own apps. T
 | Env var | Required | What |
 |---|---|---|
 | `STORE` | yes | `postgres` in prod; `memory` in dev |
-| `DATABASE_URL` | when `STORE=postgres` | `postgres://...railway.internal:5432/railway` |
+| `DATABASE_URL` | when `STORE=postgres` | Railway Postgres private URL, e.g. `postgres://...railway.internal:5432/railway` |
 | `PORT` | yes | `4001` |
 | `WORKER_INTERNAL_SECRET` | yes | 32-byte random secret — **must match the app's value** |
 | `DEFAULT_MODEL_PROVIDER` | yes | e.g. `openai` — used when an agent doesn't specify |
@@ -81,7 +81,7 @@ The worker prefers per-user `ProviderConfig` from `ProviderStore`. Env vars are 
 | `WORKER_URL` | yes | Worker public URL (Railway-provided domain) |
 | `WORKER_INTERNAL_SECRET` | yes | **Same value as the worker's** |
 | `STORE` | yes | `postgres` |
-| `DATABASE_URL` | yes | Same Postgres as the worker |
+| `DATABASE_URL` | yes | Same Postgres as the worker, but reachable from Vercel; use the public TCP proxy URL, not `*.railway.internal` |
 | `DEFAULT_MODEL_PROVIDER` | yes | e.g. `openai` |
 | `DEFAULT_MODEL_NAME` | yes | e.g. `gpt-4o` |
 | Provider keys (`OPENAI_API_KEY`, etc.) | one of | Same fallback role as the worker |
@@ -89,7 +89,7 @@ The worker prefers per-user `ProviderConfig` from `ProviderStore`. Env vars are 
 Two important sharing rules:
 
 1. **`WORKER_INTERNAL_SECRET` must match** in both services. Mismatch = every app→worker call returns 401.
-2. **`DATABASE_URL` must be the same Postgres** in both services. The app's direct-store CRUD and the worker's execution writes have to land in the same database.
+2. **The app and worker must use the same Postgres database**, but not necessarily the same hostname. The Railway worker can use the private `DATABASE_URL`; the Vercel app's `DATABASE_URL` must be Railway's public TCP proxy URL because Vercel is outside Railway's private network.
 
 ### Site
 

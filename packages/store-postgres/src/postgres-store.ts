@@ -634,12 +634,16 @@ export class PostgresStore implements UnifiedStore {
 			this.ownsPool = true;
 		}
 
+		if (this.ownsPool) {
+			// Idle clients can error after a database/proxy restart. The pool will
+			// discard them; this listener prevents an unhandled EventEmitter error.
+			this.pool.on("error", (err) => {
+				console.warn("PostgresStore idle client error:", err.message);
+			});
+		}
+
 		if (!opts.skipMigration) {
-			this.migratePromise = this.migrate();
-			// Mark the promise as handled so a migration failure doesn't crash the
-			// process as an unhandled rejection. ensureMigrated() awaits the same
-			// promise and will surface the error on the first real operation.
-			this.migratePromise.catch(() => {});
+			this.startMigration();
 		}
 	}
 
@@ -670,12 +674,24 @@ export class PostgresStore implements UnifiedStore {
 
 	private async ensureMigrated(): Promise<void> {
 		if (this.migrated) return;
-		if (this.migratePromise) {
-			await this.migratePromise;
-			return;
+		if (!this.migratePromise) {
+			this.startMigration();
 		}
-		this.migratePromise = this.migrate();
 		await this.migratePromise;
+	}
+
+	private startMigration(): void {
+		const promise = this.migrate().catch((err) => {
+			if (this.migratePromise === promise) {
+				this.migratePromise = null;
+			}
+			throw err;
+		});
+		this.migratePromise = promise;
+		// Mark the promise as handled so a migration failure doesn't crash the
+		// process as an unhandled rejection. ensureMigrated() awaits the same
+		// promise and will surface the error on the first real operation.
+		promise.catch(() => {});
 	}
 
 	private async migrate(): Promise<void> {
