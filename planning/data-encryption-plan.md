@@ -30,7 +30,8 @@ What already exists and shapes the design:
 - **Dedup and curation operate above the store.** `Memrez.write()` compares content for dedup *after* the store returns entries; the curator reads via `listScopeSlice` and writes via `putEntry`. Both work unchanged through a decrypting decorator.
 - **Sessions are clean too.** `ar_messages` carries sensitive payload in three columns: `content` (TEXT, legacy dual-write), `content_blocks` (JSONB), `tool_calls` (JSONB). `SessionSummary` (`packages/core/src/types.ts:505-511`) has **no content-derived fields** (no title/preview), and nothing in `postgres-store.ts` searches message content. Decorator-compatible.
 - **`user_id` is the tenant.** In the hosted worker, `user_id` is the agntz account (Clerk id / API-key owner) — end users of a customer app (e.g. trainees in the personal-trainer app) are invisible to agntz except through sessionIds and namespace strings.
-- **The worker does not use memrez.** `packages/worker/package.json` depends only on core/manifest/store-postgres; `resolveRunnerAndManifest` (`packages/worker/src/routes.ts`) never populates `RunnerConfig.resources`. The dependency runs the other way: `packages/memrez/src/reasoner.ts` calls the deployed worker via `client.agents.run()` for tagging/curation. Memory *data* lives in whatever DB the embedding app's `MemoryStore` points at.
+- **The worker hosts memrez (as of `9b5792e`).** `packages/worker/src/resources.ts` builds one process-wide provider — `createMemrez({ store })` exposed as `resources.memory` — and every runner the worker creates receives it. The store follows `MEMREZ_STORE`/`STORE` (postgres in prod) and connects via `MEMREZ_DATABASE_URL ?? DATABASE_URL`, i.e. **memrez tables live in the worker's own database by default**, beside `ar_sessions`/`ar_messages`. Manifests declaring `resources.memory` activate it (`bridge.ts` passes `manifest.resources` through). Hosted memrez currently runs the deterministic reasoner — no LLM tagger/curator is wired server-side; embedding apps still point `memrez/src/reasoner.ts` at the worker via `client.agents.run()`.
+- **Grants are caller-supplied and unprefixed.** Run requests carry namespace grants as `context: string[]`; `WorkerAPIOptions.namespacePolicy` exists but `server.ts` sets none. The hosted memrez store is shared across tenants with scope as the only partition — nothing today stops two tenants from asserting the same scope string. See §5 for why encryption turns this from an isolation bug into a key-sharing hazard.
 - **The integration seams for manifest-level config exist.** The manifest parser already handles a `resources` block (`packages/manifest/src/parser.ts:72-102`), and the worker's execution bridge threads namespace grants for resource providers (`packages/worker/src/bridge.ts:50` — `context?: string[]`).
 
 ## 3. Threat model
@@ -99,9 +100,11 @@ CREATE TABLE scope_keys (
 );
 ```
 
-- One `scope_keys` table lives **beside each store** (the embedding app's memrez DB, the worker's postgres). Where memory and sessions share a database they share the table; where they don't, "shred subject X" is one delete per database. Same format everywhere.
+- One `scope_keys` table lives **beside each store**. In the hosted worker, memrez and sessions share the worker's database by default (post-`9b5792e`), so one table — and one shred delete — covers a subject's chats *and* memories. Split deployments (an embedding app's own memrez DB) get their own table; same format everywhere.
 - DEK creation is race-safe: generate → wrap → `INSERT … ON CONFLICT DO NOTHING` → re-read.
 - **DEK cache:** unwrapped DEKs cached in-process (small LRU, short TTL). With an env KEK this is a micro-optimization; with KMS it is essential — one billed unwrap call per scope per process instead of per row.
+
+**Precondition for the hosted worker — tenant-prefixed key roots.** The hosted memrez store is multi-tenant with scope as the only partition, and grants are caller-supplied (§2). Under scope-keyed encryption, two tenants asserting `app/user/u123` would silently **share a DEK** — a cross-tenant blast-radius leak, where the current plaintext store merely has a data-isolation bug. Before encryption is enabled on the hosted worker, the effective key root must be `{tenantId}/{scope}` (and ideally the same prefix should be enforced on grants themselves via `namespacePolicy` or route-layer rewriting). Library deployments are single-tenant by construction and unaffected.
 
 ### Ciphertext formats
 
@@ -220,7 +223,7 @@ createMemrez({
 | Phase | Title | Packages | Outcome |
 |---|---|---|---|
 | **P1** | Crypto core & scope keys | `core` | Keyed+versioned AES-GCM, `KeySource` (env/static), DEK cache, `ScopeKeyStore` interface |
-| **P2** | Memrez encryption | `memrez` | `withEncryption(MemoryStore)`, key-store impls (pg/sqlite/memory), `MemrezOptions.encryption`; trainer app can encrypt memories |
+| **P2** | Memrez encryption | `memrez`, `worker` | `withEncryption(MemoryStore)`, key-store impls (pg/sqlite/memory), `MemrezOptions.encryption`; memories encrypted in library *and* hosted deployments |
 | **P3** | Session encryption | `core`, `store-postgres`, `store-sqlite`, `worker`, `app` | `key_scope` column (migration v10), `withEncryption(SessionStore)`, scope threading on run requests |
 | **P4** | Manifest config & enforcement | `manifest`, `worker` | `encryption` blocks parsed + validated; fail-closed (D5); runner floor (D6) |
 | **P5** | Operations | `worker`, `core`, docs | KMS `keySource`, KEK-rotation job, shred admin API, legacy-row metric, deployment docs |
@@ -233,10 +236,11 @@ createMemrez({
 - `ScopeKeyStore` interface in core types: `get(scopeRoot)`, `put(scopeRoot, wrapped)` (conflict-safe), `delete(scopeRoot)` (shred).
 - Unit tests: round-trip, tamper detection (GCM tag), version/prefix sniffing, cache behavior.
 
-**P2 — Memrez encryption** (`packages/memrez`)
+**P2 — Memrez encryption** (`packages/memrez`, `packages/worker`)
 - `src/encryption.ts`: `withEncryption(inner, { kek, keyStore, keyScope? })` implementing all 8 `MemoryStore` methods; encrypts `content` + `blurb`.
 - `ScopeKeyStore` impls beside each store: `keys-postgres.ts`, `keys-sqlite.ts`, in-memory; `scope_keys` DDL added to each store's schema migration.
 - `MemrezOptions.encryption` sugar so `createMemrez` can wire the decorator itself.
+- Worker `resources.ts`: wrap the hosted store with `withEncryption` when `AGNTZ_DATA_KEY` is set, with `keyScope` prefixing the tenant id — gated on the §5 hosted precondition.
 - Tests: write/read round-trip, dedup through decryption, curate round-trip, legacy plaintext coexistence, scope-key isolation (scope A's DEK can't decrypt scope B), shred-then-read fails closed.
 
 **P3 — Session encryption** (`core`, `store-postgres`, `store-sqlite`, `worker`, `app`)
@@ -248,7 +252,8 @@ createMemrez({
 **P4 — Manifest config & enforcement** (`manifest`, `worker`)
 - Parser + types: `encryption: { key }` on the root agent object and on `resources.<name>` entries; enum validation `none|tenant|session|scope`; clear errors.
 - Worker: resolve declared unit + run-supplied scope → key root; **fail closed** when `scope` is declared but absent; enforce runner `minimum`; thread resolved key roots into the decorators.
-- Validation tests: silent-fallback regression (must error), floor enforcement, precedence.
+- Worker: enforce tenant-prefixed grants/key roots (`namespacePolicy` or route-layer rewrite) — the §5 hosted precondition becomes mandatory here.
+- Validation tests: silent-fallback regression (must error), floor enforcement, precedence, cross-tenant scope-collision isolation.
 
 **P5 — Operations**
 - `{ kind: "kms", keyId }` `KeySource` (AWS/GCP), with the DEK cache earning its keep.
@@ -261,7 +266,7 @@ createMemrez({
 - **Traces/runs/logs encryption** — message content is duplicated in trace and run records; until addressed, v1's honest posture is "memories + messages encrypted; traces are operational data with N-day retention." Same decorator pattern applies when prioritized.
 - **Blind-indexed topics** — per-scope HMAC index + encrypted display names, only if sensitive topic names become real.
 - **User-held "vault" tier (BYOK)** — a scope whose DEK is additionally wrapped by a user-supplied key and excluded from curation; clean landing spot exists (`keyHolder: service | user` beside `key:`), build when a customer demands it.
-- **Hosted memory endpoints + scoped read tokens** — the memory-viewer API for hosted agntz (mint grant-bound, capability-bound short-lived tokens; `GET /memory/topics`, `GET /memory/entries`). The library path (`memrez.scan()/read()` from the embedding backend) already works today and needs no new infra.
+- **Hosted memory *read* endpoints + scoped tokens** — hosted agents now get memory tools (the provider ships in the worker as of `9b5792e`), but there is still no out-of-band viewer API: mint grant-bound, capability-bound short-lived tokens; `GET /memory/topics`, `GET /memory/entries`. The library path (`memrez.scan()/read()` from an embedding backend) works today and needs no new infra.
 
 ## 13. Open questions
 
@@ -270,3 +275,4 @@ createMemrez({
 3. **Key-table backup retention** — pick the actual number (7 days?) and document it as part of the deletion story.
 4. **Where `scope_keys` lives for split deployments** (trainer app's memrez DB vs worker DB) — confirmed two tables/one format; any need for a shared shredding orchestration helper?
 5. **Per-message vs per-session encryption granularity** — current design encrypts per value with the scope DEK; is per-session sub-keying (HKDF from scope DEK + sessionId) worth it for forward-ish secrecy? Default: no, keep it simple.
+6. **Tenant-prefixing mechanics for the hosted worker** (§5 precondition) — rewrite caller grants to `{tenantId}/…` at the route layer, or enforce-and-reject via `namespacePolicy`? Rewriting is transparent but changes scope strings callers see; rejecting is explicit but breaks existing unprefixed data written since `9b5792e`.

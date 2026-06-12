@@ -569,7 +569,8 @@ scoped token                   (already built)</code></pre>
     <li><strong>Dedup and curation operate above the store.</strong> <code>Memrez.write()</code> compares content after the store returns entries; the curator reads via <code>listScopeSlice</code>, writes via <code>putEntry</code>. Both survive a decrypting decorator unchanged.</li>
     <li><strong>Sessions are decorator-clean too.</strong> Payload lives in three <code>ar_messages</code> columns — <code>content</code> (TEXT, legacy dual-write), <code>content_blocks</code> (JSONB), <code>tool_calls</code> (JSONB). <code>SessionSummary</code> has no content-derived fields; nothing searches message content.</li>
     <li><strong><code>user_id</code> is the tenant.</strong> End users of a customer app (trainees) are invisible to agntz except through sessionIds and namespace strings.</li>
-    <li><strong>The worker does not use memrez.</strong> Worker deps are core/manifest/store-postgres only; <code>resolveRunnerAndManifest</code> never populates <code>RunnerConfig.resources</code>. The dependency runs the other way — <code>memrez/src/reasoner.ts</code> calls the deployed worker via <code>client.agents.run()</code> for tagging and curation.</li>
+    <li><strong>The worker hosts memrez</strong> (as of <code>9b5792e</code>). <code>worker/src/resources.ts</code> builds one process-wide provider — <code>createMemrez({ store })</code> exposed as <code>resources.memory</code> — and every runner the worker creates receives it. The store follows <code>MEMREZ_STORE</code>/<code>STORE</code> and connects via <code>MEMREZ_DATABASE_URL ?? DATABASE_URL</code> — <strong>memrez tables live in the worker's own database by default</strong>, beside <code>ar_sessions</code>/<code>ar_messages</code>. Manifests declaring <code>resources.memory</code> activate it. Hosted memrez currently runs the deterministic reasoner — no LLM tagger/curator server-side; embedding apps still point <code>memrez/src/reasoner.ts</code> at the worker via <code>client.agents.run()</code>.</li>
+    <li><strong>Grants are caller-supplied and unprefixed.</strong> Run requests carry namespace grants as <code>context: string[]</code>; <code>WorkerAPIOptions.namespacePolicy</code> exists but <code>server.ts</code> sets none. The hosted memrez store is shared across tenants with scope as the only partition — nothing today stops two tenants from asserting the same scope string. See §5 for why encryption turns this from an isolation bug into a key-sharing hazard.</li>
     <li><strong>Manifest seams exist.</strong> The parser already handles a <code>resources</code> block (<code>manifest/src/parser.ts:72</code>); the worker bridge threads namespace grants for resource providers (<code>worker/src/bridge.ts:50</code>).</li>
   </ul>
 </section>
@@ -699,9 +700,13 @@ scoped token                   (already built)</code></pre>
   <aside class="note">DEK creation is race-safe: generate → wrap → <code>INSERT … ON CONFLICT DO NOTHING</code> → re-read.</aside>
 
   <ul class="plain">
-    <li>One <code>scope_keys</code> table lives <strong>beside each store</strong> — the embedding app's memrez DB, the worker's postgres. Sharing a database means sharing the table; split deployments mean "shred subject X" is one delete per database. Same format everywhere.</li>
+    <li>One <code>scope_keys</code> table lives <strong>beside each store</strong>. In the hosted worker, memrez and sessions share the worker's database by default (post-<code>9b5792e</code>), so one table — and one shred delete — covers a subject's chats <em>and</em> memories. Split deployments (an embedding app's own memrez DB) get their own table; same format everywhere.</li>
     <li><strong>DEK cache:</strong> unwrapped DEKs cached in-process (small LRU, short TTL). With an env KEK it's a micro-optimization; with KMS it is essential — one billed unwrap per scope per process instead of per row.</li>
   </ul>
+
+  <aside class="note">In the plaintext store, a scope collision is a data-isolation bug. Under scope-keyed encryption it becomes a shared DEK — strictly worse. Hence: precondition, not nice-to-have.</aside>
+
+  <p><strong>Precondition for the hosted worker — tenant-prefixed key roots.</strong> The hosted memrez store is multi-tenant with scope as the only partition, and grants are caller-supplied (§2). Under scope-keyed encryption, two tenants asserting <code>app/user/u123</code> would silently <strong>share a DEK</strong> — a cross-tenant blast-radius leak. Before encryption is enabled on the hosted worker, the effective key root must be <code>{tenantId}/{scope}</code>, and ideally the same prefix is enforced on grants themselves via <code>namespacePolicy</code> or route-layer rewriting. Library deployments are single-tenant by construction and unaffected.</p>
 
   <h3>Ciphertext formats</h3>
   <table>
@@ -854,7 +859,7 @@ inner store writes ciphertext, unaware         (dedup · curation · tools · vi
     <thead><tr><th>Phase</th><th>Title</th><th>Packages</th><th>Outcome</th></tr></thead>
     <tbody>
       <tr><td>P1</td><td>Crypto core &amp; scope keys</td><td><code>core</code></td><td>Keyed + versioned AES-GCM, <code>KeySource</code>, DEK cache, <code>ScopeKeyStore</code> interface</td></tr>
-      <tr><td>P2</td><td>Memrez encryption</td><td><code>memrez</code></td><td><code>withEncryption(MemoryStore)</code> + key-store impls; trainer app can encrypt memories</td></tr>
+      <tr><td>P2</td><td>Memrez encryption</td><td><code>memrez</code> <code>worker</code></td><td><code>withEncryption(MemoryStore)</code> + key-store impls; memories encrypted in library <em>and</em> hosted deployments</td></tr>
       <tr><td>P3</td><td>Session encryption</td><td><code>core</code> <code>store-pg</code> <code>store-sqlite</code> <code>worker</code> <code>app</code></td><td><code>key_scope</code> column, <code>withEncryption(SessionStore)</code>, scope threading on runs</td></tr>
       <tr><td>P4</td><td>Manifest config &amp; enforcement</td><td><code>manifest</code> <code>worker</code></td><td><code>encryption</code> blocks parsed + validated; fail-closed; runner floor</td></tr>
       <tr><td>P5</td><td>Operations</td><td><code>worker</code> <code>core</code> docs</td><td>KMS keySource, rotation job, shred API, legacy-row metric</td></tr>
@@ -872,11 +877,12 @@ inner store writes ciphertext, unaware         (dedup · curation · tools · vi
   </div>
 
   <div class="phase">
-    <h3><span class="pn">P2</span> Memrez encryption <span class="pkg">packages/memrez</span></h3>
+    <h3><span class="pn">P2</span> Memrez encryption <span class="pkg">packages/memrez · packages/worker</span></h3>
     <ul>
       <li><code>src/encryption.ts</code>: <code>withEncryption(inner, { kek, keyStore, keyScope? })</code> implementing all 8 <code>MemoryStore</code> methods; encrypts <code>content</code> + <code>blurb</code>.</li>
       <li><code>ScopeKeyStore</code> impls beside each store (pg / sqlite / memory); <code>scope_keys</code> DDL in each store's schema migration.</li>
       <li><code>MemrezOptions.encryption</code> sugar so <code>createMemrez</code> wires the decorator itself.</li>
+      <li>Worker <code>resources.ts</code>: wrap the hosted store with <code>withEncryption</code> when <code>AGNTZ_DATA_KEY</code> is set, with <code>keyScope</code> prefixing the tenant id — gated on the §5 hosted precondition.</li>
       <li>Tests: round-trip, dedup through decryption, curate round-trip, legacy coexistence, scope-key isolation, shred-then-read fails closed.</li>
     </ul>
   </div>
@@ -896,7 +902,8 @@ inner store writes ciphertext, unaware         (dedup · curation · tools · vi
     <ul>
       <li>Parser + types: <code>encryption: { key }</code> on the root agent object and on <code>resources.&lt;name&gt;</code> entries; enum validation with clear errors.</li>
       <li>Worker: resolve declared unit + run-supplied scope → key root; <strong>fail closed</strong> when scope is declared but absent; enforce runner <code>minimum</code>; thread key roots into decorators.</li>
-      <li>Tests: silent-fallback regression (must error), floor enforcement, precedence.</li>
+      <li>Worker: enforce tenant-prefixed grants/key roots (<code>namespacePolicy</code> or route-layer rewrite) — the §5 hosted precondition becomes mandatory here.</li>
+      <li>Tests: silent-fallback regression (must error), floor enforcement, precedence, cross-tenant scope-collision isolation.</li>
     </ul>
   </div>
 
@@ -919,7 +926,7 @@ inner store writes ciphertext, unaware         (dedup · curation · tools · vi
     <li><strong>Traces / runs / logs encryption.</strong> Message content is duplicated in trace and run records; until addressed, v1's honest posture is "memories + messages encrypted; traces are operational data with N-day retention." The same decorator pattern applies when prioritized.</li>
     <li><strong>Blind-indexed topics.</strong> Per-scope HMAC index + encrypted display names — only if sensitive topic names become real.</li>
     <li><strong>User-held "vault" tier (BYOK).</strong> A scope whose DEK is additionally wrapped by a user-supplied key and excluded from curation. A clean landing spot exists (<code>keyHolder: service | user</code> beside <code>key:</code>) — build when a customer demands it.</li>
-    <li><strong>Hosted memory endpoints + scoped read tokens.</strong> The memory-viewer API for hosted agntz: mint grant-bound, capability-bound, short-lived tokens; <code>GET /memory/topics</code>, <code>GET /memory/entries</code>. The library path — <code>memrez.scan()</code> / <code>read()</code> from the embedding backend — already works today and needs no new infrastructure.</li>
+    <li><strong>Hosted memory <em>read</em> endpoints + scoped tokens.</strong> Hosted agents now get memory tools (the provider ships in the worker as of <code>9b5792e</code>), but there is still no out-of-band viewer API: mint grant-bound, capability-bound, short-lived tokens; <code>GET /memory/topics</code>, <code>GET /memory/entries</code>. The library path — <code>memrez.scan()</code> / <code>read()</code> from an embedding backend — works today and needs no new infrastructure.</li>
   </ul>
 </section>
 
@@ -933,6 +940,7 @@ inner store writes ciphertext, unaware         (dedup · curation · tools · vi
     <li><strong>Key-table backup retention</strong> — pick the number (7 days?) and document it as part of the deletion story.</li>
     <li><strong><code>scope_keys</code> placement for split deployments</strong> (trainer app's memrez DB vs. worker DB) — two tables, one format is confirmed; does a shared shredding-orchestration helper earn its place?</li>
     <li><strong>Per-message sub-keying</strong> (HKDF from scope DEK + sessionId) for forward-ish secrecy — default no; keep it simple.</li>
+    <li><strong>Tenant-prefixing mechanics for the hosted worker</strong> (§5 precondition) — rewrite caller grants to <code>{tenantId}/…</code> at the route layer, or enforce-and-reject via <code>namespacePolicy</code>? Rewriting is transparent but changes scope strings callers see; rejecting is explicit but breaks existing unprefixed data written since <code>9b5792e</code>.</li>
   </ol>
 </section>
 
