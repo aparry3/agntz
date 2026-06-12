@@ -266,7 +266,7 @@ createMemrez({
 - **Traces/runs/logs encryption** — message content is duplicated in trace and run records; until addressed, v1's honest posture is "memories + messages encrypted; traces are operational data with N-day retention." Same decorator pattern applies when prioritized.
 - **Blind-indexed topics** — per-scope HMAC index + encrypted display names, only if sensitive topic names become real.
 - **User-held "vault" tier (BYOK)** — a scope whose DEK is additionally wrapped by a user-supplied key and excluded from curation; clean landing spot exists (`keyHolder: service | user` beside `key:`), build when a customer demands it.
-- **Hosted memory *read* endpoints + scoped tokens** — hosted agents now get memory tools (the provider ships in the worker as of `9b5792e`), but there is still no out-of-band viewer API: mint grant-bound, capability-bound short-lived tokens; `GET /memory/topics`, `GET /memory/entries`. The library path (`memrez.scan()/read()` from an embedding backend) works today and needs no new infra.
+- **Scoped end-user tokens for memory access** — mint grant-bound, capability-bound short-lived tokens for direct user→worker memory reads. The viewer API itself is no longer parked: hosted read endpoints, the SDK `list()` surface, preload, and curation wiring are now planned in [`memory-observability-plan.md`](./memory-observability-plan.md) (v1 uses app→worker internal auth; only the end-user token tier stays parked here).
 
 ## 13. Open questions
 
