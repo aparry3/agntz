@@ -1,0 +1,948 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data Encryption at Rest — agntz + memrez · Engineering Plan</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,360;0,9..144,460;0,9..144,560;0,9..144,640;1,9..144,400&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,460;0,6..72,560;1,6..72,400;1,6..72,500&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap');
+
+:root {
+  --paper:    #f6f1e6;
+  --paper-2:  #efe7d4;
+  --paper-3:  #e9dfc8;
+  --ink:      #211d15;
+  --ink-soft: #57503f;
+  --muted:    #84785f;
+  --accent:   #9a3a20;
+  --accent-2: #31506e;
+  --good:     #44663f;
+  --rule:     #d8cdb2;
+  --rule-2:   #c4b896;
+  --serif: "Newsreader", "Iowan Old Style", Georgia, serif;
+  --disp:  "Fraunces", Georgia, serif;
+  --mono:  "IBM Plex Mono", "SF Mono", Menlo, monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 17px;
+  line-height: 1.66;
+  -webkit-font-smoothing: antialiased;
+  position: relative;
+}
+
+/* paper grain */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+  opacity: .5;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.035 0'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+.sheet {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 64px 32px 96px;
+  position: relative;
+}
+
+/* ── document header ─────────────────────────────── */
+
+header { position: relative; margin-bottom: 56px; }
+
+.doc-meta {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--accent);
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--ink);
+  padding-bottom: 10px;
+  animation: rise .7s cubic-bezier(.2,.7,.2,1) both;
+}
+
+h1 {
+  font-family: var(--disp);
+  font-weight: 460;
+  font-size: clamp(44px, 6.4vw, 78px);
+  line-height: 1.02;
+  letter-spacing: -0.015em;
+  margin: 34px 0 10px;
+  max-width: 14ch;
+  font-variation-settings: "opsz" 100;
+  animation: rise .7s .08s cubic-bezier(.2,.7,.2,1) both;
+}
+h1 em {
+  font-style: italic;
+  font-weight: 400;
+  color: var(--accent);
+}
+
+.subtitle {
+  font-size: 21px;
+  font-style: italic;
+  color: var(--ink-soft);
+  max-width: 52ch;
+  margin-bottom: 40px;
+  animation: rise .7s .16s cubic-bezier(.2,.7,.2,1) both;
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.stamp {
+  position: absolute;
+  top: 118px;
+  right: 0;
+  transform: rotate(-7deg);
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: .3em;
+  text-transform: uppercase;
+  color: var(--accent);
+  border: 2.5px double var(--accent);
+  padding: 9px 18px 9px 22px;
+  opacity: .82;
+  animation: stampIn .5s .45s cubic-bezier(.2,1.4,.4,1) both;
+}
+@keyframes stampIn {
+  from { opacity: 0; transform: rotate(-7deg) scale(1.5); }
+  to   { opacity: .82; transform: rotate(-7deg) scale(1); }
+}
+
+.preamble {
+  border-top: 1px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  animation: rise .7s .24s cubic-bezier(.2,.7,.2,1) both;
+}
+.preamble div {
+  padding: 14px 18px 16px;
+  border-right: 1px solid var(--rule-2);
+}
+.preamble div:last-child { border-right: none; }
+.preamble dt {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.preamble dd {
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.preamble dd .draft { color: var(--accent); font-weight: 600; }
+
+/* ── layout: article + margin notes ──────────────── */
+
+article {
+  max-width: 690px;
+  position: relative;
+}
+
+@media (min-width: 1080px) {
+  .note {
+    float: right;
+    clear: right;
+    width: 268px;
+    margin-right: -342px;
+    margin-top: 4px;
+    margin-bottom: 18px;
+  }
+}
+.note {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--ink-soft);
+  padding-left: 14px;
+  border-left: 1px solid var(--rule-2);
+}
+.note::before {
+  content: "✳";
+  color: var(--accent);
+  display: block;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+@media (max-width: 1079px) {
+  .note {
+    margin: 20px 0;
+    background: var(--paper-2);
+    border-left: 2px solid var(--accent);
+    padding: 12px 16px;
+  }
+  .note::before { display: inline; margin-right: 6px; }
+}
+
+/* ── table of contents ───────────────────────────── */
+
+nav.toc {
+  margin: 0 0 72px;
+  max-width: 690px;
+  counter-reset: toc;
+}
+nav.toc h2 {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .24em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 16px;
+}
+nav.toc ol { list-style: none; }
+nav.toc li { counter-increment: toc; }
+nav.toc a {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  text-decoration: none;
+  color: var(--ink);
+  padding: 6.5px 0;
+  border-bottom: 1px solid var(--rule);
+  font-size: 16.5px;
+}
+nav.toc a::before {
+  content: "§" counter(toc);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--accent);
+  min-width: 34px;
+}
+nav.toc a::after {
+  content: "";
+  flex: 1;
+  border-bottom: 1px dotted var(--rule-2);
+  transform: translateY(-4px);
+}
+nav.toc a:hover { color: var(--accent); }
+nav.toc a:hover::after { border-bottom-color: var(--accent); }
+
+/* ── sections ────────────────────────────────────── */
+
+section { margin-bottom: 76px; }
+
+h2.sec {
+  font-family: var(--disp);
+  font-weight: 560;
+  font-size: 31px;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+  margin-bottom: 22px;
+  padding-top: 18px;
+  border-top: 2px solid var(--ink);
+  display: flex;
+  gap: 18px;
+  align-items: baseline;
+}
+h2.sec .n {
+  font-family: var(--mono);
+  font-weight: 400;
+  font-size: 14px;
+  color: var(--accent);
+  letter-spacing: .05em;
+  white-space: nowrap;
+}
+
+h3 {
+  font-family: var(--disp);
+  font-weight: 560;
+  font-size: 20.5px;
+  margin: 36px 0 12px;
+}
+
+p { margin-bottom: 16px; }
+p strong { font-weight: 560; }
+em { font-style: italic; }
+
+ul.plain, ol.plain { margin: 0 0 16px 22px; }
+ul.plain li, ol.plain li { margin-bottom: 9px; padding-left: 4px; }
+ul.plain li::marker { color: var(--accent); }
+ol.plain li::marker { color: var(--accent); font-family: var(--mono); font-size: 14px; }
+
+a { color: var(--accent-2); text-decoration-color: var(--rule-2); text-underline-offset: 3px; }
+
+/* ── code ────────────────────────────────────────── */
+
+code {
+  font-family: var(--mono);
+  font-size: .82em;
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 1px 5px 2px;
+  white-space: nowrap;
+}
+
+pre {
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent-2);
+  padding: 18px 22px;
+  overflow-x: auto;
+  margin: 20px 0 24px;
+  line-height: 1.58;
+}
+pre code {
+  background: none; border: none; padding: 0;
+  font-size: 13px;
+  white-space: pre;
+}
+pre .c  { color: var(--muted); font-style: italic; }
+pre .kw { color: var(--accent); }
+pre .s  { color: var(--accent-2); }
+
+/* ── figures / diagrams ──────────────────────────── */
+
+figure.diagram {
+  margin: 26px 0 30px;
+  break-inside: avoid;
+}
+figure.diagram pre {
+  border: 1px solid var(--rule-2);
+  border-left: 1px solid var(--rule-2);
+  background: var(--paper-2);
+  padding: 22px 26px;
+}
+figure.diagram pre code { font-size: 12.5px; line-height: 1.62; }
+figcaption {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-top: 10px;
+}
+figcaption b { color: var(--accent); font-weight: 600; }
+
+/* ── tables ──────────────────────────────────────── */
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 20px 0 26px;
+  font-size: 15px;
+  line-height: 1.5;
+  break-inside: avoid;
+}
+th {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--ink-soft);
+  text-align: left;
+  padding: 8px 14px 8px 0;
+  border-top: 2px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+}
+td {
+  padding: 10px 14px 10px 0;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+td:first-child { font-weight: 560; }
+table .y, table .x {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  white-space: nowrap;
+}
+table .y { color: var(--good); }
+table .x { color: var(--accent); }
+
+.k {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  background: var(--paper-3);
+  border: 1px solid var(--rule-2);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 1px 7px 2px;
+  white-space: nowrap;
+}
+
+/* ── decisions ───────────────────────────────────── */
+
+.decision {
+  border: 1px solid var(--ink);
+  border-left: 4px solid var(--accent);
+  margin: 26px 0;
+  break-inside: avoid;
+  background: linear-gradient(180deg, rgba(154,58,32,.045), rgba(154,58,32,0) 38%);
+}
+.decision .tab {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: var(--paper);
+  background: var(--accent);
+  padding: 4px 12px 5px;
+  margin: 0;
+}
+.decision .body { padding: 14px 22px 8px; }
+.decision h4 {
+  font-family: var(--disp);
+  font-weight: 560;
+  font-size: 18.5px;
+  margin-bottom: 8px;
+}
+.decision p { font-size: 16px; margin-bottom: 12px; }
+.decision .alt {
+  font-size: 14.5px;
+  color: var(--ink-soft);
+  border-top: 1px dotted var(--rule-2);
+  padding-top: 10px;
+}
+.decision .alt b {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ── phases ──────────────────────────────────────── */
+
+.phase { margin: 34px 0; break-inside: avoid; }
+.phase h3 {
+  display: flex; align-items: center; gap: 14px;
+  margin: 0 0 10px;
+}
+.phase .pn {
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--paper);
+  background: var(--ink);
+  padding: 3px 9px 4px;
+  letter-spacing: .08em;
+}
+.phase .pkg {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+  letter-spacing: .04em;
+}
+.phase ul { margin: 0 0 0 22px; }
+.phase li { margin-bottom: 7px; padding-left: 4px; font-size: 16px; }
+.phase li::marker { color: var(--accent); }
+
+/* ── misc ────────────────────────────────────────── */
+
+.dividend {
+  text-align: center;
+  color: var(--rule-2);
+  font-size: 18px;
+  letter-spacing: 1.2em;
+  margin: 0 0 76px;
+}
+
+footer {
+  margin-top: 90px;
+  border-top: 2px solid var(--ink);
+  padding-top: 18px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+footer .fin { color: var(--ink); font-size: 15px; }
+
+/* ── print ───────────────────────────────────────── */
+
+@page { margin: 16mm; }
+@media print {
+  body::before { display: none; }
+  body { font-size: 11.5pt; background: #fff; }
+  .sheet { padding: 0; max-width: none; }
+  article { max-width: none; }
+  .note { float: none; width: auto; margin: 12pt 0; }
+  .stamp { animation: none; }
+  h1, .doc-meta, .subtitle, .preamble { animation: none; }
+  section { break-inside: auto; }
+  h2.sec { break-after: avoid; }
+  pre, figure.diagram, table, .decision, .phase { break-inside: avoid; }
+  nav.toc a::before { color: var(--accent); }
+  a { color: var(--ink); text-decoration: none; }
+}
+</style>
+</head>
+<body>
+<div class="sheet">
+
+<header>
+  <div class="doc-meta">
+    <span>agntz · engineering plan</span>
+    <span>planning/data-encryption-plan</span>
+  </div>
+  <div class="stamp">Draft · For Review</div>
+  <h1>Data Encryption <em>at Rest</em></h1>
+  <p class="subtitle">Envelope encryption with service-held master keys and per-scope data keys, for memrez memories and agntz sessions — plus the permission story for reading a user's memory.</p>
+  <dl class="preamble">
+    <div><dt>Status</dt><dd><span class="draft">DRAFT</span></dd></div>
+    <div><dt>Date</dt><dd>2026-06-12</dd></div>
+    <div><dt>Author</dt><dd>Aaron Parry<br>w/ Claude</dd></div>
+    <div><dt>Packages</dt><dd>memrez · core · store-pg · store-sqlite · manifest · worker</dd></div>
+  </dl>
+</header>
+
+<nav class="toc">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#summary"><span>Summary &amp; trust posture</span></a></li>
+    <li><a href="#current"><span>Current state — verified findings</span></a></li>
+    <li><a href="#threat"><span>Threat model</span></a></li>
+    <li><a href="#decisions"><span>Design decisions D1–D8</span></a></li>
+    <li><a href="#keys"><span>Key hierarchy &amp; storage</span></a></li>
+    <li><a href="#paths"><span>Data paths</span></a></li>
+    <li><a href="#fields"><span>Encrypted vs. plaintext fields</span></a></li>
+    <li><a href="#config"><span>Configuration surface</span></a></li>
+    <li><a href="#migration"><span>Migration &amp; compatibility</span></a></li>
+    <li><a href="#lifecycle"><span>Key lifecycle — rotation &amp; shredding</span></a></li>
+    <li><a href="#phases"><span>Rollout phases P1–P5</span></a></li>
+    <li><a href="#parked"><span>Parked — explicit non-goals</span></a></li>
+    <li><a href="#questions"><span>Open questions</span></a></li>
+  </ol>
+</nav>
+
+<article>
+
+<!-- ════════════════════ §1 ════════════════════ -->
+<section id="summary">
+  <h2 class="sec"><span class="n">§ 1</span>Summary &amp; trust posture</h2>
+
+  <p>Add optional, config-driven encryption at rest for memory entries (memrez) and chat history (agntz sessions), using <strong>envelope encryption with a service-held master key and per-scope data keys</strong>. Alongside it, expose a permission-gated way to read a user's memories — the "memory viewer" use case that motivated this work.</p>
+
+  <aside class="note">The three layers compose without knowing about each other — permissions bind identities to grants, memrez binds grants to scopes, the keyring binds scopes to keys. Nothing fights the existing architecture.</aside>
+
+  <figure class="diagram">
+<pre><code>identity ──── auth layer ────▶ grants ─── grants.ts ───▶ scopes ─── keyring ───▶ DEK
+
+Clerk session                  visibleScopes()            scope_keys table
+API key                        assertReadableScope()      wrapped per scope root
+scoped token                   (already built)</code></pre>
+    <figcaption><b>Fig. 1</b> — The three independent layers</figcaption>
+  </figure>
+
+  <p><strong>Trust posture, stated plainly:</strong> this is encryption <em>at rest</em> with service-held keys — the same posture as OpenAI and Anthropic. It defends against database dumps, stolen backups, and infrastructure-level snooping. It does <strong>not</strong> defend against the service operator: agntz can always decrypt. Who-may-read is enforced by grants at the API layer; keys decide blast radius, shredding, and what a leaked dump exposes. True user-held (E2E) keys are explicitly parked (§12): they would break offline curation, lock the operator out of debugging, and make key loss equal data loss.</p>
+</section>
+
+<!-- ════════════════════ §2 ════════════════════ -->
+<section id="current">
+  <h2 class="sec"><span class="n">§ 2</span>Current state — verified findings</h2>
+
+  <p>What already exists in the codebase and shapes the design:</p>
+
+  <ul class="plain">
+    <li><strong>AES-256-GCM primitives exist.</strong> <code>packages/core/src/utils/crypto.ts</code> — <code>encryptSecret</code>/<code>decryptSecret</code> with a master key from <code>AGNTZ_SECRET_KEY</code>, format <code>iv:tag:ct</code> (base64, no version prefix). Used today for <code>ar_secrets</code>. Needs generalizing to accept a key argument instead of closing over the global secret.</li>
+    <li><strong>Memrez partitions purely by scope.</strong> No <code>user_id</code> column anywhere — the namespace string is the partition. Verified: every query in <code>packages/memrez/src/postgres.ts</code> filters on <code>scope</code>/<code>topic</code>/<code>status</code> only. <code>content</code> and <code>blurb</code> are never filtered or searched — pure read/write blobs, encryptable with zero query changes.</li>
+    <li><strong><code>MemoryStore</code> is an 8-method interface</strong> (<code>memrez/src/types.ts:115</code>) with in-memory, SQLite, and Postgres implementations — encryption can be one decorator over any of them, not a fork of three.</li>
+    <li><strong>Dedup and curation operate above the store.</strong> <code>Memrez.write()</code> compares content after the store returns entries; the curator reads via <code>listScopeSlice</code>, writes via <code>putEntry</code>. Both survive a decrypting decorator unchanged.</li>
+    <li><strong>Sessions are decorator-clean too.</strong> Payload lives in three <code>ar_messages</code> columns — <code>content</code> (TEXT, legacy dual-write), <code>content_blocks</code> (JSONB), <code>tool_calls</code> (JSONB). <code>SessionSummary</code> has no content-derived fields; nothing searches message content.</li>
+    <li><strong><code>user_id</code> is the tenant.</strong> End users of a customer app (trainees) are invisible to agntz except through sessionIds and namespace strings.</li>
+    <li><strong>The worker does not use memrez.</strong> Worker deps are core/manifest/store-postgres only; <code>resolveRunnerAndManifest</code> never populates <code>RunnerConfig.resources</code>. The dependency runs the other way — <code>memrez/src/reasoner.ts</code> calls the deployed worker via <code>client.agents.run()</code> for tagging and curation.</li>
+    <li><strong>Manifest seams exist.</strong> The parser already handles a <code>resources</code> block (<code>manifest/src/parser.ts:72</code>); the worker bridge threads namespace grants for resource providers (<code>worker/src/bridge.ts:50</code>).</li>
+  </ul>
+</section>
+
+<!-- ════════════════════ §3 ════════════════════ -->
+<section id="threat">
+  <h2 class="sec"><span class="n">§ 3</span>Threat model</h2>
+
+  <table>
+    <thead><tr><th style="width:46%">Threat</th><th style="width:14%">Mitigated</th><th>How / why not</th></tr></thead>
+    <tbody>
+      <tr><td>Stolen DB dump / SQLi exfiltration</td><td class="y">✓ YES</td><td>Content columns are ciphertext; DEKs in the dump are wrapped by a KEK that is not in the database</td></tr>
+      <tr><td>Stolen or leaked backup</td><td class="y">✓ YES*</td><td>Same — with the §10 retention caveat: a backup also contains the wrapped-key table</td></tr>
+      <tr><td>Curious / compromised DB credentials</td><td class="y">✓ YES</td><td>Plaintext never stored; decryption requires the runtime-held KEK</td></tr>
+      <tr><td>Cross-user exposure in a leaked dump</td><td class="y">✓ YES</td><td>Per-scope DEKs — one unwrapped key exposes one scope, not the table</td></tr>
+      <tr><td>"Delete my data" vs. immutable backups</td><td class="y">✓ YES</td><td>Crypto-shredding: delete the scope's wrapped DEK (§10)</td></tr>
+      <tr><td>Compromised app server holding the KEK</td><td class="x">✗ NO</td><td>KEK holder unwraps anything. Mitigate later with KMS + IAM (P5)</td></tr>
+      <tr><td>The service operator (agntz itself)</td><td class="x">✗ BY DESIGN</td><td>The hybrid bargain — required for offline curation and operator debugging</td></tr>
+      <tr><td>AuthZ bugs (reading a scope you shouldn't)</td><td class="x">✗ N/A</td><td>Access control is grants at the API layer; encryption is not an access-control mechanism</td></tr>
+      <tr><td>Plaintext copies in runs / traces / logs</td><td class="x">✗ PARKED</td><td>Message content is duplicated in trace and run records — see §12</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ════════════════════ §4 ════════════════════ -->
+<section id="decisions">
+  <h2 class="sec"><span class="n">§ 4</span>Design decisions</h2>
+
+  <div class="decision">
+    <span class="tab">Decision D1</span>
+    <div class="body">
+      <h4>Envelope encryption: service-held KEK, per-scope DEKs — the hybrid</h4>
+      <p>One master key (KEK) held by the service (<code>AGNTZ_DATA_KEY</code> env var now, KMS later). Each scope gets a random 32-byte DEK stored only <em>wrapped</em>. Per-scope keys give isolation, blast-radius control, individual shredding, cheap rotation. A service-held KEK keeps <code>curate()</code> (offline, no user present), the operator memory-viewer, and account recovery working. The user's token is never a cryptographic ingredient — it is an authorization gate only.</p>
+      <p class="alt"><b>Rejected</b> — user-held / token-derived keys: breaks offline curation, locks the operator out, makes key loss data loss. Parked as an opt-in vault tier (§12).</p>
+    </div>
+  </div>
+
+  <aside class="note">Per-user vs. user-held are different axes: <em>per-user</em> is how many DEKs exist; <em>user-held</em> is who can unwrap them. The hybrid takes the first without the second.</aside>
+
+  <div class="decision">
+    <span class="tab">Decision D2</span>
+    <div class="body">
+      <h4>The key unit is the scope, not a user or an org</h4>
+      <p>"User" and "org" mean nothing to agntz — <code>user_id</code> is the tenant, memrez only knows scopes. The distinctions live in the <em>string the caller passes</em>: <code>app/user/u123</code> vs <code>app/org/acme</code> vs <code>app/org/acme/u123</code>. The DEK hangs off the scope root. Sessions gain a scope stamp so one key serves both the chats and the memories of one data subject; shared scopes (coach + client, teams) get their own DEKs with the semantically right shredding behavior.</p>
+    </div>
+  </div>
+
+  <div class="decision">
+    <span class="tab">Decision D3</span>
+    <div class="body">
+      <h4>Encryption is a store decorator, not a store fork</h4>
+      <p><code>withEncryption(inner, opts)</code> implements the same <code>MemoryStore</code> / <code>SessionStore</code> interface and wraps any backend. SQL below never sees plaintext; logic above — dedup, curation, tools, viewer — never sees ciphertext. Encrypted fields are exactly the ones SQL never filters.</p>
+    </div>
+  </div>
+
+  <div class="decision">
+    <span class="tab">Decision D4</span>
+    <div class="body">
+      <h4>Field named <code>encryption</code> · enum <code>none | tenant | session | scope</code></h4>
+      <p>Declared on the <strong>root agent object</strong> (governs sessions) and the <strong>memory resource object</strong> (governs entries). <code>security</code> rejected as a grab-bag name; <code>user</code>/<code>org</code> rejected as enum values per D2 — the enum names only derivation sources agntz natively has.</p>
+    </div>
+  </div>
+
+  <table>
+    <thead><tr><th>Value</th><th>Key unit</th><th>Caller cooperation</th><th>Use</th></tr></thead>
+    <tbody>
+      <tr><td><span class="k">none</span></td><td>— plaintext</td><td>no</td><td>dev; non-sensitive agents</td></tr>
+      <tr><td><span class="k">tenant</span></td><td>agntz account (<code>user_id</code>)</td><td>no</td><td>coarse floor: "encrypted at rest, period"</td></tr>
+      <tr><td><span class="k">session</span></td><td>sessionId</td><td>no</td><td>finest no-cooperation unit; fallback</td></tr>
+      <tr><td><span class="k">scope</span></td><td>caller-supplied namespace root</td><td><strong>yes</strong></td><td>the workhorse — user/org/team encoded in the string</td></tr>
+    </tbody>
+  </table>
+
+  <div class="decision">
+    <span class="tab">Decision D5</span>
+    <div class="body">
+      <h4>Fail closed</h4>
+      <p>An agent declaring <code>key: scope</code> <strong>rejects</strong> runs that arrive without a scope. No silent fallback to tenant keys — a forgotten parameter must be an error, not a quiet isolation downgrade. This is the main reason the declaration lives on the agent definition at all.</p>
+    </div>
+  </div>
+
+  <div class="decision">
+    <span class="tab">Decision D6</span>
+    <div class="body">
+      <h4>Manifests pick the unit; the runner holds the keys and the floor</h4>
+      <p>Manifests are semi-trusted content — user-editable, rewritten by the <code>agent-editor</code> LLM. They may select among policies but never carry key material, key sources, or KMS ids. Runner/worker config holds <code>keySource</code> and a <code>minimum</code> floor (prod refuses <code>none</code> even if a manifest asks).</p>
+    </div>
+  </div>
+
+  <div class="decision">
+    <span class="tab">Decision D7</span>
+    <div class="body">
+      <h4>Dev default: encryption ON with a static throwaway key</h4>
+      <p>If the encrypt path only runs in prod, its bugs ship blind. Dev uses <code>{ kind: "static" }</code> with a dummy key so the path is exercised constantly; <code>none</code> stays available explicitly for debugging raw rows.</p>
+    </div>
+  </div>
+
+  <div class="decision">
+    <span class="tab">Decision D8</span>
+    <div class="body">
+      <h4>Stamp the key scope at creation; never re-derive from current config</h4>
+      <p>Entries already carry <code>scope</code>; sessions get a <code>key_scope</code> column written at creation. Reads are self-describing, so changing an agent's declared unit later affects only new data and never orphans old ciphertext.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════ §5 ════════════════════ -->
+<section id="keys">
+  <h2 class="sec"><span class="n">§ 5</span>Key hierarchy &amp; storage</h2>
+
+  <figure class="diagram">
+<pre><code>AGNTZ_DATA_KEY / KMS          (service-held KEK, versioned)
+  │
+  ├─ wraps ─▶ DEK('app/user/u123')  ── encrypts ─▶ u123's memories + chat payloads
+  ├─ wraps ─▶ DEK('app/user/u456')  ── encrypts ─▶ u456's …
+  └─ wraps ─▶ DEK('app/org/acme')   ── encrypts ─▶ shared org memory</code></pre>
+    <figcaption><b>Fig. 2</b> — Envelope structure</figcaption>
+  </figure>
+
+<pre><code><span class="kw">CREATE TABLE</span> scope_keys (
+  scope_root   TEXT <span class="kw">PRIMARY KEY</span>,     <span class="c">-- 'app/user/u123'</span>
+  wrapped_dek  TEXT <span class="kw">NOT NULL</span>,        <span class="c">-- enc:v1:k&lt;kek_version&gt;:&lt;iv&gt;:&lt;tag&gt;:&lt;ct&gt;</span>
+  kek_version  INT  <span class="kw">NOT NULL DEFAULT</span> 1,
+  created_at   TIMESTAMPTZ <span class="kw">NOT NULL DEFAULT</span> NOW()
+);</code></pre>
+
+  <aside class="note">DEK creation is race-safe: generate → wrap → <code>INSERT … ON CONFLICT DO NOTHING</code> → re-read.</aside>
+
+  <ul class="plain">
+    <li>One <code>scope_keys</code> table lives <strong>beside each store</strong> — the embedding app's memrez DB, the worker's postgres. Sharing a database means sharing the table; split deployments mean "shred subject X" is one delete per database. Same format everywhere.</li>
+    <li><strong>DEK cache:</strong> unwrapped DEKs cached in-process (small LRU, short TTL). With an env KEK it's a micro-optimization; with KMS it is essential — one billed unwrap per scope per process instead of per row.</li>
+  </ul>
+
+  <h3>Ciphertext formats</h3>
+  <table>
+    <thead><tr><th>Location</th><th>Format</th></tr></thead>
+    <tbody>
+      <tr><td>TEXT columns (<code>content</code>, <code>blurb</code>)</td><td><code>enc:v1:&lt;b64 iv&gt;:&lt;b64 tag&gt;:&lt;b64 ct&gt;</code></td></tr>
+      <tr><td>JSONB columns (<code>content_blocks</code>, <code>tool_calls</code>)</td><td><code>{"enc":"v1","ct":"&lt;iv:tag:ct&gt;"}</code> — column type survives</td></tr>
+      <tr><td>Legacy plaintext</td><td>no <code>enc:</code> prefix / no <code>enc</code> key → passed through as-is</td></tr>
+    </tbody>
+  </table>
+  <p>Fresh random 12-byte IV per value; AES-256-GCM throughout, reusing the core primitives. The version prefix is new — the existing <code>crypto.ts</code> format has none and gains one when generalized.</p>
+</section>
+
+<!-- ════════════════════ §6 ════════════════════ -->
+<section id="paths">
+  <h2 class="sec"><span class="n">§ 6</span>Data paths</h2>
+
+  <figure class="diagram">
+<pre><code>WRITE                                          READ
+─────                                          ────
+memrez.write(grants, content)                  store.getByTopic(scopes, topic)
+  │  tagger runs on plaintext                    │  normal SQL — plaintext columns only
+  ▼  (live request)                              ▼
+withEncryption.putEntry(entry)                 rows return to decorator
+  │  keyScope(entry.scope) → key root            │  sniff "enc:" prefix
+  │  fetch wrapped DEK (create on miss)          │  unwrap DEK (cached) · decrypt
+  │  unwrap with KEK (cached)                    │  no prefix? legacy row → pass through
+  │  AES-256-GCM(DEK, content)                   ▼
+  ▼                                            caller receives plaintext MemoryEntry
+inner store writes ciphertext, unaware         (dedup · curation · tools · viewer)</code></pre>
+    <figcaption><b>Fig. 3</b> — Write and read through the decorator</figcaption>
+  </figure>
+
+  <p><strong>Why curation just works:</strong> the curator calls <code>listScopeSlice</code> → decorator decrypts → LLM consolidates plaintext → replacements flow back through <code>putEntry</code> → re-encrypted under the same DEK. No user present, none needed — the KEK is the service's. This is the entire payoff of D1.</p>
+
+  <aside class="note">Forgetting the legacy dual-write <code>content</code> TEXT column would leak every message in flattened form. The session decorator handles all three columns or refuses to construct.</aside>
+
+  <p><strong>Sessions:</strong> identical shape on <code>SessionStore.append</code> / <code>getMessages</code>, keyed by the session's stamped <code>key_scope</code>. Three payload columns are encrypted — <code>content</code>, <code>content_blocks</code>, <code>tool_calls</code>. Tool calls are often the most sensitive payload of all: tool arguments and results are where workout logs and health data actually flow.</p>
+</section>
+
+<!-- ════════════════════ §7 ════════════════════ -->
+<section id="fields">
+  <h2 class="sec"><span class="n">§ 7</span>Encrypted vs. plaintext fields</h2>
+
+  <table>
+    <thead><tr><th>Store</th><th>Encrypted</th><th>Plaintext — kept queryable</th></tr></thead>
+    <tbody>
+      <tr><td>memrez <code>entries</code></td><td><code>content</code></td><td><code>scope</code>, <code>topics</code> (join table), <code>type</code>, <code>status</code>, <code>superseded_by</code>, timestamps</td></tr>
+      <tr><td>memrez <code>topic_meta</code></td><td><code>blurb</code></td><td><code>scope</code>, <code>topic</code>, <code>last_updated_at</code></td></tr>
+      <tr><td><code>ar_messages</code></td><td><code>content</code>, <code>content_blocks</code>, <code>tool_calls</code></td><td><code>role</code>, <code>session_id</code>, <code>tool_call_id</code>, <code>timestamp</code></td></tr>
+      <tr><td><code>ar_sessions</code></td><td>—</td><td><code>id</code>, <code>agent_id</code>, <code>user_id</code>, <strong>new:</strong> <code>key_scope</code>, timestamps</td></tr>
+    </tbody>
+  </table>
+
+  <p>Topic names stay plaintext deliberately — <code>listTopics</code>/<code>getByTopic</code> need them indexable, and they're low-sensitivity labels. If a deployment ever needs sensitive topic names, the upgrade path is a blind index: per-scope HMAC in the index column, encrypted display name alongside. Parked (§12).</p>
+</section>
+
+<!-- ════════════════════ §8 ════════════════════ -->
+<section id="config">
+  <h2 class="sec"><span class="n">§ 8</span>Configuration surface</h2>
+
+  <h3>Agent manifest — semi-trusted; selects policy only</h3>
+
+<pre><code><span class="c"># personal agent — every trainee keyed to themselves</span>
+<span class="kw">name:</span> personal-trainer
+<span class="kw">encryption:</span>
+  <span class="kw">key:</span> <span class="s">scope</span>            <span class="c"># sessions keyed to the scope each run supplies</span>
+<span class="kw">resources:</span>
+  <span class="kw">memory:</span>
+    <span class="kw">kind:</span> <span class="s">memrez</span>
+    <span class="kw">encryption:</span>
+      <span class="kw">key:</span> <span class="s">scope</span>        <span class="c"># DEKs at the grant root — entries carry scopes natively</span>
+
+<span class="c"># org agent — private member chats, shared org memory</span>
+<span class="kw">name:</span> acme-assistant
+<span class="kw">encryption:</span>
+  <span class="kw">key:</span> <span class="s">scope</span>            <span class="c"># runs invoked with app/org/acme/u123 → per-member chat keys</span>
+<span class="kw">resources:</span>
+  <span class="kw">memory:</span>
+    <span class="kw">kind:</span> <span class="s">memrez</span>
+    <span class="kw">encryption:</span>
+      <span class="kw">key:</span> <span class="s">scope</span>        <span class="c"># runs grant app/org/acme → one org memory key</span></code></pre>
+
+  <aside class="note">Both agents say <code>key: scope</code> — <em>user vs. org is data, not config.</em> It lives in the namespace string the caller passes at invocation.</aside>
+
+  <h3>Runner / worker config — trusted; holds key material and the floor</h3>
+
+<pre><code>createRunner({
+  store,
+  <span class="kw">encryption</span>: {
+    <span class="kw">keySource</span>: { kind: <span class="s">"env"</span>, var: <span class="s">"AGNTZ_DATA_KEY"</span> },
+    <span class="c">// | { kind: "static", key }   (dev)</span>
+    <span class="c">// | { kind: "kms", keyId }    (P5)</span>
+    <span class="kw">default</span>: <span class="s">"tenant"</span>,     <span class="c">// when a manifest is silent</span>
+    <span class="kw">minimum</span>: <span class="s">"tenant"</span>,     <span class="c">// refuse manifests below this — prod refuses `none`</span>
+  },
+});</code></pre>
+
+  <h3>Memrez as a library — e.g. the trainer backend</h3>
+
+<pre><code>createMemrez({
+  store: <span class="kw">withEncryption</span>(new PostgresMemoryStore(pool), {
+    <span class="kw">kek</span>: { kind: <span class="s">"env"</span>, var: <span class="s">"AGNTZ_DATA_KEY"</span> },
+    <span class="kw">keyStore</span>: new PostgresScopeKeyStore(pool),
+    <span class="kw">keyScope</span>: grantRoot,   <span class="c">// default: map entry scope → grant root</span>
+  }),
+});</code></pre>
+
+  <h3>Resolution &amp; precedence</h3>
+  <ol class="plain">
+    <li>The manifest declares the <em>shape</em> (<code>key: scope</code>); each run supplies the <em>value</em> (<code>scope: app/user/u123</code>, alongside existing grants).</li>
+    <li>The worker resolves shape + value → concrete key root → threads it into the session and memory decorators.</li>
+    <li>Manifest setting overrides runner <code>default</code>; runner <code>minimum</code> overrides everything downward.</li>
+    <li><code>key: scope</code> + no scope on the run → <strong>reject the run</strong> (D5).</li>
+  </ol>
+</section>
+
+<!-- ════════════════════ §9 ════════════════════ -->
+<section id="migration">
+  <h2 class="sec"><span class="n">§ 9</span>Migration &amp; compatibility</h2>
+
+  <ul class="plain">
+    <li><strong>Coexistence by prefix.</strong> Plaintext and ciphertext rows live side by side; reads sniff <code>enc:</code> / <code>"enc"</code> and pass legacy rows through. Enabling encryption is zero-downtime — new writes encrypt immediately.</li>
+    <li><strong>Backfill is optional.</strong> Lazy (read-then-write paths like curation naturally launder old rows) or a one-shot job per scope. A metric counting legacy plaintext rows tracks progress (P5).</li>
+    <li><strong>Disabling later.</strong> A decrypt-only decorator mode reads ciphertext but writes plaintext — a dev/debug affordance.</li>
+    <li><strong><code>crypto.ts</code> generalization is additive.</strong> Existing <code>encryptSecret</code>/<code>decryptSecret</code> keep serving <code>ar_secrets</code>; new keyed + versioned functions sit beside them.</li>
+  </ul>
+</section>
+
+<!-- ════════════════════ §10 ════════════════════ -->
+<section id="lifecycle">
+  <h2 class="sec"><span class="n">§ 10</span>Key lifecycle — rotation &amp; shredding</h2>
+
+  <ul class="plain">
+    <li><strong>KEK rotation:</strong> mint KEK v2 → background job re-wraps each <code>scope_keys</code> row (decrypt wrapped DEK with v1, encrypt with v2; <code>kek_version</code> tracks progress). Data rows untouched — the envelope win. Keep v1 until the table reports fully re-wrapped.</li>
+    <li><strong>Single-scope compromise:</strong> rotate that scope's DEK and re-encrypt just its rows — one user, not the table.</li>
+    <li><strong>Crypto-shredding:</strong> <code>DELETE FROM scope_keys WHERE scope_root = 'app/user/u123'</code> renders that subject's ciphertext permanently unreadable on live systems — chats and memories in one operation per database.</li>
+  </ul>
+
+  <aside class="note">For a fitness app holding health-adjacent data, "unreadable immediately on live systems; unreadable everywhere within 7 days" is a genuinely strong GDPR deletion story.</aside>
+
+  <p><strong>Backup nuance, stated honestly:</strong> a full-database backup contains the wrapped-key table, so a restored backup can still decrypt. The standard fix is shorter retention on <code>scope_keys</code> backups than on data backups. The deletion story becomes: <em>unreadable immediately on live systems; unreadable everywhere once key backups age out (e.g. 7 days), even though data backups persist (e.g. 90 days).</em></p>
+</section>
+
+<!-- ════════════════════ §11 ════════════════════ -->
+<section id="phases">
+  <h2 class="sec"><span class="n">§ 11</span>Rollout phases</h2>
+
+  <table>
+    <thead><tr><th>Phase</th><th>Title</th><th>Packages</th><th>Outcome</th></tr></thead>
+    <tbody>
+      <tr><td>P1</td><td>Crypto core &amp; scope keys</td><td><code>core</code></td><td>Keyed + versioned AES-GCM, <code>KeySource</code>, DEK cache, <code>ScopeKeyStore</code> interface</td></tr>
+      <tr><td>P2</td><td>Memrez encryption</td><td><code>memrez</code></td><td><code>withEncryption(MemoryStore)</code> + key-store impls; trainer app can encrypt memories</td></tr>
+      <tr><td>P3</td><td>Session encryption</td><td><code>core</code> <code>store-pg</code> <code>store-sqlite</code> <code>worker</code> <code>app</code></td><td><code>key_scope</code> column, <code>withEncryption(SessionStore)</code>, scope threading on runs</td></tr>
+      <tr><td>P4</td><td>Manifest config &amp; enforcement</td><td><code>manifest</code> <code>worker</code></td><td><code>encryption</code> blocks parsed + validated; fail-closed; runner floor</td></tr>
+      <tr><td>P5</td><td>Operations</td><td><code>worker</code> <code>core</code> docs</td><td>KMS keySource, rotation job, shred API, legacy-row metric</td></tr>
+    </tbody>
+  </table>
+
+  <div class="phase">
+    <h3><span class="pn">P1</span> Crypto core &amp; scope keys <span class="pkg">packages/core</span></h3>
+    <ul>
+      <li><code>utils/crypto.ts</code>: add <code>encryptWithKey</code> / <code>decryptWithKey</code> emitting and parsing the versioned <code>enc:v1:</code> format; JSONB wrapper helpers.</li>
+      <li>New <code>utils/keyring.ts</code>: <code>KeySource</code> (<code>env | static</code>), <code>wrapDek</code>/<code>unwrapDek</code>, in-process DEK cache (LRU + TTL).</li>
+      <li><code>ScopeKeyStore</code> interface in core types: <code>get</code>, <code>put</code> (conflict-safe), <code>delete</code> (shred).</li>
+      <li>Tests: round-trip, GCM tamper detection, prefix sniffing, cache behavior.</li>
+    </ul>
+  </div>
+
+  <div class="phase">
+    <h3><span class="pn">P2</span> Memrez encryption <span class="pkg">packages/memrez</span></h3>
+    <ul>
+      <li><code>src/encryption.ts</code>: <code>withEncryption(inner, { kek, keyStore, keyScope? })</code> implementing all 8 <code>MemoryStore</code> methods; encrypts <code>content</code> + <code>blurb</code>.</li>
+      <li><code>ScopeKeyStore</code> impls beside each store (pg / sqlite / memory); <code>scope_keys</code> DDL in each store's schema migration.</li>
+      <li><code>MemrezOptions.encryption</code> sugar so <code>createMemrez</code> wires the decorator itself.</li>
+      <li>Tests: round-trip, dedup through decryption, curate round-trip, legacy coexistence, scope-key isolation, shred-then-read fails closed.</li>
+    </ul>
+  </div>
+
+  <div class="phase">
+    <h3><span class="pn">P3</span> Session encryption <span class="pkg">core · store-postgres · store-sqlite · worker · app</span></h3>
+    <ul>
+      <li>Migration v10: <code>ALTER TABLE ar_sessions ADD COLUMN key_scope TEXT</code> (nullable = legacy era); sqlite equivalent.</li>
+      <li><code>stores/encrypted-session-store.ts</code> in core: decorator encrypting <code>content</code>, <code>content_blocks</code>, <code>tool_calls</code>; stamps and reads <code>key_scope</code>.</li>
+      <li>Run requests accept an optional <code>scope</code> (worker routes + app worker-client passthrough); session creation stamps it (D8).</li>
+      <li>Tests: three-column coverage incl. the legacy dual-write column, mixed legacy/encrypted history, scope stamping.</li>
+    </ul>
+  </div>
+
+  <div class="phase">
+    <h3><span class="pn">P4</span> Manifest config &amp; enforcement <span class="pkg">manifest · worker</span></h3>
+    <ul>
+      <li>Parser + types: <code>encryption: { key }</code> on the root agent object and on <code>resources.&lt;name&gt;</code> entries; enum validation with clear errors.</li>
+      <li>Worker: resolve declared unit + run-supplied scope → key root; <strong>fail closed</strong> when scope is declared but absent; enforce runner <code>minimum</code>; thread key roots into decorators.</li>
+      <li>Tests: silent-fallback regression (must error), floor enforcement, precedence.</li>
+    </ul>
+  </div>
+
+  <div class="phase">
+    <h3><span class="pn">P5</span> Operations <span class="pkg">worker · core · docs</span></h3>
+    <ul>
+      <li><code>{ kind: "kms", keyId }</code> KeySource (AWS/GCP) — where the DEK cache earns its keep.</li>
+      <li>KEK rotation job (re-wrap <code>scope_keys</code>, bump <code>kek_version</code>); per-scope DEK rotation utility.</li>
+      <li>Admin shred endpoint (internal-only auth): delete scope key + optional hard-delete of rows.</li>
+      <li>Legacy-row metric per store; deployment docs — key generation, backup-retention guidance per §10.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ════════════════════ §12 ════════════════════ -->
+<section id="parked">
+  <h2 class="sec"><span class="n">§ 12</span>Parked — explicit non-goals for now</h2>
+
+  <ul class="plain">
+    <li><strong>Traces / runs / logs encryption.</strong> Message content is duplicated in trace and run records; until addressed, v1's honest posture is "memories + messages encrypted; traces are operational data with N-day retention." The same decorator pattern applies when prioritized.</li>
+    <li><strong>Blind-indexed topics.</strong> Per-scope HMAC index + encrypted display names — only if sensitive topic names become real.</li>
+    <li><strong>User-held "vault" tier (BYOK).</strong> A scope whose DEK is additionally wrapped by a user-supplied key and excluded from curation. A clean landing spot exists (<code>keyHolder: service | user</code> beside <code>key:</code>) — build when a customer demands it.</li>
+    <li><strong>Hosted memory endpoints + scoped read tokens.</strong> The memory-viewer API for hosted agntz: mint grant-bound, capability-bound, short-lived tokens; <code>GET /memory/topics</code>, <code>GET /memory/entries</code>. The library path — <code>memrez.scan()</code> / <code>read()</code> from the embedding backend — already works today and needs no new infrastructure.</li>
+  </ul>
+</section>
+
+<!-- ════════════════════ §13 ════════════════════ -->
+<section id="questions">
+  <h2 class="sec"><span class="n">§ 13</span>Open questions</h2>
+
+  <ol class="plain">
+    <li><strong>Run-request field name</strong> for the data subject: <code>scope</code>, <code>subject</code>, or extend the existing grants (<code>context</code>)? Leaning explicit <code>scope</code> — grants may be plural; the key root must be singular and unambiguous. Multi-grant runs must not guess.</li>
+    <li><strong><code>keyScope</code> default depth</strong> for memrez: grant root is the proposal; confirm against real namespace shapes (<code>app/user/u123/…</code>).</li>
+    <li><strong>Key-table backup retention</strong> — pick the number (7 days?) and document it as part of the deletion story.</li>
+    <li><strong><code>scope_keys</code> placement for split deployments</strong> (trainer app's memrez DB vs. worker DB) — two tables, one format is confirmed; does a shared shredding-orchestration helper earn its place?</li>
+    <li><strong>Per-message sub-keying</strong> (HKDF from scope DEK + sessionId) for forward-ish secrecy — default no; keep it simple.</li>
+  </ol>
+</section>
+
+</article>
+
+<footer>
+  <span>agntz · planning/data-encryption-plan.md</span>
+  <span class="fin">End of plan&ensp;∎</span>
+</footer>
+
+</div>
+</body>
+</html>
