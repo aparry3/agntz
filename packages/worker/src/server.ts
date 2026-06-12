@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 import "dotenv/config";
 import { serve } from "@hono/node-server";
+import {
+	describeResourceProviders,
+	getResourceProviders,
+} from "./resources.js";
 import { createWorkerAPI } from "./routes.js";
 import { getStore } from "./store.js";
 
@@ -16,8 +20,9 @@ if (!internalSecret) {
 }
 
 const store = await getStore();
+const resources = getResourceProviders();
 
-const app = createWorkerAPI({ store, internalSecret });
+const app = createWorkerAPI({ store, internalSecret, resources });
 
 serve({
 	fetch: app.fetch,
@@ -27,3 +32,4 @@ serve({
 
 console.log(`agntz worker listening on http://${hostname}:${port}`);
 console.log(`Store: ${process.env.STORE ?? "memory"}`);
+console.log(`Resources: ${describeResourceProviders(resources)}`);

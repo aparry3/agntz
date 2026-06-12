@@ -52,6 +52,9 @@ HOSTNAME=0.0.0.0
 WORKER_INTERNAL_SECRET=...        # required
 STORE=postgres                    # or memory (dev only)
 DATABASE_URL=postgres://...       # when STORE=postgres
+MEMREZ_STORE=postgres             # postgres | memory | disabled; defaults to STORE
+MEMREZ_DATABASE_URL=postgres://... # optional: separate DB for memory
+MEMREZ_TABLE_PREFIX=              # optional: prefix for memrez_* tables
 DEFAULT_MODEL_PROVIDER=openai
 DEFAULT_MODEL_NAME=gpt-5.4-mini
 BUILT_IN_AGENTS_DIR=...           # optional: extra YAMLs to seed per workspace

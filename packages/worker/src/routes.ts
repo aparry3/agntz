@@ -11,9 +11,11 @@ import {
 	type InvokeResult,
 	MemoryStore,
 	type MultiplexedEvent,
+	type NamespaceGrantPolicy,
 	OutboundUrlPolicyError,
 	type OutboundUrlPolicyOptions,
 	type Reply,
+	type ResourceProvider,
 	type Run,
 	type RunListFilters,
 	type RunRegistry,
@@ -109,6 +111,10 @@ export interface WorkerAPIOptions {
 		userId: string,
 		agentId: string,
 	) => Promise<{ runner: Runner; manifest: AgentManifest }>;
+	/** Resource providers keyed by resource kind. Production wires memrez here. */
+	resources?: Record<string, ResourceProvider>;
+	/** Optional guardrail for runtime namespace grants. */
+	namespacePolicy?: NamespaceGrantPolicy;
 	/** Override outbound URL policy for tests or trusted local deployments. */
 	outboundUrlPolicy?: OutboundUrlPolicyOptions;
 }
@@ -123,6 +129,7 @@ export interface WorkerAPIOptions {
  */
 export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 	const { store, internalSecret } = opts;
+	const resourceProviders = opts.resources ?? {};
 	const app = new Hono();
 
 	// Test override for the runner+manifest resolver, falling back to the
@@ -130,7 +137,14 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 	const resolveRunnerAndManifestImpl =
 		opts.resolveRunnerAndManifest ??
 		((store: UnifiedStore, userId: string, agentId: string) =>
-			resolveRunnerAndManifest(store, userId, agentId, opts.outboundUrlPolicy));
+			resolveRunnerAndManifest(
+				store,
+				userId,
+				agentId,
+				opts.outboundUrlPolicy,
+				resourceProviders,
+				opts.namespacePolicy,
+			));
 
 	// Process-wide trace registry — one per worker instance, shared across requests.
 	// Receives span events from per-request SpanEmitters and batches them to the store.
@@ -212,6 +226,8 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			const ephemeralRunner = createRunner({
 				store: ephemeralStore,
 				tools: [...LOCAL_TOOLS],
+				resources: resourceProviders,
+				namespacePolicy: opts.namespacePolicy,
 				defaults: {
 					model: {
 						provider: process.env.DEFAULT_MODEL_PROVIDER ?? "openai",
@@ -310,6 +326,8 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			const ephemeralRunner = createRunner({
 				store: ephemeralStore,
 				tools: [...LOCAL_TOOLS],
+				resources: resourceProviders,
+				namespacePolicy: opts.namespacePolicy,
 				defaults: {
 					model: {
 						provider: process.env.DEFAULT_MODEL_PROVIDER ?? "openai",
@@ -2722,6 +2740,8 @@ async function resolveRunnerAndManifest(
 	userId: string,
 	agentId: string,
 	outboundUrlPolicy?: OutboundUrlPolicyOptions,
+	resources: Record<string, ResourceProvider> = {},
+	namespacePolicy?: NamespaceGrantPolicy,
 ): Promise<{ runner: Runner; manifest: AgentManifest }> {
 	const tools = [...LOCAL_TOOLS];
 	const defaults = {
@@ -2748,6 +2768,8 @@ async function resolveRunnerAndManifest(
 		const runner = createRunner({
 			store: ephemeralStore,
 			tools,
+			resources,
+			namespacePolicy,
 			defaults,
 			outboundUrlPolicy,
 		});
@@ -2758,6 +2780,8 @@ async function resolveRunnerAndManifest(
 	const runner = createRunner({
 		store: scoped,
 		tools,
+		resources,
+		namespacePolicy,
 		defaults,
 		outboundUrlPolicy,
 	});

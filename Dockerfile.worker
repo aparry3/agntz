@@ -13,6 +13,7 @@ COPY pnpm-lock.yaml pnpm-workspace.yaml package.json tsconfig.base.json turbo.js
 COPY scripts/install-hooks.mjs scripts/install-hooks.mjs
 COPY packages/core/package.json packages/core/
 COPY packages/manifest/package.json packages/manifest/
+COPY packages/memrez/package.json packages/memrez/
 COPY packages/sdk/package.json packages/sdk/
 COPY packages/worker/package.json packages/worker/
 COPY packages/app/package.json packages/app/
@@ -28,6 +29,7 @@ FROM deps AS build
 COPY packages/ packages/
 RUN pnpm --filter @agntz/core build
 RUN pnpm --filter @agntz/manifest build
+RUN pnpm --filter @agntz/memrez build
 RUN pnpm --filter @agntz/store-postgres build
 RUN pnpm --filter @agntz/worker build
 
@@ -38,12 +40,15 @@ FROM base AS worker
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/packages/core/node_modules ./packages/core/node_modules
 COPY --from=deps /app/packages/manifest/node_modules ./packages/manifest/node_modules
+COPY --from=deps /app/packages/memrez/node_modules ./packages/memrez/node_modules
 COPY --from=deps /app/packages/worker/node_modules ./packages/worker/node_modules
 COPY --from=deps /app/packages/store-postgres/node_modules ./packages/store-postgres/node_modules
 COPY --from=build /app/packages/core/dist ./packages/core/dist
 COPY --from=build /app/packages/core/package.json ./packages/core/
 COPY --from=build /app/packages/manifest/dist ./packages/manifest/dist
 COPY --from=build /app/packages/manifest/package.json ./packages/manifest/
+COPY --from=build /app/packages/memrez/dist ./packages/memrez/dist
+COPY --from=build /app/packages/memrez/package.json ./packages/memrez/
 COPY --from=build /app/packages/store-postgres/dist ./packages/store-postgres/dist
 COPY --from=build /app/packages/store-postgres/package.json ./packages/store-postgres/
 COPY --from=build /app/packages/worker/dist ./packages/worker/dist

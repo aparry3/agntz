@@ -319,6 +319,7 @@ function manifestToAgentDefinition(
 		spawnable: manifest.spawnable
 			? manifestSpawnableToCore(manifest.spawnable)
 			: undefined,
+		resources: manifest.resources,
 		reply: manifest.reply,
 	};
 }

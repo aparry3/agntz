@@ -58,6 +58,9 @@ External developers install the npm packages to embed agntz in their own apps. T
 |---|---|---|
 | `STORE` | yes | `postgres` in prod; `memory` in dev |
 | `DATABASE_URL` | when `STORE=postgres` | Railway Postgres private URL, e.g. `postgres://...railway.internal:5432/railway` |
+| `MEMREZ_STORE` | no | `postgres`, `memory`, or `disabled`; defaults to `STORE` |
+| `MEMREZ_DATABASE_URL` | no | Separate Postgres URL for memory; defaults to `DATABASE_URL` |
+| `MEMREZ_TABLE_PREFIX` | no | Optional prefix for memrez tables |
 | `PORT` | yes | `4001` |
 | `WORKER_INTERNAL_SECRET` | yes | 32-byte random secret — **must match the app's value** |
 | `DEFAULT_MODEL_PROVIDER` | yes | e.g. `openai` — used when an agent doesn't specify |

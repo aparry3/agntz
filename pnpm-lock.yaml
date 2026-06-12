@@ -376,6 +376,9 @@ importers:
       '@agntz/manifest':
         specifier: workspace:*
         version: link:../manifest
+      '@agntz/memrez':
+        specifier: workspace:*
+        version: link:../memrez
       '@agntz/store-postgres':
         specifier: workspace:*
         version: link:../store-postgres

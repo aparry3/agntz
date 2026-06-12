@@ -186,6 +186,9 @@ The worker reads three env vars at boot (see [deployment chapter](/guide/20-depl
 | `WORKER_INTERNAL_SECRET` | Shared secret for App → Worker auth |
 | `STORE` | `memory` (default, for dev) or `postgres` |
 | `DATABASE_URL` | Required when `STORE=postgres` |
+| `MEMREZ_STORE` | `postgres`, `memory`, or `disabled`; defaults to `STORE` |
+| `MEMREZ_DATABASE_URL` | Optional separate Postgres URL for memrez memory |
+| `MEMREZ_TABLE_PREFIX` | Optional prefix for memrez tables |
 
 Provider API keys for OpenAI/Anthropic/etc. are **per-user**, stored in `ProviderStore` and resolved at runtime via `AISDKModelProvider`. The worker doesn't need them as env vars — though it falls back to env (`OPENAI_API_KEY`, etc.) if a user has no `ProviderConfig` registered.
 
