@@ -1,11 +1,14 @@
 import type { ResourceProvider } from "@agntz/core";
 import {
+	DeterministicReasoner,
 	InMemoryMemoryStore,
+	type Memrez,
 	PostgresMemoryStore,
 	createMemrez,
 } from "@agntz/memrez";
 
 let _resources: Record<string, ResourceProvider> | null = null;
+let _memrez: Memrez | null = null;
 type MemrezStoreKind = "postgres" | "memory" | "disabled";
 
 /**
@@ -31,9 +34,35 @@ export function getResourceProviders(): Record<string, ResourceProvider> {
 				})
 			: new InMemoryMemoryStore();
 
-	const memrez = createMemrez({ store });
-	_resources = { memory: memrez.provider() };
+	// memrez's built-in LLM reasoner (direct model calls, env-key auth) is the
+	// default. MEMREZ_REASONER=deterministic is the emergency kill-switch:
+	// writes file under "general" and curation becomes a no-op.
+	const reasoner =
+		resolveMemrezReasonerKind() === "deterministic"
+			? new DeterministicReasoner()
+			: undefined;
+
+	_memrez = createMemrez({ store, reasoner });
+	_resources = { memory: _memrez.provider() };
 	return _resources;
+}
+
+type MemrezReasonerKind = "llm" | "deterministic";
+
+function resolveMemrezReasonerKind(): MemrezReasonerKind {
+	const raw = process.env.MEMREZ_REASONER?.toLowerCase();
+	if (!raw || raw === "llm") return "llm";
+	if (raw === "deterministic") return "deterministic";
+	throw new Error("MEMREZ_REASONER must be one of: llm, deterministic");
+}
+
+/**
+ * The Memrez instance behind the "memory" resource provider, for the
+ * deterministic read/curate routes. Null when memrez is disabled.
+ */
+export function getMemrez(): Memrez | null {
+	getResourceProviders();
+	return _memrez;
 }
 
 export function describeResourceProviders(

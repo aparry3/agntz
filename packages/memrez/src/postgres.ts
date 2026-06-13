@@ -1,5 +1,6 @@
 import pg from "pg";
 import type {
+	DirtyTopic,
 	EntryType,
 	MemoryEntry,
 	MemoryStore,
@@ -147,10 +148,12 @@ export class PostgresMemoryStore implements MemoryStore {
 	async listTopics(scopePaths: string[]): Promise<TopicSummary[]> {
 		await this.ready;
 		if (scopePaths.length === 0) return [];
-		const result = await this.pool.query<TopicRow>(
-			`SELECT t.topic AS topic, COUNT(*) AS count, MAX(e.updated_at) AS last_updated_at
+		const result = await this.pool.query<TopicRow & { has_uncurated: boolean }>(
+			`SELECT t.topic AS topic, COUNT(*) AS count, MAX(e.updated_at) AS last_updated_at,
+              BOOL_OR(m.last_updated_at IS NULL OR e.updated_at > m.last_updated_at) AS has_uncurated
        FROM ${this.table("entries")} e
        JOIN ${this.table("entry_topics")} t ON t.entry_id = e.id
+       LEFT JOIN ${this.table("topic_meta")} m ON m.scope = e.scope AND m.topic = t.topic
        WHERE e.status = 'active' AND e.scope = ANY($1::text[])
        GROUP BY t.topic
        ORDER BY t.topic ASC`,
@@ -165,7 +168,7 @@ export class PostgresMemoryStore implements MemoryStore {
 					count: Number(row.count),
 					blurb: meta?.blurb ?? undefined,
 					lastUpdatedAt: meta?.last_updated_at ?? row.last_updated_at,
-					hasUncuratedWrites: true,
+					hasUncuratedWrites: row.has_uncurated,
 				};
 			}),
 		);
@@ -267,6 +270,21 @@ export class PostgresMemoryStore implements MemoryStore {
 			params,
 		);
 		return Promise.all(result.rows.map((row) => this.rowToEntry(row)));
+	}
+
+	async listDirtyTopics(): Promise<DirtyTopic[]> {
+		await this.ready;
+		const result = await this.pool.query<{ scope: string; topic: string }>(
+			`SELECT e.scope AS scope, t.topic AS topic
+       FROM ${this.table("entries")} e
+       JOIN ${this.table("entry_topics")} t ON t.entry_id = e.id
+       LEFT JOIN ${this.table("topic_meta")} m ON m.scope = e.scope AND m.topic = t.topic
+       WHERE e.status = 'active'
+       GROUP BY e.scope, t.topic, m.last_updated_at
+       HAVING m.last_updated_at IS NULL OR MAX(e.updated_at) > m.last_updated_at
+       ORDER BY e.scope ASC, t.topic ASC`,
+		);
+		return result.rows;
 	}
 
 	private async migrate(): Promise<void> {

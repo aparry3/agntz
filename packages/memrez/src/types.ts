@@ -48,6 +48,12 @@ export interface ReadOptions {
 	includeAncestors?: boolean;
 }
 
+export interface ListOptions {
+	topics?: string[];
+	includeSuperseded?: boolean;
+	includeAncestors?: boolean;
+}
+
 export interface ScanOptions {
 	includeAncestors?: boolean;
 	topicLimit?: number;
@@ -107,6 +113,15 @@ export interface CurateReport {
 	blurbsUpdated: number;
 }
 
+/**
+ * A (scope, topic) pair with active writes newer than the topic's last
+ * curation pass. The unit of work for curation sweeps.
+ */
+export interface DirtyTopic {
+	scope: string;
+	topic: string;
+}
+
 export interface MemrezReasoner {
 	tag(input: TaggerInput): Promise<TaggerResult>;
 	curate?(input: CuratorInput): Promise<CurateOp[]>;
@@ -135,6 +150,13 @@ export interface MemoryStore {
 		scopePaths: string[],
 		opts?: { topics?: string[]; includeSuperseded?: boolean },
 	): Promise<MemoryEntry[]>;
+	/**
+	 * Enumerate (scope, topic) pairs whose newest active entry postdates the
+	 * topic's `topic_meta.last_updated_at` (or that have no meta row at all).
+	 * Unlike every other method this takes no scopePaths — it is the global
+	 * work-discovery primitive for curation crons.
+	 */
+	listDirtyTopics(): Promise<DirtyTopic[]>;
 }
 
 export interface MemrezOptions {

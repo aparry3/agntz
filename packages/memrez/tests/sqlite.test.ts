@@ -2,7 +2,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { SqliteMemoryStore, createMemrez } from "../src/index.js";
+import {
+	DeterministicReasoner,
+	SqliteMemoryStore,
+	createMemrez,
+} from "../src/index.js";
 
 const tempDirs: string[] = [];
 
@@ -18,7 +22,10 @@ describe("SqliteMemoryStore", () => {
 		tempDirs.push(dir);
 
 		const store = new SqliteMemoryStore(path);
-		const memrez = createMemrez({ store });
+		const memrez = createMemrez({
+			store,
+			reasoner: new DeterministicReasoner(),
+		});
 		const write = await memrez.write(
 			["app/user/u_123"],
 			"Prefers email receipts.",
@@ -48,7 +55,10 @@ describe("SqliteMemoryStore", () => {
 		const { dir, path } = tempDbPath();
 		tempDirs.push(dir);
 		const store = new SqliteMemoryStore(path);
-		const memrez = createMemrez({ store });
+		const memrez = createMemrez({
+			store,
+			reasoner: new DeterministicReasoner(),
+		});
 
 		await memrez.write(["app"], "Global policy.", { topicsHint: ["shared"] });
 		await memrez.write(["app/user/u_123"], "User 123 preference.", {
@@ -131,6 +141,44 @@ describe("SqliteMemoryStore", () => {
 				hasUncuratedWrites: true,
 			},
 		]);
+		store.close();
+	});
+
+	it("enumerates dirty topics across all scopes and clears them via meta", async () => {
+		const { dir, path } = tempDbPath();
+		tempDirs.push(dir);
+		const store = new SqliteMemoryStore(path);
+		const memrez = createMemrez({
+			store,
+			reasoner: new DeterministicReasoner(),
+		});
+
+		await memrez.write(["app/user/u_123"], "Prefers email.", {
+			topicsHint: ["prefs"],
+		});
+		await memrez.write(["app/user/u_456"], "Wants strength.", {
+			topicsHint: ["goals"],
+		});
+
+		expect(await store.listDirtyTopics()).toEqual([
+			{ scope: "app/user/u_123", topic: "prefs" },
+			{ scope: "app/user/u_456", topic: "goals" },
+		]);
+		expect(
+			(await store.listTopics(["app/user/u_123"]))[0].hasUncuratedWrites,
+		).toBe(true);
+
+		await new Promise((resolve) => setTimeout(resolve, 2));
+		await store.setTopicMeta("app/user/u_123", "prefs", {
+			lastUpdatedAt: new Date().toISOString(),
+		});
+
+		expect(await store.listDirtyTopics()).toEqual([
+			{ scope: "app/user/u_456", topic: "goals" },
+		]);
+		expect(
+			(await store.listTopics(["app/user/u_123"]))[0].hasUncuratedWrites,
+		).toBe(false);
 		store.close();
 	});
 });

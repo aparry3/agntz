@@ -11,6 +11,7 @@ import {
 	type InvokeResult,
 	MemoryStore,
 	type MultiplexedEvent,
+	NamespaceGrantError,
 	type NamespaceGrantPolicy,
 	OutboundUrlPolicyError,
 	type OutboundUrlPolicyOptions,
@@ -46,7 +47,14 @@ import {
 	validateManifestFull,
 } from "@agntz/manifest";
 import type { AgentManifest, ManifestSelection } from "@agntz/manifest";
+import {
+	MemrezCorrectionError,
+	MemrezEntryNotFoundError,
+	MemrezScopeError,
+} from "@agntz/memrez";
+import type { CurateReport, Memrez } from "@agntz/memrez";
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { stringify as stringifyYAML } from "yaml";
@@ -113,6 +121,12 @@ export interface WorkerAPIOptions {
 	) => Promise<{ runner: Runner; manifest: AgentManifest }>;
 	/** Resource providers keyed by resource kind. Production wires memrez here. */
 	resources?: Record<string, ResourceProvider>;
+	/**
+	 * Memrez instance backing the "memory" resource provider. Enables the
+	 * deterministic /memory/* read, correct, and curate endpoints — the
+	 * observability surface over what agents see through their tools.
+	 */
+	memrez?: Memrez;
 	/** Optional guardrail for runtime namespace grants. */
 	namespacePolicy?: NamespaceGrantPolicy;
 	/** Override outbound URL policy for tests or trusted local deployments. */
@@ -412,6 +426,11 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 	app.use("/webhook-secrets/*", workerAuth({ store, internalSecret }));
 	app.use("/system/agents", internalOnlyAuth({ internalSecret }));
 	app.use("/system/agents/*", internalOnlyAuth({ internalSecret }));
+	// Memory observability endpoints are app→worker only for now. Scoped
+	// end-user tokens are deliberately parked until grant-bound capability
+	// tokens exist (memory-observability plan §D8).
+	app.use("/memory", internalOnlyAuth({ internalSecret }));
+	app.use("/memory/*", internalOnlyAuth({ internalSecret }));
 
 	app.post("/validate", async (c) => {
 		try {
@@ -469,6 +488,109 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			yaml: info.yaml,
 			manifest: info.manifest,
 		});
+	});
+
+	// ── Memory observability ────────────────────────────────────────────────
+	// Deterministic read surface over the memrez instance agents use. Takes
+	// grants and expands them through the same normalizeGrants→visibleScopes
+	// pipeline as agent tools, so "view what the agent sees" holds by
+	// construction.
+
+	app.get("/memory/topics", async (c) => {
+		const memrez = opts.memrez;
+		if (!memrez) return memoryNotConfigured(c);
+		try {
+			const grants = parseGrantsParam(c.req.queries("grants"));
+			const scan = await memrez.scan(grants);
+			return c.json(scan);
+		} catch (error) {
+			return memoryErrorResponse(c, error);
+		}
+	});
+
+	app.get("/memory/entries", async (c) => {
+		const memrez = opts.memrez;
+		if (!memrez) return memoryNotConfigured(c);
+		try {
+			const grants = parseGrantsParam(c.req.queries("grants"));
+			const topics = parseListParam(c.req.queries("topics"));
+			const includeSuperseded = isTruthyParam(c.req.query("includeSuperseded"));
+			const limit = clampInt(c.req.query("limit"), 200, 1, 1000);
+			const offset = clampInt(c.req.query("offset"), 0, 0);
+
+			const entries = await memrez.list(grants, {
+				topics: topics.length > 0 ? topics : undefined,
+				includeSuperseded,
+			});
+			return c.json({
+				entries: entries.slice(offset, offset + limit),
+				total: entries.length,
+				limit,
+				offset,
+			});
+		} catch (error) {
+			return memoryErrorResponse(c, error);
+		}
+	});
+
+	app.post("/memory/entries/:id/correct", async (c) => {
+		const memrez = opts.memrez;
+		if (!memrez) return memoryNotConfigured(c);
+		try {
+			const id = decodeURIComponent(c.req.param("id"));
+			const body = (await c.req.json().catch(() => ({}))) as {
+				grants?: unknown;
+				content?: unknown;
+			};
+			if (!Array.isArray(body.grants) || body.grants.length === 0) {
+				return c.json(
+					{ error: "Missing required field: grants (string array)" },
+					400,
+				);
+			}
+			if (typeof body.content !== "string" || body.content.trim() === "") {
+				return c.json(
+					{ error: "Missing required field: content (non-empty string)" },
+					400,
+				);
+			}
+			const result = await memrez.correct(
+				body.grants as string[],
+				id,
+				body.content,
+			);
+			return c.json(result);
+		} catch (error) {
+			return memoryErrorResponse(c, error);
+		}
+	});
+
+	app.post("/memory/curate", async (c) => {
+		const memrez = opts.memrez;
+		if (!memrez) return memoryNotConfigured(c);
+		try {
+			const body = (await c.req.json().catch(() => ({}))) as {
+				grants?: unknown;
+				topics?: unknown;
+			};
+			if (body.grants !== undefined) {
+				if (!Array.isArray(body.grants) || body.grants.length === 0) {
+					return c.json(
+						{ error: "grants must be a non-empty string array" },
+						400,
+					);
+				}
+				const report = await memrez.curate(body.grants as string[], {
+					topics: Array.isArray(body.topics)
+						? (body.topics as string[])
+						: undefined,
+				});
+				return c.json({ curateEnabled: true, report });
+			}
+			return c.json(await runCurationSweep(memrez));
+		} catch (error) {
+			return memoryErrorResponse(c, error);
+		}
 	});
 
 	app.post("/run", async (c) => {
@@ -2809,6 +2931,114 @@ async function resolveStoredManifest(
 	throw new Error(
 		`Agent "${agentId}" does not have a manifest. Store with metadata.manifest (YAML string).`,
 	);
+}
+
+export interface CurationSweepResult {
+	curateEnabled: boolean;
+	/** Total dirty (scope, topic) pairs discovered before the sweep. */
+	dirty: number;
+	scopes: Array<{
+		scope: string;
+		topics: string[];
+		report?: CurateReport;
+		error?: string;
+	}>;
+}
+
+/**
+ * Discover every (scope, topic) pair with uncurated writes and curate each
+ * scope with grants = [scope] — one scope at a time, so a future encryption
+ * decorator only ever needs one scope's key unwrapped at once. Shared by
+ * POST /memory/curate (no-grants form) and the MEMREZ_CURATE_INTERVAL loop.
+ */
+export async function runCurationSweep(
+	memrez: Memrez,
+): Promise<CurationSweepResult> {
+	if (!memrez.reasoner.curate) {
+		return { curateEnabled: false, dirty: 0, scopes: [] };
+	}
+	const dirty = await memrez.store.listDirtyTopics();
+	const byScope = new Map<string, string[]>();
+	for (const { scope, topic } of dirty) {
+		const topics = byScope.get(scope);
+		if (topics) topics.push(topic);
+		else byScope.set(scope, [topic]);
+	}
+	const scopes: CurationSweepResult["scopes"] = [];
+	for (const [scope, topics] of byScope) {
+		try {
+			const report = await memrez.curate([scope], {
+				topics,
+				// The sweep unit is the exact dirty scope. Do not expand to
+				// ancestors here; future encrypted stores should only need this one
+				// scope's key unwrapped for the pass.
+				includeDescendants: true,
+			});
+			scopes.push({ scope, topics, report });
+		} catch (error) {
+			scopes.push({ scope, topics, error: errorMessage(error) });
+		}
+	}
+	return { curateEnabled: true, dirty: dirty.length, scopes };
+}
+
+function memoryNotConfigured(c: Context) {
+	return c.json({ error: "memory resource is not configured" }, 503);
+}
+
+/**
+ * Map memrez errors onto HTTP statuses: unknown entry → 404, correction
+ * conflicts → 409, bad grants/scopes → 400.
+ */
+function memoryErrorResponse(c: Context, error: unknown) {
+	if (error instanceof MemrezEntryNotFoundError) {
+		return c.json({ error: error.message }, 404);
+	}
+	if (error instanceof MemrezCorrectionError) {
+		return c.json({ error: error.message }, 409);
+	}
+	if (
+		error instanceof MemrezScopeError ||
+		error instanceof NamespaceGrantError ||
+		isBadRequest(error)
+	) {
+		return c.json({ error: errorMessage(error) }, 400);
+	}
+	return c.json({ error: errorMessage(error) }, 500);
+}
+
+/** Parse repeated and/or comma-separated `grants` query params. */
+function parseGrantsParam(values: string[] | undefined): string[] {
+	const grants = parseListParam(values);
+	if (grants.length === 0) {
+		throw badRequest("Missing required query param: grants");
+	}
+	return grants;
+}
+
+function parseListParam(values: string[] | undefined): string[] {
+	if (!values) return [];
+	return values
+		.flatMap((value) => value.split(","))
+		.map((value) => value.trim())
+		.filter((value) => value.length > 0);
+}
+
+function isTruthyParam(value: string | undefined): boolean {
+	if (!value) return false;
+	return ["1", "true", "yes"].includes(value.toLowerCase());
+}
+
+function clampInt(
+	value: string | undefined,
+	fallback: number,
+	min: number,
+	max?: number,
+): number {
+	const parsed = Number.parseInt(value ?? "", 10);
+	if (Number.isNaN(parsed)) return fallback;
+	const floored = Math.max(min, parsed);
+	return max !== undefined ? Math.min(max, floored) : floored;
 }
 
 function errorMessage(error: unknown): string {

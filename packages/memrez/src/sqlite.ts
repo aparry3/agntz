@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import type { Database as DatabaseType } from "better-sqlite3";
 import type {
+	DirtyTopic,
 	EntryType,
 	MemoryEntry,
 	MemoryStore,
@@ -175,14 +176,16 @@ export class SqliteMemoryStore implements MemoryStore {
 		if (scopePaths.length === 0) return [];
 		const rows = this.db
 			.prepare(
-				`SELECT t.topic AS topic, COUNT(*) AS count, MAX(e.updated_at) AS last_updated_at
+				`SELECT t.topic AS topic, COUNT(*) AS count, MAX(e.updated_at) AS last_updated_at,
+                MAX(CASE WHEN m.last_updated_at IS NULL OR e.updated_at > m.last_updated_at THEN 1 ELSE 0 END) AS has_uncurated
          FROM memrez_entries e
          JOIN memrez_entry_topics t ON t.entry_id = e.id
+         LEFT JOIN memrez_topic_meta m ON m.scope = e.scope AND m.topic = t.topic
          WHERE e.status = 'active' AND e.scope IN (${placeholders(scopePaths)})
          GROUP BY t.topic
          ORDER BY t.topic ASC`,
 			)
-			.all(...scopePaths) as TopicRow[];
+			.all(...scopePaths) as Array<TopicRow & { has_uncurated: number }>;
 
 		return rows.map((row) => {
 			const meta = this.findTopicMeta(scopePaths, row.topic);
@@ -191,7 +194,7 @@ export class SqliteMemoryStore implements MemoryStore {
 				count: row.count,
 				blurb: meta?.blurb,
 				lastUpdatedAt: meta?.lastUpdatedAt ?? row.last_updated_at,
-				hasUncuratedWrites: true,
+				hasUncuratedWrites: row.has_uncurated === 1,
 			};
 		});
 	}
@@ -287,6 +290,22 @@ export class SqliteMemoryStore implements MemoryStore {
 			)
 			.all(...params) as EntryRow[];
 		return rows.map((row) => this.rowToEntry(row));
+	}
+
+	async listDirtyTopics(): Promise<DirtyTopic[]> {
+		const rows = this.db
+			.prepare(
+				`SELECT e.scope AS scope, t.topic AS topic
+         FROM memrez_entries e
+         JOIN memrez_entry_topics t ON t.entry_id = e.id
+         LEFT JOIN memrez_topic_meta m ON m.scope = e.scope AND m.topic = t.topic
+         WHERE e.status = 'active'
+         GROUP BY e.scope, t.topic, m.last_updated_at
+         HAVING m.last_updated_at IS NULL OR MAX(e.updated_at) > m.last_updated_at
+         ORDER BY e.scope ASC, t.topic ASC`,
+			)
+			.all() as Array<{ scope: string; topic: string }>;
+		return rows;
 	}
 
 	private migrate(): void {

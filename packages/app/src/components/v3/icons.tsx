@@ -71,6 +71,18 @@ export const Traces = (p: IconProps) => (
 export const Logs = (p: IconProps) => (
 	<Icon {...p} d="M3 4h10M3 7h10M3 10h7M3 13h4" />
 );
+export const Memory = (p: IconProps) => (
+	<Icon
+		{...p}
+		d={
+			<>
+				<ellipse cx="8" cy="4" rx="5" ry="2" />
+				<path d="M3 4v8c0 1.1 2.24 2 5 2s5-.9 5-2V4" />
+				<path d="M3 8c0 1.1 2.24 2 5 2s5-.9 5-2" />
+			</>
+		}
+	/>
+);
 export const Tools = (p: IconProps) => (
 	<Icon {...p} d="M10.5 2.5l3 3-2 2-3-3 2-2zM10 6L4 12l-1.5.5L3 11l6-6" />
 );
@@ -245,6 +257,7 @@ export const I = {
 	Runs,
 	Traces,
 	Logs,
+	Memory,
 	Tools,
 	Settings,
 	Key,

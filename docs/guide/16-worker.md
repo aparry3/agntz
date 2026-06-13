@@ -189,6 +189,21 @@ The worker reads three env vars at boot (see [deployment chapter](/guide/20-depl
 | `MEMREZ_STORE` | `postgres`, `memory`, or `disabled`; defaults to `STORE` |
 | `MEMREZ_DATABASE_URL` | Optional separate Postgres URL for memrez memory |
 | `MEMREZ_TABLE_PREFIX` | Optional prefix for memrez tables |
+| `MEMREZ_REASONER` | `llm` (default — memrez's built-in reasoner tags every write and runs curation via direct model calls, keyed from the provider env vars below) or `deterministic` (kill-switch: writes file under `general`, curation is a no-op). LLM tagging falls back to deterministic on transient model failure; a *missing* key throws. |
+| `MEMREZ_CURATE_INTERVAL` | Optional curation sweep cadence, e.g. `30m`, `1h`, `900s` (min 1m). Unset = no sweep; trigger manually via `POST /memory/curate`. |
+
+## Memory observability endpoints
+
+Deterministic read/curate surface over the worker's memrez instance, behind
+`X-Internal-Secret` (app → worker only — grants are taken verbatim, so these
+must not face multi-tenant traffic until scopes are tenant-prefixed):
+
+| Route | What |
+|---|---|
+| `GET /memory/topics?grants=a,b` | Topic summaries (count, blurb, `hasUncuratedWrites`) visible to the grants |
+| `GET /memory/entries?grants=…&topics=…&includeSuperseded=…&limit=…&offset=…` | Entries visible to the grants; `includeSuperseded=true` is the audit view |
+| `POST /memory/entries/:id/correct` | `{ grants, content }` — supersede an entry with a corrected replacement (inherits scope/topics/type) |
+| `POST /memory/curate` | `{ grants?, topics? }` — curate explicit grants, or with no body sweep every dirty `(scope, topic)` pair, one scope at a time |
 
 Provider API keys for OpenAI/Anthropic/etc. are **per-user**, stored in `ProviderStore` and resolved at runtime via `AISDKModelProvider`. The worker doesn't need them as env vars — though it falls back to env (`OPENAI_API_KEY`, etc.) if a user has no `ProviderConfig` registered.
 

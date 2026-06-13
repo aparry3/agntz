@@ -24,8 +24,8 @@ services:
     depends_on: [postgres]
     environment:
       - DATABASE_URL=postgres://memrez:****@postgres/memrez
-      - AGNTZ_TAGGER_MANIFEST=/manifests/memrez-tagger.yaml
-      - AGNTZ_CURATOR_MANIFEST=/manifests/memrez-curator.yaml
+      - OPENAI_API_KEY=\${OPENAI_API_KEY}
+      - MEMREZ_REASONER=llm
     ports: ["4000:4000"]
 
   postgres:
@@ -52,7 +52,7 @@ const SERVICES = [
 
 const REQS: [string, string][] = [
 	["Postgres 14+", "entry + topic store"],
-	["Node 20+ or Python 3.11+", "reasoner runner"],
+	["Node 22+", "LLM reasoner runtime"],
 	["S3-compatible blob", "curation reports & snapshots"],
 	["Docker · Kubernetes", "deploy pattern of your choice"],
 ];

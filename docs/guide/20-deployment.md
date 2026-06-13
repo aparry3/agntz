@@ -61,6 +61,8 @@ External developers install the npm packages to embed agntz in their own apps. T
 | `MEMREZ_STORE` | no | `postgres`, `memory`, or `disabled`; defaults to `STORE` |
 | `MEMREZ_DATABASE_URL` | no | Separate Postgres URL for memory; defaults to `DATABASE_URL` |
 | `MEMREZ_TABLE_PREFIX` | no | Optional prefix for memrez tables |
+| `MEMREZ_REASONER` | no | `llm` (default) tags writes and curates via memrez's built-in reasoner (needs a provider key); `deterministic` is the kill-switch |
+| `MEMREZ_CURATE_INTERVAL` | no | Curation sweep cadence (`30m`, `1h`, …); unset disables the sweep |
 | `PORT` | yes | `4001` |
 | `WORKER_INTERNAL_SECRET` | yes | 32-byte random secret — **must match the app's value** |
 | `DEFAULT_MODEL_PROVIDER` | yes | e.g. `openai` — used when an agent doesn't specify |

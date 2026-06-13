@@ -1,4 +1,9 @@
-import type { MemoryEntry, MemoryStore, TopicSummary } from "./types.js";
+import type {
+	DirtyTopic,
+	MemoryEntry,
+	MemoryStore,
+	TopicSummary,
+} from "./types.js";
 
 interface TopicMeta {
 	blurb?: string;
@@ -34,37 +39,36 @@ export class InMemoryMemoryStore implements MemoryStore {
 
 	async listTopics(scopePaths: string[]): Promise<TopicSummary[]> {
 		const scopes = new Set(scopePaths);
-		const counts = new Map<
-			string,
-			{ count: number; lastUpdatedAt: string; hasUncuratedWrites: boolean }
-		>();
+		const counts = new Map<string, { count: number; lastUpdatedAt: string }>();
+		const newestByPair = this.newestActiveByPair((entry) =>
+			scopes.has(entry.scope),
+		);
 		for (const entry of this.entries.values()) {
 			if (entry.status !== "active" || !scopes.has(entry.scope)) continue;
 			for (const topic of entry.topics) {
 				const current = counts.get(topic);
 				if (!current) {
-					counts.set(topic, {
-						count: 1,
-						lastUpdatedAt: entry.updatedAt,
-						hasUncuratedWrites: true,
-					});
+					counts.set(topic, { count: 1, lastUpdatedAt: entry.updatedAt });
 				} else {
 					current.count += 1;
 					if (entry.updatedAt > current.lastUpdatedAt)
 						current.lastUpdatedAt = entry.updatedAt;
-					current.hasUncuratedWrites = true;
 				}
 			}
 		}
 		return Array.from(counts.entries())
 			.map(([topic, summary]) => {
 				const meta = this.findTopicMeta(scopePaths, topic);
+				const hasUncuratedWrites = scopePaths.some((scope) => {
+					const newest = newestByPair.get(metaKey(scope, topic));
+					return newest !== undefined && this.isPairDirty(scope, topic, newest);
+				});
 				return {
 					topic,
 					count: summary.count,
 					blurb: meta?.blurb,
 					lastUpdatedAt: meta?.lastUpdatedAt ?? summary.lastUpdatedAt,
-					hasUncuratedWrites: summary.hasUncuratedWrites,
+					hasUncuratedWrites,
 				};
 			})
 			.sort((a, b) => a.topic.localeCompare(b.topic));
@@ -132,6 +136,44 @@ export class InMemoryMemoryStore implements MemoryStore {
 			.map(cloneEntry);
 	}
 
+	async listDirtyTopics(): Promise<DirtyTopic[]> {
+		const newestByPair = this.newestActiveByPair(() => true);
+		const out: DirtyTopic[] = [];
+		for (const [key, newest] of newestByPair) {
+			const [scope, topic] = splitMetaKey(key);
+			if (this.isPairDirty(scope, topic, newest)) {
+				out.push({ scope, topic });
+			}
+		}
+		return out.sort(
+			(a, b) =>
+				a.scope.localeCompare(b.scope) || a.topic.localeCompare(b.topic),
+		);
+	}
+
+	/** Newest active-entry updatedAt per (scope, topic) pair. */
+	private newestActiveByPair(
+		include: (entry: MemoryEntry) => boolean,
+	): Map<string, string> {
+		const newest = new Map<string, string>();
+		for (const entry of this.entries.values()) {
+			if (entry.status !== "active" || !include(entry)) continue;
+			for (const topic of entry.topics) {
+				const key = metaKey(entry.scope, topic);
+				const current = newest.get(key);
+				if (!current || entry.updatedAt > current) {
+					newest.set(key, entry.updatedAt);
+				}
+			}
+		}
+		return newest;
+	}
+
+	private isPairDirty(scope: string, topic: string, newest: string): boolean {
+		const meta = this.topicMeta.get(metaKey(scope, topic));
+		return !meta?.lastUpdatedAt || newest > meta.lastUpdatedAt;
+	}
+
 	private findTopicMeta(
 		scopePaths: string[],
 		topic: string,
@@ -146,6 +188,11 @@ export class InMemoryMemoryStore implements MemoryStore {
 
 function metaKey(scope: string, topic: string): string {
 	return `${scope}\u0000${topic}`;
+}
+
+function splitMetaKey(key: string): [string, string] {
+	const idx = key.indexOf("\u0000");
+	return [key.slice(0, idx), key.slice(idx + 1)];
 }
 
 function cloneEntry(entry: MemoryEntry): MemoryEntry {

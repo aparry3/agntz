@@ -7,8 +7,21 @@ import {
 } from "@agntz/core";
 import { parseManifest } from "@agntz/manifest";
 import { createMemrez } from "@agntz/memrez";
+import type { MemrezReasoner, TaggerInput, TaggerResult } from "@agntz/memrez";
 import { describe, expect, it } from "vitest";
 import { createWorkerAPI } from "../src/routes.js";
+
+/** Tagger stub: files anything mentioning tea as a tea preference. */
+class TeaReasoner implements MemrezReasoner {
+	async tag(input: TaggerInput): Promise<TaggerResult> {
+		return {
+			namespace: input.grants[0],
+			topics: ["preferences"],
+			type: "preference",
+			normalizedContent: "Prefers tea.",
+		};
+	}
+}
 
 const SECRET = "test-secret";
 const usage = { promptTokens: 1, completionTokens: 1, totalTokens: 2 };
@@ -39,7 +52,10 @@ function internalAuthHeaders() {
 describe("worker memrez integration", () => {
 	it("exposes memory tools for a YAML agent and persists writes", async () => {
 		const store = new MemoryStore();
-		const memrez = createMemrez();
+		// The agent-facing memory_write tool is content-only; organizing the
+		// write is the reasoner's job. Stub one that derives topic/type from
+		// content so the persisted shape is deterministic for assertion.
+		const memrez = createMemrez({ reasoner: new TeaReasoner() });
 		const modelProvider = new MockModelProvider([
 			{
 				text: "",
@@ -47,11 +63,7 @@ describe("worker memrez integration", () => {
 					{
 						id: "tc_write",
 						name: "memory_write",
-						args: {
-							content: "Prefers tea.",
-							type: "preference",
-							topicsHint: ["preferences"],
-						},
+						args: { content: "Remember that I prefer tea." },
 					},
 				],
 				usage,

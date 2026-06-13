@@ -175,15 +175,25 @@ Use ancestor promotion only for trusted agents that are designed to curate share
 
 ## Reasoning layer
 
-memrez uses a reasoner to tag memory writes with topics, entry type, normalized content, and target namespace. The default reasoner is deterministic and uses the first grant plus provided topic hints. You can supply an agntz-backed reasoner when you want a model to classify and curate memory entries.
+memrez uses a reasoner to organize memory writes — choosing topics, entry type, normalized content, and target namespace — and to curate scopes. By default \`createMemrez({ store })\` wires a built-in LLM reasoner that makes direct model calls, keyed from your provider env var (e.g. \`OPENAI_API_KEY\`). That is why the agent's \`memory_write\` tool takes content only: filing the entry is memrez's job, not the agent's.
+
+Override the reasoner when you want different models, or no LLM at all for tests / emergency fallback:
 
 \`\`\`ts
-import { agntzReasoner, createMemrez } from "@agntz/memrez";
+import {
+  createMemrez,
+  llmReasoner,
+  DeterministicReasoner,
+} from "@agntz/memrez";
 
-const memrez = createMemrez({
-  reasoner: agntzReasoner({ client }),
-});
+createMemrez({ store, reasoner: llmReasoner({ taggerModel: { provider: "anthropic", name: "claude-haiku-4-5" } }) });
+createMemrez({ store, reasoner: new DeterministicReasoner() }); // no LLM (tests / kill-switch)
 \`\`\`
+
+memrez does not run its tagger or curator through the agntz agent loop yet.
+Those steps are bounded structured model calls owned by memrez, which avoids
+circular setups where memory writes invoke agents that can themselves use
+memory.
 
 The reasoner may propose a namespace, but memrez validates it before writing. The model cannot bypass the grant boundary.
 

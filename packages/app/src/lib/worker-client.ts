@@ -272,6 +272,113 @@ export async function workerValidateManifest(
 	return res.json() as Promise<ValidationResult>;
 }
 
+// ── Memory observability ──────────────────────────────────────────────────
+// Wire types mirror @agntz/memrez. The app deliberately reads memory through
+// the worker so there is exactly one authorization path: grants expand to
+// scopes the same way they do for agent tools.
+
+export interface MemoryTopicSummary {
+	topic: string;
+	count: number;
+	blurb?: string;
+	lastUpdatedAt: string;
+	hasUncuratedWrites: boolean;
+}
+
+export interface MemoryEntryWire {
+	id: string;
+	scope: string;
+	content: string;
+	topics: string[];
+	type: "fact" | "preference" | "event" | "summary";
+	source?: { agentId?: string; sessionId?: string; runId?: string };
+	status: "active" | "superseded";
+	supersededBy?: string;
+	createdAt: string;
+	updatedAt: string;
+}
+
+export interface MemoryEntriesPage {
+	entries: MemoryEntryWire[];
+	total: number;
+	limit: number;
+	offset: number;
+}
+
+export async function workerMemoryTopics(
+	grants: string[],
+): Promise<{ grants: string[]; topics: MemoryTopicSummary[] }> {
+	const params = new URLSearchParams({ grants: grants.join(",") });
+	const res = await fetch(`${WORKER_URL}/memory/topics?${params}`, {
+		headers: { "X-Internal-Secret": internalSecret() },
+	});
+
+	if (!res.ok) {
+		const body = await res.json().catch(() => ({}));
+		throw new Error(
+			(body as { error?: string }).error ?? `Worker error: ${res.status}`,
+		);
+	}
+
+	return res.json() as Promise<{
+		grants: string[];
+		topics: MemoryTopicSummary[];
+	}>;
+}
+
+export async function workerMemoryEntries(req: {
+	grants: string[];
+	topics?: string[];
+	includeSuperseded?: boolean;
+	limit?: number;
+	offset?: number;
+}): Promise<MemoryEntriesPage> {
+	const params = new URLSearchParams({ grants: req.grants.join(",") });
+	if (req.topics?.length) params.set("topics", req.topics.join(","));
+	if (req.includeSuperseded) params.set("includeSuperseded", "true");
+	if (req.limit !== undefined) params.set("limit", String(req.limit));
+	if (req.offset !== undefined) params.set("offset", String(req.offset));
+	const res = await fetch(`${WORKER_URL}/memory/entries?${params}`, {
+		headers: { "X-Internal-Secret": internalSecret() },
+	});
+
+	if (!res.ok) {
+		const body = await res.json().catch(() => ({}));
+		throw new Error(
+			(body as { error?: string }).error ?? `Worker error: ${res.status}`,
+		);
+	}
+
+	return res.json() as Promise<MemoryEntriesPage>;
+}
+
+export async function workerMemoryCorrect(req: {
+	grants: string[];
+	id: string;
+	content: string;
+}): Promise<{ entry: MemoryEntryWire }> {
+	const res = await fetch(
+		`${WORKER_URL}/memory/entries/${encodeURIComponent(req.id)}/correct`,
+		{
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"X-Internal-Secret": internalSecret(),
+			},
+			body: JSON.stringify({ grants: req.grants, content: req.content }),
+		},
+	);
+
+	if (!res.ok) {
+		const body = await res.json().catch(() => ({}));
+		throw new Error(
+			(body as { error?: string }).error ?? `Worker error: ${res.status}`,
+		);
+	}
+
+	return res.json() as Promise<{ entry: MemoryEntryWire }>;
+}
+
 /**
  * List system agents bundled with the worker. These are global (not
  * user-scoped), so the endpoint only needs the internal secret.

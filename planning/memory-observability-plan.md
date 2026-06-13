@@ -1,6 +1,17 @@
 # Memory Observability & Preload for memrez + agntz
 
-**Status:** Draft for review · **Date:** 2026-06-12 · **Companion to:** [`data-encryption-plan.md`](./data-encryption-plan.md)
+**Status:** Implemented (M1–M4, 2026-06-12) · **Date:** 2026-06-12 · **Companion to:** [`data-encryption-plan.md`](./data-encryption-plan.md)
+
+> **Implementation notes (2026-06-12).** All four phases landed. Resolutions of §5's open questions:
+> 1. Pinned topic name: **`pinned`** (documented in the built-in reasoner instructions + memrez README).
+> 2. `preloadLimit` default: **50 entries**; cap is entry-count only, with an explicit "+N more not shown" note to the model on overflow.
+> 3. Enumeration shape: **`listDirtyTopics()`** on `MemoryStore` (all three stores), driven by `topic_meta.last_updated_at` watermarks; `curate()` now stamps every scanned `(scope, topic)` pair after a curate-capable pass, which also makes `scan()`'s `hasUncuratedWrites` real instead of hardcoded `true`.
+> 4. Pagination: **endpoint-layer `limit`/`offset`** (default 200, max 1000) with `total` in the response; `Memrez.list()` stays unpaginated.
+> 5. Grants transport: **comma-separated/repeatable `grants` query param** for GETs, `grants` body field for POSTs; multiple grants allowed.
+>
+> Beyond the plan: the app's `/memory` viewer and `/api/memory/*` proxy routes are **super-admin-gated** (same gate as System Agents) because grants are taken verbatim — they open to all users only after the tenant-prefixing decision (encryption plan §5/§12). The hosted cron is an in-process `MEMREZ_CURATE_INTERVAL` sweep in `server.ts` sharing `runCurationSweep()` with `POST /memory/curate`.
+>
+> **Reasoner correction (post-review).** The plan's D6 framed importance/tagging as partly the *writing agent's* job (topicsHint at write time, "day-one solution with the deterministic reasoner"). That blends agent logic into memory logic. Corrected: **memrez owns organization; the agent's `memory_write` is content-only** (no `type`/`topicsHint` in the tool schema — programmatic `WriteOptions.topicsHint` is retained for trusted callers/tests). The **built-in `llmReasoner()` is now the `createMemrez()` default and the only supported reasoner loop** — direct model calls through core's `AISDKModelProvider`, no agntz client/runner, so memrez stays strictly below the agent layer and there's no client↔resource circular construction. The `pinned` set is maintained by the reasoner (tagger files it, curator promotes/demotes), not by agent prompt guidance. Missing provider key → throws on first write (loud setup error); transient model failure → deterministic fallback so the write still lands. `DeterministicReasoner` is tests + the `MEMREZ_REASONER=deterministic` kill-switch. The agntz-agent-loop reasoner is punted until we have explicit guardrails; the worker just calls `createMemrez({ store })` like every other consumer.
 
 agntz has traces for agent observability but nothing equivalent for memory: once memrez writes an entry, there is no way to see it outside the agent loop. This plan adds (a) a deterministic read surface — SDK methods, worker endpoints, app viewer — so a user's memories can be inspected for a grant exactly as an agent would see them, (b) invoke-time preloading of important memories so agents don't burn a turn recalling obvious context, and (c) the wiring that makes curation actually run, which both of the above quietly depend on.
 
@@ -11,7 +22,7 @@ agntz has traces for agent observability but nothing equivalent for memory: once
 - **`Memrez.scan/read/write/curate` are already public deterministic methods** taking `grants: string[]` (`packages/memrez/src/memrez.ts`). The library viewing path exists today; nothing new is needed to call it from an embedding backend.
 - **Agents get `read` + `write` tools only; scan is not a tool.** The provider's `getContext` hook (`provider.ts:27`) injects a topic list — name, count, blurb — into every run, controlled by `autoScan` (default ON). Invoke-time topic injection already exists.
 - **`read` is single-topic.** Tool schema is `topic: z.string()`; `Memrez.read` takes one topic. An agent recalling three topics pays three round trips.
-- **`curate` never runs anywhere.** The default `DeterministicReasoner` implements only `tag`; `Memrez.curate` falls back to zero ops when `reasoner.curate` is undefined (`memrez.ts:129`). The LLM-backed `agntzReasoner` (`reasoner.ts`) implements curate via a `memrez-curator` agent, but nothing wires it: local callers must pass it explicitly, and the worker's `resources.ts` (from `9b5792e`) configures no reasoner. Consequence: blurbs are never written, supersession never happens, and the autoScan context shows bare topic names and counts.
+- **`curate` previously never ran anywhere.** The old default `DeterministicReasoner` implemented only `tag`, so `Memrez.curate` fell back to zero ops when `reasoner.curate` was undefined. The corrected default is the built-in `llmReasoner()`, which implements both `tag` and `curate` as direct structured model calls owned by memrez.
 - **The "read everything" primitive already exists at the store level:** `MemoryStore.listScopeSlice(scopePaths, { topics?, includeSuperseded? })` — curate itself uses it. A public wrapper is ~10 lines.
 - **Topics are tags, not paths.** Postgres schema: `entries` has a single `scope TEXT` column (hierarchy is string convention; `visibleScopes` expands grants and queries `scope = ANY(...)`); `entry_topics` is an `(entry_id, topic)` join table — many flat labels per entry; `topic_meta` is keyed `(scope, topic)` and holds blurbs. Topics are per-scope and orthogonal to the scope hierarchy.
 - **No scope enumeration on `MemoryStore`.** Every method takes `scopePaths` as input. A global curation cron has no way to discover which scopes have work. `TopicSummary.hasUncuratedWrites` exists per topic but is only reachable if you already know the scope.
@@ -67,9 +78,9 @@ Side benefit: `pinned` appears in scan like any topic, so its per-`(scope, topic
 
 **D7 — Curation wiring.**
 
-- *Local:* pass `agntzReasoner({ client })` into `createMemrez` and call `await memrez.curate(grants)` — from a script, on session end, or write-triggered (after N writes to a topic with `hasUncuratedWrites`).
+- *Local:* use the default `createMemrez({ store })` LLM reasoner and call `await memrez.curate(grants)` — from a script, on session end, or write-triggered (after N writes to a topic with `hasUncuratedWrites`).
 - *Hosted:* a cron hits an internal `POST /memory/curate`. Requires closing the enumeration gap with a new store method, e.g. `listDirtyTopics(): Promise<{ scope: string; topic: string }[]>` (driven by the existing uncurated-writes tracking), so the cron pages through dirty topics and curates each with `grants = [scope]`. That per-scope loop has a nice property under the encryption plan: curate only ever needs one scope's DEK unwrapped at a time.
-- The worker must also wire `agntzReasoner` pointing at its own run endpoint (the `memrez-curator` / `memrez-tagger` agents must exist as system agents) — without it, hosted curate is a no-op today.
+- The worker must not route memrez reasoning back through the agntz agent loop for now. The default LLM reasoner keeps tagging/curation below the agent layer and avoids circular memory-tool construction.
 
 **D8 — Worker read endpoints.** `GET /memory/topics?grants=…` and `GET /memory/entries?grants=…&topics=…&includeSuperseded=…` on the process-wide memrez instance from `resources.ts`, behind the existing internal-secret auth, calling `scan()`/`list()`. This un-parks the "hosted memory read endpoints" item from the encryption plan §12. The tenant-prefixed key-root precondition from that plan's §5 applies identically here: the route layer must resolve the effective scope as `{tenantId}/{scope}` before these endpoints ship to multi-tenant traffic. Scoped end-user tokens (grant-bound, capability-bound, short-lived) remain parked; v1 is app→worker internal auth only.
 
@@ -81,9 +92,9 @@ Everything here sits **above** the store interface, and the encryption decorator
 
 | Phase | Scope | Packages |
 |-------|-------|----------|
-| **M1** | `Memrez.list()`, multi-topic `read` tool, `preload` + `preloadLimit` in `getContext`, `pinned` convention documented in tagger/curator guidance | `memrez` |
+| **M1** | `Memrez.list()`, multi-topic `read` tool, `preload` + `preloadLimit` in `getContext`, `pinned` convention documented in reasoner guidance | `memrez` |
 | **M2** | Worker read endpoints (`GET /memory/topics`, `GET /memory/entries`), app memory viewer (topics → entries → audit view) | `worker`, `app` |
-| **M3** | Curation wiring: `agntzReasoner` in worker resources, `memrez-tagger`/`memrez-curator` system agents, `listDirtyTopics` store method, `POST /memory/curate` + cron | `memrez`, `worker` |
+| **M3** | Curation wiring: built-in LLM reasoner default, `listDirtyTopics` store method, `POST /memory/curate` + cron | `memrez`, `worker` |
 | **M4** | Correction: `Memrez.correct()`, edit affordance in the viewer | `memrez`, `worker`, `app` |
 
 M1 is pure library work — deterministic, no store schema changes, shippable independently of the encryption plan's P1. M2 should land after (or with) the tenant-prefixing decision (encryption plan open question 6). M3 is what makes blurbs/pinned/summaries real; until it lands, preload via explicit topics or `all` carries the weight.

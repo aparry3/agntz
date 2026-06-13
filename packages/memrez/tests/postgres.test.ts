@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { PostgresMemoryStore, createMemrez } from "../src/index.js";
+import {
+	DeterministicReasoner,
+	PostgresMemoryStore,
+	createMemrez,
+} from "../src/index.js";
 
 const url = process.env.MEMREZ_POSTGRES_URL ?? process.env.DATABASE_URL;
 const describePg = url ? describe : describe.skip;
@@ -10,7 +14,10 @@ describePg("PostgresMemoryStore", () => {
 			connection: url!,
 			tablePrefix: `test_${Date.now()}_`,
 		});
-		const memrez = createMemrez({ store });
+		const memrez = createMemrez({
+			store,
+			reasoner: new DeterministicReasoner(),
+		});
 		try {
 			await memrez.write(["app"], "Global policy.", { topicsHint: ["shared"] });
 			await memrez.write(["app/user/u_123"], "User 123 preference.", {
@@ -101,6 +108,47 @@ describePg("PostgresMemoryStore", () => {
 					hasUncuratedWrites: true,
 				},
 			]);
+		} finally {
+			await store.close();
+		}
+	});
+
+	it("enumerates dirty topics across all scopes and clears them via meta", async () => {
+		const store = new PostgresMemoryStore({
+			connection: url!,
+			tablePrefix: `test_${Date.now()}_`,
+		});
+		const memrez = createMemrez({
+			store,
+			reasoner: new DeterministicReasoner(),
+		});
+		try {
+			await memrez.write(["app/user/u_123"], "Prefers email.", {
+				topicsHint: ["prefs"],
+			});
+			await memrez.write(["app/user/u_456"], "Wants strength.", {
+				topicsHint: ["goals"],
+			});
+
+			expect(await store.listDirtyTopics()).toEqual([
+				{ scope: "app/user/u_123", topic: "prefs" },
+				{ scope: "app/user/u_456", topic: "goals" },
+			]);
+			expect(
+				(await store.listTopics(["app/user/u_123"]))[0].hasUncuratedWrites,
+			).toBe(true);
+
+			await new Promise((resolve) => setTimeout(resolve, 2));
+			await store.setTopicMeta("app/user/u_123", "prefs", {
+				lastUpdatedAt: new Date().toISOString(),
+			});
+
+			expect(await store.listDirtyTopics()).toEqual([
+				{ scope: "app/user/u_456", topic: "goals" },
+			]);
+			expect(
+				(await store.listTopics(["app/user/u_123"]))[0].hasUncuratedWrites,
+			).toBe(false);
 		} finally {
 			await store.close();
 		}

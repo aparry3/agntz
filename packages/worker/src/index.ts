@@ -1,5 +1,5 @@
-export { createWorkerAPI } from "./routes.js";
-export type { WorkerAPIOptions } from "./routes.js";
+export { createWorkerAPI, runCurationSweep } from "./routes.js";
+export type { CurationSweepResult, WorkerAPIOptions } from "./routes.js";
 export { createExecutionContext } from "./bridge.js";
 export { readFileTool } from "./tools/read-file.js";
 export { validateManifestTool } from "./tools/validate-manifest.js";

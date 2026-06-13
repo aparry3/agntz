@@ -48,6 +48,15 @@ const observeLinks: NavLink[] = [
 	{ href: "/sessions", label: "Sessions", Ic: I.Sessions },
 ];
 
+// Admin-only until memory scopes are tenant-prefixed — the viewer takes
+// grants verbatim, so it must not be exposed to every signed-in user yet.
+const memoryLink: NavLink = {
+	href: "/memory",
+	label: "Memory",
+	Ic: I.Memory,
+	matches: (p) => p === "/memory" || p.startsWith("/memory/"),
+};
+
 const configureLinks: NavLink[] = [
 	{ href: "/settings", label: "Settings", Ic: I.Settings },
 	{ href: "/settings/api-keys", label: "API Keys", Ic: I.Key },
@@ -271,6 +280,13 @@ export function AppSidebar() {
 							collapsed={collapsed}
 						/>
 					))}
+					{isAdmin && (
+						<NavItem
+							{...memoryLink}
+							on={isActive(memoryLink)}
+							collapsed={collapsed}
+						/>
+					)}
 				</NavSection>
 
 				{/* Configure — collapsible group */}

@@ -6,12 +6,14 @@ import {
 	normalizeWritePolicy,
 	visibleScopes,
 } from "./grants.js";
+import { llmReasoner } from "./llm-reasoner.js";
 import { createMemoryResourceProvider } from "./provider.js";
 import { InMemoryMemoryStore } from "./store.js";
 import type {
 	CurateOptions,
 	CurateReport,
 	EntryType,
+	ListOptions,
 	MemoryEntry,
 	MemoryStore,
 	MemrezOptions,
@@ -32,7 +34,12 @@ export class Memrez {
 
 	constructor(options: MemrezOptions = {}) {
 		this.store = options.store ?? new InMemoryMemoryStore();
-		this.reasoner = options.reasoner ?? new DeterministicReasoner();
+		// Memory handling is memrez's job: by default every write is tagged and
+		// every curate pass is reasoned by the built-in LLM reasoner (direct
+		// model calls, env-key auth). Pass `reasoner` to override — e.g.
+		// llmReasoner({ taggerModel, curatorModel }) for custom models, or
+		// DeterministicReasoner for tests / kill-switch behavior.
+		this.reasoner = options.reasoner ?? llmReasoner();
 		this.namespacePolicy = options.namespacePolicy;
 	}
 
@@ -55,12 +62,42 @@ export class Memrez {
 
 	async read(
 		grants: NamespaceGrant[],
-		topic: string,
+		topic: string | string[],
 		opts: ReadOptions = {},
 	): Promise<MemoryEntry[]> {
 		const normalized = normalizeGrants(grants, this.namespacePolicy);
 		const scopes = visibleScopes(normalized, opts.includeAncestors ?? true);
-		return this.store.getByTopic(scopes, topic, opts.limit);
+		const topics = Array.isArray(topic) ? topic : [topic];
+		// Loop per topic so `limit` keeps its per-topic semantics, then dedupe
+		// entries tagged with more than one of the requested topics.
+		const seen = new Set<string>();
+		const out: MemoryEntry[] = [];
+		for (const t of topics) {
+			const entries = await this.store.getByTopic(scopes, t, opts.limit);
+			for (const entry of entries) {
+				if (seen.has(entry.id)) continue;
+				seen.add(entry.id);
+				out.push(entry);
+			}
+		}
+		return out;
+	}
+
+	/**
+	 * Deterministic read of every entry visible to the given grants — the
+	 * viewer/audit primitive. `includeSuperseded: true` returns supersession
+	 * chains as well as active entries.
+	 */
+	async list(
+		grants: NamespaceGrant[],
+		opts: ListOptions = {},
+	): Promise<MemoryEntry[]> {
+		const normalized = normalizeGrants(grants, this.namespacePolicy);
+		const scopes = visibleScopes(normalized, opts.includeAncestors ?? true);
+		return this.store.listScopeSlice(scopes, {
+			topics: opts.topics,
+			includeSuperseded: opts.includeSuperseded,
+		});
 	}
 
 	async write(
@@ -142,6 +179,20 @@ export class Memrez {
 			blurbsUpdated: 0,
 		};
 
+		// (scope, topic) pairs covered by this pass. Touched below so dirty
+		// tracking (listDirtyTopics / hasUncuratedWrites) resets even for
+		// topics the curator left untouched.
+		const curatedPairs = new Map<string, { scope: string; topic: string }>();
+		for (const entry of entries) {
+			for (const topic of entry.topics) {
+				if (opts.topics && !opts.topics.includes(topic)) continue;
+				curatedPairs.set(`${entry.scope}\u0000${topic}`, {
+					scope: entry.scope,
+					topic,
+				});
+			}
+		}
+
 		for (const op of ops) {
 			if (op.type === "setBlurb") {
 				await this.store.setTopicMeta(op.scope, op.topic, {
@@ -168,12 +219,76 @@ export class Memrez {
 				};
 				await this.store.putEntry(replacement);
 				await this.store.supersede(op.ids, replacement.id);
+				for (const topic of replacement.topics) {
+					curatedPairs.set(`${scope}\u0000${topic}`, { scope, topic });
+				}
 				report.created += 1;
 				report.superseded += op.ids.length;
 			}
 		}
 
+		// Stamp the pass only when a real curator ran; the deterministic
+		// no-op fallback must leave topics dirty for a future LLM pass.
+		if (this.reasoner.curate) {
+			const stamp = new Date().toISOString();
+			for (const { scope, topic } of curatedPairs.values()) {
+				const existing = await this.store.getTopicMeta(scope, topic);
+				await this.store.setTopicMeta(scope, topic, {
+					blurb: existing?.blurb,
+					lastUpdatedAt: stamp,
+				});
+			}
+		}
+
 		return report;
+	}
+
+	/**
+	 * Correct an entry's content without changing what it means to the
+	 * organizer: the replacement inherits the original's scope, topics, and
+	 * type, and the original is superseded — never edited in place — so the
+	 * audit trail stays intact. Deterministic; the tagger is not consulted.
+	 */
+	async correct(
+		grants: NamespaceGrant[],
+		id: string,
+		newContent: string,
+	): Promise<{ entry: MemoryEntry }> {
+		const normalized = normalizeGrants(grants, this.namespacePolicy);
+		const original = await this.store.getEntry(id);
+		if (!original) {
+			throw new MemrezEntryNotFoundError(id);
+		}
+		if (original.status !== "active") {
+			throw new MemrezCorrectionError(
+				`entry '${id}' is already superseded by '${original.supersededBy}'; correct the active entry instead`,
+			);
+		}
+		assertWritableScope(
+			normalized,
+			original.scope,
+			normalizeWritePolicy(undefined),
+		);
+
+		const content = newContent.trim();
+		if (!content) {
+			throw new MemrezCorrectionError("corrected content must not be empty");
+		}
+
+		const now = new Date().toISOString();
+		const entry: MemoryEntry = {
+			id: `mem_${randomUUID()}`,
+			scope: original.scope,
+			content,
+			topics: [...original.topics],
+			type: original.type,
+			status: "active",
+			createdAt: now,
+			updatedAt: now,
+		};
+		await this.store.putEntry(entry);
+		await this.store.supersede([id], entry.id);
+		return { entry };
 	}
 
 	private async findExactDuplicate(
@@ -193,16 +308,17 @@ export function createMemrez(options: MemrezOptions = {}): Memrez {
 	return new Memrez(options);
 }
 
-class DeterministicReasoner implements MemrezReasoner {
-	async tag(input: TaggerInput): Promise<TaggerResult> {
-		return {
-			namespace: input.grants[0],
-			topics: normalizeTopics(
-				input.topicsHint?.length ? input.topicsHint : ["general"],
-			),
-			type: "fact",
-			normalizedContent: input.content.trim(),
-		};
+export class MemrezEntryNotFoundError extends Error {
+	constructor(id: string) {
+		super(`memory entry '${id}' not found`);
+		this.name = "MemrezEntryNotFoundError";
+	}
+}
+
+export class MemrezCorrectionError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "MemrezCorrectionError";
 	}
 }
 
