@@ -16,6 +16,8 @@ What runs where, today. Embedded means in-process SDK execution: \`@agntz/sdk\` 
 | Generic resource provider runtime | ✓ | ✓ | self-host configurable |
 | memrez memory resource provider | ✓ | ✓ | self-host configurable |
 | memrez SQLite / Postgres memory stores | ✓ | ✓ | deployment-owned |
+| memrez built-in LLM reasoner default | ✓ | × | ✓ |
+| memrez preload / core topic policy | ✓ | × | ✓ |
 | Spawnable subagents | ✓ | not yet | ✓ |
 | Skills (\`use_skill\` tool) | ✓ | not yet | ✓ |
 | Reply tool (intermediate messages) | ✓ | persisted messages only | ✓ |
@@ -64,7 +66,7 @@ client.agents.run(
 
 The Python SDK follows Python naming conventions, so wire names become \`agent_id\` and \`session_id\` while YAML fields remain unchanged.
 
-Resource and memory APIs use the same pattern: TypeScript passes \`resources: { memory: memrez.provider() }\`; Python passes \`resources={"memory": memrez.provider()}\`.
+Resource and memory APIs use the same pattern: TypeScript passes \`resources: { memory: memrez.provider() }\`; Python passes \`resources={"memory": memrez.provider()}\`. The TypeScript provider and hosted worker currently have the newer built-in LLM reasoner default plus \`preload\`/\`topics.core\` config; Python local memrez still defaults to deterministic tagging and does not yet implement invoke-time preload.
 
 ### Hosted → self-hosted
 

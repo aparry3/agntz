@@ -156,6 +156,14 @@ resources:                           # runtime resource slots (optional)
   memory:
     mode: read-write                  # read | read-write
     autoScan: true                    # provider-specific config passthrough
+    topics:
+      preferred: [goals, equipment]   # memrez: preferred topic vocabulary
+    preload:
+      core: true                      # memrez: include configured core topic
+      topics: [goals, equipment]      # memrez: additional preloaded topics
+      limit: 30                       # memrez: entry cap
+      maxChars: 10000                 # memrez: rendered context cap
+      types: [fact, preference, summary]
   product-docs:
     kind: rag                         # kind defaults to the resource name
     mode: read
@@ -252,6 +260,14 @@ resources:
   memory:
     mode: read-write
     autoScan: true
+    topics:
+      preferred: [goals, equipment, schedule, injuries]
+    preload:
+      core: true
+      topics: [goals, equipment]
+      limit: 30
+      maxChars: 10000
+      types: [fact, preference, summary]
   product-docs:
     kind: rag
     mode: read
@@ -265,6 +281,7 @@ Rules:
 - `mode` is `read` or `read-write`; runtime providers may define defaults when omitted.
 - `namespace` is static provider input, not an automatic runtime grant.
 - Provider tools are exposed as `<resource>_<tool>`, with non-identifier characters in the resource name converted to `_`.
+- Provider-specific fields pass through the manifest layer. For memrez, `autoScan` injects topic summaries, `topics.preferred` steers the reasoner, `topics.core` renames the special always-load topic from its default `core`, and `preload` controls full-entry memory injected before tool calls.
 
 ---
 

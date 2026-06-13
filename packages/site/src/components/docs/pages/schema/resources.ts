@@ -94,12 +94,20 @@ resources:
   memory:
     mode: read-write
     autoScan: true
+    topics:
+      preferred: [goals, equipment, schedule, injuries]
+    preload:
+      core: true
+      topics: [goals, equipment]
+      limit: 30
+      maxChars: 10000
+      types: [fact, preference, summary]
     writePolicy:
       descendants: true
       ancestorPromotion: none
 \`\`\`
 
-Use provider docs to know which fields are meaningful. For memrez, see [Memory with memrez](/docs/tools/memory-memrez).
+Use provider docs to know which fields are meaningful. For memrez, \`autoScan\` injects topic summaries, \`topics.preferred\` steers the reasoner toward an agent-specific topic vocabulary, \`topics.core\` can rename the special always-load topic from its default \`core\`, and \`preload\` controls full-entry memory injected before tool calls. See [Memory with memrez](/docs/tools/memory-memrez).
 
 ## Generated tools
 

@@ -305,7 +305,10 @@ JSON request body.
 ## Memrez
 
 The Python package includes namespace grants, the memrez core, memory resource
-provider wiring, and SQLite/Postgres memory stores.
+provider wiring, and SQLite/Postgres memory stores. Python local memrez
+currently defaults to deterministic tagging and does not yet implement the
+TypeScript provider's built-in LLM reasoner default or invoke-time
+`preload`/`topics.core` policy.
 
 ```python
 from agntz import LiteLLMModelProvider, agntz

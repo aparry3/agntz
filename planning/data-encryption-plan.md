@@ -30,7 +30,7 @@ What already exists and shapes the design:
 - **Dedup and curation operate above the store.** `Memrez.write()` compares content for dedup *after* the store returns entries; the curator reads via `listScopeSlice` and writes via `putEntry`. Both work unchanged through a decrypting decorator.
 - **Sessions are clean too.** `ar_messages` carries sensitive payload in three columns: `content` (TEXT, legacy dual-write), `content_blocks` (JSONB), `tool_calls` (JSONB). `SessionSummary` (`packages/core/src/types.ts:505-511`) has **no content-derived fields** (no title/preview), and nothing in `postgres-store.ts` searches message content. Decorator-compatible.
 - **`user_id` is the tenant.** In the hosted worker, `user_id` is the agntz account (Clerk id / API-key owner) — end users of a customer app (e.g. trainees in the personal-trainer app) are invisible to agntz except through sessionIds and namespace strings.
-- **The worker hosts memrez (as of `9b5792e`).** `packages/worker/src/resources.ts` builds one process-wide provider — `createMemrez({ store })` exposed as `resources.memory` — and every runner the worker creates receives it. The store follows `MEMREZ_STORE`/`STORE` (postgres in prod) and connects via `MEMREZ_DATABASE_URL ?? DATABASE_URL`, i.e. **memrez tables live in the worker's own database by default**, beside `ar_sessions`/`ar_messages`. Manifests declaring `resources.memory` activate it (`bridge.ts` passes `manifest.resources` through). Hosted memrez currently runs the deterministic reasoner — no LLM tagger/curator is wired server-side; embedding apps still point `memrez/src/reasoner.ts` at the worker via `client.agents.run()`.
+- **The worker hosts memrez.** `packages/worker/src/resources.ts` builds one process-wide provider — `createMemrez({ store })` exposed as `resources.memory` — and every runner the worker creates receives it. The store follows `MEMREZ_STORE`/`STORE` (postgres in prod) and connects via `MEMREZ_DATABASE_URL ?? DATABASE_URL`, i.e. **memrez tables live in the worker's own database by default**, beside `ar_sessions`/`ar_messages`. Manifests declaring `resources.memory` activate it (`bridge.ts` passes `manifest.resources` through). Hosted memrez uses the built-in `llmReasoner()` by default (`MEMREZ_REASONER=llm`) for direct model-call tagging and curation, keyed from worker env provider keys. `MEMREZ_REASONER=deterministic` is the test/emergency kill switch; it files writes under `general` and curation is a no-op.
 - **Grants are caller-supplied and unprefixed.** Run requests carry namespace grants as `context: string[]`; `WorkerAPIOptions.namespacePolicy` exists but `server.ts` sets none. The hosted memrez store is shared across tenants with scope as the only partition — nothing today stops two tenants from asserting the same scope string. See §5 for why encryption turns this from an isolation bug into a key-sharing hazard.
 - **The integration seams for manifest-level config exist.** The manifest parser already handles a `resources` block (`packages/manifest/src/parser.ts:72-102`), and the worker's execution bridge threads namespace grants for resource providers (`packages/worker/src/bridge.ts:50` — `context?: string[]`).
 
@@ -153,7 +153,7 @@ encryption:
   key: scope                 # sessions keyed to the scope each run supplies
 resources:
   memory:
-    kind: memrez
+    kind: memory
     encryption:
       key: scope             # DEKs at the grant root; entries carry scopes natively
 
@@ -163,7 +163,7 @@ encryption:
   key: scope                 # runs invoked with scope app/org/acme/u123 → per-member chat keys
 resources:
   memory:
-    kind: memrez
+    kind: memory
     encryption:
       key: scope             # runs grant app/org/acme → one org memory key
 ```

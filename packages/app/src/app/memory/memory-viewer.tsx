@@ -510,8 +510,8 @@ function EntryCard({
 				{entry.topics.map((topic) => (
 					<Tag
 						key={topic}
-						bg={topic === "pinned" ? ag.purpleBg : "transparent"}
-						color={topic === "pinned" ? ag.purple : ag.text2}
+						bg={topic === "core" ? ag.purpleBg : "transparent"}
+						color={topic === "core" ? ag.purple : ag.text2}
 						mono
 					>
 						{topic}

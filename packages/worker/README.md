@@ -55,10 +55,15 @@ DATABASE_URL=postgres://...       # when STORE=postgres
 MEMREZ_STORE=postgres             # postgres | memory | disabled; defaults to STORE
 MEMREZ_DATABASE_URL=postgres://... # optional: separate DB for memory
 MEMREZ_TABLE_PREFIX=              # optional: prefix for memrez_* tables
+MEMREZ_REASONER=llm               # llm | deterministic; default llm
+MEMREZ_CURATE_INTERVAL=           # optional, e.g. 30m or 1h
+OPENAI_API_KEY=...                # used by default memrez LLM reasoner
 DEFAULT_MODEL_PROVIDER=openai
 DEFAULT_MODEL_NAME=gpt-5.4-mini
 BUILT_IN_AGENTS_DIR=...           # optional: extra YAMLs to seed per workspace
 ```
+
+`MEMREZ_REASONER=llm` uses memrez's built-in direct model calls for tagging and curation. It is process-wide and reads provider keys from env vars, not per-user provider settings. Set `MEMREZ_REASONER=deterministic` only as a test/emergency kill switch; writes file under `general` and curation becomes a no-op.
 
 ## System agents
 
