@@ -45,7 +45,29 @@ from .core import (
     ToolResult,
     tool,
 )
-from .memrez import Memrez, MemrezScopeError, create_memrez
+from .memrez import (
+    DeterministicReasoner,
+    DirtyTopic,
+    MemoryEntry,
+    MemoryTopicConfig,
+    Memrez,
+    MemrezCorrectionError,
+    MemrezEntryNotFoundError,
+    MemrezScopeError,
+    TopicMeta,
+    TopicSummary,
+    WritePolicy,
+    create_memrez,
+)
+from .memrez_llm_reasoner import (
+    DEFAULT_CURATOR_MODEL,
+    DEFAULT_TAGGER_MODEL,
+    LiteLLMReasonerModelProvider,
+    LlmReasoner,
+    MemrezReasonerSetupError,
+    ReasonerModelConfig,
+    llm_reasoner,
+)
 from .memrez_postgres import PostgresMemoryStore, PostgresMemoryStoreOptions
 from .memrez_provider import MemoryResourceProvider, create_memory_resource_provider
 from .memrez_reasoner import AgntzReasoner, agntz_reasoner, memrez_agents_path
@@ -70,6 +92,10 @@ __all__ = [
     "AgentVersionSummary",
     "AsyncAgntzClient",
     "AuthenticationError",
+    "DEFAULT_CURATOR_MODEL",
+    "DEFAULT_TAGGER_MODEL",
+    "DeterministicReasoner",
+    "DirtyTopic",
     "ApiKeyRecord",
     "EvalCaseResult",
     "EvalCriterion",
@@ -83,16 +109,23 @@ __all__ = [
     "EvalRunSummary",
     "GenerateTextResult",
     "LiteLLMModelProvider",
+    "LiteLLMReasonerModelProvider",
     "LocalClient",
     "LocalMessageRecord",
     "LocalSessionSummary",
     "LocalTraceSpanRecord",
+    "LlmReasoner",
+    "MemoryEntry",
     "ModelMessage",
     "ModelProvider",
     "ModelTool",
     "MemoryStore",
     "MemoryResourceProvider",
+    "MemoryTopicConfig",
     "Memrez",
+    "MemrezCorrectionError",
+    "MemrezEntryNotFoundError",
+    "MemrezReasonerSetupError",
     "MemrezScopeError",
     "NamespaceGrantError",
     "NamespaceGrantPolicy",
@@ -101,6 +134,7 @@ __all__ = [
     "PostgresMemoryStore",
     "PostgresMemoryStoreOptions",
     "ProtectedNamespaceRule",
+    "ReasonerModelConfig",
     "ResourceProvider",
     "ResourceProviderToolDefinition",
     "ResourceRegistrationContext",
@@ -112,10 +146,14 @@ __all__ = [
     "ToolCall",
     "ToolDefinition",
     "ToolResult",
+    "TopicMeta",
+    "TopicSummary",
+    "WritePolicy",
     "agntz",
     "agntz_reasoner",
     "create_memory_resource_provider",
     "create_memrez",
+    "llm_reasoner",
     "memrez_agents_path",
     "normalize_namespace_grant",
     "normalize_namespace_grants",
@@ -123,4 +161,4 @@ __all__ = [
     "tool",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

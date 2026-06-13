@@ -42,6 +42,15 @@ class DirectiveReasoner:
         )
 
 
+class NoopCuratorReasoner(DirectiveReasoner):
+    def __init__(self) -> None:
+        self.curate_inputs: list[dict[str, object]] = []
+
+    def curate(self, input_value: dict[str, object]) -> list[dict[str, object]]:
+        self.curate_inputs.append(input_value)
+        return []
+
+
 def test_namespace_grants_normalize_and_narrow() -> None:
     assert normalize_namespace_grants(["app/user/u_123", "app/user/u_123"]) == ["app/user/u_123"]
     assert namespace_ancestors("app/user/u_123") == ["app", "app/user", "app/user/u_123"]
@@ -136,6 +145,52 @@ def test_memrez_rejects_broad_protected_namespace_grants() -> None:
         "topic:prefs|User-specific memory.",
     )
     assert result["entry"].scope == "gymtext/private/users/u_123"
+
+
+def test_memrez_multi_topic_read_list_and_correct() -> None:
+    memrez = create_memrez(reasoner=DirectiveReasoner())
+    first = memrez.write(
+        ["app/user/u_123"],
+        "topic:prefs,core|Prefers email.",
+    )["entry"]
+    memrez.write(["app/user/u_123"], "topic:goals|Train for a 10k.")
+
+    multi_topic = memrez.read(["app/user/u_123"], ["prefs", "core"])
+    assert [entry.id for entry in multi_topic] == [first.id]
+
+    corrected = memrez.correct(["app/user/u_123"], first.id, "Prefers SMS.")
+    all_entries = memrez.list(["app/user/u_123"], include_superseded=True)
+    original = next(entry for entry in all_entries if entry.id == first.id)
+
+    assert corrected["entry"].topics == ["prefs", "core"]
+    assert corrected["entry"].type == first.type
+    assert original.status == "superseded"
+    assert original.superseded_by == corrected["entry"].id
+
+
+def test_memrez_curate_stamps_dirty_topics_without_ops() -> None:
+    reasoner = NoopCuratorReasoner()
+    memrez = create_memrez(reasoner=reasoner)
+    memrez.write(["app/user/u_123"], "topic:prefs,core|Prefers email.")
+
+    assert {(row.scope, row.topic) for row in memrez.store.list_dirty_topics()} == {
+        ("app/user/u_123", "core"),
+        ("app/user/u_123", "prefs"),
+    }
+    assert memrez.scan(["app/user/u_123"])["topics"][0].has_uncurated_writes is True
+
+    report = memrez.curate(["app/user/u_123"])
+
+    assert report == {"scanned": 1, "superseded": 0, "created": 0, "blurbsUpdated": 0}
+    assert memrez.store.list_dirty_topics() == []
+    assert all(
+        not topic.has_uncurated_writes
+        for topic in memrez.scan(["app/user/u_123"])["topics"]
+    )
+    assert reasoner.curate_inputs[0]["topicConfig"] == {
+        "core": "core",
+        "preferred": [],
+    }
 
 
 def _parse_directive(raw: str) -> Directive:

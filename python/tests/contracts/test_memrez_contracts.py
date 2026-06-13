@@ -8,6 +8,7 @@ import pytest
 
 from agntz import NamespaceGrantError, normalize_namespace_grants
 from agntz.memrez import (
+    DeterministicReasoner,
     MemrezScopeError,
     assert_writable_scope,
     create_memrez,
@@ -62,7 +63,7 @@ def test_memrez_contract_scenarios() -> None:
     scenarios = {scenario["name"]: scenario for scenario in contract["scenarios"]}
 
     read_scenario = scenarios["ancestor-read-without-sibling-leakage"]
-    memrez = create_memrez()
+    memrez = create_memrez(reasoner=DeterministicReasoner())
     for write in read_scenario["writes"]:
         memrez.write(
             write["grants"],

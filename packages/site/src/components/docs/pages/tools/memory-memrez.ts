@@ -11,10 +11,10 @@ pnpm add @agntz/memrez
 \`\`\`
 
 \`\`\`bash {group=memrez-install select=python}
-pip install agntz
+pip install "agntz[litellm]"
 \`\`\`
 
-The TypeScript package is published as \`@agntz/memrez\`. The Python package exports matching core storage and provider primitives from \`agntz.memrez\`, \`agntz.memrez_sqlite\`, \`agntz.memrez_postgres\`, and \`agntz.memrez_provider\`. The TypeScript package and hosted worker currently have the newer built-in LLM reasoner, curation dirtiness tracking, and preload/topic-policy config described below; Python local memrez still defaults to deterministic tagging and does not yet implement invoke-time preload.
+The TypeScript package is published as \`@agntz/memrez\`. The Python package exports matching core storage and provider primitives from \`agntz.memrez\`, \`agntz.memrez_llm_reasoner\`, \`agntz.memrez_sqlite\`, \`agntz.memrez_postgres\`, and \`agntz.memrez_provider\`.
 
 ## Declare a memory resource
 
@@ -160,7 +160,7 @@ Set \`autoScan: false\` when you want the model to discover memory only through 
 
 ## Preload and topic policy
 
-Use \`topics.preferred\` to give memrez's reasoner an agent-specific topic vocabulary. The configured \`topics.core\` topic is the special always-load set for durable profile facts; it defaults to \`core\`. This config is honored by the TypeScript provider and hosted worker.
+Use \`topics.preferred\` to give memrez's reasoner an agent-specific topic vocabulary. The configured \`topics.core\` topic is the special always-load set for durable profile facts; it defaults to \`core\`.
 
 \`\`\`yaml
 resources:
@@ -200,9 +200,7 @@ Use ancestor promotion only for trusted agents that are designed to curate share
 
 ## Reasoning layer
 
-memrez uses a reasoner to organize memory writes — choosing topics, entry type, normalized content, and target namespace — and to curate scopes. By default \`createMemrez({ store })\` wires a built-in LLM reasoner that makes direct model calls, keyed from your provider env var (e.g. \`OPENAI_API_KEY\`). That is why the agent's \`memory_write\` tool takes content only: filing the entry is memrez's job, not the agent's.
-
-That default applies to the TypeScript package and hosted worker. Python local memrez currently defaults to deterministic tagging unless you pass a custom reasoner.
+memrez uses a reasoner to organize memory writes — choosing topics, entry type, normalized content, and target namespace — and to curate scopes. By default \`createMemrez({ store })\` and \`create_memrez(store=...)\` wire a built-in LLM reasoner that makes direct model calls, keyed from your provider env var (e.g. \`OPENAI_API_KEY\`). That is why the agent's \`memory_write\` tool takes content only: filing the entry is memrez's job, not the agent's.
 
 Override the reasoner when you want different models, or no LLM at all for tests / emergency fallback:
 
@@ -215,6 +213,19 @@ import {
 
 createMemrez({ store, reasoner: llmReasoner({ taggerModel: { provider: "anthropic", name: "claude-haiku-4-5" } }) });
 createMemrez({ store, reasoner: new DeterministicReasoner() }); // no LLM (tests / kill-switch)
+\`\`\`
+
+\`\`\`python
+from agntz.memrez import DeterministicReasoner, create_memrez
+from agntz.memrez_llm_reasoner import ReasonerModelConfig, llm_reasoner
+
+create_memrez(
+    store=store,
+    reasoner=llm_reasoner(
+        tagger_model=ReasonerModelConfig(provider="anthropic", name="claude-haiku-4-5")
+    ),
+)
+create_memrez(store=store, reasoner=DeterministicReasoner())  # no LLM (tests / kill-switch)
 \`\`\`
 
 memrez does not run its tagger or curator through the agntz agent loop yet.

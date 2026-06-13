@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agntz import SqliteMemoryStore, create_memrez
+from agntz import DeterministicReasoner, SqliteMemoryStore, create_memrez
 from agntz.memrez import MemoryEntry
 
 
 def test_sqlite_memory_store_persists_entries(tmp_path: Path) -> None:
     db_path = tmp_path / "memrez.db"
     store = SqliteMemoryStore(db_path)
-    memrez = create_memrez(store=store)
+    memrez = create_memrez(store=store, reasoner=DeterministicReasoner())
     written = memrez.write(
         ["app/user/u_123"],
         "Prefers email receipts.",
@@ -19,7 +19,7 @@ def test_sqlite_memory_store_persists_entries(tmp_path: Path) -> None:
     store.close()
 
     reopened = SqliteMemoryStore(db_path)
-    persisted = create_memrez(store=reopened)
+    persisted = create_memrez(store=reopened, reasoner=DeterministicReasoner())
     entries = persisted.read(["app/user/u_123"], "prefs")
 
     assert len(entries) == 1
@@ -33,7 +33,7 @@ def test_sqlite_memory_store_persists_entries(tmp_path: Path) -> None:
 
 def test_sqlite_memory_store_reads_ancestors_without_siblings(tmp_path: Path) -> None:
     store = SqliteMemoryStore(tmp_path / "memrez.db")
-    memrez = create_memrez(store=store)
+    memrez = create_memrez(store=store, reasoner=DeterministicReasoner())
 
     memrez.write(["app"], "Global policy.", topics_hint=["shared"])
     memrez.write(["app/user/u_123"], "User 123 preference.", topics_hint=["prefs"])
@@ -96,6 +96,7 @@ def test_sqlite_memory_store_persists_supersede_and_topic_meta(tmp_path: Path) -
         include_superseded=True,
     )
     topics = store.list_topics(["app/user/u_123"])
+    meta = store.get_topic_meta("app/user/u_123", "prefs")
 
     assert superseded is not None
     assert superseded.status == "superseded"
@@ -107,4 +108,18 @@ def test_sqlite_memory_store_persists_supersede_and_topic_meta(tmp_path: Path) -
     assert topics[0].blurb == "Communication preferences."
     assert topics[0].last_updated_at == "2026-05-27T00:00:00.000Z"
     assert topics[0].has_uncurated_writes is True
+    assert [(row.scope, row.topic) for row in store.list_dirty_topics()] == [
+        ("app/user/u_123", "prefs")
+    ]
+    assert meta is not None
+    assert meta.blurb == "Communication preferences."
+
+    store.set_topic_meta(
+        "app/user/u_123",
+        "prefs",
+        blurb="Communication preferences.",
+        last_updated_at="2026-05-30T00:00:00.000Z",
+    )
+    assert store.list_topics(["app/user/u_123"])[0].has_uncurated_writes is False
+    assert store.list_dirty_topics() == []
     store.close()

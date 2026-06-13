@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from .memrez import EntryType, MemoryEntry, Source, TopicSummary
+from .memrez import DirtyTopic, EntryType, MemoryEntry, Source, TopicMeta, TopicSummary
 
 
 @dataclass(frozen=True)
@@ -126,7 +126,7 @@ class SqliteMemoryStore:
                         if meta is not None and meta["last_updated_at"] is not None
                         else str(row["last_updated_at"])
                     ),
-                    has_uncurated_writes=True,
+                    has_uncurated_writes=self._has_uncurated_writes(scope_paths, topic),
                 )
             )
         return summaries
@@ -158,6 +158,24 @@ class SqliteMemoryStore:
             tuple(params),
         ).fetchall()
         return [self._row_to_entry(row) for row in rows]
+
+    def get_topic_meta(self, scope: str, topic: str) -> TopicMeta | None:
+        row = self._conn.execute(
+            """
+            SELECT scope, topic, blurb, last_updated_at
+            FROM memrez_topic_meta
+            WHERE scope = ? AND topic = ?
+            """,
+            (scope, topic),
+        ).fetchone()
+        if row is None:
+            return None
+        return TopicMeta(
+            scope=str(row["scope"]),
+            topic=str(row["topic"]),
+            blurb=str(row["blurb"]) if row["blurb"] is not None else None,
+            last_updated_at=str(row["last_updated_at"]),
+        )
 
     def set_topic_meta(
         self,
@@ -208,6 +226,24 @@ class SqliteMemoryStore:
             tuple(params),
         ).fetchall()
         return [self._row_to_entry(row) for row in rows]
+
+    def list_dirty_topics(self) -> list[DirtyTopic]:
+        rows = self._conn.execute(
+            """
+            SELECT e.scope AS scope, t.topic AS topic
+            FROM memrez_entries e
+            JOIN memrez_entry_topics t ON t.entry_id = e.id
+            LEFT JOIN memrez_topic_meta m ON m.scope = e.scope AND m.topic = t.topic
+            WHERE e.status = 'active'
+            GROUP BY e.scope, t.topic, m.last_updated_at
+            HAVING m.last_updated_at IS NULL OR MAX(e.updated_at) > m.last_updated_at
+            ORDER BY e.scope ASC, t.topic ASC
+            """
+        ).fetchall()
+        return [
+            DirtyTopic(scope=str(row["scope"]), topic=str(row["topic"]))
+            for row in rows
+        ]
 
     def _migrate(self) -> None:
         self._conn.executescript(
@@ -284,7 +320,7 @@ class SqliteMemoryStore:
         for scope in reversed(scope_paths):
             row = self._conn.execute(
                 """
-                SELECT topic, blurb, last_updated_at
+                SELECT scope, topic, blurb, last_updated_at
                 FROM memrez_topic_meta
                 WHERE scope = ? AND topic = ?
                 """,
@@ -293,6 +329,26 @@ class SqliteMemoryStore:
             if row is not None:
                 return row
         return None
+
+    def _has_uncurated_writes(self, scope_paths: Sequence[str], topic: str) -> bool:
+        if not scope_paths:
+            return False
+        row = self._conn.execute(
+            f"""
+            SELECT 1
+            FROM memrez_entries e
+            JOIN memrez_entry_topics t ON t.entry_id = e.id
+            LEFT JOIN memrez_topic_meta m ON m.scope = e.scope AND m.topic = t.topic
+            WHERE e.status = 'active'
+              AND e.scope IN ({_placeholders(scope_paths)})
+              AND t.topic = ?
+            GROUP BY e.scope, t.topic, m.last_updated_at
+            HAVING m.last_updated_at IS NULL OR MAX(e.updated_at) > m.last_updated_at
+            LIMIT 1
+            """,
+            (*scope_paths, topic),
+        ).fetchone()
+        return row is not None
 
 
 def _placeholders(values: Sequence[Any]) -> str:

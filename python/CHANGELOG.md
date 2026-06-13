@@ -1,5 +1,11 @@
 # agntz
 
+## 0.3.0
+
+- Add memrez's built-in LLM reasoner default, content-only memory write tool,
+  preload/topic-policy config, dirty-topic tracking, correction, audit listing,
+  and multi-topic reads to the Python SDK.
+
 ## 0.2.0
 
 - Add versioned agent storage and resolution for bare ids, `@latest`, exact

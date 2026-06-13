@@ -6,7 +6,14 @@ import json
 from pathlib import Path
 from typing import Any, Protocol, cast
 
-from .memrez import EntryType, TaggerInput, TaggerResult, WritePolicy
+from .memrez import (
+    EntryType,
+    MemoryTopicConfig,
+    TaggerInput,
+    TaggerResult,
+    WritePolicy,
+    normalize_topic_config,
+)
 
 
 class AgntzAgentsResourceLike(Protocol):
@@ -45,6 +52,7 @@ class AgntzReasoner:
                 "content": input_value.content,
                 "existingTopics": input_value.existing_topics,
                 "topicsHint": input_value.topics_hint or [],
+                "topicConfig": _topic_config_to_dict(input_value.topic_config),
                 "writePolicy": _write_policy_to_dict(input_value.write_policy),
                 "source": input_value.source or None,
             },
@@ -59,6 +67,7 @@ class AgntzReasoner:
                 "scopePaths": input_value.get("scopePaths", []),
                 "entries": input_value.get("entries", []),
                 "topics": input_value.get("topics", []),
+                "topicConfig": input_value.get("topicConfig"),
             },
         )
         parsed = _parse_output(_result_output(result))
@@ -82,7 +91,9 @@ def agntz_reasoner(
 
 def memrez_agents_path() -> Path:
     repo_agents = Path(__file__).resolve().parents[3] / "packages" / "memrez" / "agents"
-    if repo_agents.exists():
+    if repo_agents.exists() and any(
+        path.suffix.lower() in {".yaml", ".yml"} for path in repo_agents.rglob("*")
+    ):
         return repo_agents
     raise FileNotFoundError("Could not find canonical memrez agent manifests")
 
@@ -138,3 +149,8 @@ def _write_policy_to_dict(policy: WritePolicy) -> dict[str, Any]:
         "descendants": policy.descendants,
         "ancestorPromotion": policy.ancestor_promotion,
     }
+
+
+def _topic_config_to_dict(topic_config: MemoryTopicConfig | None) -> dict[str, Any]:
+    normalized = normalize_topic_config(topic_config)
+    return {"core": normalized.core, "preferred": list(normalized.preferred)}

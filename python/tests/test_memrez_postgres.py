@@ -5,7 +5,12 @@ from time import time_ns
 
 import pytest
 
-from agntz import PostgresMemoryStore, PostgresMemoryStoreOptions, create_memrez
+from agntz import (
+    DeterministicReasoner,
+    PostgresMemoryStore,
+    PostgresMemoryStoreOptions,
+    create_memrez,
+)
 from agntz.memrez import MemoryEntry
 
 POSTGRES_URL = os.environ.get("MEMREZ_POSTGRES_URL") or os.environ.get("DATABASE_URL")
@@ -26,7 +31,7 @@ def test_postgres_memory_store_persists_entries_and_scope_visibility() -> None:
             table_prefix=f"test_{time_ns()}_",
         )
     )
-    memrez = create_memrez(store=store)
+    memrez = create_memrez(store=store, reasoner=DeterministicReasoner())
 
     try:
         memrez.write(["app"], "Global policy.", topics_hint=["shared"])
@@ -106,6 +111,7 @@ def test_postgres_memory_store_persists_supersede_and_topic_meta() -> None:
             include_superseded=True,
         )
         topics = store.list_topics(["app/user/u_123"])
+        meta = store.get_topic_meta("app/user/u_123", "prefs")
 
         assert superseded is not None
         assert superseded.status == "superseded"
@@ -117,5 +123,19 @@ def test_postgres_memory_store_persists_supersede_and_topic_meta() -> None:
         assert topics[0].blurb == "Communication preferences."
         assert topics[0].last_updated_at == "2026-05-27T00:00:00.000Z"
         assert topics[0].has_uncurated_writes is True
+        assert [(row.scope, row.topic) for row in store.list_dirty_topics()] == [
+            ("app/user/u_123", "prefs")
+        ]
+        assert meta is not None
+        assert meta.blurb == "Communication preferences."
+
+        store.set_topic_meta(
+            "app/user/u_123",
+            "prefs",
+            blurb="Communication preferences.",
+            last_updated_at="2026-05-30T00:00:00.000Z",
+        )
+        assert store.list_topics(["app/user/u_123"])[0].has_uncurated_writes is False
+        assert store.list_dirty_topics() == []
     finally:
         store.close()

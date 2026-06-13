@@ -85,4 +85,4 @@ def test_client_wire_contract_pins_hosted_request_and_stream_shape() -> None:
 def test_python_package_has_phase0_version() -> None:
     import agntz
 
-    assert agntz.__version__ == "0.2.0"
+    assert agntz.__version__ == "0.3.0"

@@ -305,10 +305,12 @@ JSON request body.
 ## Memrez
 
 The Python package includes namespace grants, the memrez core, memory resource
-provider wiring, and SQLite/Postgres memory stores. Python local memrez
-currently defaults to deterministic tagging and does not yet implement the
-TypeScript provider's built-in LLM reasoner default or invoke-time
-`preload`/`topics.core` policy.
+provider wiring, and in-memory/SQLite/Postgres memory stores. By default,
+`create_memrez()` wires memrez's built-in LLM reasoner for tagging and
+curation through direct LiteLLM calls. Install `agntz[litellm]` and set the
+provider key for the default model, such as `OPENAI_API_KEY`, when you want
+the default reasoner to run locally. Pass `DeterministicReasoner()` for tests
+or no-LLM kill-switch behavior.
 
 ```python
 from agntz import LiteLLMModelProvider, agntz
@@ -335,6 +337,39 @@ You can also use memrez directly:
 ```python
 memrez.write(["app/user/u_123"], "Prefers metric units.", topics_hint=["prefs"])
 entries = memrez.read(["app/user/u_123"], "prefs")
+```
+
+Configure agent-specific memory vocabulary and invoke-time preload in the
+resource declaration:
+
+```yaml
+resources:
+  memory:
+    kind: memory
+    mode: read-write
+    topics:
+      preferred: [goals, equipment, schedule, injuries]
+    preload:
+      core: true
+      topics: [goals, equipment]
+      limit: 30
+      maxChars: 10000
+      types: [fact, preference, summary]
+```
+
+Override the reasoner explicitly when needed:
+
+```python
+from agntz.memrez import DeterministicReasoner, create_memrez
+from agntz.memrez_llm_reasoner import ReasonerModelConfig, llm_reasoner
+
+memrez = create_memrez(
+    reasoner=llm_reasoner(
+        tagger_model=ReasonerModelConfig(provider="anthropic", name="claude-haiku-4-5")
+    )
+)
+
+test_memrez = create_memrez(reasoner=DeterministicReasoner())
 ```
 
 ## CLI
@@ -364,7 +399,8 @@ Implemented in this package:
   timestamps, and aliases.
 - First-class datasets, eval definitions, eval runs, and latest-score tracking.
 - Runtime namespace grants, resource providers, and the memrez memory provider.
-- Memrez in-memory, SQLite, and Postgres memory stores.
+- Memrez LLM reasoner default, preload/topic policy, in-memory, SQLite, and
+  Postgres memory stores.
 - LiteLLM-backed model execution with tool-call loop support.
 - Memory, SQLite, and Postgres stores for hosted service data including runs,
   traces, sessions, agent versions, aliases, eval data, latest scores, and API
