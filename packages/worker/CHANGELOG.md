@@ -1,5 +1,12 @@
 # @agntz/worker
 
+## 0.1.9
+
+### Patch Changes
+
+- Updated dependencies [2e92a9f]
+  - @agntz/memrez@2.1.0
+
 ## 0.1.8
 
 ### Patch Changes

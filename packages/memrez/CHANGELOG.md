@@ -1,5 +1,11 @@
 # @agntz/memrez
 
+## 2.1.0
+
+### Minor Changes
+
+- 2e92a9f: Add configurable memory preload topic policy with core and preferred topic support.
+
 ## 2.0.0
 
 ### Patch Changes
