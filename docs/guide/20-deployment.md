@@ -67,11 +67,11 @@ External developers install the npm packages to embed agntz in their own apps. T
 | `WORKER_INTERNAL_SECRET` | yes | 32-byte random secret — **must match the app's value** |
 | `DEFAULT_MODEL_PROVIDER` | yes | e.g. `openai` — used when an agent doesn't specify |
 | `DEFAULT_MODEL_NAME` | yes | e.g. `gpt-4o` |
-| `OPENAI_API_KEY` | one of | Fallback when user has no `ProviderConfig` for the provider |
-| `ANTHROPIC_API_KEY` | one of | Same |
-| `GOOGLE_GENERATIVE_AI_API_KEY` | one of | Same |
+| `OPENAI_API_KEY` | one of | Fallback for agent model calls when user has no `ProviderConfig`; also used by memrez's built-in LLM reasoner when `MEMREZ_REASONER=llm` and the default OpenAI models are used |
+| `ANTHROPIC_API_KEY` | one of | Same fallback role for Anthropic agent models; required by memrez only if its reasoner models are configured for Anthropic |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | one of | Same fallback role for Google agent models; required by memrez only if its reasoner models are configured for Google |
 
-The worker prefers per-user `ProviderConfig` from `ProviderStore`. Env vars are the org-wide fallback so the system has *some* key to use if a user hasn't configured one.
+The worker prefers per-user `ProviderConfig` from `ProviderStore` for normal agent model calls. Env vars are the org-wide fallback for those calls. memrez's built-in LLM reasoner is process-wide today, so it uses env provider keys rather than per-user provider config.
 
 ### App
 

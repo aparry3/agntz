@@ -205,7 +205,9 @@ must not face multi-tenant traffic until scopes are tenant-prefixed):
 | `POST /memory/entries/:id/correct` | `{ grants, content }` — supersede an entry with a corrected replacement (inherits scope/topics/type) |
 | `POST /memory/curate` | `{ grants?, topics? }` — curate explicit grants, or with no body sweep every dirty `(scope, topic)` pair, one scope at a time |
 
-Provider API keys for OpenAI/Anthropic/etc. are **per-user**, stored in `ProviderStore` and resolved at runtime via `AISDKModelProvider`. The worker doesn't need them as env vars — though it falls back to env (`OPENAI_API_KEY`, etc.) if a user has no `ProviderConfig` registered.
+Agent model calls prefer per-user provider keys from `ProviderStore`, resolved at runtime by `AISDKModelProvider`, and fall back to env vars (`OPENAI_API_KEY`, etc.) only when the user has no `ProviderConfig`.
+
+memrez is different today: its built-in reasoner is a process-wide memory service, not a per-user agent runner, so `MEMREZ_REASONER=llm` uses worker env provider keys. Set the relevant provider env var for the tagger/curator models, or set `MEMREZ_REASONER=deterministic` to disable LLM memory reasoning.
 
 ## Running locally
 
