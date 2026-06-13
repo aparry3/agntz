@@ -1,4 +1,4 @@
-import { AuthRequiredError, requireUserContext } from "@/lib/user";
+import { AuthRequiredError, requireUserContext, workerIdentity } from "@/lib/user";
 import { workerValidateManifest } from "@/lib/worker-client";
 import { type NextRequest, NextResponse } from "next/server";
 import { parse as parseYAML } from "yaml";
@@ -82,7 +82,8 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
 	try {
-		const { userId, runner } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const { runner } = ctx;
 		const body = await req.json();
 		const { id, name, manifest, ...rest } = body;
 
@@ -100,7 +101,7 @@ export async function POST(req: NextRequest) {
 		}
 
 		const validation = await workerValidateManifest({
-			userId,
+			...workerIdentity(ctx),
 			manifest,
 			strict: true,
 		});

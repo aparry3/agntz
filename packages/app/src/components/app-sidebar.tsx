@@ -2,7 +2,13 @@
 
 import { I } from "@/components/v3/icons";
 import { Avatar, HR, Kbd, ag } from "@/components/v3/primitives";
-import { UserButton, useAuth, useUser } from "@clerk/nextjs";
+import {
+	OrganizationSwitcher,
+	UserButton,
+	useAuth,
+	useOrganization,
+	useUser,
+} from "@clerk/nextjs";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -68,6 +74,7 @@ const COLLAPSE_STORAGE_KEY = "agntz.sidebar.collapsed";
 export function AppSidebar() {
 	const pathname = usePathname() ?? "";
 	const { isSignedIn } = useAuth();
+	const { organization } = useOrganization();
 	const { user } = useUser();
 	const [isAdmin, setIsAdmin] = useState(false);
 	const [collapsed, setCollapsed] = useState(false);
@@ -124,6 +131,7 @@ export function AppSidebar() {
 	}, [user]);
 
 	const displayEmail = user?.primaryEmailAddress?.emailAddress;
+	const workspaceName = organization?.name ?? "Personal workspace";
 
 	return (
 		<aside
@@ -185,11 +193,38 @@ export function AppSidebar() {
 						>
 							Workspace
 						</div>
-						<div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+						<div
+							style={{
+								display: "flex",
+								alignItems: "center",
+								gap: 6,
+								minWidth: 0,
+							}}
+						>
 							<div style={{ fontSize: 13.5, fontWeight: 600, color: ag.ink }}>
-								agntz
+								{workspaceName}
 							</div>
-							<I.Chev size={11} />
+							<OrganizationSwitcher
+								afterCreateOrganizationUrl="/agents"
+								afterLeaveOrganizationUrl="/agents"
+								afterSelectOrganizationUrl="/agents"
+								afterSelectPersonalUrl="/agents"
+								appearance={{
+									elements: {
+										rootBox: { display: "grid", placeItems: "center" },
+										organizationSwitcherTrigger: {
+											width: 20,
+											height: 20,
+											padding: 0,
+											borderRadius: 4,
+											border: `1px solid ${ag.line}`,
+											background: ag.surface2,
+											color: ag.muted,
+										},
+										organizationPreview: { display: "none" },
+									},
+								}}
+							/>
 						</div>
 					</div>
 				)}

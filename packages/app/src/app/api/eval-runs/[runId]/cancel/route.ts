@@ -1,4 +1,4 @@
-import { AuthRequiredError, requireUserContext } from "@/lib/user";
+import { AuthRequiredError, requireUserContext, workerIdentity } from "@/lib/user";
 import { workerCancelEvalRun } from "@/lib/worker-client";
 import { type NextRequest, NextResponse } from "next/server";
 
@@ -8,8 +8,8 @@ export async function POST(
 ) {
 	try {
 		const { runId } = await params;
-		const { userId } = await requireUserContext();
-		const run = await workerCancelEvalRun(userId, runId);
+		const ctx = await requireUserContext();
+		const run = await workerCancelEvalRun(workerIdentity(ctx), runId);
 		return NextResponse.json(run);
 	} catch (error) {
 		if (error instanceof AuthRequiredError) {

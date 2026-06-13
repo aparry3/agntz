@@ -1,4 +1,4 @@
-import { AuthRequiredError, requireUserContext } from "@/lib/user";
+import { AuthRequiredError, requireUserContext, workerIdentity } from "@/lib/user";
 import { workerValidateManifest } from "@/lib/worker-client";
 import { type NextRequest, NextResponse } from "next/server";
 
@@ -53,7 +53,8 @@ export async function PUT(
 		const { id } = await params;
 		const bad = rejectVersionSuffix(id);
 		if (bad) return bad;
-		const { userId, runner } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const { runner } = ctx;
 		const body = await req.json();
 		const { name, manifest, ...rest } = body;
 
@@ -65,7 +66,7 @@ export async function PUT(
 		}
 
 		const validation = await workerValidateManifest({
-			userId,
+			...workerIdentity(ctx),
 			manifest,
 			strict: true,
 		});

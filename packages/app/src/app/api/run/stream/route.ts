@@ -1,10 +1,10 @@
-import { AuthRequiredError, requireUserContext } from "@/lib/user";
+import { AuthRequiredError, requireUserContext, workerIdentity } from "@/lib/user";
 import { workerRunStream } from "@/lib/worker-client";
 import { type NextRequest, NextResponse } from "next/server";
 
 export async function POST(req: NextRequest) {
 	try {
-		const { userId } = await requireUserContext();
+		const ctx = await requireUserContext();
 		const body = await req.json();
 		const { agentId, input, sessionId } = body;
 
@@ -15,7 +15,12 @@ export async function POST(req: NextRequest) {
 			);
 		}
 
-		const stream = await workerRunStream({ userId, agentId, input, sessionId });
+		const stream = await workerRunStream({
+			...workerIdentity(ctx),
+			agentId,
+			input,
+			sessionId,
+		});
 
 		return new Response(stream, {
 			headers: {

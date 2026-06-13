@@ -1,4 +1,11 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { NextResponse } from "next/server";
+import {
+	hasAgntzPermission,
+	normalizeAgntzRole,
+	permissionsForRole,
+	requiredPermissionForRequest,
+} from "./lib/authz";
 
 const isPublic = createRouteMatcher([
 	"/sign-in(.*)",
@@ -8,7 +15,27 @@ const isPublic = createRouteMatcher([
 
 export default clerkMiddleware(async (auth, req) => {
 	if (!isPublic(req)) {
-		await auth.protect();
+		const authState = await auth.protect();
+		const required = requiredPermissionForRequest(
+			req.nextUrl.pathname,
+			req.method,
+		);
+		if (!required) return;
+
+		const role = normalizeAgntzRole(
+			authState.orgRole,
+			Boolean(authState.orgId),
+		);
+		const permissions = permissionsForRole(role);
+		if (hasAgntzPermission(permissions, required)) return;
+
+		if (req.nextUrl.pathname.startsWith("/api/")) {
+			return NextResponse.json(
+				{ error: "forbidden", requiredPermission: required },
+				{ status: 403 },
+			);
+		}
+		return NextResponse.redirect(new URL("/agents", req.url));
 	}
 });
 

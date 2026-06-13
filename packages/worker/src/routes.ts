@@ -300,10 +300,13 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 	});
 
 	app.use("/edit-agent", rateLimit({ windowMs: 60 * 60_000, max: 10 }));
+	app.use("/edit-agent", workerAuth({ store, internalSecret }));
 	app.post("/edit-agent", async (c) => {
 		const start = Date.now();
 		try {
-			const body = (await c.req.json().catch(() => ({}))) as {
+			const userId = getUserId(c);
+			const body = (getCachedBody(c) ??
+				(await c.req.json().catch(() => ({})))) as {
 				currentManifest?: string;
 				changeDescription?: string;
 				selection?: unknown;
@@ -370,8 +373,8 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			const ctx = createExecutionContext(ephemeralRunner, {
 				runRegistry: localRegistry,
 				spanEmitter,
-				ownerId: "public:edit-agent",
-				userId: "public:edit-agent",
+				ownerId: userId,
+				userId,
 				sessionId,
 			});
 

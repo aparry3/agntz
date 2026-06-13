@@ -1,4 +1,4 @@
-import { AuthRequiredError, requireUserContext } from "@/lib/user";
+import { AuthRequiredError, requireUserContext, workerIdentity } from "@/lib/user";
 import { workerTraceStream } from "@/lib/worker-traces";
 import { type NextRequest, NextResponse } from "next/server";
 
@@ -7,11 +7,11 @@ export async function GET(
 	context: { params: Promise<{ id: string }> },
 ) {
 	try {
-		const { userId } = await requireUserContext();
+		const ctx = await requireUserContext();
 		const { id: traceId } = await context.params;
 
 		const upstream = await workerTraceStream({
-			userId,
+			...workerIdentity(ctx),
 			traceId,
 			signal: req.signal,
 		});

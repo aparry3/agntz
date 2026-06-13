@@ -10,8 +10,8 @@ export async function POST(
 	context: { params: Promise<{ id: string }> },
 ) {
 	try {
-		const { userId } = await requireUserContext();
-		requireSuperAdmin(userId);
+		const { actorUserId } = await requireUserContext();
+		requireSuperAdmin(actorUserId);
 
 		const { id } = await context.params;
 		const body = (await req.json().catch(() => ({}))) as {

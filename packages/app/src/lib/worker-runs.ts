@@ -1,3 +1,5 @@
+import { type WorkerIdentity, signWorkerIdentity } from "./internal-auth";
+
 const WORKER_URL = process.env.WORKER_URL ?? "http://localhost:4001";
 
 function internalSecret(): string {
@@ -18,14 +20,24 @@ function internalSecret(): string {
  */
 export async function workerRunsFetch(params: {
 	userId: string;
+	actorUserId?: string;
+	tenantId?: string;
+	orgId?: string;
+	orgSlug?: string;
+	orgRole?: string;
+	roles?: string[];
+	permissions?: string[];
 	path: string; // begins with `/runs...`
 	method?: "GET" | "POST";
 	signal?: AbortSignal;
 }): Promise<Response> {
+	const secret = internalSecret();
+	const identity: WorkerIdentity = params;
 	return fetch(`${WORKER_URL}${params.path}`, {
 		method: params.method ?? "GET",
 		headers: {
-			"X-Internal-Secret": internalSecret(),
+			"X-Internal-Secret": secret,
+			"X-Agntz-Internal-Auth": signWorkerIdentity(identity, secret),
 			"X-User-Id": params.userId,
 		},
 		signal: params.signal,

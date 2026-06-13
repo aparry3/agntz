@@ -1,11 +1,11 @@
-import { AuthRequiredError, requireUserContext } from "@/lib/user";
+import { AuthRequiredError, requireUserContext, workerIdentity } from "@/lib/user";
 import { workerRunBlockStream } from "@/lib/worker-client";
 import type { ManifestSelection } from "@agntz/manifest";
 import { type NextRequest, NextResponse } from "next/server";
 
 export async function POST(req: NextRequest) {
 	try {
-		const { userId } = await requireUserContext();
+		const ctx = await requireUserContext();
 		const body = await req.json();
 		const { agentId, input, sessionId, selection } = body;
 
@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
 		}
 
 		const stream = await workerRunBlockStream({
-			userId,
+			...workerIdentity(ctx),
 			agentId,
 			input,
 			sessionId,

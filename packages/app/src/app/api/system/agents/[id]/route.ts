@@ -9,8 +9,8 @@ export async function GET(
 ) {
 	try {
 		const { id } = await params;
-		const { userId } = await requireUserContext();
-		requireSuperAdmin(userId);
+		const { actorUserId } = await requireUserContext();
+		requireSuperAdmin(actorUserId);
 
 		// Accept both "agent-builder" and "system:agent-builder"; decode URL encoding first.
 		const info = await workerGetSystemAgent(decodeURIComponent(id));

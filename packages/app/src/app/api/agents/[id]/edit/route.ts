@@ -1,4 +1,4 @@
-import { AuthRequiredError, requireUserContext } from "@/lib/user";
+import { AuthRequiredError, requireUserContext, workerIdentity } from "@/lib/user";
 import { workerEditAgent, workerValidateManifest } from "@/lib/worker-client";
 import type { ManifestSelection } from "@agntz/manifest";
 import { type NextRequest, NextResponse } from "next/server";
@@ -19,7 +19,8 @@ export async function POST(
 ) {
 	try {
 		const { id } = await params;
-		const { userId, runner } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const { runner } = ctx;
 		const existing = await runner.agents.getAgent(id);
 		if (!existing) {
 			return NextResponse.json(
@@ -53,6 +54,7 @@ export async function POST(
 		}
 
 		const result = await workerEditAgent({
+			...workerIdentity(ctx),
 			currentManifest,
 			changeDescription,
 			selection: selection as ManifestSelection | undefined,
@@ -80,7 +82,7 @@ export async function POST(
 		}
 
 		const validation = await workerValidateManifest({
-			userId,
+			...workerIdentity(ctx),
 			manifest: result.yaml,
 			strict: true,
 		});

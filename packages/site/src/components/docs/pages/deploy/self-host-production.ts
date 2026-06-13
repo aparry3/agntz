@@ -47,7 +47,7 @@ library primitives from your own scheduler.
 
 ## 3. Set up Clerk
 
-Sign up at clerk.com, create an application, copy the **Publishable** and **Secret** keys from the API Keys page. No Organizations setup needed.
+Sign up at clerk.com, create an application, copy the **Publishable** and **Secret** keys from the API Keys page. Enable **Organizations** for hosted Cloud-style workspaces, role-based access, and enterprise SSO.
 
 ## 4. Deploy the app on Vercel
 
@@ -104,19 +104,19 @@ In Clerk → **Domains** — add the production URL as an allowed origin, swap t
 ## Architecture
 
 \`\`\`
- Browser ──(Clerk session)──► app (Next.js) ──(X-Internal-Secret + userId)──► worker (Hono)
+ Browser ──(Clerk session + active org)──► app (Next.js) ──(signed tenant context)──► worker (Hono)
  External caller ──(Bearer ar_live_...)─────────────────────────────────────► worker
                                                                                   │
                                                                                   ▼
-                                                                        Postgres (user_id scoped)
+                                                                        Postgres (tenant-owner scoped)
 \`\`\`
 
 The worker accepts two auth modes:
 
-- **Internal** — \`X-Internal-Secret\` header + \`userId\` in the request body. Used by the app on behalf of signed-in users.
-- **External** — \`Authorization: Bearer ar_live_<token>\` from a key generated in **Settings → API Keys**. The worker sha256-hashes the key and resolves it to a \`user_id\`.
+- **Internal** — \`X-Internal-Secret\` header + \`X-Agntz-Internal-Auth\` signed tenant context. Used by the app on behalf of signed-in workspaces.
+- **External** — \`Authorization: Bearer ar_live_<token>\` from a key generated in **Settings → API Keys**. The worker sha256-hashes the key and resolves it to a workspace owner key.
 
-Every store row is scoped to a Clerk \`userId\`. The app never sees another user's data.
+Every store row is scoped to the active Clerk organization id, falling back to the Clerk \`userId\` for personal workspaces. The app never sees another workspace's data.
 
 ## Operating the deployment
 

@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { MemoryStore } from "@agntz/core";
 import { describe, expect, it } from "vitest";
 import { createWorkerAPI } from "../src/routes.js";
@@ -10,7 +11,73 @@ function makeApp() {
 	return { app, store };
 }
 
+function signedInternalAuth(claims: {
+	actorUserId: string;
+	tenantId: string;
+	orgId?: string;
+}): string {
+	const now = Math.floor(Date.now() / 1000);
+	const payload = Buffer.from(
+		JSON.stringify({
+			v: 1,
+			roles: ["admin"],
+			permissions: ["traces:read"],
+			authMethod: "clerk",
+			iat: now,
+			exp: now + 60,
+			...claims,
+		}),
+		"utf8",
+	).toString("base64url");
+	const sig = createHmac("sha256", SECRET).update(payload).digest("base64url");
+	return `${payload}.${sig}`;
+}
+
 describe("workerAuth — X-User-Id header fallback", () => {
+	it("signed internal tenant context resolves body-less GET scope", async () => {
+		const { app, store } = makeApp();
+		await store.forUser("org_1").upsertSummary({
+			traceId: "tr_org",
+			ownerId: "org_1",
+			rootName: "manifest",
+			agentId: "a1",
+			startedAt: "2026-05-11T12:00:00.000Z",
+			endedAt: "2026-05-11T12:00:01.000Z",
+			durationMs: 1000,
+			spanCount: 0,
+			status: "ok",
+			totalTokens: 0,
+			totalCostUsd: null,
+		});
+
+		const res = await app.request("/traces", {
+			method: "GET",
+			headers: {
+				"X-Internal-Secret": SECRET,
+				"X-Agntz-Internal-Auth": signedInternalAuth({
+					actorUserId: "user_1",
+					tenantId: "org_1",
+					orgId: "org_1",
+				}),
+			},
+		});
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { rows: Array<{ traceId: string }> };
+		expect(body.rows.map((r) => r.traceId)).toEqual(["tr_org"]);
+	});
+
+	it("rejects invalid signed internal tenant context", async () => {
+		const { app } = makeApp();
+		const res = await app.request("/traces", {
+			method: "GET",
+			headers: {
+				"X-Internal-Secret": SECRET,
+				"X-Agntz-Internal-Auth": "bad.token",
+			},
+		});
+		expect(res.status).toBe(401);
+	});
+
 	it("internal-secret + X-User-Id header resolves userId for body-less GET", async () => {
 		const { app, store } = makeApp();
 		await store.forUser("u1").upsertSummary({

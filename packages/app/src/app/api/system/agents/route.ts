@@ -5,8 +5,8 @@ import { NextResponse } from "next/server";
 
 export async function GET() {
 	try {
-		const { userId } = await requireUserContext();
-		requireSuperAdmin(userId);
+		const { actorUserId } = await requireUserContext();
+		requireSuperAdmin(actorUserId);
 
 		const agents = await workerListSystemAgents();
 		return NextResponse.json(agents);

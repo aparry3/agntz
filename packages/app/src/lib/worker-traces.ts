@@ -1,3 +1,5 @@
+import { type WorkerIdentity, signWorkerIdentity } from "./internal-auth";
+
 const WORKER_URL = process.env.WORKER_URL ?? "http://localhost:4001";
 
 function internalSecret(): string {
@@ -17,14 +19,24 @@ function internalSecret(): string {
  */
 export async function workerTraceStream(params: {
 	userId: string;
+	actorUserId?: string;
+	tenantId?: string;
+	orgId?: string;
+	orgSlug?: string;
+	orgRole?: string;
+	roles?: string[];
+	permissions?: string[];
 	traceId: string;
 	signal?: AbortSignal;
 }): Promise<Response> {
 	const url = `${WORKER_URL}/traces/${encodeURIComponent(params.traceId)}/stream`;
+	const secret = internalSecret();
+	const identity: WorkerIdentity = params;
 	return fetch(url, {
 		method: "GET",
 		headers: {
-			"X-Internal-Secret": internalSecret(),
+			"X-Internal-Secret": secret,
+			"X-Agntz-Internal-Auth": signWorkerIdentity(identity, secret),
 			"X-User-Id": params.userId,
 			Accept: "text/event-stream",
 		},

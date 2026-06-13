@@ -1,5 +1,5 @@
 import { evalRunFiltersFromSearch } from "@/lib/evals";
-import { AuthRequiredError, requireUserContext } from "@/lib/user";
+import { AuthRequiredError, requireUserContext, workerIdentity } from "@/lib/user";
 import { workerEvalRun } from "@/lib/worker-client";
 import { type NextRequest, NextResponse } from "next/server";
 
@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
 	try {
-		const { userId } = await requireUserContext();
+		const ctx = await requireUserContext();
 		const body = (await req.json()) as {
 			evalId?: string;
 			evalVersion?: string;
@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
 			);
 		}
 		const run = await workerEvalRun({
-			userId,
+			...workerIdentity(ctx),
 			evalId: body.evalId,
 			evalVersion: body.evalVersion,
 			datasetId: body.datasetId,

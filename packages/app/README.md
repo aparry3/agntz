@@ -1,6 +1,6 @@
 # @agntz/app
 
-Hosted web UI for agntz. Next.js 15 App Router + Tailwind + Clerk auth + per-user data scoping. Pairs with `@agntz/worker` for agent execution.
+Hosted web UI for agntz. Next.js 15 App Router + Tailwind + Clerk auth + workspace data scoping. Pairs with `@agntz/worker` for agent execution.
 
 ## Features
 
@@ -9,27 +9,27 @@ Hosted web UI for agntz. Next.js 15 App Router + Tailwind + Clerk auth + per-use
 - **Sessions & logs** — browse conversation history and invocation traces
 - **Tool catalog** — list available inline / MCP tools
 - **Providers** — per-user LLM API key management
-- **API keys** — per-user programmatic auth for external apps
-- **Auth** — Clerk sign-in / sign-up
-- **Scoping** — every row in the store is scoped to the Clerk `userId`
+- **API keys** — per-workspace programmatic auth for external apps
+- **Auth** — Clerk sign-in / sign-up + active organization support
+- **Scoping** — every row in the store is scoped to the active Clerk organization, with personal accounts falling back to the Clerk `userId`
 
 ## Architecture
 
 ```
- Browser ──(Clerk session)──► app (Next.js, :3000) ──(X-Internal-Secret + userId)──► worker (Hono, :4001)
+ Browser ──(Clerk session + active org)──► app (Next.js, :3000) ──(signed tenant context)──► worker (Hono, :4001)
  External caller ──(Bearer ar_live_...)────────────────────────────────────────────────► worker
                                                              │
                                                              ▼
-                                                   Postgres (ar_* tables, user_id scoped)
+                                                   Postgres (ar_* tables, tenant-owner scoped)
 ```
 
-The app serves browser requests, resolves the signed-in user's Clerk `userId`, and either handles CRUD itself (store reads/writes) or proxies to the worker for `/run` and `/run/stream`. The worker can also be called directly by external services using an `ar_live_...` API key created in **Settings → API Keys**.
+The app serves browser requests, resolves the signed-in user's active Clerk organization, and either handles CRUD itself (store reads/writes) or proxies to the worker for `/run` and `/run/stream`. If no organization is active, the user's personal account is the workspace. The worker can also be called directly by external services using an `ar_live_...` API key created in **Settings → API Keys** for the active workspace.
 
 ## Local setup
 
 ### 1. Clerk dev app
 
-Sign up at https://clerk.com → create an app. Copy `Publishable key` + `Secret key` from the API Keys page. No Organizations setup needed.
+Sign up at https://clerk.com → create an app. Copy `Publishable key` + `Secret key` from the API Keys page. Enable Organizations when testing shared workspaces or enterprise SSO.
 
 ### 2. Postgres
 
@@ -63,19 +63,20 @@ pnpm --filter @agntz/worker dev    # :4001
 pnpm --filter @agntz/app dev       # :3000
 ```
 
-Sign up at http://localhost:3000, then create an agent.
+Sign up at http://localhost:3000, optionally create/switch to an organization from the sidebar, then create an agent.
 
 ## How scoping works
 
 Every API route calls `requireUserContext()` from `@/lib/user`, which:
 
-1. Reads `userId` from Clerk's session
-2. Returns a user-scoped `UnifiedStore` via `adminStore.forUser(userId)` plus a fresh `Runner` wired to it
+1. Reads the human Clerk `userId` and active Clerk `orgId` from the session
+2. Uses `orgId ?? userId` as the workspace owner key
+3. Returns a scoped `UnifiedStore` via `adminStore.forUser(ownerKey)` plus a fresh `Runner` wired to it
 
 The worker's `workerAuth` middleware accepts two authentication modes:
 
-- **Internal** — `X-Internal-Secret: $WORKER_INTERNAL_SECRET` header + `userId` in the JSON body. Used by the app when calling `/run` on behalf of the signed-in user.
-- **External** — `Authorization: Bearer ar_live_...` header. The key is sha256'd and resolved to a `user_id`.
+- **Internal** — `X-Internal-Secret: $WORKER_INTERNAL_SECRET` plus a short-lived signed tenant context. Used by the app when calling worker routes on behalf of the signed-in workspace.
+- **External** — `Authorization: Bearer ar_live_...` header. The key is sha256'd and resolved to a workspace owner key.
 
 ## System agents
 

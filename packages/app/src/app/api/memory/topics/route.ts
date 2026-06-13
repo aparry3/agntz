@@ -12,8 +12,8 @@ import { type NextRequest, NextResponse } from "next/server";
  */
 export async function GET(req: NextRequest) {
 	try {
-		const { userId } = await requireUserContext();
-		requireSuperAdmin(userId);
+		const { actorUserId } = await requireUserContext();
+		requireSuperAdmin(actorUserId);
 
 		const grants = parseGrantsParam(req);
 		if (grants.length === 0) {

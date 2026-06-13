@@ -1,5 +1,6 @@
 import type { UnifiedStore } from "@agntz/core";
 import type { Context, MiddlewareHandler } from "hono";
+import { verifyInternalAuthToken } from "./internal-auth.js";
 
 export interface AuthDeps {
 	store: UnifiedStore;
@@ -9,21 +10,44 @@ export interface AuthDeps {
 /**
  * Resolve the user for an inbound request. Two acceptable auth modes:
  *
- *   1. Internal: header `X-Internal-Secret: <WORKER_INTERNAL_SECRET>` plus
- *      `userId` in the JSON body OR an `X-User-Id` header. The body takes
- *      precedence when both are present. Used by the Next.js app, which has
- *      already verified the user's Clerk session.
+ *   1. Internal: header `X-Internal-Secret: <WORKER_INTERNAL_SECRET>` plus a
+ *      signed `X-Agntz-Internal-Auth` tenant context. Legacy callers may still
+ *      provide `userId` in the JSON body OR an `X-User-Id` header. Used by the
+ *      Next.js app, which has already verified the user's Clerk session.
  *
  *   2. External: header `Authorization: Bearer ar_live_...`. The key is
  *      hashed and looked up in `ar_api_keys`; we set userId from the row.
  *
- * On success: c.set("userId", ...). On failure: 401 (missing auth) or 400
- * (internal auth without a resolvable userId).
+ * On success: c.set("userId", tenant owner key). On failure: 401 (missing
+ * auth) or 400 (internal auth without a resolvable userId).
  */
 export function workerAuth(deps: AuthDeps): MiddlewareHandler {
 	return async (c, next) => {
 		const internalHeader = c.req.header("x-internal-secret");
 		if (internalHeader && internalHeader === deps.internalSecret) {
+			const signedIdentity = c.req.header("x-agntz-internal-auth");
+			if (signedIdentity) {
+				const claims = verifyInternalAuthToken(
+					signedIdentity,
+					deps.internalSecret,
+				);
+				if (!claims) {
+					return c.json({ error: "invalid internal auth token" }, 401);
+				}
+				setAuthContext(c, {
+					userId: claims.tenantId,
+					actorUserId: claims.actorUserId,
+					tenantId: claims.tenantId,
+					orgId: claims.orgId,
+					orgRole: claims.orgRole,
+					orgSlug: claims.orgSlug,
+					roles: claims.roles,
+					permissions: claims.permissions,
+					authMethod: claims.authMethod,
+				});
+				return next();
+			}
+
 			const body = await readJsonOnce(c);
 			const bodyUserId = (body as { userId?: string } | undefined)?.userId;
 			const headerUserId = c.req.header("x-user-id");
@@ -38,7 +62,14 @@ export function workerAuth(deps: AuthDeps): MiddlewareHandler {
 					400,
 				);
 			}
-			c.set("userId", userId);
+			setAuthContext(c, {
+				userId,
+				actorUserId: userId,
+				tenantId: userId,
+				roles: [],
+				permissions: [],
+				authMethod: "internal",
+			});
 			return next();
 		}
 
@@ -49,7 +80,14 @@ export function workerAuth(deps: AuthDeps): MiddlewareHandler {
 			if (!resolved) {
 				return c.json({ error: "invalid or revoked API key" }, 401);
 			}
-			c.set("userId", resolved.userId);
+			setAuthContext(c, {
+				userId: resolved.userId,
+				actorUserId: resolved.userId,
+				tenantId: resolved.userId,
+				roles: [],
+				permissions: [],
+				authMethod: "api_key",
+			});
 			return next();
 		}
 
@@ -93,6 +131,37 @@ export function getUserId(c: Context): string {
 	return u;
 }
 
+export function getActorUserId(c: Context): string {
+	const u = c.get("actorUserId" as never) as string | undefined;
+	if (!u) return getUserId(c);
+	return u;
+}
+
 export function getCachedBody(c: Context): unknown {
 	return c.get("parsedBody" as never);
+}
+
+function setAuthContext(
+	c: Context,
+	ctx: {
+		userId: string;
+		actorUserId: string;
+		tenantId: string;
+		orgId?: string;
+		orgRole?: string;
+		orgSlug?: string;
+		roles: string[];
+		permissions: string[];
+		authMethod: "clerk" | "internal" | "api_key";
+	},
+) {
+	c.set("userId" as never, ctx.userId as never);
+	c.set("actorUserId" as never, ctx.actorUserId as never);
+	c.set("tenantId" as never, ctx.tenantId as never);
+	c.set("roles" as never, ctx.roles as never);
+	c.set("permissions" as never, ctx.permissions as never);
+	c.set("authMethod" as never, ctx.authMethod as never);
+	if (ctx.orgId) c.set("orgId" as never, ctx.orgId as never);
+	if (ctx.orgRole) c.set("orgRole" as never, ctx.orgRole as never);
+	if (ctx.orgSlug) c.set("orgSlug" as never, ctx.orgSlug as never);
 }

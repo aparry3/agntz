@@ -1,10 +1,10 @@
-import { AuthRequiredError, requireUserContext } from "@/lib/user";
+import { AuthRequiredError, requireUserContext, workerIdentity } from "@/lib/user";
 import { workerRun } from "@/lib/worker-client";
 import { type NextRequest, NextResponse } from "next/server";
 
 export async function POST(req: NextRequest) {
 	try {
-		const { userId } = await requireUserContext();
+		const ctx = await requireUserContext();
 		const body = await req.json();
 		const { description, currentManifest } = body;
 
@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
 		}
 
 		const result = await workerRun({
-			userId,
+			...workerIdentity(ctx),
 			agentId: "system:agent-builder",
 			input: { description: fullDescription },
 		});

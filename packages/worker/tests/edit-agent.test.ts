@@ -10,6 +10,14 @@ function makeApp() {
 	return { app };
 }
 
+function authHeaders(): Record<string, string> {
+	return {
+		"content-type": "application/json",
+		"X-Internal-Secret": SECRET,
+		"X-User-Id": "u1",
+	};
+}
+
 const currentManifest = `
 id: root
 kind: sequential
@@ -24,11 +32,21 @@ steps:
 `;
 
 describe("POST /edit-agent", () => {
-	it("requires no auth headers", async () => {
+	it("requires authentication", async () => {
 		const { app } = makeApp();
 		const res = await app.request("/edit-agent", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
+			body: JSON.stringify({}),
+		});
+		expect(res.status).toBe(401);
+	});
+
+	it("rejects missing currentManifest", async () => {
+		const { app } = makeApp();
+		const res = await app.request("/edit-agent", {
+			method: "POST",
+			headers: authHeaders(),
 			body: JSON.stringify({}),
 		});
 		expect(res.status).toBe(400);
@@ -40,7 +58,7 @@ describe("POST /edit-agent", () => {
 		const { app } = makeApp();
 		const res = await app.request("/edit-agent", {
 			method: "POST",
-			headers: { "content-type": "application/json" },
+			headers: authHeaders(),
 			body: JSON.stringify({
 				currentManifest,
 				changeDescription: 123,
@@ -53,7 +71,7 @@ describe("POST /edit-agent", () => {
 		const { app } = makeApp();
 		const res = await app.request("/edit-agent", {
 			method: "POST",
-			headers: { "content-type": "application/json" },
+			headers: authHeaders(),
 			body: JSON.stringify({
 				currentManifest: "a".repeat(70_000),
 				changeDescription: "change it",
@@ -66,7 +84,7 @@ describe("POST /edit-agent", () => {
 		const { app } = makeApp();
 		const res = await app.request("/edit-agent", {
 			method: "POST",
-			headers: { "content-type": "application/json" },
+			headers: authHeaders(),
 			body: JSON.stringify({
 				currentManifest,
 				changeDescription: "make the child concise",
@@ -82,7 +100,7 @@ describe("POST /edit-agent", () => {
 		const { app } = makeApp();
 		const res = await app.request("/edit-agent", {
 			method: "POST",
-			headers: { "content-type": "application/json" },
+			headers: authHeaders(),
 			body: JSON.stringify({
 				currentManifest,
 				changeDescription: "make the child concise",

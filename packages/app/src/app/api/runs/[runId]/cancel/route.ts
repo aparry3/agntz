@@ -1,4 +1,4 @@
-import { AuthRequiredError, requireUserContext } from "@/lib/user";
+import { AuthRequiredError, requireUserContext, workerIdentity } from "@/lib/user";
 import { workerRunsFetch } from "@/lib/worker-runs";
 import { type NextRequest, NextResponse } from "next/server";
 
@@ -7,11 +7,11 @@ export async function POST(
 	context: { params: Promise<{ runId: string }> },
 ) {
 	try {
-		const { userId } = await requireUserContext();
+		const ctx = await requireUserContext();
 		const { runId } = await context.params;
 
 		const upstream = await workerRunsFetch({
-			userId,
+			...workerIdentity(ctx),
 			path: `/runs/${encodeURIComponent(runId)}/cancel`,
 			method: "POST",
 			signal: req.signal,

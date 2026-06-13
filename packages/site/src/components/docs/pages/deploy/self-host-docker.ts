@@ -6,7 +6,7 @@ The whole stack is open source under MIT. The fastest way to get it running on y
 
 | Service | Role | Port |
 |---|---|---|
-| \`@agntz/app\` | Next.js 15 web UI (Clerk auth, agent editor, playground) | 3000 |
+| \`@agntz/app\` | Next.js 15 web UI (Clerk auth + organizations, agent editor, playground) | 3000 |
 | \`@agntz/worker\` | Hono HTTP worker — executes agents, exposes \`/run\` and \`/run/stream\` | 4001 |
 | Postgres | Backing store for sessions, runs, traces, agents | 5432 |
 | \`@agntz/site\` | Marketing site (optional) | 3001 |
@@ -29,7 +29,7 @@ The \`.env.example\` lists every variable. The non-optional ones:
 
 | Variable | Where used | Notes |
 |---|---|---|
-| \`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY\` | app | From Clerk Dashboard → API Keys |
+| \`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY\` | app | From Clerk Dashboard → API Keys. Enable Organizations for shared workspaces. |
 | \`CLERK_SECRET_KEY\` | app | Same source |
 | \`WORKER_INTERNAL_SECRET\` | app + worker | Must be identical on both. Generate with \`openssl rand -base64 32\`. |
 | \`DATABASE_URL\` | app + worker | Defaults to the compose-provided Postgres. |
@@ -47,7 +47,8 @@ when you call the curation endpoint manually.
 ## First-run flow
 
 1. Open \`http://localhost:3000\`. Clerk shows sign-in / sign-up.
-2. Sign up — every record from here on is scoped to your Clerk user id.
+2. Sign up, then optionally create or switch to an organization from the sidebar.
+   Records are scoped to the active organization; personal workspaces fall back to your Clerk user id.
 3. Hit **Create agent**, paste a description or write YAML directly, save.
 4. Click **Playground**, run the agent, watch the trace.
 5. Generate an API key in **Settings → API Keys**, then call your local worker from code:

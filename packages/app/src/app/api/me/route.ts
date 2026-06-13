@@ -5,10 +5,26 @@ import { NextResponse } from "next/server";
 /** Returns the signed-in user's Clerk id + whether they're a super admin. */
 export async function GET() {
 	try {
-		const { userId } = await requireUserContext();
+		const {
+			userId,
+			actorUserId,
+			tenantId,
+			orgId,
+			orgSlug,
+			orgRole,
+			roles,
+			permissions,
+		} = await requireUserContext();
 		return NextResponse.json({
 			userId,
-			isSuperAdmin: isSuperAdmin(userId),
+			actorUserId,
+			tenantId,
+			orgId,
+			orgSlug,
+			orgRole,
+			roles,
+			permissions,
+			isSuperAdmin: isSuperAdmin(actorUserId),
 		});
 	} catch (error) {
 		if (error instanceof AuthRequiredError) {

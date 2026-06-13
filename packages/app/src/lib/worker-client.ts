@@ -4,6 +4,7 @@ import type {
 	ManifestSelection,
 	ValidationResult,
 } from "@agntz/manifest";
+import { type WorkerIdentity, signWorkerIdentity } from "./internal-auth";
 
 const WORKER_URL = process.env.WORKER_URL ?? "http://localhost:4001";
 
@@ -17,8 +18,32 @@ function internalSecret(): string {
 	return secret;
 }
 
+function internalHeaders(identity?: WorkerIdentity): Record<string, string> {
+	const secret = internalSecret();
+	return {
+		"X-Internal-Secret": secret,
+		...(identity
+			? { "X-Agntz-Internal-Auth": signWorkerIdentity(identity, secret) }
+			: {}),
+	};
+}
+
+function internalJsonHeaders(identity: WorkerIdentity): Record<string, string> {
+	return {
+		"Content-Type": "application/json",
+		...internalHeaders(identity),
+	};
+}
+
 export interface RunRequest {
 	userId: string;
+	actorUserId?: string;
+	tenantId?: string;
+	orgId?: string;
+	orgSlug?: string;
+	orgRole?: string;
+	roles?: string[];
+	permissions?: string[];
 	agentId: string;
 	input: unknown;
 	sessionId?: string;
@@ -50,6 +75,13 @@ export interface EditAgentResponse {
 
 export interface EvalRunRequest {
 	userId: string;
+	actorUserId?: string;
+	tenantId?: string;
+	orgId?: string;
+	orgSlug?: string;
+	orgRole?: string;
+	roles?: string[];
+	permissions?: string[];
 	evalId: string;
 	evalVersion?: string;
 	datasetId?: string;
@@ -66,10 +98,7 @@ export interface EvalRunRequest {
 export async function workerRun(req: RunRequest): Promise<RunResult> {
 	const res = await fetch(`${WORKER_URL}/run`, {
 		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			"X-Internal-Secret": internalSecret(),
-		},
+		headers: internalJsonHeaders(req),
 		body: JSON.stringify(req),
 	});
 
@@ -86,10 +115,7 @@ export async function workerRun(req: RunRequest): Promise<RunResult> {
 export async function workerRunBlock(req: RunRequest): Promise<RunResult> {
 	const res = await fetch(`${WORKER_URL}/run/block`, {
 		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			"X-Internal-Secret": internalSecret(),
-		},
+		headers: internalJsonHeaders(req),
 		body: JSON.stringify(req),
 	});
 
@@ -106,10 +132,7 @@ export async function workerRunBlock(req: RunRequest): Promise<RunResult> {
 export async function workerEvalRun(req: EvalRunRequest): Promise<EvalRun> {
 	const res = await fetch(`${WORKER_URL}/eval-runs`, {
 		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			"X-Internal-Secret": internalSecret(),
-		},
+		headers: internalJsonHeaders(req),
 		body: JSON.stringify(req),
 	});
 
@@ -124,17 +147,19 @@ export async function workerEvalRun(req: EvalRunRequest): Promise<EvalRun> {
 }
 
 export async function workerCancelEvalRun(
-	userId: string,
+	identityOrUserId: WorkerIdentity | string,
 	runId: string,
 ): Promise<EvalRun> {
+	const identity =
+		typeof identityOrUserId === "string"
+			? { userId: identityOrUserId }
+			: identityOrUserId;
+	const userId = identity.tenantId ?? identity.userId;
 	const res = await fetch(
 		`${WORKER_URL}/eval-runs/${encodeURIComponent(runId)}/cancel`,
 		{
 			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				"X-Internal-Secret": internalSecret(),
-			},
+			headers: internalJsonHeaders(identity),
 			body: JSON.stringify({ userId }),
 		},
 	);
@@ -157,10 +182,7 @@ export async function workerRunStream(
 ): Promise<ReadableStream<Uint8Array>> {
 	const res = await fetch(`${WORKER_URL}/run/stream`, {
 		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			"X-Internal-Secret": internalSecret(),
-		},
+		headers: internalJsonHeaders(req),
 		body: JSON.stringify(req),
 	});
 
@@ -183,10 +205,7 @@ export async function workerRunBlockStream(
 ): Promise<ReadableStream<Uint8Array>> {
 	const res = await fetch(`${WORKER_URL}/run/block/stream`, {
 		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			"X-Internal-Secret": internalSecret(),
-		},
+		headers: internalJsonHeaders(req),
 		body: JSON.stringify(req),
 	});
 
@@ -205,14 +224,11 @@ export async function workerRunBlockStream(
 }
 
 export async function workerEditAgent(
-	req: EditAgentRequest,
+	req: EditAgentRequest & WorkerIdentity,
 ): Promise<EditAgentResponse> {
 	const res = await fetch(`${WORKER_URL}/edit-agent`, {
 		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			"X-Internal-Secret": internalSecret(),
-		},
+		headers: internalJsonHeaders(req),
 		body: JSON.stringify(req),
 	});
 
@@ -240,6 +256,13 @@ export interface SystemAgentDetail extends SystemAgentSummary {
 
 export interface ValidateRequest {
 	userId: string;
+	actorUserId?: string;
+	tenantId?: string;
+	orgId?: string;
+	orgSlug?: string;
+	orgRole?: string;
+	roles?: string[];
+	permissions?: string[];
 	manifest: string;
 	strict?: boolean;
 	mcpTimeoutMs?: number;
@@ -255,10 +278,7 @@ export async function workerValidateManifest(
 ): Promise<ValidationResult> {
 	const res = await fetch(`${WORKER_URL}/validate`, {
 		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			"X-Internal-Secret": internalSecret(),
-		},
+		headers: internalJsonHeaders(req),
 		body: JSON.stringify(req),
 	});
 

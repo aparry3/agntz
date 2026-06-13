@@ -1,10 +1,10 @@
-import { AuthRequiredError, requireUserContext } from "@/lib/user";
+import { AuthRequiredError, requireUserContext, workerIdentity } from "@/lib/user";
 import { workerValidateManifest } from "@/lib/worker-client";
 import { type NextRequest, NextResponse } from "next/server";
 
 export async function POST(req: NextRequest) {
 	try {
-		const { userId } = await requireUserContext();
+		const ctx = await requireUserContext();
 		const body = await req.json();
 		const { manifest } = body;
 
@@ -15,7 +15,10 @@ export async function POST(req: NextRequest) {
 			);
 		}
 
-		const result = await workerValidateManifest({ userId, manifest });
+		const result = await workerValidateManifest({
+			...workerIdentity(ctx),
+			manifest,
+		});
 		return NextResponse.json(result);
 	} catch (error) {
 		if (error instanceof AuthRequiredError) {
