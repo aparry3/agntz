@@ -7,6 +7,10 @@ import {
 import { composeSignal, sendRequest } from "./fetch.js";
 import { parseSSE } from "./sse.js";
 import type {
+	AgentDefinition,
+	AgentImportInput,
+	AgentImportResponse,
+	AgentSummary,
 	AgntzClientOptions,
 	EvalDataset,
 	EvalDatasetListFilter,
@@ -20,6 +24,8 @@ import type {
 	EvalRunListFilter,
 	EvalRunListResult,
 	HealthResult,
+	MemoryImportInput,
+	MemoryImportResponse,
 	MultiplexedRunEvent,
 	Run,
 	RunInput,
@@ -28,6 +34,8 @@ import type {
 	RunResult,
 	RunsStartInput,
 	RunsStreamInput,
+	SessionImportInput,
+	SessionImportResponse,
 	StreamEvent,
 	TraceDetail,
 	TraceFilter,
@@ -39,7 +47,9 @@ export class AgntzClient {
 	readonly agents: AgentsResource;
 	readonly datasets: DatasetsResource;
 	readonly evals: EvalsResource;
+	readonly memory: MemoryResource;
 	readonly runs: RunsResource;
+	readonly sessions: SessionsResource;
 	readonly traces: TracesResource;
 	private readonly apiKey: string;
 	private readonly baseUrl: string;
@@ -56,7 +66,9 @@ export class AgntzClient {
 		this.agents = new AgentsResource(this);
 		this.datasets = new DatasetsResource(this);
 		this.evals = new EvalsResource(this);
+		this.memory = new MemoryResource(this);
 		this.runs = new RunsResource(this);
+		this.sessions = new SessionsResource(this);
 		this.traces = new TracesResource(this);
 	}
 
@@ -116,6 +128,50 @@ export class AgntzClient {
 export class AgentsResource {
 	constructor(private readonly client: AgntzClient) {}
 
+	async list(opts: { signal?: AbortSignal } = {}): Promise<AgentSummary[]> {
+		const signal = this.client._composeSignal(opts.signal);
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: "/agents",
+			method: "GET",
+			apiKey: this.client._apiKey,
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as AgentSummary[];
+	}
+
+	async get(
+		agentId: string,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<AgentDefinition> {
+		const signal = this.client._composeSignal(opts.signal);
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/agents/${encodeURIComponent(agentId)}`,
+			method: "GET",
+			apiKey: this.client._apiKey,
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as AgentDefinition;
+	}
+
+	async import(input: AgentImportInput): Promise<AgentImportResponse> {
+		const signal = this.client._composeSignal(input.signal);
+		const { signal: _signal, ...body } = input;
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: "/agents/import",
+			method: "POST",
+			apiKey: this.client._apiKey,
+			body,
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as AgentImportResponse;
+	}
+
 	async run(input: RunInput): Promise<RunResult> {
 		const res = await this.client._runRequest(input, false);
 		return (await res.json()) as RunResult;
@@ -123,6 +179,44 @@ export class AgentsResource {
 
 	stream(input: RunInput): AsyncGenerator<StreamEvent, void, void> {
 		return streamAgentEvents(this.client, input);
+	}
+}
+
+export class SessionsResource {
+	constructor(private readonly client: AgntzClient) {}
+
+	async import(input: SessionImportInput): Promise<SessionImportResponse> {
+		const signal = this.client._composeSignal(input.signal);
+		const { signal: _signal, ...body } = input;
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: "/sessions/import",
+			method: "POST",
+			apiKey: this.client._apiKey,
+			body,
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as SessionImportResponse;
+	}
+}
+
+export class MemoryResource {
+	constructor(private readonly client: AgntzClient) {}
+
+	async import(input: MemoryImportInput): Promise<MemoryImportResponse> {
+		const signal = this.client._composeSignal(input.signal);
+		const { signal: _signal, ...body } = input;
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: "/memory/import",
+			method: "POST",
+			apiKey: this.client._apiKey,
+			body,
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as MemoryImportResponse;
 	}
 }
 

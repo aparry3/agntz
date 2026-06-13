@@ -21,6 +21,7 @@ import {
 	type RunListFilters,
 	type RunRegistry,
 	type Runner,
+	type SessionSnapshot,
 	SpanEmitter,
 	type TraceFilter,
 	type UnifiedStore,
@@ -52,7 +53,7 @@ import {
 	MemrezEntryNotFoundError,
 	MemrezScopeError,
 } from "@agntz/memrez";
-import type { CurateReport, Memrez } from "@agntz/memrez";
+import type { CurateReport, MemoryEntry, Memrez } from "@agntz/memrez";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { cors } from "hono/cors";
@@ -422,15 +423,14 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 	app.use("/traces", workerAuth({ store, internalSecret }));
 	app.use("/traces/*", workerAuth({ store, internalSecret }));
 	app.use("/validate", workerAuth({ store, internalSecret }));
+	app.use("/agents", workerAuth({ store, internalSecret }));
+	app.use("/agents/*", workerAuth({ store, internalSecret }));
+	app.use("/sessions/import", workerAuth({ store, internalSecret }));
+	app.use("/memory/import", workerAuth({ store, internalSecret }));
 	app.use("/webhook-secrets", workerAuth({ store, internalSecret }));
 	app.use("/webhook-secrets/*", workerAuth({ store, internalSecret }));
 	app.use("/system/agents", internalOnlyAuth({ internalSecret }));
 	app.use("/system/agents/*", internalOnlyAuth({ internalSecret }));
-	// Memory observability endpoints are app→worker only for now. Scoped
-	// end-user tokens are deliberately parked until grant-bound capability
-	// tokens exist (memory-observability plan §D8).
-	app.use("/memory", internalOnlyAuth({ internalSecret }));
-	app.use("/memory/*", internalOnlyAuth({ internalSecret }));
 
 	app.post("/validate", async (c) => {
 		try {
@@ -461,6 +461,229 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			return c.json({ error: errorMessage(error) }, 500);
 		}
 	});
+
+	app.get("/agents", async (c) => {
+		try {
+			const userId = getUserId(c);
+			const agents = await store.forUser(userId).listAgents();
+			return c.json(agents);
+		} catch (error) {
+			return c.json({ error: errorMessage(error) }, 500);
+		}
+	});
+
+	app.get("/agents/:id", async (c) => {
+		try {
+			const userId = getUserId(c);
+			const id = decodeURIComponent(c.req.param("id"));
+			if (id.includes("@")) {
+				return c.json(
+					{ error: "Agent CRUD ids must not include a version suffix" },
+					400,
+				);
+			}
+			const agent = await store.forUser(userId).getAgent(id);
+			if (!agent) return c.json({ error: `Agent "${id}" not found` }, 404);
+			return c.json(agent);
+		} catch (error) {
+			return c.json({ error: errorMessage(error) }, 500);
+		}
+	});
+
+	app.post("/agents/import", async (c) => {
+		try {
+			const userId = getUserId(c);
+			const body = (getCachedBody(c) ?? (await c.req.json())) as {
+				agents?: unknown;
+				onConflict?: unknown;
+				dryRun?: unknown;
+				strict?: unknown;
+			};
+			const items = normalizeAgentImportItems(body.agents);
+			const onConflict = normalizeAgentConflict(body.onConflict);
+			const dryRun = body.dryRun === true;
+			const scoped = store.forUser(userId);
+			const incomingIds = items.map((item) => item.id);
+			const validationCtx = buildValidationContext(scoped, {
+				strict: body.strict !== false,
+				outboundUrlPolicy: opts.outboundUrlPolicy,
+				extraAgentIds: incomingIds,
+			});
+
+			const validationResults = await Promise.all(
+				items.map((item) => validateManifestFull(item.manifest, validationCtx)),
+			);
+			const invalid = validationResults
+				.map((validation, index) => ({ validation, item: items[index] }))
+				.filter(({ validation }) => validation.errors.length > 0);
+			if (invalid.length > 0) {
+				return c.json(
+					{
+						error: "Invalid manifest",
+						results: invalid.map(({ item, validation }) => ({
+							id: item.id,
+							sourcePath: item.sourcePath,
+							errors: validation.errors,
+							warnings: validation.warnings,
+						})),
+					},
+					400,
+				);
+			}
+
+			const results: AgentImportResult[] = [];
+			for (const [index, item] of items.entries()) {
+				const existing = await scoped.getAgent(item.id);
+				if (existing && onConflict === "fail") {
+					return c.json(
+						{ error: `Agent "${item.id}" already exists`, id: item.id },
+						409,
+					);
+				}
+				const action = existing
+					? onConflict === "skip"
+						? "skip"
+						: "version"
+					: "create";
+				if (!dryRun && action !== "skip") {
+					await scoped.putAgent({
+						id: item.id,
+						name: item.manifestName ?? item.id,
+						description: item.description,
+						systemPrompt: "",
+						model: defaultModelConfig(),
+						metadata: {
+							manifest: item.manifest,
+							sourcePath: item.sourcePath,
+							publishedFrom: "cli",
+							publishedAt: new Date().toISOString(),
+						},
+					});
+				}
+				results.push({
+					id: item.id,
+					sourcePath: item.sourcePath,
+					action,
+					warnings: validationResults[index].warnings,
+				});
+			}
+
+			return c.json({
+				dryRun,
+				results,
+				counts: countActions(results),
+			});
+		} catch (error) {
+			return c.json(
+				{ error: errorMessage(error) },
+				isBadRequest(error) ? 400 : 500,
+			);
+		}
+	});
+
+	app.post("/sessions/import", async (c) => {
+		try {
+			const userId = getUserId(c);
+			const body = (getCachedBody(c) ?? (await c.req.json())) as {
+				sessions?: unknown;
+				onConflict?: unknown;
+				dryRun?: unknown;
+			};
+			const sessions = normalizeSessionSnapshots(body.sessions);
+			const onConflict = normalizeSnapshotConflict(body.onConflict);
+			const dryRun = body.dryRun === true;
+			const scoped = store.forUser(userId);
+			if (!scoped.putSessionSnapshot) {
+				return c.json(
+					{
+						error:
+							"The configured store does not support session snapshot imports.",
+					},
+					501,
+				);
+			}
+			const existing = new Map(
+				(await scoped.listSessions()).map((session) => [
+					session.sessionId,
+					session,
+				]),
+			);
+			const results: SessionImportResult[] = [];
+
+			for (const snapshot of sessions) {
+				const current = existing.get(snapshot.sessionId);
+				if (current) {
+					if (onConflict === "fail") {
+						return c.json(
+							{
+								error: `Session "${snapshot.sessionId}" already exists`,
+								sessionId: snapshot.sessionId,
+							},
+							409,
+						);
+					}
+					results.push({
+						sessionId: snapshot.sessionId,
+						agentId: snapshot.agentId,
+						action: "skip",
+						messageCount: snapshot.messages.length,
+					});
+					continue;
+				}
+				if (!dryRun) await scoped.putSessionSnapshot(snapshot);
+				results.push({
+					sessionId: snapshot.sessionId,
+					agentId: snapshot.agentId,
+					action: "create",
+					messageCount: snapshot.messages.length,
+				});
+			}
+
+			return c.json({ dryRun, results, counts: countActions(results) });
+		} catch (error) {
+			return c.json(
+				{ error: errorMessage(error) },
+				isBadRequest(error) ? 400 : 500,
+			);
+		}
+	});
+
+	app.post("/memory/import", async (c) => {
+		try {
+			const memrez = opts.memrez;
+			if (!memrez) return memoryNotConfigured(c);
+			const body = (getCachedBody(c) ?? (await c.req.json())) as {
+				entries?: unknown;
+				dryRun?: unknown;
+			};
+			const entries = normalizeMemoryEntries(body.entries);
+			const dryRun = body.dryRun === true;
+			const results: MemoryImportResult[] = [];
+
+			for (const entry of entries) {
+				const existing = await memrez.store.getEntry(entry.id);
+				if (!dryRun) await memrez.store.putEntry(entry);
+				results.push({
+					id: entry.id,
+					scope: entry.scope,
+					action: existing ? "update" : "create",
+					status: entry.status,
+				});
+			}
+
+			return c.json({ dryRun, results, counts: countActions(results) });
+		} catch (error) {
+			return c.json(
+				{ error: errorMessage(error) },
+				isBadRequest(error) ? 400 : 500,
+			);
+		}
+	});
+
+	// Memory observability endpoints are app→worker only for now. The import
+	// route above is explicitly user-scoped through workerAuth for CLI migration.
+	app.use("/memory", internalOnlyAuth({ internalSecret }));
+	app.use("/memory/*", internalOnlyAuth({ internalSecret }));
 
 	app.get("/system/agents", async (c) => {
 		const agents = await listSystemAgents();
@@ -2669,6 +2892,264 @@ function stringOrUndefined(value: unknown): string | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+type AgentConflictMode = "version" | "skip" | "fail";
+type SnapshotConflictMode = "skip" | "fail";
+type ImportAction = "create" | "version" | "skip" | "update";
+
+interface AgentImportItem {
+	id: string;
+	manifest: string;
+	manifestName?: string;
+	description?: string;
+	sourcePath?: string;
+}
+
+interface AgentImportResult {
+	id: string;
+	sourcePath?: string;
+	action: ImportAction;
+	warnings?: unknown[];
+}
+
+interface SessionImportResult {
+	sessionId: string;
+	agentId?: string;
+	action: ImportAction;
+	messageCount: number;
+}
+
+interface MemoryImportResult {
+	id: string;
+	scope: string;
+	action: ImportAction;
+	status: MemoryEntry["status"];
+}
+
+function normalizeAgentImportItems(value: unknown): AgentImportItem[] {
+	if (!Array.isArray(value) || value.length === 0) {
+		throw badRequest("Body must include a non-empty agents array.");
+	}
+	const seen = new Set<string>();
+	return value.map((raw, index) => {
+		if (!isRecord(raw)) {
+			throw badRequest(`agents[${index}] must be an object.`);
+		}
+		const manifestSource = raw.manifest;
+		if (typeof manifestSource !== "string" || !manifestSource.trim()) {
+			throw badRequest(`agents[${index}].manifest must be a non-empty string.`);
+		}
+		let manifest: AgentManifest;
+		try {
+			manifest = parseManifest(manifestSource);
+		} catch (error) {
+			throw badRequest(
+				`agents[${index}].manifest could not be parsed: ${errorMessage(error)}`,
+			);
+		}
+		const requestedId =
+			typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : manifest.id;
+		if (requestedId !== manifest.id) {
+			throw badRequest(
+				`agents[${index}].id "${requestedId}" does not match manifest id "${manifest.id}".`,
+			);
+		}
+		if (seen.has(requestedId)) {
+			throw badRequest(`Duplicate agent id in import batch: ${requestedId}`);
+		}
+		seen.add(requestedId);
+		return {
+			id: requestedId,
+			manifest: manifestSource,
+			manifestName: manifest.name,
+			description: manifest.description,
+			sourcePath:
+				typeof raw.sourcePath === "string" && raw.sourcePath.trim()
+					? raw.sourcePath
+					: undefined,
+		};
+	});
+}
+
+function normalizeAgentConflict(value: unknown): AgentConflictMode {
+	if (value === undefined || value === null) return "version";
+	if (value === "version" || value === "skip" || value === "fail") {
+		return value;
+	}
+	throw badRequest("onConflict must be one of: version, skip, fail.");
+}
+
+function normalizeSnapshotConflict(value: unknown): SnapshotConflictMode {
+	if (value === undefined || value === null) return "skip";
+	if (value === "skip" || value === "fail") return value;
+	throw badRequest("onConflict must be one of: skip, fail.");
+}
+
+function normalizeSessionSnapshots(value: unknown): SessionSnapshot[] {
+	if (!Array.isArray(value) || value.length === 0) {
+		throw badRequest("Body must include a non-empty sessions array.");
+	}
+	const seen = new Set<string>();
+	return value.map((raw, index) => {
+		if (!isRecord(raw)) {
+			throw badRequest(`sessions[${index}] must be an object.`);
+		}
+		const sessionId = raw.sessionId;
+		if (typeof sessionId !== "string" || !sessionId.trim()) {
+			throw badRequest(
+				`sessions[${index}].sessionId must be a non-empty string.`,
+			);
+		}
+		if (seen.has(sessionId)) {
+			throw badRequest(`Duplicate session id in import batch: ${sessionId}`);
+		}
+		seen.add(sessionId);
+		if (!Array.isArray(raw.messages)) {
+			throw badRequest(`sessions[${index}].messages must be an array.`);
+		}
+		return {
+			sessionId,
+			agentId: stringOrUndefined(raw.agentId),
+			createdAt: stringOrUndefined(raw.createdAt),
+			updatedAt: stringOrUndefined(raw.updatedAt),
+			messages: raw.messages.map((message, msgIndex) =>
+				normalizeMessage(message, `sessions[${index}].messages[${msgIndex}]`),
+			),
+		};
+	});
+}
+
+function normalizeMessage(
+	value: unknown,
+	path: string,
+): SessionSnapshot["messages"][number] {
+	if (!isRecord(value)) throw badRequest(`${path} must be an object.`);
+	const role = value.role;
+	if (
+		role !== "system" &&
+		role !== "user" &&
+		role !== "assistant" &&
+		role !== "tool"
+	) {
+		throw badRequest(`${path}.role must be system, user, assistant, or tool.`);
+	}
+	const content = value.content;
+	if (typeof content !== "string" && !Array.isArray(content)) {
+		throw badRequest(
+			`${path}.content must be a string or content block array.`,
+		);
+	}
+	const timestamp = value.timestamp;
+	if (typeof timestamp !== "string" || !timestamp.trim()) {
+		throw badRequest(`${path}.timestamp must be a non-empty string.`);
+	}
+	return {
+		role,
+		content: content as SessionSnapshot["messages"][number]["content"],
+		timestamp,
+		toolCalls: Array.isArray(value.toolCalls)
+			? (value.toolCalls as SessionSnapshot["messages"][number]["toolCalls"])
+			: undefined,
+		toolCallId: stringOrUndefined(value.toolCallId),
+	};
+}
+
+function normalizeMemoryEntries(value: unknown): MemoryEntry[] {
+	if (!Array.isArray(value) || value.length === 0) {
+		throw badRequest("Body must include a non-empty entries array.");
+	}
+	const seen = new Set<string>();
+	return value.map((raw, index) => {
+		if (!isRecord(raw)) {
+			throw badRequest(`entries[${index}] must be an object.`);
+		}
+		const id = raw.id;
+		const scope = raw.scope;
+		const content = raw.content;
+		if (typeof id !== "string" || !id.trim()) {
+			throw badRequest(`entries[${index}].id must be a non-empty string.`);
+		}
+		if (seen.has(id)) throw badRequest(`Duplicate memory entry id: ${id}`);
+		seen.add(id);
+		if (typeof scope !== "string" || !scope.trim()) {
+			throw badRequest(`entries[${index}].scope must be a non-empty string.`);
+		}
+		if (typeof content !== "string" || !content.trim()) {
+			throw badRequest(`entries[${index}].content must be a non-empty string.`);
+		}
+		const topics = raw.topics;
+		if (
+			!Array.isArray(topics) ||
+			topics.some((topic) => typeof topic !== "string")
+		) {
+			throw badRequest(`entries[${index}].topics must be a string array.`);
+		}
+		const type = raw.type;
+		if (
+			type !== "fact" &&
+			type !== "preference" &&
+			type !== "event" &&
+			type !== "summary"
+		) {
+			throw badRequest(
+				`entries[${index}].type must be fact, preference, event, or summary.`,
+			);
+		}
+		const status = raw.status;
+		if (status !== "active" && status !== "superseded") {
+			throw badRequest(
+				`entries[${index}].status must be active or superseded.`,
+			);
+		}
+		const createdAt = raw.createdAt;
+		const updatedAt = raw.updatedAt;
+		if (typeof createdAt !== "string" || !createdAt.trim()) {
+			throw badRequest(
+				`entries[${index}].createdAt must be a non-empty string.`,
+			);
+		}
+		if (typeof updatedAt !== "string" || !updatedAt.trim()) {
+			throw badRequest(
+				`entries[${index}].updatedAt must be a non-empty string.`,
+			);
+		}
+		return {
+			id,
+			scope,
+			content,
+			topics: [...new Set(topics as string[])],
+			type,
+			status,
+			source: isRecord(raw.source)
+				? {
+						agentId: stringOrUndefined(raw.source.agentId),
+						sessionId: stringOrUndefined(raw.source.sessionId),
+						runId: stringOrUndefined(raw.source.runId),
+					}
+				: undefined,
+			supersededBy: stringOrUndefined(raw.supersededBy),
+			createdAt,
+			updatedAt,
+		};
+	});
+}
+
+function defaultModelConfig(): { provider: string; name: string } {
+	return {
+		provider: process.env.DEFAULT_MODEL_PROVIDER ?? "openai",
+		name: process.env.DEFAULT_MODEL_NAME ?? "gpt-5.4-mini",
+	};
+}
+
+function countActions<T extends { action: string }>(
+	results: T[],
+): Record<string, number> {
+	const counts: Record<string, number> = {};
+	for (const result of results) {
+		counts[result.action] = (counts[result.action] ?? 0) + 1;
+	}
+	return counts;
 }
 
 function normalizeGate(

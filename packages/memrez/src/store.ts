@@ -136,6 +136,15 @@ export class InMemoryMemoryStore implements MemoryStore {
 			.map(cloneEntry);
 	}
 
+	async listEntries(
+		opts: { includeSuperseded?: boolean } = {},
+	): Promise<MemoryEntry[]> {
+		return Array.from(this.entries.values())
+			.filter((entry) => opts.includeSuperseded || entry.status === "active")
+			.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+			.map(cloneEntry);
+	}
+
 	async listDirtyTopics(): Promise<DirtyTopic[]> {
 		const newestByPair = this.newestActiveByPair(() => true);
 		const out: DirtyTopic[] = [];

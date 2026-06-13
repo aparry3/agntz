@@ -292,6 +292,21 @@ export class SqliteMemoryStore implements MemoryStore {
 		return rows.map((row) => this.rowToEntry(row));
 	}
 
+	async listEntries(
+		opts: { includeSuperseded?: boolean } = {},
+	): Promise<MemoryEntry[]> {
+		const conditions = opts.includeSuperseded ? "" : "WHERE status = 'active'";
+		const rows = this.db
+			.prepare(
+				`SELECT *
+         FROM memrez_entries
+         ${conditions}
+         ORDER BY updated_at DESC`,
+			)
+			.all() as EntryRow[];
+		return rows.map((row) => this.rowToEntry(row));
+	}
+
 	async listDirtyTopics(): Promise<DirtyTopic[]> {
 		const rows = this.db
 			.prepare(

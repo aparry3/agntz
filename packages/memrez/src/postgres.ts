@@ -272,6 +272,20 @@ export class PostgresMemoryStore implements MemoryStore {
 		return Promise.all(result.rows.map((row) => this.rowToEntry(row)));
 	}
 
+	async listEntries(
+		opts: { includeSuperseded?: boolean } = {},
+	): Promise<MemoryEntry[]> {
+		await this.ready;
+		const where = opts.includeSuperseded ? "" : "WHERE status = 'active'";
+		const result = await this.pool.query<EntryRow>(
+			`SELECT *
+       FROM ${this.table("entries")}
+       ${where}
+       ORDER BY updated_at DESC`,
+		);
+		return Promise.all(result.rows.map((row) => this.rowToEntry(row)));
+	}
+
 	async listDirtyTopics(): Promise<DirtyTopic[]> {
 		await this.ready;
 		const result = await this.pool.query<{ scope: string; topic: string }>(

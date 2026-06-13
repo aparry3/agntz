@@ -161,6 +161,7 @@ export interface MemoryStore {
 		scopePaths: string[],
 		opts?: { topics?: string[]; includeSuperseded?: boolean },
 	): Promise<MemoryEntry[]>;
+	listEntries(opts?: { includeSuperseded?: boolean }): Promise<MemoryEntry[]>;
 	/**
 	 * Enumerate (scope, topic) pairs whose newest active entry postdates the
 	 * topic's `topic_meta.last_updated_at` (or that have no meta row at all).

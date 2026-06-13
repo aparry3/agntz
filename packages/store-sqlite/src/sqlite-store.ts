@@ -39,6 +39,7 @@ import type {
 	RunStatus,
 	SecretDefinition,
 	SecretMetadata,
+	SessionSnapshot,
 	SessionSummary,
 	SkillDefinition,
 	Span,
@@ -916,6 +917,67 @@ export class SqliteStore implements UnifiedStore {
 				);
 				insertMsg.run(
 					sessionId,
+					msg.role,
+					contentText,
+					contentBlocksJson,
+					msg.toolCalls ? JSON.stringify(msg.toolCalls) : null,
+					msg.toolCallId ?? null,
+					msg.timestamp,
+				);
+			}
+		});
+
+		transaction();
+	}
+
+	async putSessionSnapshot(snapshot: SessionSnapshot): Promise<void> {
+		const u = this.requireUser();
+		const now = new Date().toISOString();
+		const createdAt = snapshot.createdAt ?? now;
+		const updatedAt = snapshot.updatedAt ?? now;
+
+		const checkOwnership = this.db.prepare(
+			"SELECT user_id FROM sessions WHERE id = ?",
+		);
+		const upsertSession = this.db.prepare(
+			`INSERT INTO sessions (user_id, id, agent_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         agent_id = excluded.agent_id,
+         created_at = excluded.created_at,
+         updated_at = excluded.updated_at`,
+		);
+		const deleteMessages = this.db.prepare(
+			"DELETE FROM messages WHERE session_id = ?",
+		);
+		const insertMsg = this.db.prepare(
+			`INSERT INTO messages (session_id, role, content, content_blocks, tool_calls, tool_call_id, timestamp)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		);
+
+		const transaction = this.db.transaction(() => {
+			const existing = checkOwnership.get(snapshot.sessionId) as
+				| { user_id: string }
+				| undefined;
+			if (existing && existing.user_id !== u) {
+				throw new Error(
+					`Session ${snapshot.sessionId} belongs to a different user`,
+				);
+			}
+			upsertSession.run(
+				u,
+				snapshot.sessionId,
+				snapshot.agentId ?? null,
+				createdAt,
+				updatedAt,
+			);
+			deleteMessages.run(snapshot.sessionId);
+			for (const msg of snapshot.messages) {
+				const { contentText, contentBlocksJson } = serializeContent(
+					msg.content,
+				);
+				insertMsg.run(
+					snapshot.sessionId,
 					msg.role,
 					contentText,
 					contentBlocksJson,

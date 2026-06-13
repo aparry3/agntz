@@ -15,6 +15,8 @@ export interface BuildValidationContextOptions {
 	outboundUrlPolicy?: OutboundUrlPolicyOptions;
 	/** Timeout for each MCP connection + listTools call. */
 	mcpTimeoutMs?: number;
+	/** Agent ids that will be created by the same batch operation. */
+	extraAgentIds?: Iterable<string>;
 }
 
 /**
@@ -32,12 +34,14 @@ export function buildValidationContext(
 ): ValidationContext {
 	const runner = createRunner({ store });
 	const toolCache = new Map<string, Promise<string[]>>();
+	const extraAgentIds = new Set(options.extraAgentIds ?? []);
 
 	return {
 		strict: options.strict,
 		outboundUrlPolicy: options.outboundUrlPolicy,
 		localTools: [...LOCAL_TOOL_NAMES],
 		resolveAgent: async (id: string) => {
+			if (extraAgentIds.has(id)) return true;
 			const agent = await runner.agents.getAgent(id);
 			return agent != null;
 		},

@@ -235,6 +235,7 @@ export type {
 	// Messages & Sessions
 	Message,
 	SessionSummary,
+	SessionSnapshot,
 	// Context
 	ContextEntry,
 	// Logs

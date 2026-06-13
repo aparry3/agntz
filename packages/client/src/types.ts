@@ -111,6 +111,123 @@ export interface HealthResult {
 	service: string;
 }
 
+export interface AgentSummary {
+	id: string;
+	name: string;
+	description?: string;
+}
+
+export interface AgentDefinition {
+	id: string;
+	name: string;
+	description?: string;
+	systemPrompt?: string;
+	model?: {
+		provider: string;
+		name: string;
+		temperature?: number;
+		maxTokens?: number;
+		topP?: number;
+		options?: Record<string, unknown>;
+	};
+	metadata?: Record<string, unknown>;
+	createdAt?: string;
+	updatedAt?: string;
+}
+
+export interface AgentImportItem {
+	id?: string;
+	manifest: string;
+	sourcePath?: string;
+}
+
+export interface AgentImportInput {
+	agents: AgentImportItem[];
+	onConflict?: "version" | "skip" | "fail";
+	dryRun?: boolean;
+	strict?: boolean;
+	signal?: AbortSignal;
+}
+
+export interface AgentImportResult {
+	id: string;
+	sourcePath?: string;
+	action: "create" | "version" | "skip" | "update";
+	warnings?: unknown[];
+}
+
+export interface AgentImportResponse {
+	dryRun: boolean;
+	results: AgentImportResult[];
+	counts: Record<string, number>;
+}
+
+export interface SessionSnapshot {
+	sessionId: string;
+	agentId?: string;
+	messages: Array<{
+		role: "system" | "user" | "assistant" | "tool";
+		content: string | ContentBlock[];
+		toolCalls?: unknown[];
+		toolCallId?: string;
+		timestamp: string;
+	}>;
+	createdAt?: string;
+	updatedAt?: string;
+}
+
+export interface SessionImportInput {
+	sessions: SessionSnapshot[];
+	onConflict?: "skip" | "fail";
+	dryRun?: boolean;
+	signal?: AbortSignal;
+}
+
+export interface SessionImportResult {
+	sessionId: string;
+	agentId?: string;
+	action: "create" | "version" | "skip" | "update";
+	messageCount: number;
+}
+
+export interface SessionImportResponse {
+	dryRun: boolean;
+	results: SessionImportResult[];
+	counts: Record<string, number>;
+}
+
+export interface MemoryEntry {
+	id: string;
+	scope: string;
+	content: string;
+	topics: string[];
+	type: "fact" | "preference" | "event" | "summary";
+	source?: { agentId?: string; sessionId?: string; runId?: string };
+	status: "active" | "superseded";
+	supersededBy?: string;
+	createdAt: string;
+	updatedAt: string;
+}
+
+export interface MemoryImportInput {
+	entries: MemoryEntry[];
+	dryRun?: boolean;
+	signal?: AbortSignal;
+}
+
+export interface MemoryImportResult {
+	id: string;
+	scope: string;
+	action: "create" | "version" | "skip" | "update";
+	status: MemoryEntry["status"];
+}
+
+export interface MemoryImportResponse {
+	dryRun: boolean;
+	results: MemoryImportResult[];
+	counts: Record<string, number>;
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // /evals, /datasets, /eval-runs
 // ─────────────────────────────────────────────────────────────────────────

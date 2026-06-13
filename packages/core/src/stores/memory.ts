@@ -30,6 +30,7 @@ import type {
 	RunStatus,
 	SecretDefinition,
 	SecretMetadata,
+	SessionSnapshot,
 	SessionSummary,
 	SkillDefinition,
 	Span,
@@ -350,6 +351,24 @@ export class MemoryStore implements UnifiedStore {
 				updatedAt: now,
 			});
 		}
+	}
+
+	async putSessionSnapshot(snapshot: SessionSnapshot): Promise<void> {
+		const u = this.requireUser();
+		const existing = this.backend.sessions.get(snapshot.sessionId);
+		if (existing && existing.userId !== u) {
+			throw new Error(
+				`Session ${snapshot.sessionId} belongs to a different user`,
+			);
+		}
+		const now = new Date().toISOString();
+		this.backend.sessions.set(snapshot.sessionId, {
+			userId: u,
+			agentId: snapshot.agentId,
+			messages: snapshot.messages.map((message) => ({ ...message })),
+			createdAt: snapshot.createdAt ?? existing?.createdAt ?? now,
+			updatedAt: snapshot.updatedAt ?? now,
+		});
 	}
 
 	async deleteSession(sessionId: string): Promise<void> {

@@ -58,14 +58,19 @@
     "@agntz/client": "workspace:*"
   },
   "peerDependencies": {
+    "@agntz/memrez": "workspace:*",
     "@agntz/store-sqlite": "workspace:*"
   },
   "peerDependenciesMeta": {
+    "@agntz/memrez": {
+      "optional": true
+    },
     "@agntz/store-sqlite": {
       "optional": true
     }
   },
   "devDependencies": {
+    "@agntz/memrez": "workspace:*",
     "@agntz/store-sqlite": "workspace:*",
     "@biomejs/biome": "^1.9.0",
     "@types/node": "^22.0.0",

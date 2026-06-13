@@ -510,6 +510,14 @@ export interface SessionSummary {
 	updatedAt: string;
 }
 
+export interface SessionSnapshot {
+	sessionId: string;
+	agentId?: string;
+	messages: Message[];
+	createdAt?: string;
+	updatedAt?: string;
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Context
 // ═══════════════════════════════════════════════════════════════════════
@@ -786,6 +794,7 @@ export interface SessionStore {
 	append(sessionId: string, messages: Message[]): Promise<void>;
 	deleteSession(sessionId: string): Promise<void>;
 	listSessions(agentId?: string): Promise<SessionSummary[]>;
+	putSessionSnapshot?(snapshot: SessionSnapshot): Promise<void>;
 	/**
 	 * Ensure a session row exists for `sessionId`. No-op if it does. Used by
 	 * the runner so the always-allocated sessionId has a persistent home before

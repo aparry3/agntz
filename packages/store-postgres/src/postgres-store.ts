@@ -39,6 +39,7 @@ import type {
 	RunStatus,
 	SecretDefinition,
 	SecretMetadata,
+	SessionSnapshot,
 	SessionSummary,
 	SkillDefinition,
 	Span,
@@ -1035,6 +1036,68 @@ export class PostgresStore implements UnifiedStore {
            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 					[
 						sessionId,
+						msg.role,
+						contentText,
+						contentBlocksJson,
+						msg.toolCalls ? JSON.stringify(msg.toolCalls) : null,
+						msg.toolCallId ?? null,
+						msg.timestamp,
+					],
+				);
+			}
+
+			await client.query("COMMIT");
+		} catch (err) {
+			await client.query("ROLLBACK");
+			throw err;
+		} finally {
+			client.release();
+		}
+	}
+
+	async putSessionSnapshot(snapshot: SessionSnapshot): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const client = await this.pool.connect();
+		try {
+			await client.query("BEGIN");
+
+			const existing = await client.query(
+				`SELECT user_id FROM ${this.t("sessions")} WHERE id = $1`,
+				[snapshot.sessionId],
+			);
+			if (existing.rows.length > 0 && existing.rows[0].user_id !== u) {
+				throw new Error(
+					`Session ${snapshot.sessionId} belongs to a different user`,
+				);
+			}
+
+			const now = new Date().toISOString();
+			const createdAt = snapshot.createdAt ?? now;
+			const updatedAt = snapshot.updatedAt ?? now;
+			await client.query(
+				`INSERT INTO ${this.t("sessions")} (user_id, id, agent_id, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT(id) DO UPDATE SET
+           agent_id = EXCLUDED.agent_id,
+           created_at = EXCLUDED.created_at,
+           updated_at = EXCLUDED.updated_at`,
+				[u, snapshot.sessionId, snapshot.agentId ?? null, createdAt, updatedAt],
+			);
+			await client.query(
+				`DELETE FROM ${this.t("messages")} WHERE session_id = $1`,
+				[snapshot.sessionId],
+			);
+
+			for (const msg of snapshot.messages) {
+				const { contentText, contentBlocksJson } = serializeContent(
+					msg.content,
+				);
+				await client.query(
+					`INSERT INTO ${this.t("messages")} (session_id, role, content, content_blocks, tool_calls, tool_call_id, timestamp)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+					[
+						snapshot.sessionId,
 						msg.role,
 						contentText,
 						contentBlocksJson,

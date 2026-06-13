@@ -18,13 +18,31 @@
  */
 
 import { existsSync } from "node:fs";
-import { chmod, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import {
+	chmod,
+	mkdir,
+	readFile,
+	readdir,
+	stat,
+	unlink,
+	writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, extname, join, relative, resolve } from "node:path";
+import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 
 import { AgntzClient } from "@agntz/client";
-import type { MultiplexedRunEvent, StreamEvent } from "@agntz/client";
+import type {
+	AgentImportItem,
+	AgentImportResponse,
+	MemoryEntry,
+	MemoryImportResponse,
+	MultiplexedRunEvent,
+	SessionImportResponse,
+	SessionSnapshot,
+	StreamEvent,
+} from "@agntz/client";
 import {
 	type ManifestSelection,
 	findSelectionsByAgentId,
@@ -49,12 +67,14 @@ Usage:
 Getting started locally:
   agntz create "Summarize customer emails" -o ./agents/email.yaml
   agntz run ./agents/email.yaml --input "..."
+  agntz publish --dry-run
   agntz run ./agents/email.yaml --input "..." --stream
 
 Commands:
   create   Generate a YAML manifest from a description (no auth required)
   edit     Revise a local YAML manifest from a change request (no auth required)
   run      Execute a local YAML/dir or hosted agent id
+  publish  Publish local agents, sessions, and memory to hosted agntz
   login    Save hosted API credentials
   logout   Remove saved hosted API credentials
   whoami   Show resolved API URL and credential source
@@ -64,6 +84,7 @@ Commands:
 
 Help:
   agntz <command> --help
+  agntz publish --help
   agntz runs --help
   agntz eval --help
   agntz traces --help
@@ -142,6 +163,43 @@ Local runtime note:
   The CLI can load YAML from disk, but it cannot register arbitrary in-repo
   local tool handlers. For agents that need local tools or resource providers,
   call @agntz/sdk from your service code and pass tools/resources there.
+`;
+
+const PUBLISH_HELP = `agntz publish — publish local data to hosted agntz
+
+Usage:
+  agntz publish [all|agents|sessions|memory...] [options]
+
+Description:
+  Publishes local agent manifests, persisted sessions, and memrez memory into
+  your hosted agntz account. With no entities, defaults to "all".
+
+Entities:
+  all        Publish every discoverable entity type
+  agents    YAML manifests from --agents-dir
+  sessions  Sessions from a local agntz SQLite store
+  memory    Entries from a local memrez SQLite store
+
+Options:
+      --agents-dir <dir>  Agent manifest directory. Default: ./agents
+      --db <path>         Local agntz SQLite store for sessions. Default: ./agntz.db if present
+      --memory-db <path>  Local memrez SQLite store. Default: ./memory.db or ./memrez.db if present
+      --dry-run           Validate and show what would publish without writing
+      --yes               Skip the confirmation prompt
+      --skip-existing     Skip existing hosted agents instead of creating new versions
+      --fail-existing     Fail if a hosted agent or session already exists
+      --include-superseded Include superseded memory entries
+      --url <apiUrl>      Override hosted API URL for this call
+      --json              Print machine-readable JSON
+  -h, --help              Show this help
+
+Examples:
+  agntz publish --dry-run
+  agntz publish --yes
+  agntz publish agents --agents-dir ./bots
+  agntz publish sessions --db ./agntz.db
+  agntz publish memory --memory-db ./memory.db
+  agntz publish agents sessions memory --dry-run
 `;
 
 const EDIT_HELP = `agntz edit — revise a local agent YAML manifest
@@ -300,6 +358,9 @@ async function main(): Promise<void> {
 			return;
 		case "run":
 			await cmdRun(rest);
+			return;
+		case "publish":
+			await cmdPublish(rest);
 			return;
 		case "login":
 			await cmdLogin(rest);
@@ -733,6 +794,455 @@ async function runHosted(opts: {
 	printRunResult(result);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// publish — migrate local agents/sessions/memory to hosted agntz
+// ─────────────────────────────────────────────────────────────────────────────
+
+type PublishEntity = "agents" | "sessions" | "memory";
+type PublishAction = "create" | "version" | "skip" | "update";
+
+interface PublishSkipped {
+	entity: PublishEntity;
+	reason: string;
+}
+
+interface PublishOutput {
+	dryRun: boolean;
+	entities: PublishEntity[];
+	skipped: PublishSkipped[];
+	agents?: AgentImportResponse;
+	sessions?: SessionImportResponse;
+	memory?: MemoryImportResponse;
+}
+
+async function cmdPublish(args: string[]): Promise<void> {
+	if (wantsHelp(args)) {
+		process.stdout.write(PUBLISH_HELP);
+		return;
+	}
+
+	const { values, positionals } = parseArgs({
+		args,
+		options: {
+			"agents-dir": { type: "string" },
+			db: { type: "string" },
+			"memory-db": { type: "string" },
+			"dry-run": { type: "boolean", default: false },
+			yes: { type: "boolean", default: false },
+			"skip-existing": { type: "boolean", default: false },
+			"fail-existing": { type: "boolean", default: false },
+			"include-superseded": { type: "boolean", default: false },
+			url: { type: "string" },
+			json: { type: "boolean", default: false },
+		},
+		allowPositionals: true,
+		strict: true,
+	});
+
+	if (values["skip-existing"] && values["fail-existing"]) {
+		fail("Use either --skip-existing or --fail-existing, not both.");
+	}
+
+	const parsed = parsePublishEntities(positionals);
+	const entities = parsed.entities;
+	const explicitEntities = parsed.explicitEntities;
+	const dryRun = values["dry-run"] === true;
+	const json = values.json === true;
+	const skipped: PublishSkipped[] = [];
+	const sources: {
+		agents?: AgentImportItem[];
+		sessions?: SessionSnapshot[];
+		memory?: MemoryEntry[];
+	} = {};
+
+	if (entities.includes("agents")) {
+		const agentsDir = resolve(values["agents-dir"] ?? "agents");
+		if (existsSync(agentsDir)) {
+			sources.agents = await readLocalAgentImports(agentsDir);
+			if (sources.agents.length === 0) {
+				skipped.push({
+					entity: "agents",
+					reason: `no YAML manifests found in ${relPath(agentsDir)}`,
+				});
+			}
+		} else if (explicitEntities.has("agents")) {
+			fail(`Agent directory not found: ${relPath(agentsDir)}`);
+		} else {
+			skipped.push({
+				entity: "agents",
+				reason: `no ${relPath(agentsDir)} directory found`,
+			});
+		}
+	}
+
+	if (entities.includes("sessions")) {
+		const dbPath = resolveLocalDbPath(values.db);
+		if (dbPath) {
+			sources.sessions = await readLocalSessionSnapshots(dbPath);
+			if (sources.sessions.length === 0) {
+				skipped.push({
+					entity: "sessions",
+					reason: `no sessions found in ${relPath(dbPath)}`,
+				});
+			}
+		} else if (explicitEntities.has("sessions")) {
+			fail("No local session store found. Pass --db ./agntz.db.");
+		} else {
+			skipped.push({
+				entity: "sessions",
+				reason: "no local session store found; pass --db ./agntz.db",
+			});
+		}
+	}
+
+	if (entities.includes("memory")) {
+		const memoryDbPath = resolveLocalMemoryDbPath(values["memory-db"]);
+		if (memoryDbPath) {
+			sources.memory = await readLocalMemoryEntries(memoryDbPath, {
+				includeSuperseded: values["include-superseded"] === true,
+			});
+			if (sources.memory.length === 0) {
+				skipped.push({
+					entity: "memory",
+					reason: `no memory entries found in ${relPath(memoryDbPath)}`,
+				});
+			}
+		} else if (explicitEntities.has("memory")) {
+			fail("No local memory store found. Pass --memory-db ./memory.db.");
+		} else {
+			skipped.push({
+				entity: "memory",
+				reason: "no local memory store found; pass --memory-db ./memory.db",
+			});
+		}
+	}
+
+	const plannedCount =
+		(sources.agents?.length ?? 0) +
+		(sources.sessions?.length ?? 0) +
+		(sources.memory?.length ?? 0);
+	if (plannedCount === 0) {
+		if (json) {
+			process.stdout.write(
+				`${formatJson({ dryRun, entities, skipped, counts: {} })}\n`,
+			);
+			return;
+		}
+		fail(
+			`Nothing to publish.\n${skipped.map((s) => `- ${s.entity}: ${s.reason}`).join("\n")}`,
+		);
+	}
+
+	if (!dryRun && !values.yes) {
+		await confirmPublishOrExit(sources);
+	}
+
+	const client = await requireHostedClient(values.url);
+	const output: PublishOutput = { dryRun, entities, skipped };
+	const agentConflict = values["fail-existing"]
+		? "fail"
+		: values["skip-existing"]
+			? "skip"
+			: "version";
+	const snapshotConflict = values["fail-existing"] ? "fail" : "skip";
+
+	if (sources.agents?.length) {
+		output.agents = await client.agents.import({
+			agents: sources.agents,
+			onConflict: agentConflict,
+			dryRun,
+		});
+	}
+	if (sources.sessions?.length) {
+		output.sessions = await client.sessions.import({
+			sessions: sources.sessions,
+			onConflict: snapshotConflict,
+			dryRun,
+		});
+	}
+	if (sources.memory?.length) {
+		output.memory = await client.memory.import({
+			entries: sources.memory,
+			dryRun,
+		});
+	}
+
+	if (json) {
+		process.stdout.write(`${formatJson(output)}\n`);
+		return;
+	}
+	printPublishOutput(output);
+}
+
+function parsePublishEntities(positionals: string[]): {
+	entities: PublishEntity[];
+	explicitEntities: Set<PublishEntity>;
+} {
+	const requested = positionals.length === 0 ? ["all"] : positionals;
+	const explicitEntities = new Set<PublishEntity>();
+	const selected = new Set<PublishEntity>();
+	for (const raw of requested) {
+		const normalized = normalizePublishEntity(raw);
+		if (normalized === "all") {
+			selected.add("agents");
+			selected.add("sessions");
+			selected.add("memory");
+			continue;
+		}
+		selected.add(normalized);
+		explicitEntities.add(normalized);
+	}
+	const order: PublishEntity[] = ["agents", "sessions", "memory"];
+	return {
+		entities: order.filter((entity) => selected.has(entity)),
+		explicitEntities,
+	};
+}
+
+function normalizePublishEntity(value: string): PublishEntity | "all" {
+	const normalized = value.toLowerCase();
+	if (normalized === "all") return "all";
+	if (normalized === "agent" || normalized === "agents") return "agents";
+	if (normalized === "session" || normalized === "sessions") return "sessions";
+	if (
+		normalized === "memory" ||
+		normalized === "memories" ||
+		normalized === "memrez"
+	) {
+		return "memory";
+	}
+	const suggestion = suggestPublishEntity(normalized);
+	fail(
+		`Unknown publish entity "${value}".${suggestion ? ` Did you mean "${suggestion}"?` : ""}`,
+	);
+}
+
+function suggestPublishEntity(value: string): string | null {
+	const known = ["all", "agents", "sessions", "memory", "memories"];
+	let best: { value: string; distance: number } | null = null;
+	for (const candidate of known) {
+		const distance = editDistance(value, candidate);
+		if (!best || distance < best.distance)
+			best = { value: candidate, distance };
+	}
+	return best && best.distance <= 2 ? best.value : null;
+}
+
+function editDistance(a: string, b: string): number {
+	const dp = Array.from({ length: a.length + 1 }, () =>
+		Array.from({ length: b.length + 1 }, () => 0),
+	);
+	for (let i = 0; i <= a.length; i++) dp[i][0] = i;
+	for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+	for (let i = 1; i <= a.length; i++) {
+		for (let j = 1; j <= b.length; j++) {
+			const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+			dp[i][j] = Math.min(
+				dp[i - 1][j] + 1,
+				dp[i][j - 1] + 1,
+				dp[i - 1][j - 1] + cost,
+			);
+		}
+	}
+	return dp[a.length][b.length];
+}
+
+async function readLocalAgentImports(dir: string): Promise<AgentImportItem[]> {
+	const files = await collectYamlFiles(dir);
+	const seen = new Map<string, string>();
+	const agents: AgentImportItem[] = [];
+	for (const file of files) {
+		const source = await readFile(file, "utf8");
+		const manifest = await loadManifestFromFile(file);
+		const previous = seen.get(manifest.id);
+		if (previous) {
+			fail(
+				`Duplicate agent id "${manifest.id}" in ${relPath(previous)} and ${relPath(file)}.`,
+			);
+		}
+		seen.set(manifest.id, file);
+		agents.push({
+			id: manifest.id,
+			manifest: source,
+			sourcePath: relPath(file),
+		});
+	}
+	return agents;
+}
+
+async function collectYamlFiles(dir: string): Promise<string[]> {
+	const out: string[] = [];
+	const entries = await readdir(dir);
+	for (const entry of entries) {
+		const full = join(dir, entry);
+		const st = await stat(full);
+		if (st.isDirectory()) {
+			out.push(...(await collectYamlFiles(full)));
+		} else if (st.isFile()) {
+			const ext = extname(entry).toLowerCase();
+			if (ext === ".yaml" || ext === ".yml") out.push(full);
+		}
+	}
+	return out.sort();
+}
+
+function resolveLocalDbPath(override?: string): string | null {
+	if (override) return resolve(override);
+	const candidate = resolve("agntz.db");
+	return existsSync(candidate) ? candidate : null;
+}
+
+function resolveLocalMemoryDbPath(override?: string): string | null {
+	if (override) return resolve(override);
+	for (const name of ["memory.db", "memrez.db"]) {
+		const candidate = resolve(name);
+		if (existsSync(candidate)) return candidate;
+	}
+	return null;
+}
+
+interface LocalSessionStore {
+	listSessions(agentId?: string): Promise<
+		Array<{
+			sessionId: string;
+			agentId?: string;
+			createdAt: string;
+			updatedAt: string;
+		}>
+	>;
+	getMessages(sessionId: string): Promise<SessionSnapshot["messages"]>;
+}
+
+async function readLocalSessionSnapshots(
+	dbPath: string,
+): Promise<SessionSnapshot[]> {
+	let imported: {
+		SqliteStore: new (opts: { path: string }) => {
+			forUser(userId: string): LocalSessionStore;
+			close(): void;
+		};
+	};
+	try {
+		imported = (await import("@agntz/store-sqlite")) as typeof imported;
+	} catch {
+		fail(
+			"Session publishing requires @agntz/store-sqlite to be installed alongside @agntz/sdk.",
+		);
+	}
+	const admin = new imported.SqliteStore({ path: dbPath });
+	try {
+		const store = admin.forUser("embedded");
+		const summaries = await store.listSessions();
+		const snapshots: SessionSnapshot[] = [];
+		for (const summary of summaries) {
+			snapshots.push({
+				sessionId: summary.sessionId,
+				agentId: summary.agentId,
+				createdAt: summary.createdAt,
+				updatedAt: summary.updatedAt,
+				messages: await store.getMessages(summary.sessionId),
+			});
+		}
+		return snapshots;
+	} finally {
+		admin.close();
+	}
+}
+
+async function readLocalMemoryEntries(
+	dbPath: string,
+	opts: { includeSuperseded: boolean },
+): Promise<MemoryEntry[]> {
+	let imported: {
+		SqliteMemoryStore: new (
+			path: string,
+		) => {
+			listEntries(opts?: { includeSuperseded?: boolean }): Promise<
+				MemoryEntry[]
+			>;
+			close(): void;
+		};
+	};
+	try {
+		imported = (await import("@agntz/memrez")) as typeof imported;
+	} catch {
+		fail(
+			"Memory publishing requires @agntz/memrez to be installed alongside @agntz/sdk.",
+		);
+	}
+	const store = new imported.SqliteMemoryStore(dbPath);
+	try {
+		return await store.listEntries({
+			includeSuperseded: opts.includeSuperseded,
+		});
+	} finally {
+		store.close();
+	}
+}
+
+async function confirmPublishOrExit(sources: {
+	agents?: AgentImportItem[];
+	sessions?: SessionSnapshot[];
+	memory?: MemoryEntry[];
+}): Promise<void> {
+	if (!process.stdin.isTTY) {
+		fail("Refusing to publish without --yes because stdin is not interactive.");
+	}
+	const summary = [
+		`agents=${sources.agents?.length ?? 0}`,
+		`sessions=${sources.sessions?.length ?? 0}`,
+		`memory=${sources.memory?.length ?? 0}`,
+	].join(", ");
+	const rl = createInterface({ input: process.stdin, output: process.stderr });
+	try {
+		const answer = await rl.question(`Publish ${summary}? [y/N] `);
+		if (!["y", "yes"].includes(answer.trim().toLowerCase())) {
+			fail("Publish cancelled.");
+		}
+	} finally {
+		rl.close();
+	}
+}
+
+function printPublishOutput(output: PublishOutput): void {
+	const mode = output.dryRun ? "Dry run complete" : "Publish complete";
+	log(mode);
+	if (output.skipped.length > 0) {
+		for (const skipped of output.skipped) {
+			log(`- ${skipped.entity}: skipped (${skipped.reason})`);
+		}
+	}
+	if (output.agents) printEntityImport("agents", output.agents);
+	if (output.sessions) printEntityImport("sessions", output.sessions);
+	if (output.memory) printEntityImport("memory", output.memory);
+	if (output.dryRun) log("\nRun again with --yes to publish.");
+}
+
+function printEntityImport(
+	entity: string,
+	response: {
+		results: Array<{ action: string; warnings?: unknown[] }>;
+		counts: Record<string, number>;
+	},
+): void {
+	const counts = formatActionCounts(response.counts);
+	const warnings = response.results.reduce(
+		(total, result) => total + (result.warnings?.length ?? 0),
+		0,
+	);
+	log(
+		`- ${entity}: ${response.results.length} found${counts ? ` (${counts})` : ""}${warnings ? `, ${warnings} warning(s)` : ""}`,
+	);
+}
+
+function formatActionCounts(counts: Record<string, number>): string {
+	const order: PublishAction[] = ["create", "version", "update", "skip"];
+	return order
+		.filter((action) => counts[action])
+		.map((action) => `${counts[action]} ${action}`)
+		.join(", ");
+}
+
 function printRunResult(result: {
 	output: unknown;
 	state?: unknown;
@@ -1156,10 +1666,12 @@ function resolveApiUrl(override?: string, config?: CliConfig): string {
 	return DEFAULT_API_URL;
 }
 
-async function requireHostedClient(): Promise<AgntzClient> {
+async function requireHostedClient(
+	apiUrlOverride?: string,
+): Promise<AgntzClient> {
 	const config = await loadConfig();
 	const apiKey = process.env.AGNTZ_API_KEY ?? config.apiKey;
-	const baseUrl = resolveApiUrl(undefined, config);
+	const baseUrl = resolveApiUrl(apiUrlOverride, config);
 	if (!apiKey) {
 		fail(
 			`Not logged in. Run 'agntz login --key <key>' or set AGNTZ_API_KEY.\n(API URL: ${baseUrl})`,

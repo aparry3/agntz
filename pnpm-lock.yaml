@@ -271,6 +271,9 @@ importers:
         specifier: ^3.25.0
         version: 3.25.76
     devDependencies:
+      '@agntz/memrez':
+        specifier: workspace:*
+        version: link:../memrez
       '@agntz/store-sqlite':
         specifier: workspace:*
         version: link:../store-sqlite
