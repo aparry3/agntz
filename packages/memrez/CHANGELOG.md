@@ -1,5 +1,11 @@
 # @agntz/memrez
 
+## 2.1.1
+
+### Patch Changes
+
+- c934126: Remove agent-level memory topic taxonomy config from the memrez resource provider. Agent manifests now own preload/read/write behavior only; topic taxonomy and reasoner policy are reserved for Memrez-level configuration.
+
 ## 2.1.0
 
 ### Minor Changes
