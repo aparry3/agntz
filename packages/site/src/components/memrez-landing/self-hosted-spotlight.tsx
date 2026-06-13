@@ -19,41 +19,40 @@ import { ACCENTS, TOKENS } from "../landing/tokens";
 
 const COMPOSE = `# docker-compose.yml
 services:
-  memrez:
-    image: memrez/server:0.1.0
-    depends_on: [postgres]
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    ports: ["4001:4001"]
     environment:
-      - DATABASE_URL=postgres://memrez:****@postgres/memrez
+      - STORE=postgres
+      - DATABASE_URL=postgres://postgres:postgres@db:5432/agntz
+      - WORKER_INTERNAL_SECRET=\${WORKER_INTERNAL_SECRET}
       - OPENAI_API_KEY=\${OPENAI_API_KEY}
       - MEMREZ_REASONER=llm
-    ports: ["4000:4000"]
+      - MEMREZ_CURATE_INTERVAL=30m
+    depends_on: [db]
 
-  postgres:
-    image: postgres:14
-    volumes: [./data/pg:/var/lib/postgresql/data]
-
-  curator-cron:
-    image: memrez/curator:0.1.0
-    depends_on: [memrez]
+  db:
+    image: postgres:17-alpine
     environment:
-      - MEMREZ_URL=http://memrez:4000
-      - CURATE_SCHEDULE=0 */6 * * *   # every six hours`;
+      - POSTGRES_DB=agntz
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    volumes: [pgdata:/var/lib/postgresql/data]
+
+volumes:
+  pgdata:`;
 
 const SERVICES = [
-	{ name: "memrez", image: "memrez/server:0.1.0", up: "2d 14h", port: "4000" },
-	{ name: "postgres", image: "postgres:14", up: "2d 14h", port: "5432" },
-	{
-		name: "curator-cron",
-		image: "memrez/curator:0.1.0",
-		up: "2d 14h",
-		port: "—",
-	},
+	{ name: "worker", image: "Dockerfile.worker", up: "2d 14h", port: "4001" },
+	{ name: "db", image: "postgres:17-alpine", up: "2d 14h", port: "5432" },
 ];
 
 const REQS: [string, string][] = [
-	["Postgres 14+", "entry + topic store"],
-	["Node 22+", "LLM reasoner runtime"],
-	["S3-compatible blob", "curation reports & snapshots"],
+	["Postgres 17+", "agent store + memrez entry/topic store"],
+	["Node 22+", "Agntz worker + LLM reasoner runtime"],
+	["Provider API key", "default agent model + memrez LLM reasoner"],
 	["Docker · Kubernetes", "deploy pattern of your choice"],
 ];
 
@@ -81,8 +80,8 @@ export function MemrezSelfHostedSpotlight() {
 						<span style={{ color: TOKENS.muted }}>yourself.</span>
 					</H2>
 					<Lede>
-						Same image, same features, your infrastructure. Postgres for
-						entries, your object store for snapshots and curation reports.
+						The Agntz worker hosts the memory provider and optional curation
+						sweep. Postgres stores agents, runs, traces, and memrez entries.
 					</Lede>
 
 					<Stack gap={6} style={{ marginTop: 4 }}>
@@ -180,10 +179,10 @@ export function MemrezSelfHostedSpotlight() {
 									color: TOKENS.text2,
 								}}
 							>
-								~/memrez / docker-compose.yml
+								~/agntz / docker-compose.yml
 							</span>
 						</Row>
-						<Pill mono>3 services</Pill>
+						<Pill mono>2 services</Pill>
 					</Row>
 
 					<pre

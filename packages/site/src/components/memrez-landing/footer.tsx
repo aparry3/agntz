@@ -177,7 +177,7 @@ export function MemrezFooter() {
 					>
 						<span>© 2026 agntz, inc.</span>
 						<span>MIT</span>
-						<span>v0.1.0 · preview</span>
+						<span>open source</span>
 						<Row gap={6} style={{ alignItems: "center" }}>
 							<span
 								style={{

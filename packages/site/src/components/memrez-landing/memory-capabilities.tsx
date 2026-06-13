@@ -103,7 +103,8 @@ export function MemrezMemoryCapabilities() {
 				</H2>
 				<Lede>
 					Everything most teams hand-build behind a vector store — namespace
-					isolation, dedup, curation, parity across runtimes. Shipped in v0.1.
+					isolation, dedup, curation, parity across runtimes. Available in
+					the current memrez packages.
 					Items marked <Code accent="amber">planned</Code> are next.
 				</Lede>
 			</div>
@@ -217,7 +218,7 @@ export function MemrezMemoryCapabilities() {
 				<Pill accent="green" dot mono>
 					shipped
 				</Pill>
-				<span>= in memrez@0.1.0.</span>
+				<span>= available today.</span>
 				<Pill accent="amber" dot mono>
 					planned
 				</Pill>

@@ -14,7 +14,7 @@ import { ACCENTS, TOKENS } from "../landing/tokens";
 import { LanguageToggle, usePreferredLanguage } from "../language";
 
 const TS_STEPS: [string, string, string][] = [
-	["1.", "npm i memrez", "install"],
+	["1.", "npm i @agntz/memrez", "install"],
 	["2.", "resources: { memory: { mode: read-write } }", "declare"],
 	[
 		"3.",
@@ -24,7 +24,7 @@ const TS_STEPS: [string, string, string][] = [
 ];
 
 const PYTHON_STEPS: [string, string, string][] = [
-	["1.", "pip install memrez", "install"],
+	["1.", 'pip install "agntz[litellm]"', "install"],
 	["2.", "resources: { memory: { mode: read-write } }", "declare"],
 	["3.", "client.agents.run(..., context=['org/acme/user/u_123'])", "grant"],
 ];
@@ -34,7 +34,8 @@ export function MemrezFinalCTA() {
 	const { language } = usePreferredLanguage();
 	const steps = language === "python" ? PYTHON_STEPS : TS_STEPS;
 	const installPrefix = language === "python" ? "pip install" : "npm install";
-	const installPackage = "memrez";
+	const installPackage =
+		language === "python" ? '"agntz[litellm]"' : "@agntz/memrez";
 
 	return (
 		<Section dark style={{ padding: "112px 0 120px" }}>

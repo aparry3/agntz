@@ -11,19 +11,22 @@ classify the entry type, and return strict JSON.
 
 Never invent data beyond the supplied content.`;
 
-const TS_RUNTIME = `import { createMemrez, postgresStore } from 'memrez';
+const TS_RUNTIME = `import { createMemrez, PostgresMemoryStore } from '@agntz/memrez';
 
 const memory = createMemrez({
-  store: postgresStore(process.env.DATABASE_URL!),
+  store: new PostgresMemoryStore(process.env.DATABASE_URL!),
   // reasoner defaults to memrez's built-in LLM calls
 });
 
 await memory.write(grants, 'Prefers email.');`;
 
-const PY_RUNTIME = `from memrez import create_memrez, postgres_store
+const PY_RUNTIME = `import os
+
+from agntz.memrez import create_memrez
+from agntz.memrez_postgres import PostgresMemoryStore
 
 memory = create_memrez(
-    store=postgres_store(os.environ["DATABASE_URL"]),
+    store=PostgresMemoryStore(os.environ["DATABASE_URL"]),
     # same reasoner contract
 )
 

@@ -48,10 +48,10 @@ resources:
 
 const HERO_RUNNER_TS = `// runner.ts — wire memrez into your agntz runner.
 import { agntz } from '@agntz/sdk';
-import { createMemrez } from 'memrez';
+import { createMemrez, SqliteMemoryStore } from '@agntz/memrez';
 
 const memory = createMemrez({
-  store: 'sqlite://./memory.db',   // in-memory by default
+  store: new SqliteMemoryStore('./memory.db'),
 });
 
 const client = await agntz({
@@ -68,11 +68,10 @@ const { output } = await client.agents.run({
 
 const HERO_RUNNER_PY = `# runner.py — wire memrez into your agntz runner.
 from agntz import LiteLLMModelProvider, agntz
-from memrez import create_memrez
+from agntz.memrez import create_memrez
+from agntz.memrez_sqlite import SqliteMemoryStore
 
-memory = create_memrez(
-    store="sqlite://./memory.db",   # in-memory by default
-)
+memory = create_memrez(store=SqliteMemoryStore("./memory.db"))
 
 client = agntz(
     agents="./agents",
@@ -97,7 +96,8 @@ export function MemrezHero() {
 	const runnerCode = language === "python" ? HERO_RUNNER_PY : HERO_RUNNER_TS;
 	const runnerLabel = language === "python" ? "runner.py" : "runner.ts";
 	const installPrefix = language === "python" ? "pip install" : "npm install";
-	const installPackage = language === "python" ? "memrez" : "memrez";
+	const installPackage =
+		language === "python" ? '"agntz[litellm]"' : "@agntz/memrez";
 
 	async function copyActive() {
 		const text = tab === "yaml" ? HERO_YAML : runnerCode;
@@ -129,7 +129,7 @@ export function MemrezHero() {
 				<Stack gap={28}>
 					<Row gap={8} style={{ alignItems: "center", flexWrap: "wrap" }}>
 						<Pill accent="terracotta" dot>
-							v0.1 — preview
+							memrez 2.x
 						</Pill>
 						<Pill mono>tagged memory</Pill>
 						<Pill mono>open source</Pill>

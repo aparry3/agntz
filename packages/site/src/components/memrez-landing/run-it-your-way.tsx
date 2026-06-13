@@ -36,7 +36,7 @@ const OPTIONS: Option[] = [
 			"Bring your own model provider for the tagger",
 		],
 		best: "Solo devs, small services, single-tenant tools.",
-		cmd: "npm i memrez",
+		cmd: "npm i @agntz/memrez",
 		cta: "Read the embedded guide",
 		href: "/docs/tools/memory-memrez",
 		icon: <CodeIcon />,
@@ -87,7 +87,10 @@ export function MemrezRunItYourWay() {
 						language === "python"
 							? "In-process, in your Python runner."
 							: "In-process, in your Node runner.",
-					cmd: language === "python" ? "pip install memrez" : "npm i memrez",
+					cmd:
+						language === "python"
+							? 'pip install "agntz[litellm]"'
+							: "npm i @agntz/memrez",
 				}
 			: option,
 	);

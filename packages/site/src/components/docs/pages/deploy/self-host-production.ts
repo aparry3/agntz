@@ -33,9 +33,17 @@ Same Railway project → **Add Service** → **GitHub Repo** → select your for
   - \`DEFAULT_MODEL_PROVIDER=openai\`
   - \`DEFAULT_MODEL_NAME=gpt-5.4\`
   - \`OPENAI_API_KEY=sk-...\`
+  - \`MEMREZ_STORE=postgres\`
+  - \`MEMREZ_REASONER=llm\`
+  - \`MEMREZ_CURATE_INTERVAL=30m\` (optional)
   - (any other provider keys you'll use)
 
 Generate a public domain in **Settings → Networking**; you'll need it for the app.
+
+With \`STORE=postgres\`, the worker can wire the memrez memory provider against
+Postgres. \`MEMREZ_CURATE_INTERVAL\` enables the worker's periodic dirty-topic
+curation sweep; omit it if you prefer to call the memory curation endpoint or
+library primitives from your own scheduler.
 
 ## 3. Set up Clerk
 

@@ -110,7 +110,10 @@ const ROWS: [string, string][] = [
 		"Vector DB + retrieval glue + auth wrapper",
 		"One resource declaration in your agntz YAML",
 	],
-	["You own the curation cron", "Curator is a YAML manifest the SDK runs"],
+	[
+		"You own the curation glue",
+		"Memrez exposes curation primitives; your app schedules them",
+	],
 ];
 
 export function MemrezTheShift() {

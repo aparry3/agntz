@@ -35,6 +35,14 @@ The \`.env.example\` lists every variable. The non-optional ones:
 | \`DATABASE_URL\` | app + worker | Defaults to the compose-provided Postgres. |
 | \`OPENAI_API_KEY\` (or any provider key) | worker | At least one provider key for default models. |
 | \`DEFAULT_MODEL_PROVIDER\`, \`DEFAULT_MODEL_NAME\` | worker | Fallback when an agent omits \`model:\`. |
+| \`MEMREZ_STORE\` | worker | Optional. Defaults from \`STORE\`; set \`postgres\` to force Postgres-backed memory. |
+| \`MEMREZ_REASONER\` | worker | Optional. \`llm\` by default; \`deterministic\` is the emergency no-LLM fallback. |
+| \`MEMREZ_CURATE_INTERVAL\` | worker | Optional. Enables periodic memory curation, e.g. \`30m\` or \`1h\`. |
+
+When \`STORE=postgres\`, the worker wires the memrez memory resource provider by
+default. Agents that declare \`resources.memory\` can use \`memory_read\` and
+\`memory_write\`; curation runs only when \`MEMREZ_CURATE_INTERVAL\` is set or
+when you call the curation endpoint manually.
 
 ## First-run flow
 

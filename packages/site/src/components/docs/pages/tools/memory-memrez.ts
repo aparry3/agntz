@@ -180,6 +180,8 @@ Omit \`preload\` when you only want topic summaries and explicit \`memory_read\`
 
 The shorthands \`preload: true\`, \`preload: all\`, and \`preload: [goals, equipment]\` are still supported. Prefer the object form for new agents.
 
+Do not set \`resources.memory.topics\` in an agent manifest. The memrez resource provider rejects agent-level topic taxonomy config; agents should choose preload slices, while memrez owns tagging policy.
+
 ## Write policy
 
 By default, memrez writes to the current grant or one of its descendants. It does not promote writes to ancestors unless configured.
@@ -231,6 +233,10 @@ circular setups where memory writes invoke agents that can themselves use
 memory.
 
 The reasoner may propose a namespace, but memrez validates it before writing. The model cannot bypass the grant boundary.
+
+## Curation
+
+Curation is a memrez capability, not an agent manifest feature. Embedded apps can call \`memrez.curate(grants)\` directly or inspect dirty work with \`memrez.store.listDirtyTopics()\`. The Agntz worker can run periodic sweeps when \`MEMREZ_CURATE_INTERVAL\` is set, for example \`30m\` or \`1h\`. Leave that env var unset when you want to trigger curation from your own scheduler or admin job.
 
 ## Hosted use
 
