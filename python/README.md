@@ -339,16 +339,14 @@ memrez.write(["app/user/u_123"], "Prefers metric units.", topics_hint=["prefs"])
 entries = memrez.read(["app/user/u_123"], "prefs")
 ```
 
-Configure agent-specific memory vocabulary and invoke-time preload in the
-resource declaration:
+Configure invoke-time preload in the resource declaration. Topic taxonomy and
+reasoner policy belong to Memrez-level configuration, not the agent manifest:
 
 ```yaml
 resources:
   memory:
     kind: memory
     mode: read-write
-    topics:
-      preferred: [goals, equipment, schedule, injuries]
     preload:
       core: true
       topics: [goals, equipment]

@@ -14,12 +14,11 @@ from .core import (
     ResourceToolContext,
 )
 from .memrez import (
+    DEFAULT_CORE_TOPIC,
     EntryType,
     MemoryEntry,
-    MemoryTopicConfig,
     Memrez,
     Source,
-    normalize_topic_config,
 )
 
 DEFAULT_PRELOAD_LIMIT = 50
@@ -66,7 +65,7 @@ class MemoryResourceProvider:
         self.memrez = memrez
 
     def get_context(self, ctx: ResourceToolContext) -> str | None:
-        topic_config = _topic_config_from_config(ctx.config)
+        _assert_no_agent_topic_config(ctx.config)
         sections: list[str] = []
 
         if _config_value(ctx.config, "autoScan") is not False:
@@ -81,7 +80,7 @@ class MemoryResourceProvider:
                     lines.append(f"- {topic.topic} ({topic.count}){blurb}")
                 sections.append("Memory topics visible to this run:\n" + "\n".join(lines))
 
-        preload = _normalize_preload_config(ctx.config, topic_config)
+        preload = _normalize_preload_config(ctx.config)
         if preload is not None:
             preloaded = _preload_entries(self.memrez, ctx, preload)
             if preloaded:
@@ -123,10 +122,10 @@ class MemoryResourceProvider:
         )
 
     def _write(self, ctx: ResourceToolContext, input_value: MemoryWriteInput) -> Any:
+        _assert_no_agent_topic_config(ctx.config)
         return self.memrez.write(
             ctx.grants,
             input_value.content,
-            topic_config=_topic_config_from_config(ctx.config),
             write_policy=_config_value(ctx.config, "writePolicy"),
             source=_source_from_run(ctx.run),
         )
@@ -201,19 +200,7 @@ def _render_preloaded_entries(
     return {"lines": lines, "shown": shown}
 
 
-def _topic_config_from_config(config: Any) -> MemoryTopicConfig:
-    raw = _config_value(config, "topics")
-    if raw is None:
-        return normalize_topic_config(None)
-    _assert_plain_object(raw, "memory.topics")
-    _reject_unknown_keys(raw, ["core", "preferred"], "memory.topics")
-    return normalize_topic_config(raw)
-
-
-def _normalize_preload_config(
-    config: Any,
-    topic_config: MemoryTopicConfig,
-) -> NormalizedPreloadConfig | None:
+def _normalize_preload_config(config: Any) -> NormalizedPreloadConfig | None:
     raw = _config_value(config, "preload")
     if raw is None or raw is False:
         return None
@@ -232,7 +219,7 @@ def _normalize_preload_config(
     if raw is True:
         return NormalizedPreloadConfig(
             all=False,
-            topics=[topic_config.core],
+            topics=[DEFAULT_CORE_TOPIC],
             limit=legacy_limit or DEFAULT_PRELOAD_LIMIT,
             max_chars=DEFAULT_PRELOAD_MAX_CHARS,
         )
@@ -250,9 +237,7 @@ def _normalize_preload_config(
         raise ValueError('memory.preload string value must be "all"')
 
     if isinstance(raw, list):
-        topics = _unique_topics(
-            [topic_config.core, *_normalize_topic_list(raw, "memory.preload")]
-        )
+        topics = _unique_topics([DEFAULT_CORE_TOPIC, *_normalize_topic_list(raw, "memory.preload")])
         return NormalizedPreloadConfig(
             all=False,
             topics=topics,
@@ -281,7 +266,7 @@ def _normalize_preload_config(
         if raw_topics is None or raw_topics == "all"
         else _normalize_topic_list(raw_topics, "memory.preload.topics")
     )
-    core_topics = [topic_config.core] if core else []
+    core_topics = [DEFAULT_CORE_TOPIC] if core else []
     topics = _unique_topics([*core_topics, *configured_topics])
     if not all_topics and not topics:
         return None
@@ -314,6 +299,15 @@ def _normalize_preload_config(
             else _normalize_entry_types(raw_types)
         ),
     )
+
+
+def _assert_no_agent_topic_config(config: Any) -> None:
+    if _config_value(config, "topics") is not None:
+        raise ValueError(
+            "memory.topics is no longer supported in agent resource config; "
+            "use memory.preload.topics for preload slices and configure taxonomy "
+            "at the Memrez level"
+        )
 
 
 def _normalize_positive_int(value: Any, path: str, max_value: int) -> int:

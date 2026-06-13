@@ -1,5 +1,11 @@
 # agntz
 
+## Unreleased
+
+- Remove agent-level memrez topic taxonomy config from the Python memory
+  resource provider. Agent manifests now control preload/read/write behavior;
+  taxonomy and reasoner policy are reserved for Memrez-level configuration.
+
 ## 0.3.0
 
 - Add memrez's built-in LLM reasoner default, content-only memory write tool,

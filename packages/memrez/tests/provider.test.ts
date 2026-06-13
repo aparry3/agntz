@@ -150,10 +150,6 @@ describe("memrez resource provider", () => {
 					memory: {
 						kind: "memory",
 						mode: "read-write",
-						topics: {
-							core: "profile",
-							preferred: ["prefs", "goals"],
-						},
 						writePolicy: { descendants: true, ancestorPromotion: "none" },
 					},
 				},
@@ -174,10 +170,7 @@ describe("memrez resource provider", () => {
 				source: { agentId: "writer", sessionId: "ses_1", runId: "run_1" },
 			},
 		});
-		expect(reasoner.tagInputs[0].topicConfig).toEqual({
-			core: "profile",
-			preferred: ["prefs", "goals"],
-		});
+		expect(reasoner.tagInputs[0].topicConfig).toBeUndefined();
 		expect(entries.map((entry) => entry.content)).toEqual(["Prefers email."]);
 	});
 
@@ -254,9 +247,6 @@ describe("memrez resource provider", () => {
 				resources: {
 					memory: {
 						kind: "memory",
-						topics: {
-							preferred: ["goals", "equipment", "schedule", "injuries"],
-						},
 						preload: {
 							core: true,
 							topics: ["goals", "equipment"],
@@ -282,6 +272,34 @@ describe("memrez resource provider", () => {
 		expect(system?.content).toContain("- [goals] Wants strength.");
 		expect(system?.content).not.toContain("Logged workout.");
 		expect(system?.content).not.toContain("Did 30 sessions.");
+	});
+
+	it("rejects agent-level topic taxonomy config", async () => {
+		const memrez = createMemrez({ reasoner: new DirectiveReasoner() });
+		const runner = createRunner({
+			modelProvider: new MockModelProvider([
+				{ text: "done", usage, finishReason: "stop" },
+			]),
+			resources: { memory: memrez.provider() },
+		});
+		runner.registerAgent(
+			defineAgent({
+				id: "bad-topics",
+				name: "BadTopics",
+				systemPrompt: "Train.",
+				model: { provider: "openai", name: "test" },
+				resources: {
+					memory: {
+						kind: "memory",
+						topics: { preferred: ["goals"] },
+					},
+				},
+			}),
+		);
+
+		await expect(
+			runner.invoke("bad-topics", "go", { context: ["app/user/u_123"] }),
+		).rejects.toThrow(/memory\.topics is no longer supported/);
 	});
 
 	it("preloads all entries except events and respects preload.limit", async () => {

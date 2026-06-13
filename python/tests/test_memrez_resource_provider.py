@@ -46,20 +46,15 @@ class MemoryToolProvider:
         return GenerateTextResult(output="done")
 
 
-class PreferredTopicReasoner:
+class FixedPrefsReasoner:
     def __init__(self) -> None:
         self.inputs: list[TaggerInput] = []
 
     def tag(self, input_value: TaggerInput) -> TaggerResult:
         self.inputs.append(input_value)
-        topic = (
-            input_value.topic_config.preferred[0]
-            if input_value.topic_config and input_value.topic_config.preferred
-            else "general"
-        )
         return TaggerResult(
             namespace=input_value.grants[0],
-            topics=[topic],
+            topics=["prefs"],
             type="preference",
             normalized_content=input_value.content.strip(),
         )
@@ -153,14 +148,12 @@ resources:
   memory:
     kind: memory
     mode: read-write
-    topics:
-      preferred: [prefs]
     writePolicy:
       descendants: true
       ancestorPromotion: none
 """,
     )
-    reasoner = PreferredTopicReasoner()
+    reasoner = FixedPrefsReasoner()
     memrez = create_memrez(reasoner=reasoner)
     provider = MemoryToolProvider(
         ToolCall(
@@ -185,7 +178,8 @@ resources:
 
     assert [entry.content for entry in entries] == ["Prefers email."]
     assert reasoner.inputs[0].topic_config is not None
-    assert reasoner.inputs[0].topic_config.preferred == ("prefs",)
+    assert reasoner.inputs[0].topic_config.core == "core"
+    assert reasoner.inputs[0].topic_config.preferred == ()
     assert entries[0].source is not None
     assert entries[0].source.get("agentId") == "writer"
     assert entries[0].source.get("sessionId") == "ses_1"
@@ -194,7 +188,7 @@ resources:
 
 def test_memory_resource_preloads_configured_topics() -> None:
     memrez = create_memrez(reasoner=DeterministicReasoner())
-    memrez.write(["app/user/u_123"], "Always load this.", topics_hint=["profile"])
+    memrez.write(["app/user/u_123"], "Always load this.", topics_hint=["core"])
     memrez.write(["app/user/u_123"], "Include this goal.", topics_hint=["goals"])
     memrez.write(
         ["app/user/u_123"],
@@ -207,7 +201,6 @@ def test_memory_resource_preloads_configured_topics() -> None:
         _resource_tool_context(
             {
                 "autoScan": False,
-                "topics": {"core": "profile", "preferred": ["goals", "schedule"]},
                 "preload": {
                     "core": True,
                     "topics": ["goals", "schedule"],
@@ -224,6 +217,15 @@ def test_memory_resource_preloads_configured_topics() -> None:
     assert "Always load this." in context
     assert "Include this goal." in context
     assert "Do not preload this event." not in context
+
+
+def test_memory_resource_rejects_agent_topic_taxonomy_config() -> None:
+    memrez = create_memrez(reasoner=DeterministicReasoner())
+
+    with pytest.raises(ValueError, match="memory\\.topics is no longer supported"):
+        memrez.provider().get_context(
+            _resource_tool_context({"topics": {"preferred": ["prefs"]}})
+        )
 
 
 def test_memory_resource_preload_all_uses_durable_types_and_limit() -> None:

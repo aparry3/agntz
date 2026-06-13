@@ -1,12 +1,7 @@
 import type { ResourceProvider, ResourceToolContext } from "@agntz/core";
 import { z } from "zod";
 import type { Memrez } from "./memrez.js";
-import type {
-	EntryType,
-	MemoryEntry,
-	MemoryTopicConfig,
-	WritePolicy,
-} from "./types.js";
+import type { EntryType, MemoryEntry, WritePolicy } from "./types.js";
 
 const ReadInput = z.object({
 	topics: z
@@ -37,14 +32,8 @@ export interface MemoryResourceConfig {
 	mode?: "read" | "read-write";
 	autoScan?: boolean;
 	/**
-	 * Topic policy for this agent's memory. `core` is the configured special
-	 * always-load topic (default "core"); `preferred` is the domain vocabulary
-	 * the reasoner should prefer when tagging new memories.
-	 */
-	topics?: MemoryTopicConfig;
-	/**
 	 * Inline full entries into the run context at invoke time. `true` means the
-	 * configured core topic. "all" means every visible active durable entry.
+	 * Memrez core topic. "all" means every visible active durable entry.
 	 * A topic array is a legacy shorthand for core + those topics. The object
 	 * form is canonical:
 	 * { core?: boolean, topics?: string[] | "all", limit?: number,
@@ -65,11 +54,6 @@ export interface MemoryPreloadConfig {
 	limit?: number;
 	maxChars?: number;
 	types?: EntryType[];
-}
-
-interface NormalizedTopicConfig {
-	core: string;
-	preferred: string[];
 }
 
 interface NormalizedPreloadConfig {
@@ -102,7 +86,7 @@ export function createMemoryResourceProvider(memrez: Memrez): ResourceProvider {
 		defaultMode: "read-write",
 		async getContext(ctx) {
 			const config = ctx.config as MemoryResourceConfig;
-			const topicConfig = normalizeTopicConfig(config.topics);
+			assertNoAgentTopicConfig(config);
 			const sections: string[] = [];
 
 			if (config.autoScan !== false) {
@@ -120,7 +104,7 @@ export function createMemoryResourceProvider(memrez: Memrez): ResourceProvider {
 				}
 			}
 
-			const preload = normalizePreloadConfig(config, topicConfig);
+			const preload = normalizePreloadConfig(config);
 			if (preload) {
 				const preloaded = await preloadEntries(memrez, ctx, preload);
 				if (preloaded) sections.push(preloaded);
@@ -156,9 +140,8 @@ export function createMemoryResourceProvider(memrez: Memrez): ResourceProvider {
 						ctx: ResourceToolContext,
 					) {
 						const config = ctx.config as MemoryResourceConfig;
-						const topicConfig = normalizeTopicConfig(config.topics);
+						assertNoAgentTopicConfig(config);
 						return memrez.write(ctx.grants, input.content, {
-							topicConfig,
 							writePolicy: config.writePolicy,
 							source: {
 								agentId: ctx.run.agentId,
@@ -241,27 +224,8 @@ function renderPreloadedEntries(
 	return { lines, shown };
 }
 
-function normalizeTopicConfig(
-	raw: MemoryTopicConfig | undefined,
-): NormalizedTopicConfig {
-	if (raw === undefined) return { core: DEFAULT_CORE_TOPIC, preferred: [] };
-	assertPlainObject(raw, "memory.topics");
-	rejectUnknownKeys(raw, ["core", "preferred"], "memory.topics");
-	return {
-		core:
-			raw.core === undefined
-				? DEFAULT_CORE_TOPIC
-				: normalizeTopicName(raw.core, "memory.topics.core"),
-		preferred:
-			raw.preferred === undefined
-				? []
-				: normalizeTopicList(raw.preferred, "memory.topics.preferred"),
-	};
-}
-
 function normalizePreloadConfig(
 	config: MemoryResourceConfig,
-	topicConfig: NormalizedTopicConfig,
 ): NormalizedPreloadConfig | undefined {
 	const raw = config.preload;
 	if (raw === undefined || raw === false) return undefined;
@@ -278,7 +242,7 @@ function normalizePreloadConfig(
 	if (raw === true) {
 		return {
 			all: false,
-			topics: [topicConfig.core],
+			topics: [DEFAULT_CORE_TOPIC],
 			limit: legacyLimit ?? DEFAULT_PRELOAD_LIMIT,
 			maxChars: DEFAULT_PRELOAD_MAX_CHARS,
 		};
@@ -300,7 +264,7 @@ function normalizePreloadConfig(
 
 	if (Array.isArray(raw)) {
 		const topics = uniqueTopics([
-			topicConfig.core,
+			DEFAULT_CORE_TOPIC,
 			...normalizeTopicList(raw, "memory.preload"),
 		]);
 		return {
@@ -337,7 +301,7 @@ function normalizePreloadConfig(
 	}
 
 	const topics = uniqueTopics([
-		...(core ? [topicConfig.core] : []),
+		...(core ? [DEFAULT_CORE_TOPIC] : []),
 		...configuredTopics,
 	]);
 	if (!all && topics.length === 0) return undefined;
@@ -368,6 +332,14 @@ function normalizePreloadConfig(
 					: undefined
 				: normalizeEntryTypes(raw.types),
 	};
+}
+
+function assertNoAgentTopicConfig(config: MemoryResourceConfig): void {
+	if (Object.prototype.hasOwnProperty.call(config, "topics")) {
+		throw new Error(
+			"memory.topics is no longer supported in agent resource config; use memory.preload.topics for preload slices and configure taxonomy at the Memrez level",
+		);
+	}
 }
 
 function normalizePositiveInt(

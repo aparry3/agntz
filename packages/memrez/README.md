@@ -101,8 +101,7 @@ Use in-memory storage for tests, SQLite for local or single-node deployments, an
 ## Resource behavior
 
 - `autoScan` injects visible memory topic summaries into the model context before tool calls.
-- `topics.core` names the special always-load topic. It defaults to `core`.
-- `topics.preferred` gives the reasoner an agent-specific topic vocabulary to prefer when tagging new memories.
+- Topic taxonomy and reasoner policy belong to Memrez-level configuration, not the agent resource declaration.
 - `preload` inlines full entries at invoke time so agents don't burn a turn recalling obvious context. Omit it for no full-entry preload; use `preload: true` for core-only preload, or the object form below for precise control.
 - `preload.limit` caps the preloaded entries (default 50), `preload.maxChars` caps the rendered context (default 12000), and `preload.types` filters entry types. Overflow is noted to the model.
 - `preload: all`, `preload: [goals, equipment]`, and legacy `preloadLimit` still work as shorthands, but the object form is preferred.
@@ -118,8 +117,6 @@ resources:
     kind: memory
     mode: read-write
     autoScan: true
-    topics:
-      preferred: [goals, equipment, schedule, injuries]
     preload:
       core: true
       topics: [goals, equipment]
@@ -160,10 +157,10 @@ runs an agent, and that agent can see memory tools again.
 
 Importance is a topic convention the reasoner maintains, not schema. The
 built-in tagger files durable profile facts (equipment, schedule, goals, hard
-constraints) under the configured core topic alongside their subject topic —
-one entry, two topic rows. By default that topic is `core`; override it with
-`topics.core` only if your app already uses a different label such as
-`profile`.
+constraints) under the Memrez core topic alongside their subject topic — one
+entry, two topic rows. Today that topic is `core`; future Memrez-level config
+will own renaming it for applications that already use a different label such
+as `profile`.
 
 `preload.core: true` loads that always-load set into the agent context. The
 curator promotes and demotes entries by rewriting replacement topics during

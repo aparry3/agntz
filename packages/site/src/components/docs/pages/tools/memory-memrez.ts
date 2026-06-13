@@ -158,18 +158,15 @@ Memory topics visible to this run:
 
 Set \`autoScan: false\` when you want the model to discover memory only through explicit \`memory_read\` calls.
 
-## Preload and topic policy
+## Preload
 
-Use \`topics.preferred\` to give memrez's reasoner an agent-specific topic vocabulary. The configured \`topics.core\` topic is the special always-load set for durable profile facts; it defaults to \`core\`.
+Agent resource config controls what memory is inlined into the run context. Topic taxonomy and reasoner policy belong to Memrez-level configuration, not the agent manifest.
 
 \`\`\`yaml
 resources:
   memory:
     kind: memory
     mode: read-write
-
-    topics:
-      preferred: [goals, equipment, schedule, injuries]
 
     preload:
       core: true
@@ -179,7 +176,7 @@ resources:
       types: [fact, preference, summary]
 \`\`\`
 
-Omit \`preload\` when you only want topic summaries and explicit \`memory_read\` calls. Use \`preload.core: true\` to include the configured core topic, and \`preload.topics\` for additional topic slices. \`preload.limit\` caps entries, \`preload.maxChars\` caps rendered context, and \`preload.types\` filters entry types.
+Omit \`preload\` when you only want topic summaries and explicit \`memory_read\` calls. Use \`preload.core: true\` to include the Memrez core topic, and \`preload.topics\` for additional topic slices. \`preload.limit\` caps entries, \`preload.maxChars\` caps rendered context, and \`preload.types\` filters entry types.
 
 The shorthands \`preload: true\`, \`preload: all\`, and \`preload: [goals, equipment]\` are still supported. Prefer the object form for new agents.
 
