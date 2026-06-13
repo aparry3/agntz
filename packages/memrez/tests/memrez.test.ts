@@ -222,14 +222,14 @@ describe("memrez core", () => {
 
 		await memrez.write(
 			["app/user/u_123"],
-			"topic:equipment,pinned|Has dumbbells only.",
+			"topic:equipment,core|Has dumbbells only.",
 		);
 		await memrez.write(["app/user/u_123"], "topic:goals|Wants strength.");
 		await memrez.write(["app/user/u_123"], "topic:schedule|Trains mornings.");
 
 		const entries = await memrez.read(
 			["app/user/u_123"],
-			["equipment", "pinned", "goals"],
+			["equipment", "core", "goals"],
 		);
 
 		expect(entries.map((entry) => entry.content)).toEqual([
@@ -287,7 +287,7 @@ describe("memrez core", () => {
 
 		const original = await memrez.write(
 			["app/user/u_123"],
-			"topic:equipment,pinned|type:preference|Has dumbbells only.",
+			"topic:equipment,core|type:preference|Has dumbbells only.",
 		);
 
 		const { entry } = await memrez.correct(
@@ -299,7 +299,7 @@ describe("memrez core", () => {
 		expect(entry).toMatchObject({
 			scope: "app/user/u_123",
 			content: "Has dumbbells and a bench.",
-			topics: ["equipment", "pinned"],
+			topics: ["equipment", "core"],
 			type: "preference",
 			status: "active",
 		});

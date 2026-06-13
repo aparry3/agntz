@@ -118,6 +118,7 @@ export class Memrez {
 			content,
 			existingTopics,
 			topicsHint: opts.topicsHint,
+			topicConfig: opts.topicConfig,
 			writePolicy,
 			source: opts.source,
 		});
@@ -169,6 +170,7 @@ export class Memrez {
 					scopePaths,
 					entries,
 					topics: opts.topics,
+					topicConfig: opts.topicConfig,
 				})
 			: [];
 

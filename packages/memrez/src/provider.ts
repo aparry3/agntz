@@ -1,7 +1,12 @@
 import type { ResourceProvider, ResourceToolContext } from "@agntz/core";
 import { z } from "zod";
 import type { Memrez } from "./memrez.js";
-import type { MemoryEntry, WritePolicy } from "./types.js";
+import type {
+	EntryType,
+	MemoryEntry,
+	MemoryTopicConfig,
+	WritePolicy,
+} from "./types.js";
 
 const ReadInput = z.object({
 	topics: z
@@ -32,24 +37,72 @@ export interface MemoryResourceConfig {
 	mode?: "read" | "read-write";
 	autoScan?: boolean;
 	/**
-	 * Inline full entries into the run context at invoke time. Either "all"
-	 * (every active entry visible to the grants, `event` entries excluded) or
-	 * an explicit topic list such as ["pinned"].
+	 * Topic policy for this agent's memory. `core` is the configured special
+	 * always-load topic (default "core"); `preferred` is the domain vocabulary
+	 * the reasoner should prefer when tagging new memories.
 	 */
-	preload?: "all" | string[];
-	/** Entry cap across preloaded topics. Default 50. */
+	topics?: MemoryTopicConfig;
+	/**
+	 * Inline full entries into the run context at invoke time. `true` means the
+	 * configured core topic. "all" means every visible active durable entry.
+	 * A topic array is a legacy shorthand for core + those topics. The object
+	 * form is canonical:
+	 * { core?: boolean, topics?: string[] | "all", limit?: number,
+	 *   maxChars?: number, types?: EntryType[] }.
+	 */
+	preload?: boolean | "all" | string[] | MemoryPreloadConfig;
+	/**
+	 * Legacy entry cap across preloaded topics. Prefer preload.limit.
+	 */
 	preloadLimit?: number;
 	writePolicy?: WritePolicy;
 	[key: string]: unknown;
 }
 
+export interface MemoryPreloadConfig {
+	core?: boolean;
+	topics?: "all" | string[];
+	limit?: number;
+	maxChars?: number;
+	types?: EntryType[];
+}
+
+interface NormalizedTopicConfig {
+	core: string;
+	preferred: string[];
+}
+
+interface NormalizedPreloadConfig {
+	all: boolean;
+	topics: string[];
+	limit: number;
+	maxChars: number;
+	types?: EntryType[];
+}
+
+const DEFAULT_CORE_TOPIC = "core";
 const DEFAULT_PRELOAD_LIMIT = 50;
+const MAX_PRELOAD_LIMIT = 200;
+const DEFAULT_PRELOAD_MAX_CHARS = 12_000;
+const MAX_PRELOAD_MAX_CHARS = 50_000;
+const DEFAULT_ALL_PRELOAD_TYPES: EntryType[] = [
+	"fact",
+	"preference",
+	"summary",
+];
+const ENTRY_TYPES = new Set<EntryType>([
+	"fact",
+	"preference",
+	"event",
+	"summary",
+]);
 
 export function createMemoryResourceProvider(memrez: Memrez): ResourceProvider {
 	return {
 		defaultMode: "read-write",
 		async getContext(ctx) {
 			const config = ctx.config as MemoryResourceConfig;
+			const topicConfig = normalizeTopicConfig(config.topics);
 			const sections: string[] = [];
 
 			if (config.autoScan !== false) {
@@ -67,8 +120,9 @@ export function createMemoryResourceProvider(memrez: Memrez): ResourceProvider {
 				}
 			}
 
-			if (config.preload) {
-				const preloaded = await preloadEntries(memrez, ctx, config);
+			const preload = normalizePreloadConfig(config, topicConfig);
+			if (preload) {
+				const preloaded = await preloadEntries(memrez, ctx, preload);
 				if (preloaded) sections.push(preloaded);
 			}
 
@@ -102,7 +156,9 @@ export function createMemoryResourceProvider(memrez: Memrez): ResourceProvider {
 						ctx: ResourceToolContext,
 					) {
 						const config = ctx.config as MemoryResourceConfig;
+						const topicConfig = normalizeTopicConfig(config.topics);
 						return memrez.write(ctx.grants, input.content, {
+							topicConfig,
 							writePolicy: config.writePolicy,
 							source: {
 								agentId: ctx.run.agentId,
@@ -129,38 +185,260 @@ function normalizeReadTopics(input: z.infer<typeof ReadInput>): string[] {
 	return raw.map((topic) => topic.trim()).filter((topic) => topic.length > 0);
 }
 
-/**
- * Render the preload section: full entries inlined beneath the topic list so
- * the agent doesn't burn a turn recalling obvious context. `all` excludes
- * `event` entries — they accumulate linearly and would crowd out durable
- * facts; an explicit topic list is taken verbatim.
- */
+/** Render full entries beneath the topic list so obvious context is in-scope. */
 async function preloadEntries(
 	memrez: Memrez,
 	ctx: ResourceToolContext,
-	config: MemoryResourceConfig,
+	preload: NormalizedPreloadConfig,
 ): Promise<string | undefined> {
-	const all = config.preload === "all";
-	// An empty topic list means "preload nothing", not "preload everything".
-	if (!all && (config.preload as string[]).length === 0) return undefined;
 	const entries = await memrez.list(ctx.grants, {
-		topics: all ? undefined : (config.preload as string[]),
+		topics: preload.all ? undefined : preload.topics,
 	});
-	const selected = all
-		? entries.filter((entry) => entry.type !== "event")
+	const selected = preload.types
+		? entries.filter((entry) => preload.types?.includes(entry.type))
 		: entries;
 	if (selected.length === 0) return undefined;
 
-	const limit = config.preloadLimit ?? DEFAULT_PRELOAD_LIMIT;
-	const shown = selected.slice(0, limit);
-	const lines = shown.map(formatPreloadedEntry);
-	const omitted = selected.length - shown.length;
+	const rendered = renderPreloadedEntries(selected, preload);
+	if (rendered.lines.length === 0) return undefined;
+	const omitted = selected.length - rendered.shown;
+	const lines = [...rendered.lines];
 	if (omitted > 0) {
-		lines.push(`… ${omitted} more entries not shown; use memory_read.`);
+		lines.push(`... ${omitted} more entries not shown; use memory_read.`);
 	}
 	return `Preloaded memory entries (most recent first):\n${lines.join("\n")}`;
 }
 
 function formatPreloadedEntry(entry: MemoryEntry): string {
 	return `- [${entry.topics.join(", ")}] ${entry.content}`;
+}
+
+function renderPreloadedEntries(
+	entries: MemoryEntry[],
+	preload: NormalizedPreloadConfig,
+): { lines: string[]; shown: number } {
+	const lines: string[] = [];
+	let used = 0;
+	let shown = 0;
+	for (const entry of entries) {
+		if (shown >= preload.limit) break;
+		const rawLine = formatPreloadedEntry(entry);
+		const separator = lines.length === 0 ? "" : "\n";
+		const nextLength = used + separator.length + rawLine.length;
+		if (nextLength <= preload.maxChars) {
+			lines.push(rawLine);
+			used = nextLength;
+			shown += 1;
+			continue;
+		}
+		const remaining = preload.maxChars - used - separator.length;
+		if (remaining > 20 && lines.length === 0) {
+			lines.push(`${rawLine.slice(0, remaining - 3)}...`);
+			shown += 1;
+		}
+		break;
+	}
+	return { lines, shown };
+}
+
+function normalizeTopicConfig(
+	raw: MemoryTopicConfig | undefined,
+): NormalizedTopicConfig {
+	if (raw === undefined) return { core: DEFAULT_CORE_TOPIC, preferred: [] };
+	assertPlainObject(raw, "memory.topics");
+	rejectUnknownKeys(raw, ["core", "preferred"], "memory.topics");
+	return {
+		core:
+			raw.core === undefined
+				? DEFAULT_CORE_TOPIC
+				: normalizeTopicName(raw.core, "memory.topics.core"),
+		preferred:
+			raw.preferred === undefined
+				? []
+				: normalizeTopicList(raw.preferred, "memory.topics.preferred"),
+	};
+}
+
+function normalizePreloadConfig(
+	config: MemoryResourceConfig,
+	topicConfig: NormalizedTopicConfig,
+): NormalizedPreloadConfig | undefined {
+	const raw = config.preload;
+	if (raw === undefined || raw === false) return undefined;
+
+	const legacyLimit =
+		config.preloadLimit === undefined
+			? undefined
+			: normalizePositiveInt(
+					config.preloadLimit,
+					"memory.preloadLimit",
+					MAX_PRELOAD_LIMIT,
+				);
+
+	if (raw === true) {
+		return {
+			all: false,
+			topics: [topicConfig.core],
+			limit: legacyLimit ?? DEFAULT_PRELOAD_LIMIT,
+			maxChars: DEFAULT_PRELOAD_MAX_CHARS,
+		};
+	}
+
+	if (raw === "all") {
+		return {
+			all: true,
+			topics: [],
+			limit: legacyLimit ?? DEFAULT_PRELOAD_LIMIT,
+			maxChars: DEFAULT_PRELOAD_MAX_CHARS,
+			types: DEFAULT_ALL_PRELOAD_TYPES,
+		};
+	}
+
+	if (typeof raw === "string") {
+		throw new Error('memory.preload string value must be "all"');
+	}
+
+	if (Array.isArray(raw)) {
+		const topics = uniqueTopics([
+			topicConfig.core,
+			...normalizeTopicList(raw, "memory.preload"),
+		]);
+		return {
+			all: false,
+			topics,
+			limit: legacyLimit ?? DEFAULT_PRELOAD_LIMIT,
+			maxChars: DEFAULT_PRELOAD_MAX_CHARS,
+		};
+	}
+
+	assertPlainObject(raw, "memory.preload");
+	rejectUnknownKeys(
+		raw,
+		["core", "topics", "limit", "maxChars", "types"],
+		"memory.preload",
+	);
+
+	const core = raw.core ?? false;
+	if (typeof core !== "boolean") {
+		throw new Error("memory.preload.core must be boolean when provided");
+	}
+
+	const all = raw.topics === "all";
+	const configuredTopics =
+		raw.topics === undefined || raw.topics === "all"
+			? []
+			: normalizeTopicList(raw.topics, "memory.preload.topics");
+	if (
+		raw.topics !== undefined &&
+		raw.topics !== "all" &&
+		!Array.isArray(raw.topics)
+	) {
+		throw new Error('memory.preload.topics must be "all" or a topic array');
+	}
+
+	const topics = uniqueTopics([
+		...(core ? [topicConfig.core] : []),
+		...configuredTopics,
+	]);
+	if (!all && topics.length === 0) return undefined;
+
+	return {
+		all,
+		topics,
+		limit:
+			raw.limit === undefined
+				? (legacyLimit ?? DEFAULT_PRELOAD_LIMIT)
+				: normalizePositiveInt(
+						raw.limit,
+						"memory.preload.limit",
+						MAX_PRELOAD_LIMIT,
+					),
+		maxChars:
+			raw.maxChars === undefined
+				? DEFAULT_PRELOAD_MAX_CHARS
+				: normalizePositiveInt(
+						raw.maxChars,
+						"memory.preload.maxChars",
+						MAX_PRELOAD_MAX_CHARS,
+					),
+		types:
+			raw.types === undefined
+				? all
+					? DEFAULT_ALL_PRELOAD_TYPES
+					: undefined
+				: normalizeEntryTypes(raw.types),
+	};
+}
+
+function normalizePositiveInt(
+	value: unknown,
+	path: string,
+	max: number,
+): number {
+	if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+		throw new Error(`${path} must be a positive integer`);
+	}
+	return Math.min(value, max);
+}
+
+function normalizeEntryTypes(raw: unknown): EntryType[] {
+	if (!Array.isArray(raw) || raw.length === 0) {
+		throw new Error(
+			"memory.preload.types must be a non-empty entry type array",
+		);
+	}
+	const out: EntryType[] = [];
+	for (const value of raw) {
+		if (typeof value !== "string" || !ENTRY_TYPES.has(value as EntryType)) {
+			throw new Error(
+				"memory.preload.types must contain only fact, preference, event, or summary",
+			);
+		}
+		if (!out.includes(value as EntryType)) out.push(value as EntryType);
+	}
+	return out;
+}
+
+function normalizeTopicList(raw: unknown, path: string): string[] {
+	if (!Array.isArray(raw)) {
+		throw new Error(`${path} must be an array of topic strings`);
+	}
+	const out = raw.map((topic, index) =>
+		normalizeTopicName(topic, `${path}[${index}]`),
+	);
+	return uniqueTopics(out);
+}
+
+function normalizeTopicName(raw: unknown, path: string): string {
+	if (typeof raw !== "string") {
+		throw new Error(`${path} must be a topic string`);
+	}
+	const topic = raw.trim().toLowerCase();
+	if (topic.length === 0) throw new Error(`${path} must not be empty`);
+	return topic;
+}
+
+function uniqueTopics(topics: string[]): string[] {
+	return [...new Set(topics)];
+}
+
+function assertPlainObject(
+	value: unknown,
+	path: string,
+): asserts value is Record<string, unknown> {
+	if (value === null || typeof value !== "object" || Array.isArray(value)) {
+		throw new Error(`${path} must be an object`);
+	}
+}
+
+function rejectUnknownKeys(
+	value: Record<string, unknown>,
+	allowedKeys: string[],
+	path: string,
+): void {
+	const allowed = new Set(allowedKeys);
+	const unknown = Object.keys(value).filter((key) => !allowed.has(key));
+	if (unknown.length > 0) {
+		throw new Error(`${path} has unsupported keys: ${unknown.join(", ")}`);
+	}
 }

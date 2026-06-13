@@ -101,8 +101,11 @@ Use in-memory storage for tests, SQLite for local or single-node deployments, an
 ## Resource behavior
 
 - `autoScan` injects visible memory topic summaries into the model context before tool calls.
-- `preload` inlines full entries at invoke time so agents don't burn a turn recalling obvious context. Either `all` (every active entry, `event` entries excluded) or an explicit topic list.
-- `preloadLimit` caps the preloaded entries (default 50); overflow is noted to the model.
+- `topics.core` names the special always-load topic. It defaults to `core`.
+- `topics.preferred` gives the reasoner an agent-specific topic vocabulary to prefer when tagging new memories.
+- `preload` inlines full entries at invoke time so agents don't burn a turn recalling obvious context. Omit it for no full-entry preload; use `preload: true` for core-only preload, or the object form below for precise control.
+- `preload.limit` caps the preloaded entries (default 50), `preload.maxChars` caps the rendered context (default 12000), and `preload.types` filters entry types. Overflow is noted to the model.
+- `preload: all`, `preload: [goals, equipment]`, and legacy `preloadLimit` still work as shorthands, but the object form is preferred.
 - `memory_read` accepts one topic or a list of topics in a single call.
 - `mode: read` exposes read tools only.
 - `mode: read-write` exposes read and write tools.
@@ -115,8 +118,14 @@ resources:
     kind: memory
     mode: read-write
     autoScan: true
-    preload: [pinned]   # or `all` for small scopes
-    preloadLimit: 50
+    topics:
+      preferred: [goals, equipment, schedule, injuries]
+    preload:
+      core: true
+      topics: [goals, equipment]
+      limit: 30
+      maxChars: 10000
+      types: [fact, preference, summary]
 ```
 
 ## The reasoner
@@ -147,16 +156,20 @@ curation are bounded structured model calls owned by memrez; keeping them out
 of the agent loop avoids circular setups where an agent writes memory, memrez
 runs an agent, and that agent can see memory tools again.
 
-## The `pinned` topic
+## The `core` topic
 
 Importance is a topic convention the reasoner maintains, not schema. The
 built-in tagger files durable profile facts (equipment, schedule, goals, hard
-constraints) under `pinned` alongside their subject topic — one entry, two
-topic rows — which you then preload with `preload: [pinned]`. The curator
-promotes and demotes entries by rewriting replacement topics during curation,
-and the per-scope `pinned` blurb serves as a one-line profile in `autoScan`
-output. No schema change, no agent involvement — the writing agent just passes
-content.
+constraints) under the configured core topic alongside their subject topic —
+one entry, two topic rows. By default that topic is `core`; override it with
+`topics.core` only if your app already uses a different label such as
+`profile`.
+
+`preload.core: true` loads that always-load set into the agent context. The
+curator promotes and demotes entries by rewriting replacement topics during
+curation, and the per-scope core blurb serves as a one-line profile in
+`autoScan` output. No schema change, no agent involvement — the writing agent
+just passes content.
 
 ## Curation
 

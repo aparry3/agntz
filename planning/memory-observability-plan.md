@@ -3,15 +3,15 @@
 **Status:** Implemented (M1–M4, 2026-06-12) · **Date:** 2026-06-12 · **Companion to:** [`data-encryption-plan.md`](./data-encryption-plan.md)
 
 > **Implementation notes (2026-06-12).** All four phases landed. Resolutions of §5's open questions:
-> 1. Pinned topic name: **`pinned`** (documented in the built-in reasoner instructions + memrez README).
-> 2. `preloadLimit` default: **50 entries**; cap is entry-count only, with an explicit "+N more not shown" note to the model on overflow.
+> 1. Core topic name: **`core` by default**, configurable with `topics.core` (documented in the built-in reasoner instructions + memrez README).
+> 2. Preload caps: **50 entries by default** and **12000 rendered characters by default**, with an explicit "+N more not shown" note to the model on overflow. `preload.limit` and `preload.maxChars` are the canonical fields; legacy `preloadLimit` still works.
 > 3. Enumeration shape: **`listDirtyTopics()`** on `MemoryStore` (all three stores), driven by `topic_meta.last_updated_at` watermarks; `curate()` now stamps every scanned `(scope, topic)` pair after a curate-capable pass, which also makes `scan()`'s `hasUncuratedWrites` real instead of hardcoded `true`.
 > 4. Pagination: **endpoint-layer `limit`/`offset`** (default 200, max 1000) with `total` in the response; `Memrez.list()` stays unpaginated.
 > 5. Grants transport: **comma-separated/repeatable `grants` query param** for GETs, `grants` body field for POSTs; multiple grants allowed.
 >
 > Beyond the plan: the app's `/memory` viewer and `/api/memory/*` proxy routes are **super-admin-gated** (same gate as System Agents) because grants are taken verbatim — they open to all users only after the tenant-prefixing decision (encryption plan §5/§12). The hosted cron is an in-process `MEMREZ_CURATE_INTERVAL` sweep in `server.ts` sharing `runCurationSweep()` with `POST /memory/curate`.
 >
-> **Reasoner correction (post-review).** The plan's D6 framed importance/tagging as partly the *writing agent's* job (topicsHint at write time, "day-one solution with the deterministic reasoner"). That blends agent logic into memory logic. Corrected: **memrez owns organization; the agent's `memory_write` is content-only** (no `type`/`topicsHint` in the tool schema — programmatic `WriteOptions.topicsHint` is retained for trusted callers/tests). The **built-in `llmReasoner()` is now the `createMemrez()` default and the only supported reasoner loop** — direct model calls through core's `AISDKModelProvider`, no agntz client/runner, so memrez stays strictly below the agent layer and there's no client↔resource circular construction. The `pinned` set is maintained by the reasoner (tagger files it, curator promotes/demotes), not by agent prompt guidance. Missing provider key → throws on first write (loud setup error); transient model failure → deterministic fallback so the write still lands. `DeterministicReasoner` is tests + the `MEMREZ_REASONER=deterministic` kill-switch. The agntz-agent-loop reasoner is punted until we have explicit guardrails; the worker just calls `createMemrez({ store })` like every other consumer.
+> **Reasoner correction (post-review).** The plan's D6 framed importance/tagging as partly the *writing agent's* job (topicsHint at write time, "day-one solution with the deterministic reasoner"). That blends agent logic into memory logic. Corrected: **memrez owns organization; the agent's `memory_write` is content-only** (no `type`/`topicsHint` in the tool schema — programmatic `WriteOptions.topicsHint` is retained for trusted callers/tests). The **built-in `llmReasoner()` is now the `createMemrez()` default and the only supported reasoner loop** — direct model calls through core's `AISDKModelProvider`, no agntz client/runner, so memrez stays strictly below the agent layer and there's no client↔resource circular construction. The configured core set is maintained by the reasoner (tagger files it, curator promotes/demotes), not by agent prompt guidance. Missing provider key → throws on first write (loud setup error); transient model failure → deterministic fallback so the write still lands. `DeterministicReasoner` is tests + the `MEMREZ_REASONER=deterministic` kill-switch. The agntz-agent-loop reasoner is punted until we have explicit guardrails; the worker just calls `createMemrez({ store })` like every other consumer.
 
 agntz has traces for agent observability but nothing equivalent for memory: once memrez writes an entry, there is no way to see it outside the agent loop. This plan adds (a) a deterministic read surface — SDK methods, worker endpoints, app viewer — so a user's memories can be inspected for a grant exactly as an agent would see them, (b) invoke-time preloading of important memories so agents don't burn a turn recalling obvious context, and (c) the wiring that makes curation actually run, which both of the above quietly depend on.
 
@@ -58,23 +58,29 @@ Deterministic — no tagger call, topics are inherited. Zero new store methods. 
 ```yaml
 resources:
   memory:
-    config:
-      autoScan: true            # topic list + blurbs (existing behavior, unchanged)
-      preload: all              # or a topic list: [pinned] / [goals, equipment, schedule]
-      preloadLimit: 50          # entry cap across preloaded topics
+    kind: memory
+    mode: read-write
+    autoScan: true              # topic list + blurbs (existing behavior, unchanged)
+    topics:
+      preferred: [goals, equipment, schedule, injuries]
+    preload:
+      core: true
+      topics: [goals, equipment]
+      limit: 30
+      maxChars: 10000
+      types: [fact, preference, summary]
 ```
 
-`getContext` inlines full entries for the selected topics beneath the topic list. `all` mode is for small scopes: active entries only, sorted `updatedAt` desc, **`type: event` excluded by default** (events accumulate linearly — every logged workout — and would crowd out durable facts), capped at `preloadLimit`. The long-term fix for event bloat is curation superseding old events into `summary` entries, at which point `all` stays naturally small.
+`getContext` inlines full entries for the selected topics beneath the topic list. Omitted `preload` means no full-entry preload. `preload: true` means core-only preload. The shorthands `preload: all`, `preload: [goals, equipment]`, and legacy `preloadLimit` remain supported, but the object form is canonical. `all` mode is for small scopes: active entries only, sorted `updatedAt` desc, **`type: event` excluded by default** (events accumulate linearly — every logged workout — and would crowd out durable facts), capped by `preload.limit` and `preload.maxChars`. The long-term fix for event bloat is curation superseding old events into `summary` entries, at which point `all` stays naturally small.
 
-**D6 — Importance is a conventional topic tag (`pinned`), not schema.** "Save equipment access to the `equipment` topic AND the always-load set" is one entry dual-tagged `["equipment", "pinned"]` — one entry row, two join rows. No duplication, no sync problem (a duplicated entry would let a correction strand a stale twin). The general-case preload config is `preload: [pinned]`. Three writers maintain the set, all already plumbed:
+**D6 — Importance is a conventional configurable topic tag (`core` by default), not schema.** "Save equipment access to the `equipment` topic AND the always-load set" is one entry dual-tagged `["equipment", "core"]` — one entry row, two join rows. No duplication, no sync problem (a duplicated entry would let a correction strand a stale twin). The general-case preload config is `preload: { core: true }`. The reasoner maintains the set:
 
-1. *Agent author at write time* — the write tool's `topicsHint`; prompt guidance like "include `pinned` for durable profile facts (equipment, schedule, goals)." Works with the deterministic reasoner; day-one solution.
-2. *Tagger organically* — the LLM tagger sees `existingTopics` and gravitates to an established `pinned` topic.
-3. *Curator at curation time* — `CurateOp.supersede` already carries `replacement.topics`, so the curator can promote entries into and demote them out of the pinned set with zero schema change. Long-term this is the right owner: only the curator sees the whole scope.
+1. *Tagger at write time* — the built-in LLM tagger sees `topics.core`, `topics.preferred`, existing topics, grants, and write policy, then files durable profile facts under core plus their subject topic.
+2. *Curator at curation time* — `CurateOp.supersede` already carries `replacement.topics`, so the curator can promote entries into and demote them out of the core set with zero schema change. Long-term this is the right owner: only the curator sees the whole scope.
 
-Side benefit: `pinned` appears in scan like any topic, so its per-`(scope, topic)` blurb is the user's one-line profile ("3×/week, dumbbells only, goal: strength") — agents without preload still get that line via autoScan.
+Side benefit: `core` appears in scan like any topic, so its per-`(scope, topic)` blurb is the user's one-line profile ("3x/week, dumbbells only, goal: strength") — agents without preload still get that line via autoScan.
 
-*Rejected:* importance-by-scope-position (scope encodes ownership/visibility, not importance; in a flat-scope app it degenerates to `all` anyway) and a `pinned: boolean` schema field (touches entry schema, store methods, tagger output, curate ops — the topic convention gets ~95% for zero migration; promote to a field later if load-bearing).
+*Rejected:* importance-by-scope-position (scope encodes ownership/visibility, not importance; in a flat-scope app it degenerates to `all` anyway) and a `core: boolean` schema field (touches entry schema, store methods, tagger output, curate ops — the topic convention gets most of the value for zero migration; promote to a field later if load-bearing).
 
 **D7 — Curation wiring.**
 
@@ -92,17 +98,17 @@ Everything here sits **above** the store interface, and the encryption decorator
 
 | Phase | Scope | Packages |
 |-------|-------|----------|
-| **M1** | `Memrez.list()`, multi-topic `read` tool, `preload` + `preloadLimit` in `getContext`, `pinned` convention documented in reasoner guidance | `memrez` |
+| **M1** | `Memrez.list()`, multi-topic `read` tool, canonical `preload` object config in `getContext`, `core` convention documented in reasoner guidance | `memrez` |
 | **M2** | Worker read endpoints (`GET /memory/topics`, `GET /memory/entries`), app memory viewer (topics → entries → audit view) | `worker`, `app` |
 | **M3** | Curation wiring: built-in LLM reasoner default, `listDirtyTopics` store method, `POST /memory/curate` + cron | `memrez`, `worker` |
 | **M4** | Correction: `Memrez.correct()`, edit affordance in the viewer | `memrez`, `worker`, `app` |
 
-M1 is pure library work — deterministic, no store schema changes, shippable independently of the encryption plan's P1. M2 should land after (or with) the tenant-prefixing decision (encryption plan open question 6). M3 is what makes blurbs/pinned/summaries real; until it lands, preload via explicit topics or `all` carries the weight.
+M1 is pure library work — deterministic, no store schema changes, shippable independently of the encryption plan's P1. M2 should land after (or with) the tenant-prefixing decision (encryption plan open question 6). M3 is what makes blurbs/core/summaries real; until it lands, preload via explicit topics or `all` carries the weight.
 
-## 5. Open questions
+## 5. Resolved questions
 
-1. **Pinned topic name** — `pinned`, `core`, or `profile`? Leaning `pinned` (describes the behavior, reads naturally in scan output).
-2. **`preloadLimit` default** — 50 entries? Should the cap also be expressible in characters/tokens?
+1. **Core topic name** — default `core`, configurable via `topics.core` for apps that prefer labels like `profile`.
+2. **Preload caps** — default 50 entries plus 12000 rendered characters. Canonical fields are `preload.limit` and `preload.maxChars`; legacy `preloadLimit` remains supported.
 3. **Enumeration shape for curation** — `listDirtyTopics()` vs a generic `listScopes(prefix?)` plus per-scope `listTopics`? Dirty-topics is narrower and cheaper; generic enumeration may be wanted by the viewer later anyway (an operator console listing all scopes needs it).
 4. **Endpoint pagination** — `listScopeSlice` has no limit/offset; fine for the SDK, but the worker endpoints should probably page from day one. Add `limit`/`cursor` to the endpoint layer or push pagination into `list()`?
 5. **Grants transport for D8** — query params vs header vs the run-style `context` body field; and whether the viewer should accept multiple grants or exactly one scope per request (singular is simpler to audit).

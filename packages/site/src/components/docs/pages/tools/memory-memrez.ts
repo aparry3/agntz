@@ -158,6 +158,31 @@ Memory topics visible to this run:
 
 Set \`autoScan: false\` when you want the model to discover memory only through explicit \`memory_read\` calls.
 
+## Preload and topic policy
+
+Use \`topics.preferred\` to give memrez's reasoner an agent-specific topic vocabulary. The configured \`topics.core\` topic is the special always-load set for durable profile facts; it defaults to \`core\`.
+
+\`\`\`yaml
+resources:
+  memory:
+    kind: memory
+    mode: read-write
+
+    topics:
+      preferred: [goals, equipment, schedule, injuries]
+
+    preload:
+      core: true
+      topics: [goals, equipment]
+      limit: 30
+      maxChars: 10000
+      types: [fact, preference, summary]
+\`\`\`
+
+Omit \`preload\` when you only want topic summaries and explicit \`memory_read\` calls. Use \`preload.core: true\` to include the configured core topic, and \`preload.topics\` for additional topic slices. \`preload.limit\` caps entries, \`preload.maxChars\` caps rendered context, and \`preload.types\` filters entry types.
+
+The shorthands \`preload: true\`, \`preload: all\`, and \`preload: [goals, equipment]\` are still supported. Prefer the object form for new agents.
+
 ## Write policy
 
 By default, memrez writes to the current grant or one of its descendants. It does not promote writes to ancestors unless configured.

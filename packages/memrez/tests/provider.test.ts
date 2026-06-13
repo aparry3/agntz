@@ -116,7 +116,8 @@ describe("memrez resource provider", () => {
 	});
 
 	it("writes through memory_write using the run grants and provider write policy", async () => {
-		const memrez = createMemrez({ reasoner: new DirectiveReasoner() });
+		const reasoner = new DirectiveReasoner();
+		const memrez = createMemrez({ reasoner });
 		const model = new MockModelProvider([
 			{
 				text: "",
@@ -149,6 +150,10 @@ describe("memrez resource provider", () => {
 					memory: {
 						kind: "memory",
 						mode: "read-write",
+						topics: {
+							core: "profile",
+							preferred: ["prefs", "goals"],
+						},
 						writePolicy: { descendants: true, ancestorPromotion: "none" },
 					},
 				},
@@ -168,6 +173,10 @@ describe("memrez resource provider", () => {
 				scope: "app/user/u_123",
 				source: { agentId: "writer", sessionId: "ses_1", runId: "run_1" },
 			},
+		});
+		expect(reasoner.tagInputs[0].topicConfig).toEqual({
+			core: "profile",
+			preferred: ["prefs", "goals"],
 		});
 		expect(entries.map((entry) => entry.content)).toEqual(["Prefers email."]);
 	});
@@ -217,12 +226,16 @@ describe("memrez resource provider", () => {
 		).toEqual(["Dumbbells only.", "Strength."]);
 	});
 
-	it("preloads pinned topics as full entries beneath the topic list", async () => {
+	it("preloads core and configured topics as full entries beneath the topic list", async () => {
 		const memrez = createMemrez({ reasoner: new DirectiveReasoner() });
 		await memrez.write(
 			["app/user/u_123"],
-			"topic:equipment,pinned|Dumbbells only.",
+			"topic:equipment,core|Dumbbells only.",
 		);
+		await memrez.write(["app/user/u_123"], "topic:goals|Wants strength.");
+		await memrez.write(["app/user/u_123"], "topic:core|Logged workout.", {
+			type: "event",
+		});
 		await memrez.write(["app/user/u_123"], "topic:history|Did 30 sessions.");
 
 		const model = new MockModelProvider([
@@ -239,7 +252,19 @@ describe("memrez resource provider", () => {
 				systemPrompt: "Train.",
 				model: { provider: "openai", name: "test" },
 				resources: {
-					memory: { kind: "memory", preload: ["pinned"] },
+					memory: {
+						kind: "memory",
+						topics: {
+							preferred: ["goals", "equipment", "schedule", "injuries"],
+						},
+						preload: {
+							core: true,
+							topics: ["goals", "equipment"],
+							limit: 30,
+							maxChars: 10_000,
+							types: ["fact", "preference", "summary"],
+						},
+					},
 				},
 			}),
 		);
@@ -253,18 +278,20 @@ describe("memrez resource provider", () => {
 		expect(system?.content).toContain(
 			"Preloaded memory entries (most recent first):",
 		);
-		expect(system?.content).toContain("- [equipment, pinned] Dumbbells only.");
+		expect(system?.content).toContain("- [equipment, core] Dumbbells only.");
+		expect(system?.content).toContain("- [goals] Wants strength.");
+		expect(system?.content).not.toContain("Logged workout.");
 		expect(system?.content).not.toContain("Did 30 sessions.");
 	});
 
-	it("preloads all entries except events and respects preloadLimit", async () => {
+	it("preloads all entries except events and respects preload.limit", async () => {
 		const memrez = createMemrez({ reasoner: new DirectiveReasoner() });
 		await memrez.write(["app/user/u_123"], "topic:goals|Strength.");
 		await memrez.write(["app/user/u_123"], "topic:history|Logged workout.", {
 			type: "event",
 		});
 		// updatedAt has millisecond resolution; step forward so "most recent
-		// first" ordering under preloadLimit is deterministic.
+		// first" ordering under preload.limit is deterministic.
 		await new Promise((resolve) => setTimeout(resolve, 2));
 		await memrez.write(["app/user/u_123"], "topic:equipment|Dumbbells only.");
 
@@ -285,8 +312,10 @@ describe("memrez resource provider", () => {
 					memory: {
 						kind: "memory",
 						autoScan: false,
-						preload: "all",
-						preloadLimit: 1,
+						preload: {
+							topics: "all",
+							limit: 1,
+						},
 					},
 				},
 			}),
@@ -302,10 +331,123 @@ describe("memrez resource provider", () => {
 		expect(system?.content).not.toContain("Logged workout.");
 		expect(system?.content).toContain("1 more entries not shown");
 	});
+
+	it("keeps legacy preload shorthands working", async () => {
+		const memrez = createMemrez({ reasoner: new DirectiveReasoner() });
+		await memrez.write(["app/user/u_123"], "topic:core|Core fact.");
+		await memrez.write(["app/user/u_123"], "topic:goals|Goal fact.");
+
+		const model = new MockModelProvider([
+			{ text: "done", usage, finishReason: "stop" },
+		]);
+		const runner = createRunner({
+			modelProvider: model,
+			resources: { memory: memrez.provider() },
+		});
+		runner.registerAgent(
+			defineAgent({
+				id: "preload-legacy",
+				name: "PreloadLegacy",
+				systemPrompt: "Train.",
+				model: { provider: "openai", name: "test" },
+				resources: {
+					memory: {
+						kind: "memory",
+						autoScan: false,
+						preload: ["goals"],
+						preloadLimit: 2,
+					},
+				},
+			}),
+		);
+
+		await runner.invoke("preload-legacy", "go", {
+			context: ["app/user/u_123"],
+		});
+
+		const system = model.calls[0].messages.find(
+			(message) => message.role === "system",
+		);
+		expect(system?.content).toContain("- [core] Core fact.");
+		expect(system?.content).toContain("- [goals] Goal fact.");
+	});
+
+	it("respects preload.maxChars", async () => {
+		const memrez = createMemrez({ reasoner: new DirectiveReasoner() });
+		await memrez.write(["app/user/u_123"], "topic:core|Dumbbells only.");
+		await new Promise((resolve) => setTimeout(resolve, 2));
+		await memrez.write(["app/user/u_123"], "topic:goals|Wants strength.");
+
+		const model = new MockModelProvider([
+			{ text: "done", usage, finishReason: "stop" },
+		]);
+		const runner = createRunner({
+			modelProvider: model,
+			resources: { memory: memrez.provider() },
+		});
+		runner.registerAgent(
+			defineAgent({
+				id: "preload-budget",
+				name: "PreloadBudget",
+				systemPrompt: "Train.",
+				model: { provider: "openai", name: "test" },
+				resources: {
+					memory: {
+						kind: "memory",
+						autoScan: false,
+						preload: {
+							core: true,
+							topics: ["goals"],
+							maxChars: 30,
+						},
+					},
+				},
+			}),
+		);
+
+		await runner.invoke("preload-budget", "go", {
+			context: ["app/user/u_123"],
+		});
+
+		const system = model.calls[0].messages.find(
+			(message) => message.role === "system",
+		);
+		expect(system?.content).toContain("- [goals] Wants strength.");
+		expect(system?.content).not.toContain("Dumbbells only.");
+		expect(system?.content).toContain("1 more entries not shown");
+	});
+
+	it("rejects unsupported preload string values", async () => {
+		const memrez = createMemrez({ reasoner: new DirectiveReasoner() });
+		const runner = createRunner({
+			modelProvider: new MockModelProvider([
+				{ text: "done", usage, finishReason: "stop" },
+			]),
+			resources: { memory: memrez.provider() },
+		});
+		runner.registerAgent(
+			defineAgent({
+				id: "bad-preload",
+				name: "BadPreload",
+				systemPrompt: "Train.",
+				model: { provider: "openai", name: "test" },
+				resources: {
+					memory: { kind: "memory", preload: "core" },
+				},
+			}),
+		);
+
+		await expect(
+			runner.invoke("bad-preload", "go", { context: ["app/user/u_123"] }),
+		).rejects.toThrow(/memory\.preload string value/);
+	});
 });
 
 class DirectiveReasoner implements MemrezReasoner {
+	public tagInputs: TaggerInput[] = [];
+
 	async tag(input: TaggerInput): Promise<TaggerResult> {
+		this.tagInputs.push(input);
 		const [prefix, content] = input.content.includes("|")
 			? input.content.split("|")
 			: ["topic:general", input.content];

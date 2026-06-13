@@ -39,6 +39,7 @@ function taggerInput(content: string): TaggerInput {
 		grants: ["app/user/u_1"],
 		content,
 		existingTopics: ["prefs"],
+		topicConfig: { preferred: ["goals", "equipment"] },
 		writePolicy: { descendants: true, ancestorPromotion: "none" },
 	};
 }
@@ -53,7 +54,7 @@ describe("llmReasoner", () => {
 		const provider = new MockModelProvider(() =>
 			jsonResult({
 				namespace: "app/user/u_1",
-				topics: ["equipment", "pinned"],
+				topics: ["equipment", "core"],
 				type: "preference",
 				normalizedContent: "Has dumbbells only.",
 				duplicateOf: null,
@@ -67,7 +68,7 @@ describe("llmReasoner", () => {
 
 		expect(result).toEqual({
 			namespace: "app/user/u_1",
-			topics: ["equipment", "pinned"],
+			topics: ["equipment", "core"],
 			type: "preference",
 			normalizedContent: "Has dumbbells only.",
 			duplicateOf: undefined,
@@ -79,6 +80,10 @@ describe("llmReasoner", () => {
 		);
 		expect(userMessage?.content).toContain("I only have dumbbells at home");
 		expect(userMessage?.content).toContain('["app/user/u_1"]');
+		expect(userMessage?.content).toContain("Core topic:");
+		expect(userMessage?.content).toContain('"core"');
+		expect(userMessage?.content).toContain("Preferred topics:");
+		expect(userMessage?.content).toContain('["goals","equipment"]');
 	});
 
 	it("falls back to deterministic tagging when the model call fails", async () => {
@@ -130,6 +135,7 @@ describe("llmReasoner", () => {
 			grants: ["app/user/u_1"],
 			scopePaths: ["app", "app/user", "app/user/u_1"],
 			entries: [],
+			topicConfig: { core: "profile", preferred: ["prefs"] },
 		});
 		expect(ops).toEqual([
 			{
@@ -139,6 +145,13 @@ describe("llmReasoner", () => {
 				blurb: "Communication preferences.",
 			},
 		]);
+		const curatorUserMessage = provider.calls[0].messages.find(
+			(message) => message.role === "user",
+		);
+		expect(curatorUserMessage?.content).toContain("Core topic:");
+		expect(curatorUserMessage?.content).toContain('"profile"');
+		expect(curatorUserMessage?.content).toContain("Preferred topics:");
+		expect(curatorUserMessage?.content).toContain('["prefs"]');
 
 		const failing = llmReasoner({
 			modelProvider: new MockModelProvider(() => {

@@ -40,6 +40,7 @@ export type {
 	MemrezReasoner,
 	MemoryEntry,
 	MemoryStore,
+	MemoryTopicConfig,
 	NamespaceGrant,
 	ReadOptions,
 	ScanOptions,

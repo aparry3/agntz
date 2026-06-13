@@ -53,12 +53,13 @@ lowercase topics, and return strict JSON matching the schema. Never invent
 data beyond the supplied content.
 
 Reuse existing topics when one fits; only mint a new topic when none do.
+Prefer configured preferred topics when they fit.
 
-The topic \`pinned\` marks the always-load set: durable profile facts an
-agent should know without searching (equipment, schedule, goals, hard
-constraints). Add \`pinned\` alongside the subject topic for such facts —
-e.g. ["equipment", "pinned"]. Never pin transient events or one-off
-details.`;
+The configured core topic marks the always-load set: durable profile facts
+an agent should know without searching (equipment, schedule, goals, hard
+constraints). Add the exact configured core topic alongside the subject topic
+for such facts, e.g. ["equipment", "core"] when the configured core topic is
+"core". Never mark transient events or one-off details as core.`;
 
 const TAGGER_OUTPUT_SCHEMA = {
 	type: "object",
@@ -88,11 +89,11 @@ A setBlurb op is {"type":"setBlurb","scope":string,"topic":string,"blurb":string
 Supersede accumulated \`event\` entries into a compact \`summary\` entry once
 they stop carrying individual value, so scopes stay small.
 
-The topic \`pinned\` is the always-load set of durable profile facts. You
-own its hygiene: when superseding, add \`pinned\` to replacement topics to
-promote a durable fact, or omit it to demote one that no longer earns
-always-load status. Keep the \`pinned\` blurb a one-line profile of the
-scope (e.g. "3x/week, dumbbells only, goal: strength").`;
+The configured core topic is the always-load set of durable profile facts.
+You own its hygiene: when superseding, add the configured core topic to
+replacement topics to promote a durable fact, or omit it to demote one that
+no longer earns always-load status. Keep the core topic blurb a one-line
+profile of the scope (e.g. "3x/week, dumbbells only, goal: strength").`;
 
 const CURATOR_OUTPUT_SCHEMA = {
 	type: "object",
@@ -113,6 +114,8 @@ const PROVIDER_ENV_KEYS: Record<string, string> = {
 	groq: "GROQ_API_KEY",
 	deepseek: "DEEPSEEK_API_KEY",
 };
+
+const DEFAULT_CORE_TOPIC = "core";
 
 export function llmReasoner(options: LlmReasonerOptions = {}): MemrezReasoner {
 	const usingEnvKeys = options.modelProvider === undefined;
@@ -201,6 +204,7 @@ function assertProviderKey(
 }
 
 function renderTaggerPrompt(input: TaggerInput): string {
+	const topicConfig = resolveTopicConfig(input.topicConfig);
 	return [
 		"Grants:",
 		JSON.stringify(input.grants),
@@ -211,6 +215,12 @@ function renderTaggerPrompt(input: TaggerInput): string {
 		"Existing topics:",
 		JSON.stringify(input.existingTopics),
 		"",
+		"Core topic:",
+		JSON.stringify(topicConfig.core),
+		"",
+		"Preferred topics:",
+		JSON.stringify(topicConfig.preferred),
+		"",
 		"Topic hints:",
 		JSON.stringify(input.topicsHint ?? []),
 		"",
@@ -220,6 +230,7 @@ function renderTaggerPrompt(input: TaggerInput): string {
 }
 
 function renderCuratorPrompt(input: CuratorInput): string {
+	const topicConfig = resolveTopicConfig(input.topicConfig);
 	return [
 		"Grants:",
 		JSON.stringify(input.grants),
@@ -230,9 +241,24 @@ function renderCuratorPrompt(input: CuratorInput): string {
 		"Topics:",
 		JSON.stringify(input.topics ?? []),
 		"",
+		"Core topic:",
+		JSON.stringify(topicConfig.core),
+		"",
+		"Preferred topics:",
+		JSON.stringify(topicConfig.preferred),
+		"",
 		"Entries:",
 		JSON.stringify(input.entries, null, 2),
 	].join("\n");
+}
+
+function resolveTopicConfig(
+	topicConfig: TaggerInput["topicConfig"] | CuratorInput["topicConfig"],
+): { core: string; preferred: string[] } {
+	return {
+		core: topicConfig?.core?.trim() || DEFAULT_CORE_TOPIC,
+		preferred: topicConfig?.preferred ?? [],
+	};
 }
 
 function parseTaggerOutput(text: string): TaggerResult {

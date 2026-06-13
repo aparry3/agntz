@@ -36,9 +36,17 @@ export interface WritePolicy {
 	ancestorPromotion?: "none" | "parent" | "ancestors";
 }
 
+export interface MemoryTopicConfig {
+	/** Special always-load topic. Defaults to "core". */
+	core?: string;
+	/** Preferred domain topic vocabulary for the reasoner. */
+	preferred?: string[];
+}
+
 export interface WriteOptions {
 	type?: EntryType;
 	topicsHint?: string[];
+	topicConfig?: MemoryTopicConfig;
 	source?: Source;
 	writePolicy?: WritePolicy;
 }
@@ -61,6 +69,7 @@ export interface ScanOptions {
 
 export interface CurateOptions {
 	topics?: string[];
+	topicConfig?: MemoryTopicConfig;
 	includeDescendants?: boolean;
 }
 
@@ -69,6 +78,7 @@ export interface TaggerInput {
 	content: string;
 	existingTopics: string[];
 	topicsHint?: string[];
+	topicConfig?: MemoryTopicConfig;
 	writePolicy: Required<WritePolicy>;
 	source?: Source;
 }
@@ -104,6 +114,7 @@ export interface CuratorInput {
 	scopePaths: string[];
 	entries: MemoryEntry[];
 	topics?: string[];
+	topicConfig?: MemoryTopicConfig;
 }
 
 export interface CurateReport {
