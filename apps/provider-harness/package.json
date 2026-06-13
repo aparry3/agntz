@@ -1,6 +1,6 @@
 {
   "name": "@agntz/provider-harness",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "description": "Multi-provider smoke harness for the agntz SDK — runs capability tests across (provider, model) combinations",
   "type": "module",

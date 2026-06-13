@@ -1,5 +1,16 @@
 # @agntz/store-sqlite
 
+## 6.0.0
+
+### Minor Changes
+
+- 4692c35: Add CLI publish support for migrating local agents, sessions, and memory into hosted agntz. Includes authenticated worker import endpoints, client import methods, session snapshot import support, and memory entry enumeration/import support.
+
+### Patch Changes
+
+- Updated dependencies [4692c35]
+  - @agntz/core@1.5.0
+
 ## 5.0.0
 
 ### Minor Changes

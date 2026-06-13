@@ -1,5 +1,14 @@
 # @agntz/app
 
+## 0.1.9
+
+### Patch Changes
+
+- Updated dependencies [4692c35]
+  - @agntz/core@1.5.0
+  - @agntz/store-postgres@6.0.0
+  - @agntz/manifest@6.0.0
+
 ## 0.1.8
 
 ### Patch Changes
