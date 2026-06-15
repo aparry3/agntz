@@ -6,6 +6,7 @@ import {
 	encryptSecret,
 	getLastFour,
 	listEvalRunsInProcess,
+	normalizeNamespaceGrant,
 } from "@agntz/core";
 import type {
 	AgentDefinition,
@@ -591,6 +592,20 @@ const MIGRATIONS: string[] = [
     ON ar_eval_latest_scores(user_id, eval_id, eval_version, dataset_id, dataset_version);
 
   UPDATE ar_schema_version SET version = 13;
+  `,
+	// v14: per-tenant namespace roots — bounds API-key tenants to the namespaces
+	// they own (hosted multi-tenant). Enforced at the worker, not in core.
+	`
+  CREATE TABLE IF NOT EXISTS ar_tenant_namespace_roots (
+    user_id        TEXT NOT NULL,
+    namespace_root TEXT NOT NULL,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, namespace_root)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ar_tenant_namespace_roots_user
+    ON ar_tenant_namespace_roots(user_id);
+
+  UPDATE ar_schema_version SET version = 14;
   `,
 ];
 
@@ -2890,6 +2905,38 @@ export class PostgresStore implements UnifiedStore {
 		);
 		if (rows.length === 0) return null;
 		return { userId: rows[0].user_id, keyId: rows[0].id };
+	}
+
+	// ═══ NamespaceRootStore ═══
+
+	async listNamespaceRoots(userId: string): Promise<string[]> {
+		await this.ensureMigrated();
+		const { rows } = await this.pool.query(
+			`SELECT namespace_root FROM ${this.t("tenant_namespace_roots")}
+       WHERE user_id = $1 ORDER BY namespace_root ASC`,
+			[userId],
+		);
+		return rows.map((r) => r.namespace_root as string);
+	}
+
+	async addNamespaceRoot(userId: string, root: string): Promise<void> {
+		await this.ensureMigrated();
+		const normalized = normalizeNamespaceGrant(root);
+		await this.pool.query(
+			`INSERT INTO ${this.t("tenant_namespace_roots")} (user_id, namespace_root)
+       VALUES ($1, $2) ON CONFLICT (user_id, namespace_root) DO NOTHING`,
+			[userId, normalized],
+		);
+	}
+
+	async removeNamespaceRoot(userId: string, root: string): Promise<void> {
+		await this.ensureMigrated();
+		const normalized = normalizeNamespaceGrant(root);
+		await this.pool.query(
+			`DELETE FROM ${this.t("tenant_namespace_roots")}
+       WHERE user_id = $1 AND namespace_root = $2`,
+			[userId, normalized],
+		);
 	}
 
 	// ═══ WebhookDeliveryStore ═══

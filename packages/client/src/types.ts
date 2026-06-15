@@ -241,6 +241,64 @@ export interface MemoryImportResponse {
 	counts: Record<string, number>;
 }
 
+export interface MemoryTopicSummary {
+	topic: string;
+	count: number;
+	blurb?: string;
+	lastUpdatedAt: string;
+	hasUncuratedWrites: boolean;
+}
+
+export interface MemoryScanResult {
+	grants: string[];
+	topics: MemoryTopicSummary[];
+}
+
+export interface MemoryEntriesPage {
+	entries: MemoryEntry[];
+	total: number;
+	limit: number;
+	offset: number;
+}
+
+export interface MemoryReadOptions {
+	limit?: number;
+	signal?: AbortSignal;
+}
+
+export interface MemoryListOptions {
+	topics?: string[];
+	includeSuperseded?: boolean;
+	limit?: number;
+	offset?: number;
+	signal?: AbortSignal;
+}
+
+export interface MemoryDeleteEntryResult {
+	deleted: boolean;
+	id: string;
+}
+
+export interface MemoryCurateReport {
+	scanned: number;
+	superseded: number;
+	created: number;
+	blurbsUpdated: number;
+}
+
+export interface MemoryCurateResult {
+	curateEnabled: boolean;
+	report: MemoryCurateReport;
+}
+
+/** Result of `POST /scopes/delete` — counts deleted per resource provider. */
+export interface ScopeDeleteResult {
+	scope: string;
+	recursive: boolean;
+	total: number;
+	byResource: Record<string, number>;
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // /evals, /datasets, /eval-runs
 // ─────────────────────────────────────────────────────────────────────────

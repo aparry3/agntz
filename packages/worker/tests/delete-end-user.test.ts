@@ -18,18 +18,14 @@ function tenantHeaders() {
 	} as const;
 }
 
-function internalHeaders() {
-	return {
-		"Content-Type": "application/json",
-		"X-Internal-Secret": SECRET,
-	} as const;
-}
-
 describe("delete end-user (scope + session composition)", () => {
 	it("erases an end-user's memories and sessions, leaving siblings intact", async () => {
 		const store = new MemoryStore();
 		const memrez = createMemrez();
 		const now = new Date().toISOString();
+
+		// gymtext (the tenant) owns the "gymtext" namespace root.
+		await store.addNamespaceRoot(TENANT, "gymtext");
 
 		// Namespace axis: end-user 123 + a sibling end-user 124.
 		await memrez.store.putEntry({
@@ -70,9 +66,10 @@ describe("delete end-user (scope + session composition)", () => {
 		});
 
 		// The application composes the two primitives to erase end-user 123.
+		// The scope is bounded to the tenant's registered "gymtext" root.
 		const scopeRes = await app.request("/scopes/delete", {
 			method: "POST",
-			headers: internalHeaders(),
+			headers: tenantHeaders(),
 			body: JSON.stringify({ scope: "gymtext/user/123" }),
 		});
 		expect(scopeRes.status).toBe(200);

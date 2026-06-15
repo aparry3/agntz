@@ -1,7 +1,7 @@
 import { requireSuperAdmin } from "@/lib/admin";
 import { memoryErrorResponse, parseGrantsParam } from "@/lib/memory-api";
 import { requireUserContext } from "@/lib/user";
-import { workerMemoryTopics } from "@/lib/worker-client";
+import { superAdminIdentity, workerMemoryTopics } from "@/lib/worker-client";
 import { type NextRequest, NextResponse } from "next/server";
 
 /**
@@ -12,8 +12,8 @@ import { type NextRequest, NextResponse } from "next/server";
  */
 export async function GET(req: NextRequest) {
 	try {
-		const { actorUserId } = await requireUserContext();
-		requireSuperAdmin(actorUserId);
+		const ctx = await requireUserContext();
+		requireSuperAdmin(ctx.actorUserId);
 
 		const grants = parseGrantsParam(req);
 		if (grants.length === 0) {
@@ -22,7 +22,9 @@ export async function GET(req: NextRequest) {
 				{ status: 400 },
 			);
 		}
-		return NextResponse.json(await workerMemoryTopics(grants));
+		return NextResponse.json(
+			await workerMemoryTopics(superAdminIdentity(ctx), grants),
+		);
 	} catch (error) {
 		return memoryErrorResponse(error);
 	}

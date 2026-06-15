@@ -1,7 +1,7 @@
 import { requireSuperAdmin } from "@/lib/admin";
 import { memoryErrorResponse } from "@/lib/memory-api";
 import { requireUserContext } from "@/lib/user";
-import { workerMemoryCorrect } from "@/lib/worker-client";
+import { superAdminIdentity, workerMemoryCorrect } from "@/lib/worker-client";
 import { type NextRequest, NextResponse } from "next/server";
 
 /** Super-admin only — see /api/memory/topics for the tenancy rationale. */
@@ -10,8 +10,8 @@ export async function POST(
 	context: { params: Promise<{ id: string }> },
 ) {
 	try {
-		const { actorUserId } = await requireUserContext();
-		requireSuperAdmin(actorUserId);
+		const ctx = await requireUserContext();
+		requireSuperAdmin(ctx.actorUserId);
 
 		const { id } = await context.params;
 		const body = (await req.json().catch(() => ({}))) as {
@@ -31,7 +31,7 @@ export async function POST(
 			);
 		}
 
-		const result = await workerMemoryCorrect({
+		const result = await workerMemoryCorrect(superAdminIdentity(ctx), {
 			grants: body.grants as string[],
 			id,
 			content: body.content,

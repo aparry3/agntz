@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { listEvalRunsInProcess } from "../evals.js";
+import { normalizeNamespaceGrant } from "../namespace.js";
 import { defineSkill } from "../skill.js";
 import type {
 	AgentDefinition,
@@ -101,6 +102,7 @@ interface MemoryBackend {
 	connections: Map<string, Map<string, Connection>>; // userId -> `${kind}:${id}` -> connection
 	apiKeys: Map<string, ApiKeyRow>; // id -> row
 	apiKeyByHash: Map<string, ApiKeyRow>; // sha256(rawKey) -> row
+	namespaceRoots: Map<string, Set<string>>; // userId -> registered roots
 	runs: Map<string, Run>; // `${userId}:${runId}` -> run
 	spans: Map<string, Span>; // spanId -> span
 	summaries: Map<string, TraceSummary>; // traceId -> summary
@@ -128,6 +130,7 @@ function createBackend(): MemoryBackend {
 		connections: new Map(),
 		apiKeys: new Map(),
 		apiKeyByHash: new Map(),
+		namespaceRoots: new Map(),
 		runs: new Map(),
 		spans: new Map(),
 		summaries: new Map(),
@@ -741,6 +744,27 @@ export class MemoryStore implements UnifiedStore {
 		if (!row || row.revokedAt) return null;
 		row.lastUsedAt = new Date().toISOString();
 		return { userId: row.userId, keyId: row.id };
+	}
+
+	// ═══ NamespaceRootStore ═══
+
+	async listNamespaceRoots(userId: string): Promise<string[]> {
+		return Array.from(this.backend.namespaceRoots.get(userId) ?? []).sort();
+	}
+
+	async addNamespaceRoot(userId: string, root: string): Promise<void> {
+		const normalized = normalizeNamespaceGrant(root);
+		let roots = this.backend.namespaceRoots.get(userId);
+		if (!roots) {
+			roots = new Set();
+			this.backend.namespaceRoots.set(userId, roots);
+		}
+		roots.add(normalized);
+	}
+
+	async removeNamespaceRoot(userId: string, root: string): Promise<void> {
+		const normalized = normalizeNamespaceGrant(root);
+		this.backend.namespaceRoots.get(userId)?.delete(normalized);
 	}
 
 	// ═══ RunStore ═══

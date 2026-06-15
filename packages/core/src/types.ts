@@ -1565,6 +1565,23 @@ export interface ApiKeyStore {
 }
 
 /**
+ * Per-tenant namespace ownership for the hosted multi-tenant worker. Records the
+ * namespace-grant roots a tenant (`userId`) is allowed to operate within, so an
+ * API-key caller can be bounded to its own namespaces (the worker narrows
+ * inbound grants/scopes to these roots). Hosted-only in practice: the local SDK
+ * has a single trusted operator and does not enforce roots, but the methods live
+ * here alongside `ApiKeyStore` so every `UnifiedStore` backend provides them.
+ */
+export interface NamespaceRootStore {
+	/** The namespace roots this tenant owns (normalized grant strings). */
+	listNamespaceRoots(userId: string): Promise<string[]>;
+	/** Register a root for the tenant. Idempotent. */
+	addNamespaceRoot(userId: string, root: string): Promise<void>;
+	/** Remove a previously registered root. No-op if absent. */
+	removeNamespaceRoot(userId: string, root: string): Promise<void>;
+}
+
+/**
  * Stores that can be scoped to a user. `forUser(userId)` returns a new store
  * instance where every AgentStore/SessionStore/ContextStore/LogStore/
  * ProviderStore method auto-filters by user_id.
@@ -1583,6 +1600,7 @@ export type UnifiedStore = AgentStore &
 	ProviderStore &
 	ConnectionStore &
 	ApiKeyStore &
+	NamespaceRootStore &
 	RunStore &
 	TraceStore &
 	SkillStore &

@@ -8,6 +8,7 @@ import type {
 	TaggerResult,
 } from "@agntz/memrez";
 import { describe, expect, it } from "vitest";
+import { signInternalAuthToken } from "../src/middleware/internal-auth.js";
 import { createWorkerAPI } from "../src/routes.js";
 
 const SECRET = "test-secret";
@@ -54,10 +55,22 @@ function makeApp(memrez?: ReturnType<typeof createMemrez>) {
 	});
 }
 
+// Super-admin (unbounded) identity: the memory/scope routes are now workerAuth +
+// root-bounded, so these behavioral tests authenticate as an unbounded admin to
+// exercise memory logic without root setup. Per-tenant bounding is covered in
+// namespace-roots.test.ts.
 function headers() {
 	return {
 		"Content-Type": "application/json",
 		"X-Internal-Secret": SECRET,
+		"X-Agntz-Internal-Auth": signInternalAuthToken(
+			{
+				actorUserId: "admin",
+				tenantId: "admin",
+				permissions: ["namespace:unbounded"],
+			},
+			SECRET,
+		),
 	} as const;
 }
 

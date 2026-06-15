@@ -6,6 +6,7 @@ import {
 	encryptSecret,
 	getLastFour,
 	listEvalRunsInProcess,
+	normalizeNamespaceGrant,
 } from "@agntz/core";
 import type {
 	AgentDefinition,
@@ -573,6 +574,19 @@ const MIGRATIONS = [
     ON eval_latest_scores(user_id, eval_id, eval_version, dataset_id, dataset_version);
 
   UPDATE schema_version SET version = 12;
+  `,
+	// v13: per-tenant namespace roots (hosted multi-tenant; enforced at the worker).
+	`
+  CREATE TABLE IF NOT EXISTS tenant_namespace_roots (
+    user_id        TEXT NOT NULL,
+    namespace_root TEXT NOT NULL,
+    created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, namespace_root)
+  );
+  CREATE INDEX IF NOT EXISTS idx_tenant_namespace_roots_user
+    ON tenant_namespace_roots(user_id);
+
+  UPDATE schema_version SET version = 13;
   `,
 ];
 
@@ -2692,6 +2706,35 @@ export class SqliteStore implements UnifiedStore {
 			.prepare("UPDATE api_keys SET last_used_at = ? WHERE id = ?")
 			.run(new Date().toISOString(), row.id);
 		return { userId: row.user_id, keyId: row.id };
+	}
+
+	// ═══ NamespaceRootStore ═══
+
+	async listNamespaceRoots(userId: string): Promise<string[]> {
+		const rows = this.db
+			.prepare(
+				"SELECT namespace_root FROM tenant_namespace_roots WHERE user_id = ? ORDER BY namespace_root ASC",
+			)
+			.all(userId) as Array<{ namespace_root: string }>;
+		return rows.map((r) => r.namespace_root);
+	}
+
+	async addNamespaceRoot(userId: string, root: string): Promise<void> {
+		const normalized = normalizeNamespaceGrant(root);
+		this.db
+			.prepare(
+				"INSERT OR IGNORE INTO tenant_namespace_roots (user_id, namespace_root) VALUES (?, ?)",
+			)
+			.run(userId, normalized);
+	}
+
+	async removeNamespaceRoot(userId: string, root: string): Promise<void> {
+		const normalized = normalizeNamespaceGrant(root);
+		this.db
+			.prepare(
+				"DELETE FROM tenant_namespace_roots WHERE user_id = ? AND namespace_root = ?",
+			)
+			.run(userId, normalized);
 	}
 
 	// ═══ WebhookDeliveryStore ═══

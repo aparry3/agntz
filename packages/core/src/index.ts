@@ -259,6 +259,7 @@ export type {
 	MCPConnectionConfig,
 	ApiKeyStore,
 	ApiKeyRecord,
+	NamespaceRootStore,
 	ScopableStore,
 	UnifiedStore,
 	// Skills

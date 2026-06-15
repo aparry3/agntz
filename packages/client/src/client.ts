@@ -24,8 +24,15 @@ import type {
 	EvalRunListFilter,
 	EvalRunListResult,
 	HealthResult,
+	MemoryCurateResult,
+	MemoryDeleteEntryResult,
+	MemoryEntriesPage,
+	MemoryEntry,
 	MemoryImportInput,
 	MemoryImportResponse,
+	MemoryListOptions,
+	MemoryReadOptions,
+	MemoryScanResult,
 	MultiplexedRunEvent,
 	Run,
 	RunInput,
@@ -34,6 +41,7 @@ import type {
 	RunResult,
 	RunsStartInput,
 	RunsStreamInput,
+	ScopeDeleteResult,
 	SessionDetail,
 	SessionImportInput,
 	SessionImportResponse,
@@ -269,6 +277,151 @@ export class MemoryResource {
 			fetchImpl: this.client._fetchImpl,
 		});
 		return (await res.json()) as MemoryImportResponse;
+	}
+
+	/** Topics visible to `grants` (mirrors `@agntz/sdk` `client.memory.scan`). */
+	async scan(
+		grants: string[],
+		opts: { signal?: AbortSignal } = {},
+	): Promise<MemoryScanResult> {
+		const signal = this.client._composeSignal(opts.signal);
+		const params = new URLSearchParams({ grants: grants.join(",") });
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/memory/topics?${params}`,
+			method: "GET",
+			apiKey: this.client._apiKey,
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as MemoryScanResult;
+	}
+
+	/** Entries for one or more topics visible to `grants`. */
+	async read(
+		grants: string[],
+		topic: string | string[],
+		opts: MemoryReadOptions = {},
+	): Promise<MemoryEntry[]> {
+		const topics = Array.isArray(topic) ? topic : [topic];
+		const page = await this.listPage(grants, {
+			topics,
+			limit: opts.limit,
+			signal: opts.signal,
+		});
+		return page.entries;
+	}
+
+	/** Every entry visible to `grants` (optionally filtered/paginated). */
+	async list(
+		grants: string[],
+		opts: MemoryListOptions = {},
+	): Promise<MemoryEntry[]> {
+		return (await this.listPage(grants, opts)).entries;
+	}
+
+	private async listPage(
+		grants: string[],
+		opts: MemoryListOptions,
+	): Promise<MemoryEntriesPage> {
+		const signal = this.client._composeSignal(opts.signal);
+		const params = new URLSearchParams({ grants: grants.join(",") });
+		if (opts.topics?.length) params.set("topics", opts.topics.join(","));
+		if (opts.includeSuperseded) params.set("includeSuperseded", "true");
+		if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+		if (opts.offset !== undefined) params.set("offset", String(opts.offset));
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/memory/entries?${params}`,
+			method: "GET",
+			apiKey: this.client._apiKey,
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as MemoryEntriesPage;
+	}
+
+	/** Hard-delete a single entry. Grants ride the query string (DELETE bodies are unreliable). */
+	async deleteEntry(
+		grants: string[],
+		id: string,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<MemoryDeleteEntryResult> {
+		const signal = this.client._composeSignal(opts.signal);
+		const params = new URLSearchParams({ grants: grants.join(",") });
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/memory/entries/${encodeURIComponent(id)}?${params}`,
+			method: "DELETE",
+			apiKey: this.client._apiKey,
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as MemoryDeleteEntryResult;
+	}
+
+	async correct(
+		grants: string[],
+		id: string,
+		content: string,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<{ entry: MemoryEntry }> {
+		const signal = this.client._composeSignal(opts.signal);
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/memory/entries/${encodeURIComponent(id)}/correct`,
+			method: "POST",
+			apiKey: this.client._apiKey,
+			body: { grants, content },
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as { entry: MemoryEntry };
+	}
+
+	async curate(
+		grants: string[],
+		opts: { topics?: string[]; signal?: AbortSignal } = {},
+	): Promise<MemoryCurateResult> {
+		const signal = this.client._composeSignal(opts.signal);
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: "/memory/curate",
+			method: "POST",
+			apiKey: this.client._apiKey,
+			body: { grants, ...(opts.topics ? { topics: opts.topics } : {}) },
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as MemoryCurateResult;
+	}
+
+	/**
+	 * Erase a namespace scope across every resource (memrez now, RAG later);
+	 * recursive (whole subtree) by default. The worker bounds `prefix` to the API
+	 * key's registered roots — `grants` is advisory on the hosted path (sent for
+	 * signature parity with `@agntz/sdk`; authorization is by registered roots).
+	 */
+	async deleteScope(
+		grants: string[],
+		prefix: string,
+		opts: { recursive?: boolean; signal?: AbortSignal } = {},
+	): Promise<ScopeDeleteResult> {
+		const signal = this.client._composeSignal(opts.signal);
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: "/scopes/delete",
+			method: "POST",
+			apiKey: this.client._apiKey,
+			body: {
+				scope: prefix,
+				grants,
+				...(opts.recursive !== undefined ? { recursive: opts.recursive } : {}),
+			},
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as ScopeDeleteResult;
 	}
 }
 

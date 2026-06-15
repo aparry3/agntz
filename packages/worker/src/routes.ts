@@ -66,6 +66,12 @@ import {
 	internalOnlyAuth,
 	workerAuth,
 } from "./middleware/auth.js";
+import {
+	ForbiddenError,
+	assertScopeWithinRoots,
+	narrowToRoots,
+	resolveAllowedRoots,
+} from "./middleware/namespace-roots.js";
 import { rateLimit } from "./rate-limit.js";
 import { wrapWithSkillRedaction } from "./session-redact.js";
 import {
@@ -731,16 +737,15 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 		}
 	});
 
-	// Memory observability endpoints are app→worker only for now. The import
-	// route above is explicitly user-scoped through workerAuth for CLI migration.
-	app.use("/memory", internalOnlyAuth({ internalSecret }));
-	app.use("/memory/*", internalOnlyAuth({ internalSecret }));
-
-	// Scope erasure fans out across namespace-addressable resources (memrez now,
-	// RAG later). App→worker only, like /memory/*: memrez is partitioned purely
-	// by namespace, so the trusted caller passes the scope it owns.
-	app.use("/scopes", internalOnlyAuth({ internalSecret }));
-	app.use("/scopes/*", internalOnlyAuth({ internalSecret }));
+	// Memory + scope routes are tenant-scoped: workerAuth resolves the caller
+	// (signed app identity, or external API key), then each handler bounds the
+	// requested grants/scope to the tenant's registered namespace roots
+	// (resolveAllowedRoots). Super-admins carry the "namespace:unbounded"
+	// permission and skip bounding; API-key tenants are confined to their roots.
+	app.use("/memory", workerAuth({ store, internalSecret }));
+	app.use("/memory/*", workerAuth({ store, internalSecret }));
+	app.use("/scopes", workerAuth({ store, internalSecret }));
+	app.use("/scopes/*", workerAuth({ store, internalSecret }));
 
 	app.get("/system/agents", async (c) => {
 		const agents = await listSystemAgents();
@@ -781,7 +786,8 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 		if (!memrez) return memoryNotConfigured(c);
 		try {
 			const grants = parseGrantsParam(c.req.queries("grants"));
-			const scan = await memrez.scan(grants);
+			const allowed = await resolveAllowedRoots(c, store);
+			const scan = await memrez.scan(narrowToRoots(allowed, grants));
 			return c.json(scan);
 		} catch (error) {
 			return memoryErrorResponse(c, error);
@@ -793,12 +799,14 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 		if (!memrez) return memoryNotConfigured(c);
 		try {
 			const grants = parseGrantsParam(c.req.queries("grants"));
+			const allowed = await resolveAllowedRoots(c, store);
+			const scopedGrants = narrowToRoots(allowed, grants);
 			const topics = parseListParam(c.req.queries("topics"));
 			const includeSuperseded = isTruthyParam(c.req.query("includeSuperseded"));
 			const limit = clampInt(c.req.query("limit"), 200, 1, 1000);
 			const offset = clampInt(c.req.query("offset"), 0, 0);
 
-			const entries = await memrez.list(grants, {
+			const entries = await memrez.list(scopedGrants, {
 				topics: topics.length > 0 ? topics : undefined,
 				includeSuperseded,
 			});
@@ -818,7 +826,8 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 		if (!memrez) return memoryNotConfigured(c);
 		try {
 			const id = decodeURIComponent(c.req.param("id"));
-			const body = (await c.req.json().catch(() => ({}))) as {
+			const body = (getCachedBody(c) ??
+				(await c.req.json().catch(() => ({})))) as {
 				grants?: unknown;
 				content?: unknown;
 			};
@@ -834,11 +843,9 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 					400,
 				);
 			}
-			const result = await memrez.correct(
-				body.grants as string[],
-				id,
-				body.content,
-			);
+			const allowed = await resolveAllowedRoots(c, store);
+			const grants = narrowToRoots(allowed, body.grants as string[]);
+			const result = await memrez.correct(grants, id, body.content);
 			return c.json(result);
 		} catch (error) {
 			return memoryErrorResponse(c, error);
@@ -852,12 +859,15 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 		if (!memrez) return memoryNotConfigured(c);
 		try {
 			const id = decodeURIComponent(c.req.param("id"));
-			const body = (await c.req.json().catch(() => ({}))) as {
+			const body = (getCachedBody(c) ??
+				(await c.req.json().catch(() => ({})))) as {
 				grants?: unknown;
 			};
-			const grants = Array.isArray(body.grants)
+			const requested = Array.isArray(body.grants)
 				? (body.grants as string[])
 				: parseGrantsParam(c.req.queries("grants"));
+			const allowed = await resolveAllowedRoots(c, store);
+			const grants = narrowToRoots(allowed, requested);
 			const result = await memrez.deleteEntry(grants, id);
 			return c.json(result);
 		} catch (error) {
@@ -869,10 +879,12 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 		const memrez = opts.memrez;
 		if (!memrez) return memoryNotConfigured(c);
 		try {
-			const body = (await c.req.json().catch(() => ({}))) as {
+			const body = (getCachedBody(c) ??
+				(await c.req.json().catch(() => ({})))) as {
 				grants?: unknown;
 				topics?: unknown;
 			};
+			const allowed = await resolveAllowedRoots(c, store);
 			if (body.grants !== undefined) {
 				if (!Array.isArray(body.grants) || body.grants.length === 0) {
 					return c.json(
@@ -880,12 +892,19 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 						400,
 					);
 				}
-				const report = await memrez.curate(body.grants as string[], {
+				const grants = narrowToRoots(allowed, body.grants as string[]);
+				const report = await memrez.curate(grants, {
 					topics: Array.isArray(body.topics)
 						? (body.topics as string[])
 						: undefined,
 				});
 				return c.json({ curateEnabled: true, report });
+			}
+			// The no-grants form sweeps EVERY scope across all tenants — admin only.
+			if (!allowed.unbounded) {
+				throw new ForbiddenError(
+					"global curation sweep (no grants) requires super-admin; pass grants to curate your own scopes",
+				);
 			}
 			return c.json(await runCurationSweep(memrez));
 		} catch (error) {
@@ -899,25 +918,26 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 	// are the tenant axis (DELETE /sessions/:id). Idempotent.
 	app.post("/scopes/delete", async (c) => {
 		try {
-			const body = (await c.req.json().catch(() => ({}))) as {
+			const body = (getCachedBody(c) ??
+				(await c.req.json().catch(() => ({})))) as {
 				scope?: unknown;
 				recursive?: unknown;
 			};
 			if (typeof body.scope !== "string" || body.scope.trim() === "") {
 				return c.json({ error: "Missing required field: scope (string)" }, 400);
 			}
+			const allowed = await resolveAllowedRoots(c, store);
+			const scope = assertScopeWithinRoots(allowed, body.scope);
 			const recursive = body.recursive !== false;
 			const byResource: Record<string, number> = {};
 			let total = 0;
 			for (const [kind, provider] of Object.entries(resourceProviders)) {
 				if (!provider.purgeScope) continue;
-				const { deleted } = await provider.purgeScope(body.scope, {
-					recursive,
-				});
+				const { deleted } = await provider.purgeScope(scope, { recursive });
 				byResource[kind] = deleted;
 				total += deleted;
 			}
-			return c.json({ scope: body.scope, recursive, total, byResource });
+			return c.json({ scope, recursive, total, byResource });
 		} catch (error) {
 			return memoryErrorResponse(c, error);
 		}
@@ -3576,7 +3596,7 @@ function memoryNotConfigured(c: Context) {
 
 /**
  * Map memrez errors onto HTTP statuses: unknown entry → 404, correction
- * conflicts → 409, bad grants/scopes → 400.
+ * conflicts → 409, tenant has no roots → 403, bad grants/scopes → 400.
  */
 function memoryErrorResponse(c: Context, error: unknown) {
 	if (error instanceof MemrezEntryNotFoundError) {
@@ -3584,6 +3604,9 @@ function memoryErrorResponse(c: Context, error: unknown) {
 	}
 	if (error instanceof MemrezCorrectionError) {
 		return c.json({ error: error.message }, 409);
+	}
+	if (error instanceof ForbiddenError) {
+		return c.json({ error: error.message }, 403);
 	}
 	if (
 		error instanceof MemrezScopeError ||

@@ -1,14 +1,14 @@
 import { requireSuperAdmin } from "@/lib/admin";
 import { memoryErrorResponse, parseGrantsParam } from "@/lib/memory-api";
 import { requireUserContext } from "@/lib/user";
-import { workerMemoryEntries } from "@/lib/worker-client";
+import { superAdminIdentity, workerMemoryEntries } from "@/lib/worker-client";
 import { type NextRequest, NextResponse } from "next/server";
 
 /** Super-admin only — see /api/memory/topics for the tenancy rationale. */
 export async function GET(req: NextRequest) {
 	try {
-		const { actorUserId } = await requireUserContext();
-		requireSuperAdmin(actorUserId);
+		const ctx = await requireUserContext();
+		requireSuperAdmin(ctx.actorUserId);
 
 		const grants = parseGrantsParam(req);
 		if (grants.length === 0) {
@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
 		const limit = Number.parseInt(search.get("limit") ?? "", 10);
 		const offset = Number.parseInt(search.get("offset") ?? "", 10);
 
-		const page = await workerMemoryEntries({
+		const page = await workerMemoryEntries(superAdminIdentity(ctx), {
 			grants,
 			topics: topics.length > 0 ? topics : undefined,
 			includeSuperseded: search.get("includeSuperseded") === "true",

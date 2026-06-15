@@ -137,6 +137,24 @@ export function getActorUserId(c: Context): string {
 	return u;
 }
 
+/** The storage-owner tenant id (falls back to userId for legacy/minimal auth). */
+export function getTenantId(c: Context): string {
+	const t = c.get("tenantId" as never) as string | undefined;
+	return t ?? getUserId(c);
+}
+
+export function getRoles(c: Context): string[] {
+	return (c.get("roles" as never) as string[] | undefined) ?? [];
+}
+
+export function getPermissions(c: Context): string[] {
+	return (c.get("permissions" as never) as string[] | undefined) ?? [];
+}
+
+export function getAuthMethod(c: Context): string | undefined {
+	return c.get("authMethod" as never) as string | undefined;
+}
+
 export function getCachedBody(c: Context): unknown {
 	return c.get("parsedBody" as never);
 }

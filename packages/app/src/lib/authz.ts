@@ -118,6 +118,7 @@ export function requiredPermissionForRequest(
 	if (pathname.startsWith("/settings")) return "settings:read";
 
 	if (pathname.startsWith("/api/api-keys")) return "api_keys:manage";
+	if (pathname.startsWith("/api/namespace-roots")) return "api_keys:manage";
 	if (pathname.startsWith("/api/secrets")) return "secrets:manage";
 	if (pathname.startsWith("/api/providers")) return "providers:manage";
 	if (

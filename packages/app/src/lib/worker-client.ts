@@ -35,6 +35,37 @@ function internalJsonHeaders(identity: WorkerIdentity): Record<string, string> {
 	};
 }
 
+/**
+ * Permission the worker honors (only for non-API-key callers) to bypass
+ * per-tenant namespace-root bounding. Mirrors the worker's
+ * NAMESPACE_UNBOUNDED_PERMISSION; kept as a literal here so the app doesn't
+ * depend on the worker package.
+ */
+export const NAMESPACE_UNBOUNDED_PERMISSION = "namespace:unbounded";
+
+/**
+ * Build an unbounded (super-admin) worker identity for app→worker memory/scope
+ * observability. The caller must have already passed `requireSuperAdmin`.
+ */
+export function superAdminIdentity(ctx: {
+	userId: string;
+	actorUserId?: string;
+	tenantId?: string;
+	orgId?: string;
+	orgSlug?: string;
+	orgRole?: string;
+}): WorkerIdentity {
+	return {
+		userId: ctx.userId,
+		actorUserId: ctx.actorUserId,
+		tenantId: ctx.tenantId,
+		...(ctx.orgId ? { orgId: ctx.orgId } : {}),
+		...(ctx.orgSlug ? { orgSlug: ctx.orgSlug } : {}),
+		...(ctx.orgRole ? { orgRole: ctx.orgRole } : {}),
+		permissions: [NAMESPACE_UNBOUNDED_PERMISSION],
+	};
+}
+
 export interface RunRequest {
 	userId: string;
 	actorUserId?: string;
@@ -326,11 +357,12 @@ export interface MemoryEntriesPage {
 }
 
 export async function workerMemoryTopics(
+	identity: WorkerIdentity,
 	grants: string[],
 ): Promise<{ grants: string[]; topics: MemoryTopicSummary[] }> {
 	const params = new URLSearchParams({ grants: grants.join(",") });
 	const res = await fetch(`${WORKER_URL}/memory/topics?${params}`, {
-		headers: { "X-Internal-Secret": internalSecret() },
+		headers: internalHeaders(identity),
 	});
 
 	if (!res.ok) {
@@ -346,20 +378,23 @@ export async function workerMemoryTopics(
 	}>;
 }
 
-export async function workerMemoryEntries(req: {
-	grants: string[];
-	topics?: string[];
-	includeSuperseded?: boolean;
-	limit?: number;
-	offset?: number;
-}): Promise<MemoryEntriesPage> {
+export async function workerMemoryEntries(
+	identity: WorkerIdentity,
+	req: {
+		grants: string[];
+		topics?: string[];
+		includeSuperseded?: boolean;
+		limit?: number;
+		offset?: number;
+	},
+): Promise<MemoryEntriesPage> {
 	const params = new URLSearchParams({ grants: req.grants.join(",") });
 	if (req.topics?.length) params.set("topics", req.topics.join(","));
 	if (req.includeSuperseded) params.set("includeSuperseded", "true");
 	if (req.limit !== undefined) params.set("limit", String(req.limit));
 	if (req.offset !== undefined) params.set("offset", String(req.offset));
 	const res = await fetch(`${WORKER_URL}/memory/entries?${params}`, {
-		headers: { "X-Internal-Secret": internalSecret() },
+		headers: internalHeaders(identity),
 	});
 
 	if (!res.ok) {
@@ -372,19 +407,19 @@ export async function workerMemoryEntries(req: {
 	return res.json() as Promise<MemoryEntriesPage>;
 }
 
-export async function workerMemoryCorrect(req: {
-	grants: string[];
-	id: string;
-	content: string;
-}): Promise<{ entry: MemoryEntryWire }> {
+export async function workerMemoryCorrect(
+	identity: WorkerIdentity,
+	req: {
+		grants: string[];
+		id: string;
+		content: string;
+	},
+): Promise<{ entry: MemoryEntryWire }> {
 	const res = await fetch(
 		`${WORKER_URL}/memory/entries/${encodeURIComponent(req.id)}/correct`,
 		{
 			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				"X-Internal-Secret": internalSecret(),
-			},
+			headers: internalJsonHeaders(identity),
 			body: JSON.stringify({ grants: req.grants, content: req.content }),
 		},
 	);
@@ -399,19 +434,19 @@ export async function workerMemoryCorrect(req: {
 	return res.json() as Promise<{ entry: MemoryEntryWire }>;
 }
 
-/** Hard-delete a single memory entry (internal-secret only, like the reads). */
-export async function workerDeleteMemoryEntry(req: {
-	grants: string[];
-	id: string;
-}): Promise<{ deleted: boolean; id: string }> {
+/** Hard-delete a single memory entry (tenant-scoped via the signed identity). */
+export async function workerDeleteMemoryEntry(
+	identity: WorkerIdentity,
+	req: {
+		grants: string[];
+		id: string;
+	},
+): Promise<{ deleted: boolean; id: string }> {
 	const res = await fetch(
 		`${WORKER_URL}/memory/entries/${encodeURIComponent(req.id)}`,
 		{
 			method: "DELETE",
-			headers: {
-				"Content-Type": "application/json",
-				"X-Internal-Secret": internalSecret(),
-			},
+			headers: internalJsonHeaders(identity),
 			body: JSON.stringify({ grants: req.grants }),
 		},
 	);
@@ -428,13 +463,17 @@ export async function workerDeleteMemoryEntry(req: {
 
 /**
  * Erase a namespace scope across every resource (memrez now, RAG later).
- * Recursive (whole subtree) by default. Internal-secret only — the calling app
- * is responsible for passing a scope within its own tenant's namespace.
+ * Recursive (whole subtree) by default. Tenant-scoped via the signed identity —
+ * the worker bounds the scope to the tenant's registered roots (or unbounded for
+ * a super-admin identity carrying `namespace:unbounded`).
  */
-export async function workerDeleteScope(req: {
-	scope: string;
-	recursive?: boolean;
-}): Promise<{
+export async function workerDeleteScope(
+	identity: WorkerIdentity,
+	req: {
+		scope: string;
+		recursive?: boolean;
+	},
+): Promise<{
 	scope: string;
 	recursive: boolean;
 	total: number;
@@ -442,10 +481,7 @@ export async function workerDeleteScope(req: {
 }> {
 	const res = await fetch(`${WORKER_URL}/scopes/delete`, {
 		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			"X-Internal-Secret": internalSecret(),
-		},
+		headers: internalJsonHeaders(identity),
 		body: JSON.stringify({ scope: req.scope, recursive: req.recursive }),
 	});
 
