@@ -706,19 +706,26 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 	});
 
 	app.post("/memory/import", async (c) => {
+		const memrez = opts.memrez;
+		if (!memrez) return memoryNotConfigured(c);
 		try {
-			const memrez = opts.memrez;
-			if (!memrez) return memoryNotConfigured(c);
 			const body = (getCachedBody(c) ?? (await c.req.json())) as {
 				entries?: unknown;
 				dryRun?: unknown;
 			};
 			const entries = normalizeMemoryEntries(body.entries);
 			const dryRun = body.dryRun === true;
+			// Import is write-class: bound each entry's scope to the tenant's roots,
+			// and refuse to overwrite (by id) an entry whose existing scope is
+			// outside them — so a tenant can neither inject into nor clobber another
+			// tenant's namespace. Super-admins (unbounded) may import any scope.
+			const allowed = await resolveAllowedRoots(c, store);
 			const results: MemoryImportResult[] = [];
 
 			for (const entry of entries) {
+				assertScopeWithinRoots(allowed, entry.scope);
 				const existing = await memrez.store.getEntry(entry.id);
+				if (existing) assertScopeWithinRoots(allowed, existing.scope);
 				if (!dryRun) await memrez.store.putEntry(entry);
 				results.push({
 					id: entry.id,
@@ -730,10 +737,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 
 			return c.json({ dryRun, results, counts: countActions(results) });
 		} catch (error) {
-			return c.json(
-				{ error: errorMessage(error) },
-				isBadRequest(error) ? 400 : 500,
-			);
+			return memoryErrorResponse(c, error);
 		}
 	});
 
@@ -787,7 +791,11 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 		try {
 			const grants = parseGrantsParam(c.req.queries("grants"));
 			const allowed = await resolveAllowedRoots(c, store);
-			const scan = await memrez.scan(narrowToRoots(allowed, grants));
+			// Bounded callers must NOT see ancestor scopes above their roots — memrez
+			// expands grants to ancestors by default, so disable that unless unbounded.
+			const scan = await memrez.scan(narrowToRoots(allowed, grants), {
+				includeAncestors: allowed.unbounded,
+			});
 			return c.json(scan);
 		} catch (error) {
 			return memoryErrorResponse(c, error);
@@ -809,6 +817,8 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			const entries = await memrez.list(scopedGrants, {
 				topics: topics.length > 0 ? topics : undefined,
 				includeSuperseded,
+				// Confine bounded callers to their roots (no ancestor expansion).
+				includeAncestors: allowed.unbounded,
 			});
 			return c.json({
 				entries: entries.slice(offset, offset + limit),

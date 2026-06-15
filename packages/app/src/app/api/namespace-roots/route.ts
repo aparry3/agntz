@@ -1,17 +1,31 @@
+import { ForbiddenError, requireSuperAdmin } from "@/lib/admin";
 import { getStore } from "@/lib/store";
 import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import { normalizeNamespaceGrant } from "@agntz/core";
 import { type NextRequest, NextResponse } from "next/server";
 
-// Per-tenant namespace roots: the namespaces this tenant is allowed to operate
-// within. The hosted worker bounds an API-key tenant's memory/scope operations
-// to these roots. Gated by `api_keys:manage` (see lib/authz.ts).
+// Per-tenant namespace roots: the namespaces a tenant may operate within. The
+// hosted worker bounds an API-key tenant's memory/scope operations to these
+// roots, so they are an OPERATOR-ASSIGNED allocation, not self-service — a tenant
+// choosing its own roots would defeat tenant isolation. Hence: SUPER-ADMIN only,
+// and every call targets an explicit `tenantId`.
 
-export async function GET() {
+export async function GET(req: NextRequest) {
 	try {
-		const { userId } = await requireUserContext();
+		const { actorUserId } = await requireUserContext();
+		requireSuperAdmin(actorUserId);
+		const tenantId = req.nextUrl.searchParams.get("tenantId")?.trim();
+		if (!tenantId) {
+			return NextResponse.json(
+				{ error: "Missing required query param: tenantId" },
+				{ status: 400 },
+			);
+		}
 		const store = await getStore();
-		return NextResponse.json({ roots: await store.listNamespaceRoots(userId) });
+		return NextResponse.json({
+			tenantId,
+			roots: await store.listNamespaceRoots(tenantId),
+		});
 	} catch (error) {
 		return errorResponse(error);
 	}
@@ -19,13 +33,17 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
 	try {
-		const { userId } = await requireUserContext();
-		const normalized = await parseRoot(req);
-		if (normalized instanceof NextResponse) return normalized;
+		const { actorUserId } = await requireUserContext();
+		requireSuperAdmin(actorUserId);
+		const parsed = await parseBody(req);
+		if (parsed instanceof NextResponse) return parsed;
 		const store = await getStore();
-		await store.addNamespaceRoot(userId, normalized);
+		await store.addNamespaceRoot(parsed.tenantId, parsed.root);
 		return NextResponse.json(
-			{ roots: await store.listNamespaceRoots(userId) },
+			{
+				tenantId: parsed.tenantId,
+				roots: await store.listNamespaceRoots(parsed.tenantId),
+			},
 			{ status: 201 },
 		);
 	} catch (error) {
@@ -35,21 +53,38 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
 	try {
-		const { userId } = await requireUserContext();
-		const normalized = await parseRoot(req);
-		if (normalized instanceof NextResponse) return normalized;
+		const { actorUserId } = await requireUserContext();
+		requireSuperAdmin(actorUserId);
+		const parsed = await parseBody(req);
+		if (parsed instanceof NextResponse) return parsed;
 		const store = await getStore();
-		await store.removeNamespaceRoot(userId, normalized);
-		return NextResponse.json({ roots: await store.listNamespaceRoots(userId) });
+		await store.removeNamespaceRoot(parsed.tenantId, parsed.root);
+		return NextResponse.json({
+			tenantId: parsed.tenantId,
+			roots: await store.listNamespaceRoots(parsed.tenantId),
+		});
 	} catch (error) {
 		return errorResponse(error);
 	}
 }
 
-/** Parse + validate `{ root }`. Returns a 400 NextResponse on bad input. */
-async function parseRoot(req: NextRequest): Promise<string | NextResponse> {
-	const body = (await req.json().catch(() => ({}))) as { root?: unknown };
+/** Parse + validate `{ tenantId, root }`. Returns a 400 NextResponse on bad input. */
+async function parseBody(
+	req: NextRequest,
+): Promise<{ tenantId: string; root: string } | NextResponse> {
+	const body = (await req.json().catch(() => ({}))) as {
+		tenantId?: unknown;
+		root?: unknown;
+	};
+	const tenantId =
+		typeof body.tenantId === "string" ? body.tenantId.trim() : "";
 	const raw = typeof body.root === "string" ? body.root.trim() : "";
+	if (!tenantId) {
+		return NextResponse.json(
+			{ error: "Missing required field: tenantId (string)" },
+			{ status: 400 },
+		);
+	}
 	if (!raw) {
 		return NextResponse.json(
 			{ error: "Missing required field: root (string)" },
@@ -57,7 +92,7 @@ async function parseRoot(req: NextRequest): Promise<string | NextResponse> {
 		);
 	}
 	try {
-		return normalizeNamespaceGrant(raw);
+		return { tenantId, root: normalizeNamespaceGrant(raw) };
 	} catch {
 		return NextResponse.json(
 			{ error: `Invalid namespace root: ${raw}` },
@@ -67,7 +102,7 @@ async function parseRoot(req: NextRequest): Promise<string | NextResponse> {
 }
 
 function errorResponse(error: unknown) {
-	if (error instanceof AuthRequiredError) {
+	if (error instanceof AuthRequiredError || error instanceof ForbiddenError) {
 		return NextResponse.json(
 			{ error: error.message },
 			{ status: error.status },

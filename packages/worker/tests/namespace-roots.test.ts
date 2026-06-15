@@ -118,4 +118,116 @@ describe("namespace-root bounding", () => {
 		expect(await memrez.store.getEntry("m_t1")).toBeNull();
 		expect(await memrez.store.getEntry("m_t2")).not.toBeNull();
 	});
+
+	// Regression: a tenant rooted at a NESTED namespace must not read entries at
+	// the parent scope via memrez's default ancestor expansion.
+	it("does not leak ancestor scopes above a nested root on reads", async () => {
+		const store = new MemoryStore();
+		const memrez = createMemrez();
+		const now = new Date().toISOString();
+		const put = (id: string, scope: string) =>
+			memrez.store.putEntry({
+				id,
+				scope,
+				content: id,
+				topics: ["t"],
+				type: "fact",
+				status: "active",
+				createdAt: now,
+				updatedAt: now,
+			});
+		await put("m_parent", "acme"); // ABOVE the root — must stay hidden
+		await put("m_team", "acme/team/1"); // within the root
+		const app = createWorkerAPI({
+			store,
+			internalSecret: SECRET,
+			memrez,
+			resources: { memory: memrez.provider() },
+		});
+		const { rawKey } = await store.createApiKey({
+			userId: "acme-t",
+			name: "k",
+		});
+		await store.addNamespaceRoot("acme-t", "acme/team");
+
+		const res = await app.request("/memory/entries?grants=acme/team/1", {
+			headers: bearer(rawKey),
+		});
+		expect(res.status).toBe(200);
+		const got = (
+			(await res.json()) as { entries: { id: string }[] }
+		).entries.map((e) => e.id);
+		expect(got).toEqual(["m_team"]); // m_parent@acme NOT leaked
+	});
+
+	it("bounds /memory/import writes to the tenant's roots", async () => {
+		const { store, memrez, app } = await setup();
+		const { rawKey } = await store.createApiKey({ userId: "t1", name: "k" });
+		await store.addNamespaceRoot("t1", "t1");
+
+		const ts = new Date().toISOString();
+		const base = {
+			id: "imp_1",
+			content: "x",
+			topics: ["t"],
+			type: "fact",
+			status: "active",
+			createdAt: ts,
+			updatedAt: ts,
+		};
+
+		// Importing into another tenant's namespace is rejected; nothing is written.
+		const bad = await app.request("/memory/import", {
+			method: "POST",
+			headers: bearer(rawKey),
+			body: JSON.stringify({ entries: [{ ...base, scope: "t2/user/9" }] }),
+		});
+		expect(bad.status).toBe(400);
+		expect(await memrez.store.getEntry("imp_1")).toBeNull();
+
+		// Importing within the tenant's root succeeds.
+		const ok = await app.request("/memory/import", {
+			method: "POST",
+			headers: bearer(rawKey),
+			body: JSON.stringify({ entries: [{ ...base, scope: "t1/user/9" }] }),
+		});
+		expect(ok.status).toBe(200);
+		expect(await memrez.store.getEntry("imp_1")).not.toBeNull();
+
+		// A tenant cannot overwrite (by id) an entry whose existing scope is outside
+		// its roots, even if the new scope is within them.
+		const clobber = await app.request("/memory/import", {
+			method: "POST",
+			headers: bearer(rawKey),
+			body: JSON.stringify({
+				entries: [{ ...base, id: "m_t2", scope: "t1/x" }],
+			}),
+		});
+		expect(clobber.status).toBe(400);
+		expect((await memrez.store.getEntry("m_t2"))?.scope).toBe("t2/user/1");
+	});
+
+	it("rejects import from a tenant with no registered roots (403)", async () => {
+		const { app, store } = await setup();
+		const { rawKey } = await store.createApiKey({ userId: "t9", name: "k" });
+		const res = await app.request("/memory/import", {
+			method: "POST",
+			headers: bearer(rawKey),
+			body: JSON.stringify({
+				entries: [
+					{
+						id: "x",
+						scope: "t9/a",
+						content: "x",
+						topics: ["t"],
+						type: "fact",
+						status: "active",
+						createdAt: new Date().toISOString(),
+						updatedAt: new Date().toISOString(),
+					},
+				],
+			}),
+		});
+		expect(res.status).toBe(403);
+	});
 });

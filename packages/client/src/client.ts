@@ -297,7 +297,12 @@ export class MemoryResource {
 		return (await res.json()) as MemoryScanResult;
 	}
 
-	/** Entries for one or more topics visible to `grants`. */
+	/**
+	 * Entries for one or more topics visible to `grants`. Note: unlike the SDK's
+	 * per-topic `read`, `limit` here caps the TOTAL entries across all topics
+	 * (hosted `/memory/entries` semantics), and an omitted limit is clamped to the
+	 * worker default (200).
+	 */
 	async read(
 		grants: string[],
 		topic: string | string[],
@@ -397,10 +402,12 @@ export class MemoryResource {
 	}
 
 	/**
-	 * Erase a namespace scope across every resource (memrez now, RAG later);
-	 * recursive (whole subtree) by default. The worker bounds `prefix` to the API
-	 * key's registered roots — `grants` is advisory on the hosted path (sent for
-	 * signature parity with `@agntz/sdk`; authorization is by registered roots).
+	 * Erase a namespace scope across every resource (memrez now, RAG later).
+	 * `recursive` defaults to **false** (single scope), matching `@agntz/sdk`'s
+	 * `deleteScope` — pass `{ recursive: true }` to erase the whole subtree. The
+	 * worker bounds `prefix` to the API key's registered roots; `grants` is
+	 * advisory on the hosted path (sent for signature parity with the SDK;
+	 * authorization is by registered roots).
 	 */
 	async deleteScope(
 		grants: string[],
@@ -413,11 +420,9 @@ export class MemoryResource {
 			path: "/scopes/delete",
 			method: "POST",
 			apiKey: this.client._apiKey,
-			body: {
-				scope: prefix,
-				grants,
-				...(opts.recursive !== undefined ? { recursive: opts.recursive } : {}),
-			},
+			// Always send an explicit boolean so the worker's recursive-by-default
+			// can't silently turn a single-scope delete into a subtree wipe.
+			body: { scope: prefix, grants, recursive: opts.recursive ?? false },
 			signal,
 			fetchImpl: this.client._fetchImpl,
 		});

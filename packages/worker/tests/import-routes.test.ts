@@ -92,7 +92,9 @@ describe("POST /sessions/import", () => {
 
 describe("POST /memory/import", () => {
 	it("upserts memory entries into the configured memrez store", async () => {
-		const { app, memrez, auth } = await makeApp();
+		const { app, memrez, store, auth } = await makeApp();
+		// Import is bounded to the tenant's roots; register the one this entry uses.
+		await store.addNamespaceRoot("u1", "user:u1");
 		const entry = {
 			id: "mem_1",
 			scope: "user:u1",
