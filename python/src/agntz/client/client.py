@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator, Mapping
+from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from typing import Any
 from urllib.parse import quote, urlencode
 
@@ -21,9 +21,15 @@ from .models import (
     EvalRunListResult,
     Event,
     HealthResult,
+    MemoryCurateResult,
+    MemoryDeleteEntryResult,
+    MemoryEntriesPage,
+    MemoryEntry,
+    MemoryScanResult,
     Run,
     RunListResult,
     RunResult,
+    ScopeDeleteResult,
     TraceDetail,
     TracesListResult,
 )
@@ -53,6 +59,7 @@ class AgntzClient:
         self.evals = EvalsResource(self)
         self.runs = RunsResource(self)
         self.traces = TracesResource(self)
+        self.memory = MemoryResource(self)
 
     def close(self) -> None:
         if self._owns_client:
@@ -135,6 +142,7 @@ class AsyncAgntzClient:
         self.evals = AsyncEvalsResource(self)
         self.runs = AsyncRunsResource(self)
         self.traces = AsyncTracesResource(self)
+        self.memory = AsyncMemoryResource(self)
 
     async def aclose(self) -> None:
         if self._owns_client:
@@ -985,6 +993,237 @@ class AsyncTracesResource:
                 yield event
                 if event.type in {"snapshot", "trace-done"}:
                     return
+
+
+class MemoryResource:
+    """Memory admin + scope-delete over the hosted worker (bounded to the tenant's roots)."""
+
+    def __init__(self, client: AgntzClient) -> None:
+        self._client = client
+
+    def scan(self, grants: Sequence[str]) -> MemoryScanResult:
+        path = _with_query("/memory/topics", {"grants": _csv(grants)})
+        response = self._client._request("GET", path)
+        return MemoryScanResult.model_validate(response.json())
+
+    def read(
+        self,
+        grants: Sequence[str],
+        topic: str | Sequence[str],
+        *,
+        limit: int | None = None,
+    ) -> list[MemoryEntry]:
+        topics = [topic] if isinstance(topic, str) else list(topic)
+        return self._list_page(grants, topics=topics, limit=limit).entries
+
+    def list(
+        self,
+        grants: Sequence[str],
+        *,
+        topics: Sequence[str] | None = None,
+        include_superseded: bool = False,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[MemoryEntry]:
+        return self._list_page(
+            grants,
+            topics=topics,
+            include_superseded=include_superseded,
+            limit=limit,
+            offset=offset,
+        ).entries
+
+    def _list_page(
+        self,
+        grants: Sequence[str],
+        *,
+        topics: Sequence[str] | None = None,
+        include_superseded: bool = False,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> MemoryEntriesPage:
+        response = self._client._request("GET", _entries_path(
+            grants, topics, include_superseded, limit, offset
+        ))
+        return MemoryEntriesPage.model_validate(response.json())
+
+    def delete_entry(self, grants: Sequence[str], entry_id: str) -> MemoryDeleteEntryResult:
+        path = _with_query(f"/memory/entries/{_q(entry_id)}", {"grants": _csv(grants)})
+        response = self._client._request("DELETE", path)
+        return MemoryDeleteEntryResult.model_validate(response.json())
+
+    def correct(
+        self,
+        grants: Sequence[str],
+        entry_id: str,
+        content: str,
+    ) -> dict[str, MemoryEntry]:
+        response = self._client._request(
+            "POST",
+            f"/memory/entries/{_q(entry_id)}/correct",
+            json_body={"grants": list(grants), "content": content},
+        )
+        return {"entry": MemoryEntry.model_validate(response.json()["entry"])}
+
+    def curate(
+        self,
+        grants: Sequence[str],
+        *,
+        topics: Sequence[str] | None = None,
+    ) -> MemoryCurateResult:
+        response = self._client._request(
+            "POST", "/memory/curate", json_body=_curate_body(grants, topics)
+        )
+        return MemoryCurateResult.model_validate(response.json())
+
+    def delete_scope(
+        self,
+        grants: Sequence[str],
+        prefix: str,
+        *,
+        recursive: bool | None = None,
+    ) -> ScopeDeleteResult:
+        response = self._client._request(
+            "POST", "/scopes/delete", json_body=_scope_delete_body(grants, prefix, recursive)
+        )
+        return ScopeDeleteResult.model_validate(response.json())
+
+
+class AsyncMemoryResource:
+    """Async counterpart to :class:`MemoryResource`."""
+
+    def __init__(self, client: AsyncAgntzClient) -> None:
+        self._client = client
+
+    async def scan(self, grants: Sequence[str]) -> MemoryScanResult:
+        path = _with_query("/memory/topics", {"grants": _csv(grants)})
+        response = await self._client._request("GET", path)
+        return MemoryScanResult.model_validate(response.json())
+
+    async def read(
+        self,
+        grants: Sequence[str],
+        topic: str | Sequence[str],
+        *,
+        limit: int | None = None,
+    ) -> list[MemoryEntry]:
+        topics = [topic] if isinstance(topic, str) else list(topic)
+        page = await self._list_page(grants, topics=topics, limit=limit)
+        return page.entries
+
+    async def list(
+        self,
+        grants: Sequence[str],
+        *,
+        topics: Sequence[str] | None = None,
+        include_superseded: bool = False,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[MemoryEntry]:
+        page = await self._list_page(
+            grants,
+            topics=topics,
+            include_superseded=include_superseded,
+            limit=limit,
+            offset=offset,
+        )
+        return page.entries
+
+    async def _list_page(
+        self,
+        grants: Sequence[str],
+        *,
+        topics: Sequence[str] | None = None,
+        include_superseded: bool = False,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> MemoryEntriesPage:
+        response = await self._client._request("GET", _entries_path(
+            grants, topics, include_superseded, limit, offset
+        ))
+        return MemoryEntriesPage.model_validate(response.json())
+
+    async def delete_entry(self, grants: Sequence[str], entry_id: str) -> MemoryDeleteEntryResult:
+        path = _with_query(f"/memory/entries/{_q(entry_id)}", {"grants": _csv(grants)})
+        response = await self._client._request("DELETE", path)
+        return MemoryDeleteEntryResult.model_validate(response.json())
+
+    async def correct(
+        self,
+        grants: Sequence[str],
+        entry_id: str,
+        content: str,
+    ) -> dict[str, MemoryEntry]:
+        response = await self._client._request(
+            "POST",
+            f"/memory/entries/{_q(entry_id)}/correct",
+            json_body={"grants": list(grants), "content": content},
+        )
+        return {"entry": MemoryEntry.model_validate(response.json()["entry"])}
+
+    async def curate(
+        self,
+        grants: Sequence[str],
+        *,
+        topics: Sequence[str] | None = None,
+    ) -> MemoryCurateResult:
+        response = await self._client._request(
+            "POST", "/memory/curate", json_body=_curate_body(grants, topics)
+        )
+        return MemoryCurateResult.model_validate(response.json())
+
+    async def delete_scope(
+        self,
+        grants: Sequence[str],
+        prefix: str,
+        *,
+        recursive: bool | None = None,
+    ) -> ScopeDeleteResult:
+        response = await self._client._request(
+            "POST", "/scopes/delete", json_body=_scope_delete_body(grants, prefix, recursive)
+        )
+        return ScopeDeleteResult.model_validate(response.json())
+
+
+def _csv(values: Sequence[str]) -> str:
+    return ",".join(values)
+
+
+def _entries_path(
+    grants: Sequence[str],
+    topics: Sequence[str] | None,
+    include_superseded: bool,
+    limit: int | None,
+    offset: int | None,
+) -> str:
+    return _with_query(
+        "/memory/entries",
+        {
+            "grants": _csv(grants),
+            "topics": _csv(topics) if topics else None,
+            "includeSuperseded": True if include_superseded else None,
+            "limit": limit,
+            "offset": offset,
+        },
+    )
+
+
+def _curate_body(grants: Sequence[str], topics: Sequence[str] | None) -> dict[str, Any]:
+    body: dict[str, Any] = {"grants": list(grants)}
+    if topics is not None:
+        body["topics"] = list(topics)
+    return body
+
+
+def _scope_delete_body(
+    grants: Sequence[str],
+    prefix: str,
+    recursive: bool | None,
+) -> dict[str, Any]:
+    body: dict[str, Any] = {"scope": prefix, "grants": list(grants)}
+    if recursive is not None:
+        body["recursive"] = recursive
+    return body
 
 
 def _run_body(

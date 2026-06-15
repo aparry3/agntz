@@ -62,6 +62,13 @@ class ResourceProvider(Protocol):
 
     def get_context(self, ctx: ResourceToolContext) -> str | None | Awaitable[str | None]: ...
 
+    # Optional capability (mirrors the optional `purgeScope?` on the TS ResourceProvider):
+    # providers MAY implement
+    #     purge_scope(self, grant: str, *, recursive: bool = True) -> dict[str, int]
+    # returning {"deleted": int} so they can participate in `deleteScope` cascades. It is
+    # intentionally NOT a required Protocol member; callers probe it dynamically via
+    # getattr(provider, "purge_scope", None).
+
 
 @dataclass(frozen=True)
 class ResolvedResource:

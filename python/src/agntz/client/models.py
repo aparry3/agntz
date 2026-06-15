@@ -305,3 +305,66 @@ class EvalLatestScore(AgntzModel):
     started_at: str = Field(alias="startedAt")
     ended_at: str | None = Field(default=None, alias="endedAt")
     updated_at: str = Field(alias="updatedAt")
+
+
+class MemorySource(AgntzModel):
+    agent_id: str | None = Field(default=None, alias="agentId")
+    session_id: str | None = Field(default=None, alias="sessionId")
+    run_id: str | None = Field(default=None, alias="runId")
+
+
+class MemoryEntry(AgntzModel):
+    id: str
+    scope: str
+    content: str
+    topics: list[str] = Field(default_factory=list)
+    type: str
+    status: str
+    created_at: str = Field(alias="createdAt")
+    updated_at: str = Field(alias="updatedAt")
+    source: MemorySource | None = None
+    superseded_by: str | None = Field(default=None, alias="supersededBy")
+
+
+class MemoryTopicSummary(AgntzModel):
+    topic: str
+    count: int
+    blurb: str | None = None
+    last_updated_at: str = Field(alias="lastUpdatedAt")
+    has_uncurated_writes: bool = Field(alias="hasUncuratedWrites")
+
+
+class MemoryScanResult(AgntzModel):
+    grants: list[str] = Field(default_factory=list)
+    topics: list[MemoryTopicSummary] = Field(default_factory=list)
+
+
+class MemoryEntriesPage(AgntzModel):
+    entries: list[MemoryEntry] = Field(default_factory=list)
+    total: int
+    limit: int
+    offset: int
+
+
+class MemoryDeleteEntryResult(AgntzModel):
+    deleted: bool
+    id: str
+
+
+class MemoryCurateReport(AgntzModel):
+    scanned: int
+    superseded: int
+    created: int
+    blurbs_updated: int = Field(alias="blurbsUpdated")
+
+
+class MemoryCurateResult(AgntzModel):
+    curate_enabled: bool = Field(alias="curateEnabled")
+    report: MemoryCurateReport
+
+
+class ScopeDeleteResult(AgntzModel):
+    scope: str
+    recursive: bool
+    total: int
+    by_resource: dict[str, int] = Field(default_factory=dict, alias="byResource")

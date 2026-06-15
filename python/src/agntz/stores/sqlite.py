@@ -20,6 +20,7 @@ from agntz.client.models import (
     EvalRun,
     EvalRunListResult,
 )
+from agntz.context import normalize_namespace_grant
 from agntz.evals import list_eval_runs_in_process
 
 from .memory import (
@@ -876,6 +877,40 @@ class SQLiteStore:
     def resolveApiKey(self, raw_key: str) -> dict[str, str] | None:
         return self.resolve_api_key(raw_key)
 
+    def list_namespace_roots(self, user_id: str) -> list[str]:
+        rows = self._conn.execute(
+            "SELECT namespace_root FROM tenant_namespace_roots "
+            "WHERE user_id = ? ORDER BY namespace_root ASC",
+            (user_id,),
+        ).fetchall()
+        return [str(row["namespace_root"]) for row in rows]
+
+    def listNamespaceRoots(self, user_id: str) -> list[str]:
+        return self.list_namespace_roots(user_id)
+
+    def add_namespace_root(self, user_id: str, root: str) -> None:
+        normalized = normalize_namespace_grant(root)
+        self._conn.execute(
+            "INSERT OR IGNORE INTO tenant_namespace_roots (user_id, namespace_root) "
+            "VALUES (?, ?)",
+            (user_id, normalized),
+        )
+        self._conn.commit()
+
+    def addNamespaceRoot(self, user_id: str, root: str) -> None:
+        self.add_namespace_root(user_id, root)
+
+    def remove_namespace_root(self, user_id: str, root: str) -> None:
+        normalized = normalize_namespace_grant(root)
+        self._conn.execute(
+            "DELETE FROM tenant_namespace_roots WHERE user_id = ? AND namespace_root = ?",
+            (user_id, normalized),
+        )
+        self._conn.commit()
+
+    def removeNamespaceRoot(self, user_id: str, root: str) -> None:
+        self.remove_namespace_root(user_id, root)
+
     def _migrate(self) -> None:
         self._conn.execute(
             """
@@ -1088,6 +1123,20 @@ class SQLiteStore:
         )
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id)"
+        )
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tenant_namespace_roots (
+              user_id        TEXT NOT NULL,
+              namespace_root TEXT NOT NULL,
+              created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+              PRIMARY KEY (user_id, namespace_root)
+            )
+            """
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tenant_namespace_roots_user "
+            "ON tenant_namespace_roots(user_id)"
         )
         self._conn.commit()
 

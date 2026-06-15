@@ -18,6 +18,7 @@ from agntz.client.models import (
     EvalRun,
     EvalRunListResult,
 )
+from agntz.context import normalize_namespace_grant
 from agntz.evals import list_eval_runs_in_process
 
 DEFAULT_USER_ID = "__default__"
@@ -169,6 +170,7 @@ class _MemoryBackend:
     eval_latest_scores: dict[str, EvalLatestScore]
     api_keys: dict[str, _ApiKeyRow]
     api_key_by_hash: dict[str, _ApiKeyRow]
+    namespace_roots: dict[str, set[str]]
 
 
 def _create_backend() -> _MemoryBackend:
@@ -186,6 +188,7 @@ def _create_backend() -> _MemoryBackend:
         eval_latest_scores={},
         api_keys={},
         api_key_by_hash={},
+        namespace_roots={},
     )
 
 
@@ -659,6 +662,28 @@ class MemoryStore:
 
     def resolveApiKey(self, raw_key: str) -> dict[str, str] | None:
         return self.resolve_api_key(raw_key)
+
+    def list_namespace_roots(self, user_id: str) -> list[str]:
+        return sorted(self._backend.namespace_roots.get(user_id, set()))
+
+    def listNamespaceRoots(self, user_id: str) -> list[str]:
+        return self.list_namespace_roots(user_id)
+
+    def add_namespace_root(self, user_id: str, root: str) -> None:
+        normalized = normalize_namespace_grant(root)
+        self._backend.namespace_roots.setdefault(user_id, set()).add(normalized)
+
+    def addNamespaceRoot(self, user_id: str, root: str) -> None:
+        self.add_namespace_root(user_id, root)
+
+    def remove_namespace_root(self, user_id: str, root: str) -> None:
+        normalized = normalize_namespace_grant(root)
+        roots = self._backend.namespace_roots.get(user_id)
+        if roots is not None:
+            roots.discard(normalized)
+
+    def removeNamespaceRoot(self, user_id: str, root: str) -> None:
+        self.remove_namespace_root(user_id, root)
 
     def put_trace_span(self, span: LocalTraceSpanRecord) -> None:
         self._backend.trace_spans.setdefault(self._key(span.trace_id), []).append(span)

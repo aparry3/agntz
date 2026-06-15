@@ -257,6 +257,45 @@ class PostgresMemoryStore:
             for row in rows
         ]
 
+    def list_entries(self, *, include_superseded: bool = False) -> list[MemoryEntry]:
+        where = "" if include_superseded else "WHERE status = 'active'"
+        rows = self._conn.execute(
+            f"SELECT * FROM {self._table('entries')} {where} ORDER BY updated_at DESC"
+        ).fetchall()
+        return [self._row_to_entry(row) for row in rows]
+
+    def delete_entry(self, entry_id: str) -> bool:
+        cursor = self._conn.execute(
+            f"DELETE FROM {self._table('entries')} WHERE id = %s",
+            (entry_id,),
+        )
+        return cursor.rowcount > 0
+
+    def delete_scope(self, scope_prefix: str, *, recursive: bool = False) -> dict[str, int]:
+        with self._conn.transaction():
+            if recursive:
+                like = f"{_escape_like(scope_prefix)}/%"
+                entries = self._conn.execute(
+                    f"DELETE FROM {self._table('entries')} "
+                    "WHERE scope = %s OR scope LIKE %s ESCAPE '\\'",
+                    (scope_prefix, like),
+                ).rowcount
+                topic_meta = self._conn.execute(
+                    f"DELETE FROM {self._table('topic_meta')} "
+                    "WHERE scope = %s OR scope LIKE %s ESCAPE '\\'",
+                    (scope_prefix, like),
+                ).rowcount
+            else:
+                entries = self._conn.execute(
+                    f"DELETE FROM {self._table('entries')} WHERE scope = %s",
+                    (scope_prefix,),
+                ).rowcount
+                topic_meta = self._conn.execute(
+                    f"DELETE FROM {self._table('topic_meta')} WHERE scope = %s",
+                    (scope_prefix,),
+                ).rowcount
+        return {"entries": entries, "topic_meta": topic_meta}
+
     def _migrate(self) -> None:
         self._conn.execute(
             f"""
@@ -417,6 +456,10 @@ def _normalize_table_prefix(prefix: str) -> str:
 def _quote_identifier(identifier: str) -> str:
     escaped = identifier.replace('"', '""')
     return f'"{escaped}"'
+
+
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _parse_source(raw: Any) -> Source | None:

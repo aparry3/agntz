@@ -72,7 +72,7 @@ from .memrez_postgres import PostgresMemoryStore, PostgresMemoryStoreOptions
 from .memrez_provider import MemoryResourceProvider, create_memory_resource_provider
 from .memrez_reasoner import AgntzReasoner, agntz_reasoner, memrez_agents_path
 from .memrez_sqlite import SqliteMemoryStore, SqliteMemoryStoreOptions
-from .sdk import LocalClient, agntz
+from .sdk import LocalClient, LocalMemoryResource, agntz
 from .stores import (
     LocalMessageRecord,
     LocalSessionSummary,
@@ -111,6 +111,7 @@ __all__ = [
     "LiteLLMModelProvider",
     "LiteLLMReasonerModelProvider",
     "LocalClient",
+    "LocalMemoryResource",
     "LocalMessageRecord",
     "LocalSessionSummary",
     "LocalTraceSpanRecord",

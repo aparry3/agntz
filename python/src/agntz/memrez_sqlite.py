@@ -245,6 +245,44 @@ class SqliteMemoryStore:
             for row in rows
         ]
 
+    def list_entries(self, *, include_superseded: bool = False) -> list[MemoryEntry]:
+        where = "" if include_superseded else "WHERE status = 'active'"
+        rows = self._conn.execute(
+            f"SELECT * FROM memrez_entries {where} ORDER BY updated_at DESC"
+        ).fetchall()
+        return [self._row_to_entry(row) for row in rows]
+
+    def delete_entry(self, entry_id: str) -> bool:
+        with self._conn:
+            cursor = self._conn.execute(
+                "DELETE FROM memrez_entries WHERE id = ?",
+                (entry_id,),
+            )
+        return cursor.rowcount > 0
+
+    def delete_scope(self, scope_prefix: str, *, recursive: bool = False) -> dict[str, int]:
+        with self._conn:
+            if recursive:
+                like = f"{_escape_like(scope_prefix)}/%"
+                entries = self._conn.execute(
+                    "DELETE FROM memrez_entries WHERE scope = ? OR scope LIKE ? ESCAPE '\\'",
+                    (scope_prefix, like),
+                ).rowcount
+                topic_meta = self._conn.execute(
+                    "DELETE FROM memrez_topic_meta WHERE scope = ? OR scope LIKE ? ESCAPE '\\'",
+                    (scope_prefix, like),
+                ).rowcount
+            else:
+                entries = self._conn.execute(
+                    "DELETE FROM memrez_entries WHERE scope = ?",
+                    (scope_prefix,),
+                ).rowcount
+                topic_meta = self._conn.execute(
+                    "DELETE FROM memrez_topic_meta WHERE scope = ?",
+                    (scope_prefix,),
+                ).rowcount
+        return {"entries": entries, "topic_meta": topic_meta}
+
     def _migrate(self) -> None:
         self._conn.executescript(
             """
@@ -353,6 +391,10 @@ class SqliteMemoryStore:
 
 def _placeholders(values: Sequence[Any]) -> str:
     return ",".join("?" for _ in values)
+
+
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _parse_source(raw: str) -> Source:

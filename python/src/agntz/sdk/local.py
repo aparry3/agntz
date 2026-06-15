@@ -7,7 +7,7 @@ import hashlib
 import inspect
 import json
 import time
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -74,6 +74,7 @@ from agntz.manifest.types import (
 from agntz.manifest.types import (
     ModelConfig as ManifestModelConfig,
 )
+from agntz.memrez import MemoryEntry, Memrez
 from agntz.stores import (
     LocalMessageRecord,
     LocalRunRecord,
@@ -103,6 +104,7 @@ class LocalClient:
         resources: Mapping[str, ResourceProvider] | None = None,
         namespace_policy: NamespaceGrantPolicyLike = None,
         store: RunStore | None = None,
+        memrez: Memrez | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self.manifests = manifests
@@ -112,12 +114,18 @@ class LocalClient:
         self.model_provider = model_provider or MissingModelProvider()
         self.store: Any = store or MemoryStore()
         self.http_client = http_client
+        self.memrez = memrez
+        # Auto-wire memrez as the "memory" resource so agent runs can use it, mirroring
+        # how @agntz/sdk registers memrez.provider() when a memrez handle is supplied.
+        if memrez is not None and "memory" not in self.resource_providers:
+            self.resource_providers["memory"] = memrez.provider()
         self.agents = LocalAgentsResource(self)
         self.datasets = LocalDatasetsResource(self)
         self.evals = LocalEvalsResource(self)
         self.runs = LocalRunsResource(self)
         self.sessions = LocalSessionsResource(self)
         self.traces = LocalTracesResource(self)
+        self.memory = LocalMemoryResource(memrez) if memrez is not None else None
 
     async def _execute(
         self,
@@ -704,6 +712,89 @@ class LocalSessionsResource:
 
     def delete(self, session_id: str) -> None:
         self._client.store.delete_session(session_id)
+
+
+class LocalMemoryResource:
+    """Admin surface over an embedded ``Memrez``, mirroring ``@agntz/sdk``'s memory resource."""
+
+    def __init__(self, memrez: Memrez) -> None:
+        self._memrez = memrez
+
+    def scan(
+        self,
+        grants: Sequence[str],
+        *,
+        include_ancestors: bool = True,
+        topic_limit: int | None = None,
+    ) -> dict[str, Any]:
+        return self._memrez.scan(
+            grants,
+            include_ancestors=include_ancestors,
+            topic_limit=topic_limit,
+        )
+
+    def read(
+        self,
+        grants: Sequence[str],
+        topic: str | Sequence[str],
+        *,
+        include_ancestors: bool = True,
+        limit: int | None = None,
+    ) -> list[MemoryEntry]:
+        return self._memrez.read(
+            grants,
+            topic,
+            include_ancestors=include_ancestors,
+            limit=limit,
+        )
+
+    def list(
+        self,
+        grants: Sequence[str],
+        *,
+        topics: Sequence[str] | None = None,
+        include_superseded: bool = False,
+        include_ancestors: bool = True,
+    ) -> list[MemoryEntry]:
+        return self._memrez.list(
+            grants,
+            topics=topics,
+            include_superseded=include_superseded,
+            include_ancestors=include_ancestors,
+        )
+
+    def delete_entry(self, grants: Sequence[str], entry_id: str) -> dict[str, Any]:
+        return self._memrez.delete_entry(grants, entry_id)
+
+    def delete_scope(
+        self,
+        grants: Sequence[str],
+        prefix: str,
+        *,
+        recursive: bool = False,
+    ) -> dict[str, Any]:
+        return self._memrez.delete_scope(grants, prefix, recursive=recursive)
+
+    def curate(
+        self,
+        grants: Sequence[str],
+        *,
+        topics: Sequence[str] | None = None,
+        include_descendants: bool = False,
+    ) -> dict[str, int]:
+        return self._memrez.curate(
+            grants,
+            topics=topics,
+            include_descendants=include_descendants,
+        )
+
+    def correct(
+        self,
+        grants: Sequence[str],
+        entry_id: str,
+        new_content: str,
+    ) -> dict[str, MemoryEntry]:
+        return self._memrez.correct(grants, entry_id, new_content)
 
 
 class LocalTracesResource:
@@ -1330,6 +1421,7 @@ def agntz(
     namespace_policy: NamespaceGrantPolicyLike = None,
     model_provider: ModelProvider | None = None,
     store: RunStore | None = None,
+    memrez: Memrez | None = None,
     http_client: httpx.AsyncClient | None = None,
 ) -> LocalClient:
     loaded = _load_manifests_with_sources(agents)
@@ -1344,6 +1436,7 @@ def agntz(
         namespace_policy=namespace_policy,
         model_provider=model_provider,
         store=resolved_store,
+        memrez=memrez,
         http_client=http_client,
     )
 

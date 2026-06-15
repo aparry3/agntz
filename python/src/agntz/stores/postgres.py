@@ -18,6 +18,7 @@ from agntz.client.models import (
     EvalRun,
     EvalRunListResult,
 )
+from agntz.context import normalize_namespace_grant
 from agntz.evals import list_eval_runs_in_process
 
 from .memory import (
@@ -911,6 +912,48 @@ class PostgresStore:
     def resolveApiKey(self, raw_key: str) -> dict[str, str] | None:
         return self.resolve_api_key(raw_key)
 
+    def list_namespace_roots(self, user_id: str) -> list[str]:
+        rows = self._conn.execute(
+            f"""
+            SELECT namespace_root
+            FROM {self._table("tenant_namespace_roots")}
+            WHERE user_id = %s
+            ORDER BY namespace_root ASC
+            """,
+            (user_id,),
+        ).fetchall()
+        return [str(row[0]) for row in rows]
+
+    def listNamespaceRoots(self, user_id: str) -> list[str]:
+        return self.list_namespace_roots(user_id)
+
+    def add_namespace_root(self, user_id: str, root: str) -> None:
+        normalized = normalize_namespace_grant(root)
+        self._conn.execute(
+            f"""
+            INSERT INTO {self._table("tenant_namespace_roots")} (user_id, namespace_root)
+            VALUES (%s, %s)
+            ON CONFLICT (user_id, namespace_root) DO NOTHING
+            """,
+            (user_id, normalized),
+        )
+
+    def addNamespaceRoot(self, user_id: str, root: str) -> None:
+        self.add_namespace_root(user_id, root)
+
+    def remove_namespace_root(self, user_id: str, root: str) -> None:
+        normalized = normalize_namespace_grant(root)
+        self._conn.execute(
+            f"""
+            DELETE FROM {self._table("tenant_namespace_roots")}
+            WHERE user_id = %s AND namespace_root = %s
+            """,
+            (user_id, normalized),
+        )
+
+    def removeNamespaceRoot(self, user_id: str, root: str) -> None:
+        self.remove_namespace_root(user_id, root)
+
     def _migrate(self) -> None:
         jsonb = "JSONB"
         for statement in [
@@ -1093,6 +1136,18 @@ class PostgresStore:
               last_used_at TIMESTAMPTZ,
               revoked_at TIMESTAMPTZ
             )
+            """,
+            f"""
+            CREATE TABLE IF NOT EXISTS {self._table("tenant_namespace_roots")} (
+              user_id        TEXT NOT NULL,
+              namespace_root TEXT NOT NULL,
+              created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              PRIMARY KEY (user_id, namespace_root)
+            )
+            """,
+            f"""
+            CREATE INDEX IF NOT EXISTS {self._table("tenant_namespace_roots_user_idx")}
+              ON {self._table("tenant_namespace_roots")}(user_id)
             """,
         ]:
             self._conn.execute(statement)

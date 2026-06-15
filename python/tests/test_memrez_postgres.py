@@ -139,3 +139,35 @@ def test_postgres_memory_store_persists_supersede_and_topic_meta() -> None:
         assert store.list_dirty_topics() == []
     finally:
         store.close()
+
+
+def test_postgres_memory_store_delete_entry_and_scope() -> None:
+    store = PostgresMemoryStore(
+        PostgresMemoryStoreOptions(
+            connection=POSTGRES_URL or "",
+            table_prefix=f"test_{time_ns()}_",
+        )
+    )
+    memrez = create_memrez(store=store, reasoner=DeterministicReasoner())
+    try:
+        alice = memrez.write(["app/team/alice"], "alice", topics_hint=["notes"])["entry"]
+        memrez.write(["app/team/alice/child"], "child", topics_hint=["notes"])
+        memrez.write(["app/team/bob"], "bob", topics_hint=["notes"])
+
+        assert store.delete_entry(alice.id) is True
+        assert store.get_entry(alice.id) is None
+        assert store.delete_entry(alice.id) is False  # idempotent
+
+        # non-recursive leaves the descendant in place
+        assert memrez.delete_scope(["app/team"], "app/team/alice")["deleted"] == 0
+        assert {entry.scope for entry in store.list_entries()} == {
+            "app/team/alice/child",
+            "app/team/bob",
+        }
+
+        # recursive removes the whole subtree
+        result = memrez.delete_scope(["app/team"], "app/team/alice", recursive=True)
+        assert result["deleted"] == 1
+        assert {entry.scope for entry in store.list_entries()} == {"app/team/bob"}
+    finally:
+        store.close()

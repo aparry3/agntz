@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import time
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, NoReturn
 
@@ -14,6 +16,12 @@ from agntz.client.models import (
     EvalDefinition,
     EvalRun,
     EvalRunSnapshots,
+)
+from agntz.context import (
+    NamespaceGrantError,
+    is_same_or_descendant_namespace,
+    narrow_namespace_grants,
+    normalize_namespace_grant,
 )
 from agntz.core import ModelProvider, ResourceProvider, ToolDefinition
 from agntz.core.ids import nanoid
@@ -26,6 +34,14 @@ from agntz.evals import (
 )
 from agntz.evals import (
     cancel_eval_run as cancel_stored_eval_run,
+)
+from agntz.memrez import (
+    MemoryEntry,
+    Memrez,
+    MemrezCorrectionError,
+    MemrezEntryNotFoundError,
+    MemrezScopeError,
+    TopicSummary,
 )
 from agntz.sdk.local import (
     LocalClient,
@@ -45,6 +61,7 @@ def create_app(
     model_provider: ModelProvider | None = None,
     tools: list[ToolDefinition] | None = None,
     resources: Mapping[str, ResourceProvider] | None = None,
+    memrez: Memrez | None = None,
 ) -> Any:
     """Create a FastAPI ASGI app backed by a synchronous Agntz store."""
 
@@ -59,10 +76,17 @@ def create_app(
     globals()["Request"] = Request
 
     backing_store = store or MemoryStore()
+    # Memory lives on the namespace axis, not the per-user axis: a single shared memrez instance
+    # plus the tenant-scoped namespace roots are the ONLY isolation for memory/scope ops. So these
+    # routes use `backing_store` (unscoped) for roots and the shared `memrez` for data — never
+    # `scoped(user_id)`.
+    resolved_resources: dict[str, ResourceProvider] = dict(resources or {})
+    if memrez is not None and "memory" not in resolved_resources:
+        resolved_resources["memory"] = memrez.provider()
     app = FastAPI(title="Agntz Python Server")
     eval_cancelled: set[str] = set()
 
-    async def user_id_from_auth(request: Request) -> str:
+    async def auth_context(request: Request) -> _AuthContext:
         internal = request.headers.get("x-internal-secret")
         if internal and internal == internal_secret:
             body = await _json_body(request)
@@ -72,7 +96,11 @@ def create_app(
                     status_code=400,
                     detail="internal request missing userId in body or X-User-Id header",
                 )
-            return user_id
+            return _AuthContext(
+                user_id=user_id,
+                auth_method="internal",
+                permissions=_permissions_from_request(request, body),
+            )
         auth = request.headers.get("authorization")
         if auth and auth.startswith("Bearer "):
             raw_key = auth[len("Bearer ") :].strip()
@@ -81,8 +109,30 @@ def create_app(
                 raise HTTPException(status_code=401, detail="invalid or revoked API key")
             user_id = resolved.get("user_id") or resolved.get("userId")
             if isinstance(user_id, str):
-                return user_id
+                # An API key can NEVER claim cross-tenant (unbounded) access.
+                return _AuthContext(user_id=user_id, auth_method="api_key", permissions=[])
         raise HTTPException(status_code=401, detail="missing authentication")
+
+    async def user_id_from_auth(request: Request) -> str:
+        ctx = await auth_context(request)
+        return ctx.user_id
+
+    async def resolve_allowed_roots(ctx: _AuthContext) -> dict[str, Any]:
+        if ctx.auth_method != "api_key" and NAMESPACE_UNBOUNDED_PERMISSION in ctx.permissions:
+            return {"unbounded": True, "roots": []}
+        roots = await _call(backing_store.list_namespace_roots, ctx.user_id)
+        return {"unbounded": False, "roots": roots}
+
+    def require_memrez() -> Memrez:
+        if memrez is None:
+            raise HTTPException(status_code=503, detail="memory is not configured on this server")
+        return memrez
+
+    def require_grants(request: Request) -> list[str]:
+        grants = _split_csv_params(request.query_params.getlist("grants"))
+        if not grants:
+            raise HTTPException(status_code=400, detail="grants query parameter is required")
+        return grants
 
     def scoped(user_id: str) -> Any:
         for_user = getattr(backing_store, "for_user", None)
@@ -98,7 +148,7 @@ def create_app(
             manifests={},
             tools={tool.name: tool for tool in tools or []},
             model_provider=model_provider,
-            resources=resources,
+            resources=resolved_resources,
             store=scoped(user_id),
         )
 
@@ -507,6 +557,181 @@ def create_app(
         spans = [span.as_dict() for span in await _call(scoped(user_id).list_trace_spans, trace_id)]
         return {"summary": trace.summary(span_count=1 + len(spans)), "spans": spans}
 
+    @app.get("/memory/topics")
+    async def memory_topics(request: Request) -> Any:
+        ctx = await auth_context(request)
+        mz = require_memrez()
+        grants = require_grants(request)
+        try:
+            allowed = await resolve_allowed_roots(ctx)
+            scoped_grants = _narrow_to_roots(allowed, grants)
+            result = await _call(mz.scan, scoped_grants, include_ancestors=allowed["unbounded"])
+        except _MEMORY_ERRORS as exc:
+            raise HTTPException(status_code=_memory_error_status(exc), detail=str(exc)) from exc
+        return {
+            "grants": result["grants"],
+            "topics": [_topic_summary_json(topic) for topic in result["topics"]],
+        }
+
+    @app.get("/memory/entries")
+    async def memory_entries(request: Request) -> Any:
+        ctx = await auth_context(request)
+        mz = require_memrez()
+        grants = require_grants(request)
+        topics = _split_csv_params(request.query_params.getlist("topics"))
+        include_superseded = _is_truthy(request.query_params.get("includeSuperseded"))
+        limit = _clamp_int(request.query_params.get("limit"), default=200, minimum=1, maximum=1000)
+        offset = _clamp_int(request.query_params.get("offset"), default=0, minimum=0)
+        try:
+            allowed = await resolve_allowed_roots(ctx)
+            scoped_grants = _narrow_to_roots(allowed, grants)
+            entries = await _call(
+                mz.list,
+                scoped_grants,
+                topics=topics or None,
+                include_superseded=include_superseded,
+                include_ancestors=allowed["unbounded"],
+            )
+        except _MEMORY_ERRORS as exc:
+            raise HTTPException(status_code=_memory_error_status(exc), detail=str(exc)) from exc
+        page = entries[offset : offset + limit]
+        return {
+            "entries": [_memory_entry_json(entry) for entry in page],
+            "total": len(entries),
+            "limit": limit,
+            "offset": offset,
+        }
+
+    @app.post("/memory/entries/{entry_id}/correct")
+    async def memory_correct(entry_id: str, request: Request) -> Any:
+        ctx = await auth_context(request)
+        mz = require_memrez()
+        body = await _json_body(request)
+        raw_grants = body.get("grants")
+        content = body.get("content")
+        if not isinstance(raw_grants, list) or not raw_grants:
+            raise HTTPException(status_code=400, detail="grants must be a non-empty array")
+        if not isinstance(content, str) or not content.strip():
+            raise HTTPException(status_code=400, detail="content must be a non-empty string")
+        try:
+            allowed = await resolve_allowed_roots(ctx)
+            scoped_grants = _narrow_to_roots(allowed, [str(grant) for grant in raw_grants])
+            result = await _call(mz.correct, scoped_grants, entry_id, content)
+        except _MEMORY_ERRORS as exc:
+            raise HTTPException(status_code=_memory_error_status(exc), detail=str(exc)) from exc
+        return {"entry": _memory_entry_json(result["entry"])}
+
+    @app.delete("/memory/entries/{entry_id}")
+    async def memory_delete_entry(entry_id: str, request: Request) -> Any:
+        ctx = await auth_context(request)
+        mz = require_memrez()
+        body = await _json_body(request)
+        raw_grants = body.get("grants")
+        if isinstance(raw_grants, list) and raw_grants:
+            grants = [str(grant) for grant in raw_grants]
+        else:
+            grants = _split_csv_params(request.query_params.getlist("grants"))
+        if not grants:
+            raise HTTPException(
+                status_code=400,
+                detail="grants are required (request body or grants query parameter)",
+            )
+        try:
+            allowed = await resolve_allowed_roots(ctx)
+            scoped_grants = _narrow_to_roots(allowed, grants)
+            result = await _call(mz.delete_entry, scoped_grants, entry_id)
+        except _MEMORY_ERRORS as exc:
+            raise HTTPException(status_code=_memory_error_status(exc), detail=str(exc)) from exc
+        return result
+
+    @app.post("/memory/curate")
+    async def memory_curate(request: Request) -> Any:
+        ctx = await auth_context(request)
+        mz = require_memrez()
+        body = await _json_body(request)
+        raw_grants = body.get("grants")
+        try:
+            allowed = await resolve_allowed_roots(ctx)
+            if raw_grants is None or raw_grants == []:
+                # Empty/absent grants = global sweep across every scope; super-admin only.
+                if not allowed["unbounded"]:
+                    raise ForbiddenError("global curation requires unbounded (super-admin) access")
+                return await _call(_run_curation_sweep, mz)
+            if not isinstance(raw_grants, list):
+                raise HTTPException(status_code=400, detail="grants must be an array")
+            topics_raw = body.get("topics")
+            topics = [str(t) for t in topics_raw] if isinstance(topics_raw, list) else None
+            scoped_grants = _narrow_to_roots(allowed, [str(grant) for grant in raw_grants])
+            report = await _call(
+                mz.curate,
+                scoped_grants,
+                topics=topics,
+                # Bounded callers curate EXACT grants only (include_descendants=True); the
+                # super-admin/unbounded path keeps ancestor expansion (False).
+                include_descendants=not allowed["unbounded"],
+            )
+        except _MEMORY_ERRORS as exc:
+            raise HTTPException(status_code=_memory_error_status(exc), detail=str(exc)) from exc
+        return {"curateEnabled": True, "report": report}
+
+    @app.post("/scopes/delete")
+    async def scopes_delete(request: Request) -> Any:
+        ctx = await auth_context(request)
+        if not resolved_resources:
+            raise HTTPException(status_code=503, detail="memory is not configured on this server")
+        body = await _json_body(request)
+        scope = body.get("scope")
+        if not isinstance(scope, str) or not scope.strip():
+            raise HTTPException(status_code=400, detail="scope must be a non-empty string")
+        recursive = body.get("recursive") is not False
+        try:
+            allowed = await resolve_allowed_roots(ctx)
+            normalized_scope = _assert_scope_within_roots(allowed, scope)
+        except _MEMORY_ERRORS as exc:
+            raise HTTPException(status_code=_memory_error_status(exc), detail=str(exc)) from exc
+        by_resource: dict[str, int] = {}
+        total = 0
+        for kind, provider in resolved_resources.items():
+            purge = getattr(provider, "purge_scope", None)
+            if not callable(purge):
+                continue
+            if inspect.iscoroutinefunction(purge):
+                result = await purge(normalized_scope, recursive=recursive)
+            else:
+                result = await _call(purge, normalized_scope, recursive=recursive)
+            deleted = int(result.get("deleted", 0)) if isinstance(result, dict) else 0
+            by_resource[kind] = deleted
+            total += deleted
+        return {
+            "scope": normalized_scope,
+            "recursive": recursive,
+            "total": total,
+            "byResource": by_resource,
+        }
+
+    @app.get("/namespace-roots")
+    async def get_namespace_roots(user_id: str = Depends(user_id_from_auth)) -> Any:
+        return {"roots": await _call(backing_store.list_namespace_roots, user_id)}
+
+    @app.post("/namespace-roots")
+    async def post_namespace_root(
+        request: Request,
+        user_id: str = Depends(user_id_from_auth),
+    ) -> Any:
+        normalized = _validate_root(await _json_body(request), HTTPException)
+        await _call(backing_store.add_namespace_root, user_id, normalized)
+        roots = await _call(backing_store.list_namespace_roots, user_id)
+        return JSONResponse({"roots": roots}, status_code=201)
+
+    @app.delete("/namespace-roots")
+    async def delete_namespace_root(
+        request: Request,
+        user_id: str = Depends(user_id_from_auth),
+    ) -> Any:
+        normalized = _validate_root(await _json_body(request), HTTPException)
+        await _call(backing_store.remove_namespace_root, user_id, normalized)
+        return {"roots": await _call(backing_store.list_namespace_roots, user_id)}
+
     return app
 
 
@@ -723,3 +948,169 @@ def _filter_params(params: dict[str, str]) -> dict[str, Any]:
 
 def _iso_now() -> str:
     return datetime.now(tz=UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+NAMESPACE_UNBOUNDED_PERMISSION = "namespace:unbounded"
+_NO_ROOTS_MESSAGE = (
+    "tenant has no registered namespace roots; register one before using "
+    "memory or scope operations"
+)
+
+
+class ForbiddenError(Exception):
+    """Raised when a bounded caller has no roots to authorize a memory/scope request."""
+
+
+@dataclass(frozen=True)
+class _AuthContext:
+    user_id: str
+    auth_method: str
+    permissions: list[str]
+
+
+_MEMORY_ERRORS = (
+    MemrezEntryNotFoundError,
+    MemrezCorrectionError,
+    MemrezScopeError,
+    NamespaceGrantError,
+    ForbiddenError,
+)
+
+
+def _permissions_from_request(request: Any, body: dict[str, Any]) -> list[str]:
+    # Python's internal auth has no signed identity token; a super-admin (the app) carries
+    # `namespace:unbounded` via the X-Agntz-Permissions header or a `permissions` body array.
+    header = request.headers.get("x-agntz-permissions")
+    if header:
+        return [part.strip() for part in header.split(",") if part.strip()]
+    raw = body.get("permissions")
+    if isinstance(raw, list):
+        return [str(item) for item in raw]
+    return []
+
+
+def _narrow_to_roots(allowed: dict[str, Any], requested: Sequence[str]) -> list[str]:
+    if allowed.get("unbounded"):
+        return list(requested)
+    roots = allowed.get("roots") or []
+    if not roots:
+        raise ForbiddenError(_NO_ROOTS_MESSAGE)
+    return narrow_namespace_grants(roots, list(requested))
+
+
+def _assert_scope_within_roots(allowed: dict[str, Any], scope: str) -> str:
+    normalized = normalize_namespace_grant(scope)
+    if allowed.get("unbounded"):
+        return normalized
+    roots = allowed.get("roots") or []
+    if not roots:
+        raise ForbiddenError(_NO_ROOTS_MESSAGE)
+    if not any(is_same_or_descendant_namespace(normalized, root) for root in roots):
+        raise NamespaceGrantError(
+            normalized,
+            f"scope is not within tenant roots [{', '.join(roots)}]",
+        )
+    return normalized
+
+
+def _memory_error_status(exc: Exception) -> int:
+    if isinstance(exc, MemrezEntryNotFoundError):
+        return 404
+    if isinstance(exc, MemrezCorrectionError):
+        return 409
+    if isinstance(exc, ForbiddenError):
+        return 403
+    if isinstance(exc, MemrezScopeError | NamespaceGrantError):
+        return 400
+    return 500
+
+
+def _memory_entry_json(entry: MemoryEntry) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "id": entry.id,
+        "scope": entry.scope,
+        "content": entry.content,
+        "topics": list(entry.topics),
+        "type": entry.type,
+        "status": entry.status,
+        "createdAt": entry.created_at,
+        "updatedAt": entry.updated_at,
+    }
+    if entry.source is not None:
+        body["source"] = dict(entry.source)
+    if entry.superseded_by is not None:
+        body["supersededBy"] = entry.superseded_by
+    return body
+
+
+def _topic_summary_json(topic: TopicSummary) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "topic": topic.topic,
+        "count": topic.count,
+        "lastUpdatedAt": topic.last_updated_at,
+        "hasUncuratedWrites": topic.has_uncurated_writes,
+    }
+    if topic.blurb is not None:
+        body["blurb"] = topic.blurb
+    return body
+
+
+def _run_curation_sweep(memrez: Memrez) -> dict[str, Any]:
+    if not callable(getattr(memrez.reasoner, "curate", None)):
+        return {"curateEnabled": False, "dirty": 0, "scopes": []}
+    dirty = memrez.store.list_dirty_topics()
+    by_scope: dict[str, list[str]] = {}
+    for item in dirty:
+        by_scope.setdefault(item.scope, []).append(item.topic)
+    scopes: list[dict[str, Any]] = []
+    for scope, topics in by_scope.items():
+        try:
+            report = memrez.curate([scope], topics=topics, include_descendants=True)
+            scopes.append({"scope": scope, "report": report})
+        except Exception as exc:
+            scopes.append({"scope": scope, "error": str(exc)})
+    return {"curateEnabled": True, "dirty": len(dirty), "scopes": scopes}
+
+
+def _split_csv_params(values: Sequence[str]) -> list[str]:
+    output: list[str] = []
+    for value in values:
+        for part in value.split(","):
+            stripped = part.strip()
+            if stripped:
+                output.append(stripped)
+    return output
+
+
+def _is_truthy(value: str | None) -> bool:
+    return value is not None and value.strip().lower() in {"1", "true", "yes"}
+
+
+def _clamp_int(
+    value: str | None,
+    *,
+    default: int,
+    minimum: int,
+    maximum: int | None = None,
+) -> int:
+    if value is None or not value.strip():
+        return default
+    try:
+        parsed = int(value)
+    except ValueError:
+        return default
+    if parsed < minimum:
+        return minimum
+    if maximum is not None and parsed > maximum:
+        return maximum
+    return parsed
+
+
+def _validate_root(body: dict[str, Any], http_exception: Any) -> str:
+    root = body.get("root")
+    if not isinstance(root, str) or not root.strip():
+        raise http_exception(status_code=400, detail="root must be a non-empty string")
+    try:
+        return normalize_namespace_grant(root)
+    except NamespaceGrantError as exc:
+        raise http_exception(status_code=400, detail=f"Invalid namespace root: {exc}") from exc

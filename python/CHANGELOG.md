@@ -5,6 +5,24 @@
 - Remove agent-level memrez topic taxonomy config from the Python memory
   resource provider. Agent manifests now control preload/read/write behavior;
   taxonomy and reasoner policy are reserved for Memrez-level configuration.
+- Add memrez delete primitives: `delete_entry`, `delete_scope`, and
+  `list_entries` on the memory stores (in-memory, SQLite, Postgres);
+  grant-authorized `Memrez.delete_entry`/`Memrez.delete_scope`; and a
+  `MemoryResourceProvider.purge_scope` cascade hook.
+- Add a `memory` resource to the local SDK (`LocalClient.memory`,
+  `agntz(..., memrez=...)`) exposing scan/read/list/delete_entry/delete_scope/
+  curate/correct, mirroring the TypeScript `@agntz/sdk` surface.
+- Add a `memory` resource to the sync and async hosted clients
+  (`AgntzClient.memory`/`AsyncAgntzClient.memory`) plus TypeScript-compatible
+  memory wire models (`MemoryEntry`, `MemoryScanResult`, `ScopeDeleteResult`,
+  and friends).
+- Add per-tenant namespace roots: `NamespaceRootStore` methods on the
+  in-memory/SQLite/Postgres stores (and a `tenant_namespace_roots` table) plus
+  `GET/POST/DELETE /namespace-roots` on `agntz.server`.
+- Add `/memory/*` and `/scopes/delete` routes to `agntz.server.create_app`
+  (with a new `memrez=` parameter), bounding every memory/scope request to the
+  caller's registered roots and disabling memrez ancestor expansion for bounded
+  (non-super-admin) callers so ancestor-scope entries never leak across tenants.
 
 ## 0.3.0
 

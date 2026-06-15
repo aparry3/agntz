@@ -152,6 +152,12 @@ class MemoryStore(Protocol):
 
     def list_dirty_topics(self) -> list[DirtyTopic]: ...
 
+    def list_entries(self, *, include_superseded: bool = False) -> list[MemoryEntry]: ...
+
+    def delete_entry(self, entry_id: str) -> bool: ...
+
+    def delete_scope(self, scope_prefix: str, *, recursive: bool = False) -> dict[str, int]: ...
+
 
 DEFAULT_WRITE_POLICY = WritePolicy()
 DEFAULT_TOPIC_CONFIG = MemoryTopicConfig()
@@ -285,6 +291,30 @@ class InMemoryMemoryStore:
         ]
         rows.sort(key=lambda row: (row.scope, row.topic))
         return rows
+
+    def list_entries(self, *, include_superseded: bool = False) -> list[MemoryEntry]:
+        rows = [
+            entry
+            for entry in self._entries.values()
+            if include_superseded or entry.status == "active"
+        ]
+        rows.sort(key=lambda entry: entry.updated_at, reverse=True)
+        return [_clone_entry(entry) for entry in rows]
+
+    def delete_entry(self, entry_id: str) -> bool:
+        return self._entries.pop(entry_id, None) is not None
+
+    def delete_scope(self, scope_prefix: str, *, recursive: bool = False) -> dict[str, int]:
+        def matches(scope: str) -> bool:
+            return scope == scope_prefix or (recursive and scope.startswith(f"{scope_prefix}/"))
+
+        entry_ids = [eid for eid, entry in self._entries.items() if matches(entry.scope)]
+        for entry_id in entry_ids:
+            del self._entries[entry_id]
+        meta_keys = [key for key in self._topic_meta if matches(key[0])]
+        for key in meta_keys:
+            del self._topic_meta[key]
+        return {"entries": len(entry_ids), "topic_meta": len(meta_keys)}
 
     def _find_topic_meta(
         self,
@@ -578,6 +608,36 @@ class Memrez:
         self.store.put_entry(entry)
         self.store.supersede([entry_id], entry.id)
         return {"entry": entry}
+
+    def delete_entry(
+        self,
+        grants: Sequence[NamespaceGrant],
+        entry_id: str,
+    ) -> dict[str, Any]:
+        normalized = _normalize_grants(grants, self.namespace_policy)
+        entry = self.store.get_entry(entry_id)
+        if entry is None:
+            raise MemrezEntryNotFoundError(entry_id)
+        assert_writable_scope(normalized, entry.scope, normalize_write_policy(None))
+        deleted = self.store.delete_entry(entry_id)
+        return {"deleted": deleted, "id": entry_id}
+
+    def delete_scope(
+        self,
+        grants: Sequence[NamespaceGrant],
+        prefix: str,
+        *,
+        recursive: bool = False,
+    ) -> dict[str, Any]:
+        normalized = _normalize_grants(grants, self.namespace_policy)
+        scope = assert_writable_scope(normalized, prefix, normalize_write_policy(None))
+        result = self.store.delete_scope(scope, recursive=recursive)
+        return {
+            "deleted": result["entries"],
+            "topicMeta": result["topic_meta"],
+            "scope": scope,
+            "recursive": recursive,
+        }
 
     def _find_exact_duplicate(self, scope: str, content: str) -> MemoryEntry | None:
         entries = self.store.list_scope_slice([scope])

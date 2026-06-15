@@ -130,6 +130,11 @@ class MemoryResourceProvider:
             source=_source_from_run(ctx.run),
         )
 
+    def purge_scope(self, grant: str, *, recursive: bool = True) -> dict[str, int]:
+        """Erase everything under ``grant`` so this resource can join scope-delete cascades."""
+        result = self.memrez.delete_scope([grant], grant, recursive=recursive)
+        return {"deleted": int(result["deleted"])}
+
 
 def create_memory_resource_provider(memrez: Memrez) -> MemoryResourceProvider:
     return MemoryResourceProvider(memrez)

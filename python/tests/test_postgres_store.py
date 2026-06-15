@@ -207,3 +207,25 @@ def test_postgres_store_persists_hosted_service_surfaces() -> None:
     finally:
         other_user.close()
         store.close()
+
+
+def test_postgres_store_namespace_roots_round_trip() -> None:
+    from agntz.stores.postgres import PostgresStore
+
+    store = PostgresStore(
+        POSTGRES_URL or "",
+        user_id="u1",
+        table_prefix=f"test_agntz_{time_ns()}_",
+    )
+    try:
+        store.add_namespace_root("u1", "acme/team")
+        store.add_namespace_root("u1", "acme/team")  # idempotent
+        store.add_namespace_root("u1", "globex")
+        store.add_namespace_root("u2", "other")
+        assert store.list_namespace_roots("u1") == ["acme/team", "globex"]
+        assert store.list_namespace_roots("u2") == ["other"]
+        store.remove_namespace_root("u1", "globex")
+        store.remove_namespace_root("u1", "missing")  # no-op
+        assert store.list_namespace_roots("u1") == ["acme/team"]
+    finally:
+        store.close()
