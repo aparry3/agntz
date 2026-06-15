@@ -164,6 +164,10 @@ export class Memrez {
 		const entries = await this.store.listScopeSlice(scopePaths, {
 			topics: opts.topics,
 		});
+		// A curate pass may only supersede entries it actually scanned (which are
+		// confined to scopePaths) — never entries outside the caller's scope, even
+		// if the reasoner returns stray ids. Defense-in-depth for the supersede op.
+		const scannedIds = new Set(entries.map((entry) => entry.id));
 		const ops = this.reasoner.curate
 			? await this.reasoner.curate({
 					grants: normalized,
@@ -203,6 +207,10 @@ export class Memrez {
 				});
 				report.blurbsUpdated += 1;
 			} else if (op.type === "supersede") {
+				// Drop any ids the curator did not scan; never supersede out-of-scope
+				// entries. If nothing remains, skip the op (no orphan replacement).
+				const ids = op.ids.filter((id) => scannedIds.has(id));
+				if (ids.length === 0) continue;
 				const scope = assertWritableScope(
 					normalized,
 					op.replacement.namespace,
@@ -220,12 +228,12 @@ export class Memrez {
 					updatedAt: now,
 				};
 				await this.store.putEntry(replacement);
-				await this.store.supersede(op.ids, replacement.id);
+				await this.store.supersede(ids, replacement.id);
 				for (const topic of replacement.topics) {
 					curatedPairs.set(`${scope}\u0000${topic}`, { scope, topic });
 				}
 				report.created += 1;
-				report.superseded += op.ids.length;
+				report.superseded += ids.length;
 			}
 		}
 

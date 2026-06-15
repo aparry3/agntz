@@ -1,10 +1,36 @@
 import { MemoryStore } from "@agntz/core";
 import { createMemrez } from "@agntz/memrez";
+import type {
+	CurateOp,
+	MemrezReasoner,
+	TaggerInput,
+	TaggerResult,
+} from "@agntz/memrez";
 import { describe, expect, it } from "vitest";
 import { signInternalAuthToken } from "../src/middleware/internal-auth.js";
 import { createWorkerAPI } from "../src/routes.js";
 
 const SECRET = "test-secret";
+
+/** Curator that tries to supersede every entry it is shown (attacker-style). */
+class SupersedeAllReasoner implements MemrezReasoner {
+	async tag(input: TaggerInput): Promise<TaggerResult> {
+		return {
+			namespace: input.grants[0],
+			topics: ["t"],
+			type: "fact",
+			normalizedContent: input.content.trim(),
+		};
+	}
+
+	async curate(input: { entries: { id: string }[] }): Promise<CurateOp[]> {
+		return input.entries.map((e) => ({
+			type: "supersede",
+			ids: [e.id],
+			replacement: { namespace: "acme/team", content: "x", topics: ["t"] },
+		}));
+	}
+}
 
 async function setup() {
 	const store = new MemoryStore();
@@ -205,6 +231,47 @@ describe("namespace-root bounding", () => {
 		});
 		expect(clobber.status).toBe(400);
 		expect((await memrez.store.getEntry("m_t2"))?.scope).toBe("t2/user/1");
+	});
+
+	// Regression: bounded curate must not expand to ancestor scopes (read OR
+	// supersede entries above the tenant's root).
+	it("does not curate/supersede ancestor scopes above a nested root", async () => {
+		const store = new MemoryStore();
+		const memrez = createMemrez({ reasoner: new SupersedeAllReasoner() });
+		const now = new Date().toISOString();
+		await memrez.store.putEntry({
+			id: "m_parent",
+			scope: "acme", // ABOVE the tenant root
+			content: "p",
+			topics: ["t"],
+			type: "fact",
+			status: "active",
+			createdAt: now,
+			updatedAt: now,
+		});
+		const app = createWorkerAPI({
+			store,
+			internalSecret: SECRET,
+			memrez,
+			resources: { memory: memrez.provider() },
+		});
+		const { rawKey } = await store.createApiKey({
+			userId: "acme-t",
+			name: "k",
+		});
+		await store.addNamespaceRoot("acme-t", "acme/team");
+
+		const res = await app.request("/memory/curate", {
+			method: "POST",
+			headers: bearer(rawKey),
+			body: JSON.stringify({ grants: ["acme/team"] }),
+		});
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			report: { scanned: number; superseded: number };
+		};
+		expect(body.report.scanned).toBe(0); // ancestor 'acme' entry NOT scanned
+		expect((await memrez.store.getEntry("m_parent"))?.status).toBe("active");
 	});
 
 	it("rejects import from a tenant with no registered roots (403)", async () => {

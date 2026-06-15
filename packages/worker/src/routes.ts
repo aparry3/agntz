@@ -904,6 +904,10 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 				}
 				const grants = narrowToRoots(allowed, body.grants as string[]);
 				const report = await memrez.curate(grants, {
+					// Bounded callers must curate ONLY their exact granted scopes —
+					// includeDescendants:true skips memrez's ancestor expansion, which
+					// would otherwise let curate read/supersede entries above the root.
+					includeDescendants: !allowed.unbounded,
 					topics: Array.isArray(body.topics)
 						? (body.topics as string[])
 						: undefined,

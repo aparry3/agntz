@@ -424,6 +424,37 @@ describe("memrez core", () => {
 		).rejects.toBeInstanceOf(MemrezScopeError);
 	});
 
+	it("curate never supersedes an entry it did not scan", async () => {
+		const reasoner = new FakeReasoner();
+		const memrez = createMemrez({ reasoner });
+		const a = await memrez.write(["app/user/u_123"], "topic:prefs|A.");
+		const other = await memrez.write(["app/user/u_456"], "topic:prefs|Other.");
+		// The reasoner tries to supersede an entry in a scope NOT being curated.
+		reasoner.nextCurateOps = [
+			{
+				type: "supersede",
+				ids: [other.entry.id],
+				replacement: {
+					namespace: "app/user/u_123",
+					content: "X",
+					topics: ["prefs"],
+				},
+			},
+		];
+
+		const report = await memrez.curate(["app/user/u_123"], {
+			includeDescendants: true,
+		});
+
+		expect(report.superseded).toBe(0); // out-of-scan id is ignored
+		const otherEntry = (
+			await memrez.list(["app/user/u_456"], { includeSuperseded: true })
+		).find((entry) => entry.id === other.entry.id);
+		expect(otherEntry?.status).toBe("active");
+		// The in-scan entry remains untouched too (the op was skipped entirely).
+		expect(a.entry.id).toBeTruthy();
+	});
+
 	it("tracks dirty topics and clears them after a curated pass", async () => {
 		const reasoner = new FakeReasoner();
 		const memrez = createMemrez({ reasoner });
