@@ -276,6 +276,35 @@ describe("namespace-root bounding", () => {
 		expect((await memrez.store.getEntry("m_parent"))?.status).toBe("active");
 	});
 
+	it("imports atomically: a rejected entry leaves earlier ones unwritten", async () => {
+		const { store, memrez, app } = await setup();
+		const { rawKey } = await store.createApiKey({ userId: "t1", name: "k" });
+		await store.addNamespaceRoot("t1", "t1");
+		const ts = new Date().toISOString();
+		const mk = (id: string, scope: string) => ({
+			id,
+			scope,
+			content: "x",
+			topics: ["t"],
+			type: "fact",
+			status: "active",
+			createdAt: ts,
+			updatedAt: ts,
+		});
+
+		// First entry is in-root, second is out-of-root → the whole batch is rejected
+		// before any write (no partial import).
+		const res = await app.request("/memory/import", {
+			method: "POST",
+			headers: bearer(rawKey),
+			body: JSON.stringify({
+				entries: [mk("ok_1", "t1/a"), mk("bad_1", "t2/b")],
+			}),
+		});
+		expect(res.status).toBe(400);
+		expect(await memrez.store.getEntry("ok_1")).toBeNull();
+	});
+
 	it("rejects import from a tenant with no registered roots (403)", async () => {
 		const { app, store } = await setup();
 		const { rawKey } = await store.createApiKey({ userId: "t9", name: "k" });

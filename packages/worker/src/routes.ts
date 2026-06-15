@@ -721,12 +721,21 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			// outside them — so a tenant can neither inject into nor clobber another
 			// tenant's namespace. Super-admins (unbounded) may import any scope.
 			const allowed = await resolveAllowedRoots(c, store);
-			const results: MemoryImportResult[] = [];
 
+			// Pass 1: validate the WHOLE batch (new scope + any overwrite target)
+			// before writing anything, so a rejected entry leaves the store unchanged
+			// (all-or-nothing on validation failure).
+			const planned: { entry: MemoryEntry; existing: boolean }[] = [];
 			for (const entry of entries) {
 				assertScopeWithinRoots(allowed, entry.scope);
 				const existing = await memrez.store.getEntry(entry.id);
 				if (existing) assertScopeWithinRoots(allowed, existing.scope);
+				planned.push({ entry, existing: existing !== null });
+			}
+
+			// Pass 2: write.
+			const results: MemoryImportResult[] = [];
+			for (const { entry, existing } of planned) {
 				if (!dryRun) await memrez.store.putEntry(entry);
 				results.push({
 					id: entry.id,
