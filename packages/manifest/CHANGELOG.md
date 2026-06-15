@@ -1,5 +1,12 @@
 # @agntz/manifest
 
+## 7.0.0
+
+### Patch Changes
+
+- Updated dependencies [0749711]
+  - @agntz/core@1.6.0
+
 ## 6.0.0
 
 ### Patch Changes

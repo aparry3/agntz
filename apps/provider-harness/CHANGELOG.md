@@ -1,5 +1,12 @@
 # @agntz/provider-harness
 
+## 0.1.7
+
+### Patch Changes
+
+- Updated dependencies [0749711]
+  - @agntz/core@1.6.0
+
 ## 0.1.6
 
 ### Patch Changes

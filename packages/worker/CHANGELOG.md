@@ -1,5 +1,15 @@
 # @agntz/worker
 
+## 0.2.1
+
+### Patch Changes
+
+- Updated dependencies [0749711]
+  - @agntz/core@1.6.0
+  - @agntz/memrez@4.0.0
+  - @agntz/store-postgres@7.0.0
+  - @agntz/manifest@7.0.0
+
 ## 0.2.0
 
 ### Minor Changes
