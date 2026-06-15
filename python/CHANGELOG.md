@@ -1,6 +1,6 @@
 # agntz
 
-## Unreleased
+## 0.4.0
 
 - Remove agent-level memrez topic taxonomy config from the Python memory
   resource provider. Agent manifests now control preload/read/write behavior;
