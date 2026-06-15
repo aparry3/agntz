@@ -70,6 +70,7 @@ import {
 	ForbiddenError,
 	assertScopeWithinRoots,
 	narrowToRoots,
+	readScopes,
 	resolveAllowedRoots,
 } from "./middleware/namespace-roots.js";
 import { rateLimit } from "./rate-limit.js";
@@ -791,11 +792,10 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 		try {
 			const grants = parseGrantsParam(c.req.queries("grants"));
 			const allowed = await resolveAllowedRoots(c, store);
-			// Bounded callers must NOT see ancestor scopes above their roots — memrez
-			// expands grants to ancestors by default, so disable that unless unbounded.
-			const scan = await memrez.scan(narrowToRoots(allowed, grants), {
-				includeAncestors: allowed.unbounded,
-			});
+			// Expand to the scopes the agent would see, clamped to the tenant's roots
+			// (within-root ancestors visible; above-root scopes hidden).
+			const { scopes, includeAncestors } = readScopes(allowed, grants);
+			const scan = await memrez.scan(scopes, { includeAncestors });
 			return c.json(scan);
 		} catch (error) {
 			return memoryErrorResponse(c, error);
@@ -808,17 +808,17 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 		try {
 			const grants = parseGrantsParam(c.req.queries("grants"));
 			const allowed = await resolveAllowedRoots(c, store);
-			const scopedGrants = narrowToRoots(allowed, grants);
+			// Within-root ancestor scopes stay visible; above-root scopes are dropped.
+			const { scopes, includeAncestors } = readScopes(allowed, grants);
 			const topics = parseListParam(c.req.queries("topics"));
 			const includeSuperseded = isTruthyParam(c.req.query("includeSuperseded"));
 			const limit = clampInt(c.req.query("limit"), 200, 1, 1000);
 			const offset = clampInt(c.req.query("offset"), 0, 0);
 
-			const entries = await memrez.list(scopedGrants, {
+			const entries = await memrez.list(scopes, {
 				topics: topics.length > 0 ? topics : undefined,
 				includeSuperseded,
-				// Confine bounded callers to their roots (no ancestor expansion).
-				includeAncestors: allowed.unbounded,
+				includeAncestors,
 			});
 			return c.json({
 				entries: entries.slice(offset, offset + limit),

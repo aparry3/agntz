@@ -145,9 +145,9 @@ describe("namespace-root bounding", () => {
 		expect(await memrez.store.getEntry("m_t2")).not.toBeNull();
 	});
 
-	// Regression: a tenant rooted at a NESTED namespace must not read entries at
-	// the parent scope via memrez's default ancestor expansion.
-	it("does not leak ancestor scopes above a nested root on reads", async () => {
+	// Regression: a tenant rooted at a NESTED namespace sees WITHIN-root ancestor
+	// scopes (matching what its agent sees) but NOT scopes above the root.
+	it("reads within-root ancestors but never scopes above the root", async () => {
 		const store = new MemoryStore();
 		const memrez = createMemrez();
 		const now = new Date().toISOString();
@@ -162,8 +162,9 @@ describe("namespace-root bounding", () => {
 				createdAt: now,
 				updatedAt: now,
 			});
-		await put("m_parent", "acme"); // ABOVE the root — must stay hidden
-		await put("m_team", "acme/team/1"); // within the root
+		await put("m_above", "acme"); // ABOVE the root — must stay hidden
+		await put("m_root", "acme/team"); // the root scope — within-root, visible
+		await put("m_leaf", "acme/team/1"); // the grant — visible
 		const app = createWorkerAPI({
 			store,
 			internalSecret: SECRET,
@@ -180,10 +181,11 @@ describe("namespace-root bounding", () => {
 			headers: bearer(rawKey),
 		});
 		expect(res.status).toBe(200);
-		const got = (
-			(await res.json()) as { entries: { id: string }[] }
-		).entries.map((e) => e.id);
-		expect(got).toEqual(["m_team"]); // m_parent@acme NOT leaked
+		const got = ((await res.json()) as { entries: { id: string }[] }).entries
+			.map((e) => e.id)
+			.sort();
+		// within-root ancestor (m_root) + the grant (m_leaf) visible; m_above hidden.
+		expect(got).toEqual(["m_leaf", "m_root"]);
 	});
 
 	it("bounds /memory/import writes to the tenant's roots", async () => {

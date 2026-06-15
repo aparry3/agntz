@@ -2,6 +2,7 @@ import {
 	NamespaceGrantError,
 	type NamespaceRootStore,
 	isSameOrDescendantNamespace,
+	namespaceAncestors,
 	narrowNamespaceGrants,
 	normalizeNamespaceGrant,
 } from "@agntz/core";
@@ -63,6 +64,43 @@ export function narrowToRoots(
 	if (allowed.unbounded) return requestedGrants;
 	if (allowed.roots.length === 0) throw new ForbiddenError(NO_ROOTS_MESSAGE);
 	return narrowNamespaceGrants(allowed.roots, requestedGrants);
+}
+
+/**
+ * Resolve the exact scope set a caller may READ (for /memory/topics + /entries).
+ * Mirrors what an agent sees — grant + ancestors — but for bounded callers CLAMPS
+ * the expanded set to the tenant's roots: within-root ancestors stay visible
+ * (preserving "view what the agent sees"), scopes ABOVE the roots are dropped.
+ * Returns the scopes plus the `includeAncestors` flag to hand memrez:
+ * - unbounded → pass the grants through and let memrez expand (includeAncestors=true);
+ * - bounded   → return the pre-expanded, clamped scope set with includeAncestors=false.
+ */
+export function readScopes(
+	allowed: AllowedRoots,
+	requestedGrants: string[],
+): { scopes: string[]; includeAncestors: boolean } {
+	if (allowed.unbounded) {
+		return { scopes: requestedGrants, includeAncestors: true };
+	}
+	if (allowed.roots.length === 0) throw new ForbiddenError(NO_ROOTS_MESSAGE);
+	const narrowed = narrowNamespaceGrants(allowed.roots, requestedGrants);
+	const seen = new Set<string>();
+	const scopes: string[] = [];
+	for (const grant of narrowed) {
+		for (const ancestor of namespaceAncestors(grant)) {
+			if (seen.has(ancestor)) continue;
+			// Keep only scopes at-or-below a root (drop ancestors above the roots).
+			if (
+				allowed.roots.some((root) =>
+					isSameOrDescendantNamespace(ancestor, root),
+				)
+			) {
+				seen.add(ancestor);
+				scopes.push(ancestor);
+			}
+		}
+	}
+	return { scopes, includeAncestors: false };
 }
 
 /** Single-scope variant for `POST /scopes/delete`. Returns the normalized scope. */
