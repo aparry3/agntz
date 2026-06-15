@@ -145,6 +145,60 @@ export class PostgresMemoryStore implements MemoryStore {
 		);
 	}
 
+	async deleteEntry(id: string): Promise<boolean> {
+		await this.ready;
+		// entry_topics rows cascade away (FK ON DELETE CASCADE).
+		const result = await this.pool.query(
+			`DELETE FROM ${this.table("entries")} WHERE id = $1`,
+			[id],
+		);
+		return (result.rowCount ?? 0) > 0;
+	}
+
+	async deleteScope(
+		scopePrefix: string,
+		opts: { recursive?: boolean } = {},
+	): Promise<{ entries: number; topicMeta: number }> {
+		await this.ready;
+		const client = await this.pool.connect();
+		try {
+			await client.query("BEGIN");
+			let entriesResult: pg.QueryResult;
+			let topicMetaResult: pg.QueryResult;
+			if (opts.recursive === true) {
+				// Postgres LIKE uses backslash as the default escape character.
+				const like = `${escapeLike(scopePrefix)}/%`;
+				entriesResult = await client.query(
+					`DELETE FROM ${this.table("entries")} WHERE scope = $1 OR scope LIKE $2`,
+					[scopePrefix, like],
+				);
+				topicMetaResult = await client.query(
+					`DELETE FROM ${this.table("topic_meta")} WHERE scope = $1 OR scope LIKE $2`,
+					[scopePrefix, like],
+				);
+			} else {
+				entriesResult = await client.query(
+					`DELETE FROM ${this.table("entries")} WHERE scope = $1`,
+					[scopePrefix],
+				);
+				topicMetaResult = await client.query(
+					`DELETE FROM ${this.table("topic_meta")} WHERE scope = $1`,
+					[scopePrefix],
+				);
+			}
+			await client.query("COMMIT");
+			return {
+				entries: entriesResult.rowCount ?? 0,
+				topicMeta: topicMetaResult.rowCount ?? 0,
+			};
+		} catch (error) {
+			await client.query("ROLLBACK");
+			throw error;
+		} finally {
+			client.release();
+		}
+	}
+
 	async listTopics(scopePaths: string[]): Promise<TopicSummary[]> {
 		await this.ready;
 		if (scopePaths.length === 0) return [];
@@ -399,6 +453,11 @@ function normalizeTablePrefix(prefix: string | undefined): string {
 
 function quoteIdentifier(identifier: string): string {
 	return `"${identifier.replace(/"/g, '""')}"`;
+}
+
+/** Escape LIKE metacharacters so a scope prefix matches literally (default `\` escape). */
+function escapeLike(value: string): string {
+	return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 
 function parseSource(raw: Source | string | null): Source | undefined {

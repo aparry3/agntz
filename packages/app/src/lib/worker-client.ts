@@ -399,6 +399,119 @@ export async function workerMemoryCorrect(req: {
 	return res.json() as Promise<{ entry: MemoryEntryWire }>;
 }
 
+/** Hard-delete a single memory entry (internal-secret only, like the reads). */
+export async function workerDeleteMemoryEntry(req: {
+	grants: string[];
+	id: string;
+}): Promise<{ deleted: boolean; id: string }> {
+	const res = await fetch(
+		`${WORKER_URL}/memory/entries/${encodeURIComponent(req.id)}`,
+		{
+			method: "DELETE",
+			headers: {
+				"Content-Type": "application/json",
+				"X-Internal-Secret": internalSecret(),
+			},
+			body: JSON.stringify({ grants: req.grants }),
+		},
+	);
+
+	if (!res.ok) {
+		const body = await res.json().catch(() => ({}));
+		throw new Error(
+			(body as { error?: string }).error ?? `Worker error: ${res.status}`,
+		);
+	}
+
+	return res.json() as Promise<{ deleted: boolean; id: string }>;
+}
+
+/**
+ * Erase a namespace scope across every resource (memrez now, RAG later).
+ * Recursive (whole subtree) by default. Internal-secret only — the calling app
+ * is responsible for passing a scope within its own tenant's namespace.
+ */
+export async function workerDeleteScope(req: {
+	scope: string;
+	recursive?: boolean;
+}): Promise<{
+	scope: string;
+	recursive: boolean;
+	total: number;
+	byResource: Record<string, number>;
+}> {
+	const res = await fetch(`${WORKER_URL}/scopes/delete`, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			"X-Internal-Secret": internalSecret(),
+		},
+		body: JSON.stringify({ scope: req.scope, recursive: req.recursive }),
+	});
+
+	if (!res.ok) {
+		const body = await res.json().catch(() => ({}));
+		throw new Error(
+			(body as { error?: string }).error ?? `Worker error: ${res.status}`,
+		);
+	}
+
+	return res.json() as Promise<{
+		scope: string;
+		recursive: boolean;
+		total: number;
+		byResource: Record<string, number>;
+	}>;
+}
+
+export interface SessionSummaryWire {
+	sessionId: string;
+	agentId?: string;
+	messageCount: number;
+	createdAt: string;
+	updatedAt: string;
+}
+
+/** List the tenant's sessions (tenant-scoped via the signed worker identity). */
+export async function workerListSessions(
+	identity: WorkerIdentity,
+	agentId?: string,
+): Promise<SessionSummaryWire[]> {
+	const params = new URLSearchParams();
+	if (agentId) params.set("agentId", agentId);
+	const url = params.toString()
+		? `${WORKER_URL}/sessions?${params}`
+		: `${WORKER_URL}/sessions`;
+	const res = await fetch(url, { headers: internalHeaders(identity) });
+
+	if (!res.ok) {
+		const body = await res.json().catch(() => ({}));
+		throw new Error(
+			(body as { error?: string }).error ?? `Worker error: ${res.status}`,
+		);
+	}
+
+	return ((await res.json()) as { sessions: SessionSummaryWire[] }).sessions;
+}
+
+/** Erase a session and everything linked to it (tenant-scoped). */
+export async function workerDeleteSession(
+	identity: WorkerIdentity,
+	sessionId: string,
+): Promise<void> {
+	const res = await fetch(
+		`${WORKER_URL}/sessions/${encodeURIComponent(sessionId)}`,
+		{ method: "DELETE", headers: internalHeaders(identity) },
+	);
+
+	if (!res.ok) {
+		const body = await res.json().catch(() => ({}));
+		throw new Error(
+			(body as { error?: string }).error ?? `Worker error: ${res.status}`,
+		);
+	}
+}
+
 /**
  * List system agents bundled with the worker. These are global (not
  * user-scoped), so the endpoint only needs the internal secret.

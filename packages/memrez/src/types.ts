@@ -138,10 +138,32 @@ export interface MemrezReasoner {
 	curate?(input: CuratorInput): Promise<CurateOp[]>;
 }
 
+export interface DeleteScopeResult {
+	/** Entry rows hard-deleted (their topic rows cascade away). */
+	entries: number;
+	/** topic_meta rows hard-deleted (no FK cascade — removed explicitly). */
+	topicMeta: number;
+}
+
 export interface MemoryStore {
 	putEntry(entry: MemoryEntry): Promise<void>;
 	getEntry(id: string): Promise<MemoryEntry | null>;
 	supersede(ids: string[], byId: string): Promise<void>;
+	/**
+	 * Hard-delete a single entry (and, via FK cascade, its topic rows). Returns
+	 * true if a row was removed. Unlike `supersede`, this is irreversible erasure.
+	 */
+	deleteEntry(id: string): Promise<boolean>;
+	/**
+	 * Hard-delete every entry whose scope is exactly `scopePrefix` and, when
+	 * `opts.recursive`, every scope at-or-below `scopePrefix/`. Also removes the
+	 * matching `topic_meta` rows (which have no FK cascade). For GDPR-style scope
+	 * erasure; safe to re-run (already-deleted rows are a no-op).
+	 */
+	deleteScope(
+		scopePrefix: string,
+		opts?: { recursive?: boolean },
+	): Promise<DeleteScopeResult>;
 	listTopics(scopePaths: string[]): Promise<TopicSummary[]>;
 	getByTopic(
 		scopePaths: string[],

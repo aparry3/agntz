@@ -144,6 +144,83 @@ describe("SqliteMemoryStore", () => {
 		store.close();
 	});
 
+	it("hard-deletes entries and scope subtrees, clearing topic rows and meta", async () => {
+		const { dir, path } = tempDbPath();
+		tempDirs.push(dir);
+		const store = new SqliteMemoryStore(path);
+		const now = new Date().toISOString();
+		const put = (id: string, scope: string) =>
+			store.putEntry({
+				id,
+				scope,
+				content: id,
+				topics: ["prefs"],
+				type: "fact",
+				status: "active",
+				createdAt: now,
+				updatedAt: now,
+			});
+
+		await put("mem_user", "gymtext/user/123");
+		await put("mem_session", "gymtext/user/123/session/s1");
+		await put("mem_sibling", "gymtext/user/124");
+		await store.setTopicMeta("gymtext/user/123", "prefs", { blurb: "b" });
+		await store.setTopicMeta("gymtext/user/123/session/s1", "prefs", {
+			blurb: "b2",
+		});
+		await store.setTopicMeta("gymtext/user/124", "prefs", { blurb: "keep" });
+
+		// deleteEntry removes the row and (via FK cascade) its topic rows.
+		expect(await store.deleteEntry("mem_user")).toBe(true);
+		expect(await store.deleteEntry("mem_user")).toBe(false);
+		expect(await store.getEntry("mem_user")).toBeNull();
+		expect(await store.getByTopic(["gymtext/user/123"], "prefs")).toHaveLength(
+			0,
+		);
+
+		// deleteScope recursive: remaining subtree entry + both subtree meta rows;
+		// the sibling user is untouched.
+		const res = await store.deleteScope("gymtext/user/123", {
+			recursive: true,
+		});
+		expect(res.entries).toBe(1); // mem_session
+		expect(res.topicMeta).toBe(2); // user/123 + session meta
+		const remaining = await store.listEntries({ includeSuperseded: true });
+		expect(remaining.map((entry) => entry.scope)).toEqual(["gymtext/user/124"]);
+		expect(
+			await store.getTopicMeta("gymtext/user/124", "prefs"),
+		).not.toBeNull();
+		store.close();
+	});
+
+	it("deleteScope treats LIKE metacharacters in scopes literally", async () => {
+		const { dir, path } = tempDbPath();
+		tempDirs.push(dir);
+		const store = new SqliteMemoryStore(path);
+		const now = new Date().toISOString();
+		const put = (id: string, scope: string) =>
+			store.putEntry({
+				id,
+				scope,
+				content: id,
+				topics: ["t"],
+				type: "fact",
+				status: "active",
+				createdAt: now,
+				updatedAt: now,
+			});
+
+		await put("a", "app/u_1"); // exact prefix (underscore is literal)
+		await put("c", "app/u_1/child"); // real descendant
+		await put("d", "app/uX1/child"); // wrongly deleted if `_` acted as a wildcard
+
+		const res = await store.deleteScope("app/u_1", { recursive: true });
+		expect(res.entries).toBe(2); // a + c only
+		const remaining = await store.listEntries();
+		expect(remaining.map((entry) => entry.scope)).toEqual(["app/uX1/child"]);
+		store.close();
+	});
+
 	it("enumerates dirty topics across all scopes and clears them via meta", async () => {
 		const { dir, path } = tempDbPath();
 		tempDirs.push(dir);

@@ -84,6 +84,15 @@ const ENTRY_TYPES = new Set<EntryType>([
 export function createMemoryResourceProvider(memrez: Memrez): ResourceProvider {
 	return {
 		defaultMode: "read-write",
+		async purgeScope(grant: string, opts?: { recursive?: boolean }) {
+			// The host passes the tenant's own scope as `grant`, so authorizing
+			// against itself satisfies assertWritableScope (exact-match branch).
+			// Scope erasure means the whole subtree, so recursive defaults to true.
+			const result = await memrez.deleteScope([grant], grant, {
+				recursive: opts?.recursive ?? true,
+			});
+			return { deleted: result.deleted };
+		},
 		async getContext(ctx) {
 			const config = ctx.config as MemoryResourceConfig;
 			assertNoAgentTopicConfig(config);

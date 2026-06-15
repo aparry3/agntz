@@ -33,15 +33,27 @@ import type {
 	EvalRun as CoreEvalRun,
 	StreamEvent as CoreStreamEvent,
 	InvokeResult,
+	Message,
 	ModelProvider,
 	Reply,
 	ResourceProvider,
 	Runner,
+	SessionSummary,
 	ToolDefinition,
 	UnifiedStore,
 } from "@agntz/core";
 import { type AgentManifest, execute } from "@agntz/manifest";
 import { createInitialState, renderTemplate } from "@agntz/manifest";
+import type {
+	CurateOptions,
+	CurateReport,
+	ListOptions,
+	MemoryEntry,
+	Memrez,
+	ReadOptions,
+	ScanOptions,
+	TopicSummary,
+} from "@agntz/memrez";
 import { createExecutionContext } from "./bridge.js";
 import { RunsBuffer, TracesBuffer, buildRunRecord } from "./buffers.js";
 import { loadManifestsFromDir } from "./loader.js";
@@ -76,6 +88,13 @@ export interface AgntzLocalOptions {
 	 * cold starts.
 	 */
 	tokenCache?: TokenCache;
+	/**
+	 * Memrez instance for memory admin (view/delete). Held directly by the host
+	 * — a ResourceProvider deliberately exposes only tools/getContext/purgeScope,
+	 * not list/delete. When provided and `resources.memory` is unset, it is also
+	 * auto-wired as the "memory" resource so agents can read/write memory.
+	 */
+	memrez?: Memrez;
 }
 
 export interface LocalClient {
@@ -84,6 +103,9 @@ export interface LocalClient {
 	readonly evals: LocalEvalsResource;
 	readonly runs: LocalRunsResource;
 	readonly traces: LocalTracesResource;
+	readonly sessions: LocalSessionsResource;
+	/** Present only when `memrez` was supplied to `agntz()`. */
+	readonly memory?: LocalMemoryResource;
 	readonly manifests: ReadonlyMap<string, AgentManifest>;
 	readonly _runner: Runner;
 }
@@ -127,6 +149,46 @@ export interface LocalTracesResource {
 	get(traceId: string): Promise<TraceDetail | null>;
 }
 
+export interface LocalSessionsResource {
+	list(agentId?: string): Promise<SessionSummary[]>;
+	get(id: string): Promise<{ sessionId: string; messages: Message[] }>;
+	/** Erases the session and everything linked to it (the store's teardown). */
+	delete(id: string): Promise<void>;
+}
+
+export interface LocalMemoryResource {
+	scan(
+		grants: string[],
+		opts?: ScanOptions,
+	): Promise<{ grants: string[]; topics: TopicSummary[] }>;
+	read(
+		grants: string[],
+		topic: string | string[],
+		opts?: ReadOptions,
+	): Promise<MemoryEntry[]>;
+	list(grants: string[], opts?: ListOptions): Promise<MemoryEntry[]>;
+	deleteEntry(
+		grants: string[],
+		id: string,
+	): Promise<{ deleted: boolean; id: string }>;
+	deleteScope(
+		grants: string[],
+		prefix: string,
+		opts?: { recursive?: boolean },
+	): Promise<{
+		deleted: number;
+		topicMeta: number;
+		scope: string;
+		recursive: boolean;
+	}>;
+	curate(grants: string[], opts?: CurateOptions): Promise<CurateReport>;
+	correct(
+		grants: string[],
+		id: string,
+		content: string,
+	): Promise<{ entry: MemoryEntry }>;
+}
+
 export async function agntz(opts: AgntzLocalOptions): Promise<LocalClient> {
 	const manifests = await loadManifestsFromDir(opts.agents);
 	const toolDefs: ToolDefinition[] = opts.tools ?? [];
@@ -135,11 +197,19 @@ export async function agntz(opts: AgntzLocalOptions): Promise<LocalClient> {
 	const envProvider = opts.envProvider ?? ((name: string) => process.env[name]);
 	const store = opts.store ?? new MemoryStore();
 
+	// Auto-wire the memrez handle as the "memory" resource unless the caller
+	// already supplied one, so a single `memrez` option powers both the agent
+	// tools and the admin surface (client.memory).
+	const resources =
+		opts.memrez && !opts.resources?.memory
+			? { ...opts.resources, memory: opts.memrez.provider() }
+			: opts.resources;
+
 	const runner = createRunner({
 		tools: toolDefs,
 		envProvider,
 		modelProvider: opts.modelProvider,
-		resources: opts.resources,
+		resources,
 		store,
 		tokenCache: opts.tokenCache,
 	});
@@ -182,6 +252,8 @@ class LocalClientImpl implements LocalClient {
 	readonly evals: LocalEvalsResource;
 	readonly runs: LocalRunsResource;
 	readonly traces: LocalTracesResource;
+	readonly sessions: LocalSessionsResource;
+	readonly memory?: LocalMemoryResource;
 	constructor(
 		readonly _runner: Runner,
 		readonly manifests: ReadonlyMap<string, AgentManifest>,
@@ -207,6 +279,64 @@ class LocalClientImpl implements LocalClient {
 		this.evals = new EvalsResourceImpl(_runner, store);
 		this.runs = new RunsResourceImpl(runsBuffer);
 		this.traces = new TracesResourceImpl(tracesBuffer);
+		this.sessions = new SessionsResourceImpl(_runner);
+		// Memory admin is only available when a memrez handle was supplied.
+		this.memory = opts.memrez ? new MemoryResourceImpl(opts.memrez) : undefined;
+	}
+}
+
+class SessionsResourceImpl implements LocalSessionsResource {
+	constructor(private readonly runner: Runner) {}
+
+	list(agentId?: string): Promise<SessionSummary[]> {
+		return this.runner.sessions.listSessions(agentId);
+	}
+
+	async get(id: string): Promise<{ sessionId: string; messages: Message[] }> {
+		return {
+			sessionId: id,
+			messages: await this.runner.sessions.getMessages(id),
+		};
+	}
+
+	delete(id: string): Promise<void> {
+		return this.runner.sessions.deleteSession(id);
+	}
+}
+
+class MemoryResourceImpl implements LocalMemoryResource {
+	constructor(private readonly memrez: Memrez) {}
+
+	scan(grants: string[], opts?: ScanOptions) {
+		return this.memrez.scan(grants, opts);
+	}
+
+	read(grants: string[], topic: string | string[], opts?: ReadOptions) {
+		return this.memrez.read(grants, topic, opts);
+	}
+
+	list(grants: string[], opts?: ListOptions) {
+		return this.memrez.list(grants, opts);
+	}
+
+	deleteEntry(grants: string[], id: string) {
+		return this.memrez.deleteEntry(grants, id);
+	}
+
+	deleteScope(
+		grants: string[],
+		prefix: string,
+		opts?: { recursive?: boolean },
+	) {
+		return this.memrez.deleteScope(grants, prefix, opts);
+	}
+
+	curate(grants: string[], opts?: CurateOptions) {
+		return this.memrez.curate(grants, opts);
+	}
+
+	correct(grants: string[], id: string, content: string) {
+		return this.memrez.correct(grants, id, content);
 	}
 }
 

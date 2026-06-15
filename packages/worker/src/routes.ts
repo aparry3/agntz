@@ -429,6 +429,8 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 	app.use("/agents", workerAuth({ store, internalSecret }));
 	app.use("/agents/*", workerAuth({ store, internalSecret }));
 	app.use("/sessions/import", workerAuth({ store, internalSecret }));
+	app.use("/sessions", workerAuth({ store, internalSecret }));
+	app.use("/sessions/*", workerAuth({ store, internalSecret }));
 	app.use("/memory/import", workerAuth({ store, internalSecret }));
 	app.use("/webhook-secrets", workerAuth({ store, internalSecret }));
 	app.use("/webhook-secrets/*", workerAuth({ store, internalSecret }));
@@ -651,6 +653,52 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 		}
 	});
 
+	// Session management (tenant-scoped). Locally these are the runner.sessions
+	// handles; hosted, the platform must surface view + delete over HTTP.
+	app.get("/sessions", async (c) => {
+		try {
+			const userId = getUserId(c);
+			const agentId = c.req.query("agentId");
+			const sessions = await store.forUser(userId).listSessions(agentId);
+			return c.json({ sessions });
+		} catch (error) {
+			return c.json(
+				{ error: errorMessage(error) },
+				isBadRequest(error) ? 400 : 500,
+			);
+		}
+	});
+
+	app.get("/sessions/:id", async (c) => {
+		try {
+			const userId = getUserId(c);
+			const id = decodeURIComponent(c.req.param("id"));
+			const messages = await store.forUser(userId).getMessages(id);
+			return c.json({ sessionId: id, messages });
+		} catch (error) {
+			return c.json(
+				{ error: errorMessage(error) },
+				isBadRequest(error) ? 400 : 500,
+			);
+		}
+	});
+
+	// Erases the session and everything linked to it (messages, invocation logs,
+	// runs, spans, traces) via the store's transactional teardown. Idempotent.
+	app.delete("/sessions/:id", async (c) => {
+		try {
+			const userId = getUserId(c);
+			const id = decodeURIComponent(c.req.param("id"));
+			await store.forUser(userId).deleteSession(id);
+			return c.body(null, 204);
+		} catch (error) {
+			return c.json(
+				{ error: errorMessage(error) },
+				isBadRequest(error) ? 400 : 500,
+			);
+		}
+	});
+
 	app.post("/memory/import", async (c) => {
 		try {
 			const memrez = opts.memrez;
@@ -687,6 +735,12 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 	// route above is explicitly user-scoped through workerAuth for CLI migration.
 	app.use("/memory", internalOnlyAuth({ internalSecret }));
 	app.use("/memory/*", internalOnlyAuth({ internalSecret }));
+
+	// Scope erasure fans out across namespace-addressable resources (memrez now,
+	// RAG later). App→worker only, like /memory/*: memrez is partitioned purely
+	// by namespace, so the trusted caller passes the scope it owns.
+	app.use("/scopes", internalOnlyAuth({ internalSecret }));
+	app.use("/scopes/*", internalOnlyAuth({ internalSecret }));
 
 	app.get("/system/agents", async (c) => {
 		const agents = await listSystemAgents();
@@ -791,6 +845,26 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 		}
 	});
 
+	// Hard-delete a single memory entry. Grants may come from the request body or
+	// (for clients that strip DELETE bodies) the `grants` query param.
+	app.delete("/memory/entries/:id", async (c) => {
+		const memrez = opts.memrez;
+		if (!memrez) return memoryNotConfigured(c);
+		try {
+			const id = decodeURIComponent(c.req.param("id"));
+			const body = (await c.req.json().catch(() => ({}))) as {
+				grants?: unknown;
+			};
+			const grants = Array.isArray(body.grants)
+				? (body.grants as string[])
+				: parseGrantsParam(c.req.queries("grants"));
+			const result = await memrez.deleteEntry(grants, id);
+			return c.json(result);
+		} catch (error) {
+			return memoryErrorResponse(c, error);
+		}
+	});
+
 	app.post("/memory/curate", async (c) => {
 		const memrez = opts.memrez;
 		if (!memrez) return memoryNotConfigured(c);
@@ -814,6 +888,36 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 				return c.json({ curateEnabled: true, report });
 			}
 			return c.json(await runCurationSweep(memrez));
+		} catch (error) {
+			return memoryErrorResponse(c, error);
+		}
+	});
+
+	// Scope erasure: fan out across every namespace-addressable resource provider
+	// that implements purgeScope (memrez now, RAG later) and aggregate the counts.
+	// Recursive (whole subtree) by default. Does NOT touch sessions/runs — those
+	// are the tenant axis (DELETE /sessions/:id). Idempotent.
+	app.post("/scopes/delete", async (c) => {
+		try {
+			const body = (await c.req.json().catch(() => ({}))) as {
+				scope?: unknown;
+				recursive?: unknown;
+			};
+			if (typeof body.scope !== "string" || body.scope.trim() === "") {
+				return c.json({ error: "Missing required field: scope (string)" }, 400);
+			}
+			const recursive = body.recursive !== false;
+			const byResource: Record<string, number> = {};
+			let total = 0;
+			for (const [kind, provider] of Object.entries(resourceProviders)) {
+				if (!provider.purgeScope) continue;
+				const { deleted } = await provider.purgeScope(body.scope, {
+					recursive,
+				});
+				byResource[kind] = deleted;
+				total += deleted;
+			}
+			return c.json({ scope: body.scope, recursive, total, byResource });
 		} catch (error) {
 			return memoryErrorResponse(c, error);
 		}

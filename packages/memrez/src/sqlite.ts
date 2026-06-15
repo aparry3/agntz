@@ -172,6 +172,46 @@ export class SqliteMemoryStore implements MemoryStore {
 		tx(ids);
 	}
 
+	async deleteEntry(id: string): Promise<boolean> {
+		// entry_topics rows cascade away (FK ON DELETE CASCADE; foreign_keys=ON).
+		const result = this.db
+			.prepare("DELETE FROM memrez_entries WHERE id = ?")
+			.run(id);
+		return result.changes > 0;
+	}
+
+	async deleteScope(
+		scopePrefix: string,
+		opts: { recursive?: boolean } = {},
+	): Promise<{ entries: number; topicMeta: number }> {
+		let entries = 0;
+		let topicMeta = 0;
+		const tx = this.db.transaction(() => {
+			if (opts.recursive === true) {
+				const like = `${escapeLike(scopePrefix)}/%`;
+				entries = this.db
+					.prepare(
+						"DELETE FROM memrez_entries WHERE scope = ? OR scope LIKE ? ESCAPE '\\'",
+					)
+					.run(scopePrefix, like).changes;
+				topicMeta = this.db
+					.prepare(
+						"DELETE FROM memrez_topic_meta WHERE scope = ? OR scope LIKE ? ESCAPE '\\'",
+					)
+					.run(scopePrefix, like).changes;
+			} else {
+				entries = this.db
+					.prepare("DELETE FROM memrez_entries WHERE scope = ?")
+					.run(scopePrefix).changes;
+				topicMeta = this.db
+					.prepare("DELETE FROM memrez_topic_meta WHERE scope = ?")
+					.run(scopePrefix).changes;
+			}
+		});
+		tx();
+		return { entries, topicMeta };
+	}
+
 	async listTopics(scopePaths: string[]): Promise<TopicSummary[]> {
 		if (scopePaths.length === 0) return [];
 		const rows = this.db
@@ -389,6 +429,11 @@ export class SqliteMemoryStore implements MemoryStore {
 
 function placeholders(values: readonly unknown[]): string {
 	return values.map(() => "?").join(", ");
+}
+
+/** Escape LIKE metacharacters so a scope prefix matches literally (ESCAPE '\'). */
+function escapeLike(value: string): string {
+	return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 
 function parseSource(raw: string | null): Source | undefined {

@@ -993,7 +993,37 @@ export class SqliteStore implements UnifiedStore {
 
 	async deleteSession(sessionId: string): Promise<void> {
 		const u = this.requireUser();
+		// Erase everything linked to the session — not just the row + messages, but
+		// the prompts/outputs in invocation_logs, runs, spans, and traces — so no
+		// session data is left behind. Idempotent.
 		const transaction = this.db.transaction(() => {
+			// Traces link to a session only through their spans; resolve ids first.
+			const traceIds = (
+				this.db
+					.prepare(
+						"SELECT DISTINCT trace_id FROM ar_spans WHERE owner_id = ? AND session_id = ?",
+					)
+					.all(u, sessionId) as Array<{ trace_id: string }>
+			).map((r) => r.trace_id);
+			this.db
+				.prepare("DELETE FROM ar_spans WHERE owner_id = ? AND session_id = ?")
+				.run(u, sessionId);
+			if (traceIds.length > 0) {
+				const placeholders = traceIds.map(() => "?").join(", ");
+				this.db
+					.prepare(
+						`DELETE FROM ar_trace_summaries WHERE owner_id = ? AND trace_id IN (${placeholders})`,
+					)
+					.run(u, ...traceIds);
+			}
+			this.db
+				.prepare("DELETE FROM runs WHERE user_id = ? AND session_id = ?")
+				.run(u, sessionId);
+			this.db
+				.prepare(
+					"DELETE FROM invocation_logs WHERE user_id = ? AND session_id = ?",
+				)
+				.run(u, sessionId);
 			this.db
 				.prepare(
 					`DELETE FROM messages WHERE session_id IN (

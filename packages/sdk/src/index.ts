@@ -6,7 +6,9 @@ export type {
 	LocalAgentsResource,
 	LocalDatasetsResource,
 	LocalEvalsResource,
+	LocalMemoryResource,
 	LocalRunsResource,
+	LocalSessionsResource,
 	LocalTracesResource,
 } from "./client.js";
 

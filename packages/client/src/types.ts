@@ -196,6 +196,19 @@ export interface SessionImportResponse {
 	counts: Record<string, number>;
 }
 
+export interface SessionSummary {
+	sessionId: string;
+	agentId?: string;
+	messageCount: number;
+	createdAt: string;
+	updatedAt: string;
+}
+
+export interface SessionDetail {
+	sessionId: string;
+	messages: SessionSnapshot["messages"];
+}
+
 export interface MemoryEntry {
 	id: string;
 	scope: string;

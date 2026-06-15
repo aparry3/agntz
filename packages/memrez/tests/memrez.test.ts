@@ -334,6 +334,96 @@ describe("memrez core", () => {
 		).rejects.toBeInstanceOf(MemrezCorrectionError);
 	});
 
+	it("hard-deletes a single entry, authorizing by scope", async () => {
+		const reasoner = new FakeReasoner();
+		const memrez = createMemrez({ reasoner });
+		const written = await memrez.write(
+			["app/user/u_123"],
+			"topic:prefs|Likes email.",
+		);
+
+		// A sibling grant cannot delete the entry.
+		await expect(
+			memrez.deleteEntry(["app/user/u_456"], written.entry.id),
+		).rejects.toBeInstanceOf(MemrezScopeError);
+
+		const result = await memrez.deleteEntry(
+			["app/user/u_123"],
+			written.entry.id,
+		);
+		expect(result).toEqual({ deleted: true, id: written.entry.id });
+		expect(await memrez.store.getEntry(written.entry.id)).toBeNull();
+
+		// Once gone, a repeat delete surfaces NotFound (maps to 404 at the API).
+		await expect(
+			memrez.deleteEntry(["app/user/u_123"], written.entry.id),
+		).rejects.toBeInstanceOf(MemrezEntryNotFoundError);
+	});
+
+	it("deleteScope erases a subtree (recursive) without touching siblings", async () => {
+		const reasoner = new FakeReasoner();
+		const memrez = createMemrez({ reasoner });
+
+		await memrez.write(["app/user/u_123"], "topic:prefs|User 123 pref.");
+		await memrez.write(
+			["app/user/u_123"],
+			"scope:app/user/u_123/session/s_1|topic:session|Session fact.",
+		);
+		await memrez.write(["app/user/u_456"], "topic:prefs|Sibling pref.");
+		await memrez.store.setTopicMeta("app/user/u_123", "prefs", { blurb: "b" });
+
+		const result = await memrez.deleteScope(
+			["app/user/u_123"],
+			"app/user/u_123",
+			{ recursive: true },
+		);
+
+		expect(result).toMatchObject({ scope: "app/user/u_123", recursive: true });
+		expect(result.deleted).toBe(2); // u_123 + its descendant session
+		expect(result.topicMeta).toBe(1);
+
+		const remaining = await memrez.store.listEntries();
+		expect(remaining.map((entry) => entry.scope)).toEqual(["app/user/u_456"]);
+		expect(
+			await memrez.store.getTopicMeta("app/user/u_123", "prefs"),
+		).toBeNull();
+	});
+
+	it("deleteScope is exact (non-recursive) by default, leaving descendants", async () => {
+		const reasoner = new FakeReasoner();
+		const memrez = createMemrez({ reasoner });
+		await memrez.write(["app/user/u_123"], "topic:prefs|Exact.");
+		await memrez.write(
+			["app/user/u_123"],
+			"scope:app/user/u_123/session/s_1|topic:session|Descendant.",
+		);
+
+		const result = await memrez.deleteScope(
+			["app/user/u_123"],
+			"app/user/u_123",
+		);
+		expect(result.deleted).toBe(1);
+		expect(result.recursive).toBe(false);
+
+		const remaining = await memrez.store.listEntries();
+		expect(remaining.map((entry) => entry.scope)).toEqual([
+			"app/user/u_123/session/s_1",
+		]);
+	});
+
+	it("deleteScope refuses to erase an ancestor or sibling scope", async () => {
+		const reasoner = new FakeReasoner();
+		const memrez = createMemrez({ reasoner });
+		await memrez.write(["app/user/u_123"], "topic:prefs|Pref.");
+
+		await expect(
+			memrez.deleteScope(["app/user/u_123"], "app/user"),
+		).rejects.toBeInstanceOf(MemrezScopeError);
+		await expect(
+			memrez.deleteScope(["app/user/u_123"], "app/user/u_456"),
+		).rejects.toBeInstanceOf(MemrezScopeError);
+	});
+
 	it("tracks dirty topics and clears them after a curated pass", async () => {
 		const reasoner = new FakeReasoner();
 		const memrez = createMemrez({ reasoner });

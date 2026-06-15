@@ -459,6 +459,20 @@ describe("memrez resource provider", () => {
 			runner.invoke("bad-preload", "go", { context: ["app/user/u_123"] }),
 		).rejects.toThrow(/memory\.preload string value/);
 	});
+
+	it("exposes purgeScope that hard-deletes a scope subtree by default", async () => {
+		const memrez = createMemrez({ reasoner: new DirectiveReasoner() });
+		await memrez.write(["app/user/u_123"], "topic:prefs|Pref A.");
+		await memrez.write(["app/user/u_123/session/s_1"], "topic:s|Session fact.");
+		await memrez.write(["app/user/u_456"], "topic:prefs|Sibling.");
+
+		// The provider hook erases the whole subtree (recursive defaults to true).
+		const result = await memrez.provider().purgeScope?.("app/user/u_123");
+
+		expect(result).toEqual({ deleted: 2 });
+		const remaining = await memrez.store.listEntries();
+		expect(remaining.map((entry) => entry.scope)).toEqual(["app/user/u_456"]);
+	});
 });
 
 class DirectiveReasoner implements MemrezReasoner {

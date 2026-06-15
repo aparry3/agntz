@@ -37,6 +37,35 @@ export class InMemoryMemoryStore implements MemoryStore {
 		}
 	}
 
+	async deleteEntry(id: string): Promise<boolean> {
+		return this.entries.delete(id);
+	}
+
+	async deleteScope(
+		scopePrefix: string,
+		opts: { recursive?: boolean } = {},
+	): Promise<{ entries: number; topicMeta: number }> {
+		const matches = (scope: string) =>
+			scope === scopePrefix ||
+			(opts.recursive === true && scope.startsWith(`${scopePrefix}/`));
+		let entries = 0;
+		for (const [id, entry] of this.entries) {
+			if (matches(entry.scope)) {
+				this.entries.delete(id);
+				entries += 1;
+			}
+		}
+		let topicMeta = 0;
+		for (const key of this.topicMeta.keys()) {
+			const [scope] = splitMetaKey(key);
+			if (matches(scope)) {
+				this.topicMeta.delete(key);
+				topicMeta += 1;
+			}
+		}
+		return { entries, topicMeta };
+	}
+
 	async listTopics(scopePaths: string[]): Promise<TopicSummary[]> {
 		const scopes = new Set(scopePaths);
 		const counts = new Map<string, { count: number; lastUpdatedAt: string }>();

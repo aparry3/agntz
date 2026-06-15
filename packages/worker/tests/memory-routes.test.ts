@@ -296,6 +296,94 @@ describe("worker memory routes", () => {
 		expect(((await again.json()) as { dirty: number }).dirty).toBe(0);
 	});
 
+	it("hard-deletes a memory entry and maps not-found / bad-scope", async () => {
+		const memrez = createMemrez({ reasoner: new FakeReasoner() });
+		const written = await memrez.write(["app/user/u_1"], "Fact.", {
+			topicsHint: ["prefs"],
+		});
+		const app = makeApp(memrez);
+
+		// A sibling grant cannot delete the entry.
+		const badScope = await app.request(`/memory/entries/${written.entry.id}`, {
+			method: "DELETE",
+			headers: headers(),
+			body: JSON.stringify({ grants: ["app/user/u_2"] }),
+		});
+		expect(badScope.status).toBe(400);
+
+		// Grants may also come from the query param (DELETE-body-stripping clients).
+		const ok = await app.request(
+			`/memory/entries/${written.entry.id}?grants=app/user/u_1`,
+			{ method: "DELETE", headers: headers() },
+		);
+		expect(ok.status).toBe(200);
+		expect(await ok.json()).toEqual({ deleted: true, id: written.entry.id });
+
+		// Already gone → 404.
+		const missing = await app.request(`/memory/entries/${written.entry.id}`, {
+			method: "DELETE",
+			headers: headers(),
+			body: JSON.stringify({ grants: ["app/user/u_1"] }),
+		});
+		expect(missing.status).toBe(404);
+	});
+
+	it("erases a scope subtree across resource providers via /scopes/delete", async () => {
+		const memrez = createMemrez({ reasoner: new FakeReasoner() });
+		await memrez.write(["app/user/u_1"], "A.", { topicsHint: ["prefs"] });
+		await memrez.write(["app/user/u_1/session/s_1"], "B.", {
+			topicsHint: ["s"],
+		});
+		await memrez.write(["app/user/u_2"], "Sibling.", { topicsHint: ["prefs"] });
+		const app = createWorkerAPI({
+			store: new MemoryStore(),
+			internalSecret: SECRET,
+			memrez,
+			resources: { memory: memrez.provider() },
+		});
+
+		const res = await app.request("/scopes/delete", {
+			method: "POST",
+			headers: headers(),
+			body: JSON.stringify({ scope: "app/user/u_1" }),
+		});
+
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({
+			scope: "app/user/u_1",
+			recursive: true,
+			total: 2,
+			byResource: { memory: 2 },
+		});
+		// Subtree erased; sibling untouched.
+		expect(await memrez.store.listEntries()).toHaveLength(1);
+		expect(await memrez.list(["app/user/u_2"])).toHaveLength(1);
+	});
+
+	it("requires the internal secret and a scope for /scopes/delete", async () => {
+		const memrez = createMemrez({ reasoner: new FakeReasoner() });
+		const app = createWorkerAPI({
+			store: new MemoryStore(),
+			internalSecret: SECRET,
+			memrez,
+			resources: { memory: memrez.provider() },
+		});
+
+		const noAuth = await app.request("/scopes/delete", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ scope: "app/user/u_1" }),
+		});
+		expect(noAuth.status).toBe(401);
+
+		const noScope = await app.request("/scopes/delete", {
+			method: "POST",
+			headers: headers(),
+			body: JSON.stringify({}),
+		});
+		expect(noScope.status).toBe(400);
+	});
+
 	it("reports curation as disabled when the reasoner cannot curate", async () => {
 		// The deterministic kill-switch (MEMREZ_REASONER=deterministic) has no
 		// curate implementation — the sweep must say so instead of no-opping.

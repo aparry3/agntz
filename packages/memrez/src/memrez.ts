@@ -293,6 +293,57 @@ export class Memrez {
 		return { entry };
 	}
 
+	/**
+	 * Hard-delete a single entry (irreversible erasure, not a supersede). The
+	 * caller must hold a writable grant covering the entry's scope.
+	 */
+	async deleteEntry(
+		grants: NamespaceGrant[],
+		id: string,
+	): Promise<{ deleted: boolean; id: string }> {
+		const normalized = normalizeGrants(grants, this.namespacePolicy);
+		const entry = await this.store.getEntry(id);
+		if (!entry) {
+			throw new MemrezEntryNotFoundError(id);
+		}
+		// Deletion is write-class: authorize like correct()/write() do.
+		assertWritableScope(
+			normalized,
+			entry.scope,
+			normalizeWritePolicy(undefined),
+		);
+		const deleted = await this.store.deleteEntry(id);
+		return { deleted, id };
+	}
+
+	/**
+	 * Hard-delete every entry at `prefix` (and, with `recursive`, the whole
+	 * `prefix/` subtree) plus their topic-meta rows. The GDPR-style scope-erasure
+	 * primitive. The caller must hold a writable grant at-or-above `prefix`, so a
+	 * grant can only erase its own scope or a descendant — never an ancestor or
+	 * sibling. Idempotent: safe to re-run.
+	 */
+	async deleteScope(
+		grants: NamespaceGrant[],
+		prefix: string,
+		opts: { recursive?: boolean } = {},
+	): Promise<{
+		deleted: number;
+		topicMeta: number;
+		scope: string;
+		recursive: boolean;
+	}> {
+		const normalized = normalizeGrants(grants, this.namespacePolicy);
+		const scope = assertWritableScope(
+			normalized,
+			prefix,
+			normalizeWritePolicy(undefined),
+		);
+		const recursive = opts.recursive ?? false;
+		const res = await this.store.deleteScope(scope, { recursive });
+		return { deleted: res.entries, topicMeta: res.topicMeta, scope, recursive };
+	}
+
 	private async findExactDuplicate(
 		scope: string,
 		content: string,

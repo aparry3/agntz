@@ -33,6 +33,7 @@ export type {
 	CurateOptions,
 	CurateReport,
 	CuratorInput,
+	DeleteScopeResult,
 	DirtyTopic,
 	EntryType,
 	ListOptions,

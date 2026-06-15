@@ -34,8 +34,10 @@ import type {
 	RunResult,
 	RunsStartInput,
 	RunsStreamInput,
+	SessionDetail,
 	SessionImportInput,
 	SessionImportResponse,
+	SessionSummary,
 	StreamEvent,
 	TraceDetail,
 	TraceFilter,
@@ -198,6 +200,56 @@ export class SessionsResource {
 			fetchImpl: this.client._fetchImpl,
 		});
 		return (await res.json()) as SessionImportResponse;
+	}
+
+	async list(
+		filter: { agentId?: string } = {},
+		opts: { signal?: AbortSignal } = {},
+	): Promise<SessionSummary[]> {
+		const signal = this.client._composeSignal(opts.signal);
+		const params = new URLSearchParams();
+		if (filter.agentId) params.set("agentId", filter.agentId);
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: params.toString() ? `/sessions?${params}` : "/sessions",
+			method: "GET",
+			apiKey: this.client._apiKey,
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
+		return ((await res.json()) as { sessions: SessionSummary[] }).sessions;
+	}
+
+	async get(
+		sessionId: string,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<SessionDetail> {
+		const signal = this.client._composeSignal(opts.signal);
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/sessions/${encodeURIComponent(sessionId)}`,
+			method: "GET",
+			apiKey: this.client._apiKey,
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as SessionDetail;
+	}
+
+	/** Erase a session and everything linked to it (messages, logs, runs, traces). */
+	async delete(
+		sessionId: string,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<void> {
+		const signal = this.client._composeSignal(opts.signal);
+		await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/sessions/${encodeURIComponent(sessionId)}`,
+			method: "DELETE",
+			apiKey: this.client._apiKey,
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
 	}
 }
 

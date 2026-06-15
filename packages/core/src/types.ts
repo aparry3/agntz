@@ -160,6 +160,18 @@ export interface ResourceProvider {
 	defaultMode?: ResourceMode;
 	tools?(ctx: ResourceRegistrationContext): ResourceProviderToolDefinition[];
 	getContext?(ctx: ResourceToolContext): Promise<string | undefined>;
+	/**
+	 * Hard-delete everything this provider holds at-or-below `grant` (GDPR-style
+	 * scope erasure). Generic over providers — it speaks only a namespace grant
+	 * string and a deleted count, never resource-specific types. Providers with
+	 * no namespace-addressable data omit it. The host (worker/SDK) iterates the
+	 * registered providers and aggregates the results: core defines the
+	 * capability, hosts orchestrate. Idempotent — safe to re-run.
+	 */
+	purgeScope?(
+		grant: string,
+		opts?: { recursive?: boolean },
+	): Promise<{ deleted: number }>;
 }
 
 // ═══════════════════════════════════════════════════════════════════════

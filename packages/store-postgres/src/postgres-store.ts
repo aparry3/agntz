@@ -1120,10 +1120,52 @@ export class PostgresStore implements UnifiedStore {
 	async deleteSession(sessionId: string): Promise<void> {
 		await this.ensureMigrated();
 		const u = this.requireUser();
-		await this.pool.query(
-			`DELETE FROM ${this.t("sessions")} WHERE user_id = $1 AND id = $2`,
-			[u, sessionId],
-		);
+		// A session's data spans several tables; only ar_messages cascades off the
+		// session row. Erase everything linked to the session in one transaction so
+		// nothing (prompts/outputs in invocation_logs, runs, spans, traces) is left
+		// behind. Idempotent: re-running deletes nothing more.
+		const client = await this.pool.connect();
+		try {
+			await client.query("BEGIN");
+			// Traces link to a session only through their spans — resolve trace ids
+			// before deleting the spans that point to them.
+			const traceRows = await client.query<{ trace_id: string }>(
+				`SELECT DISTINCT trace_id FROM ${this.t("spans")}
+         WHERE owner_id = $1 AND session_id = $2`,
+				[u, sessionId],
+			);
+			const traceIds = traceRows.rows.map((r) => r.trace_id);
+			await client.query(
+				`DELETE FROM ${this.t("spans")} WHERE owner_id = $1 AND session_id = $2`,
+				[u, sessionId],
+			);
+			if (traceIds.length > 0) {
+				await client.query(
+					`DELETE FROM ${this.t("trace_summaries")}
+           WHERE owner_id = $1 AND trace_id = ANY($2::text[])`,
+					[u, traceIds],
+				);
+			}
+			await client.query(
+				`DELETE FROM ${this.t("runs")} WHERE user_id = $1 AND session_id = $2`,
+				[u, sessionId],
+			);
+			await client.query(
+				`DELETE FROM ${this.t("invocation_logs")} WHERE user_id = $1 AND session_id = $2`,
+				[u, sessionId],
+			);
+			// Removes the session row; ar_messages cascade via FK.
+			await client.query(
+				`DELETE FROM ${this.t("sessions")} WHERE user_id = $1 AND id = $2`,
+				[u, sessionId],
+			);
+			await client.query("COMMIT");
+		} catch (error) {
+			await client.query("ROLLBACK");
+			throw error;
+		} finally {
+			client.release();
+		}
 	}
 
 	async getOrCreateSession(sessionId: string): Promise<void> {

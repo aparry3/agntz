@@ -374,8 +374,29 @@ export class MemoryStore implements UnifiedStore {
 	async deleteSession(sessionId: string): Promise<void> {
 		const u = this.requireUser();
 		const session = this.backend.sessions.get(sessionId);
-		if (session && session.userId === u) {
-			this.backend.sessions.delete(sessionId);
+		if (!session || session.userId !== u) return;
+		// Erase everything linked to the session — session + messages, invocation
+		// logs, runs, spans, and traces — mirroring the persisted stores so dev
+		// behavior matches production.
+		this.backend.sessions.delete(sessionId);
+		this.backend.logs = this.backend.logs.filter(
+			(row) => !(row.userId === u && row.log.sessionId === sessionId),
+		);
+		for (const [key, run] of this.backend.runs) {
+			if (run.sessionId === sessionId && key === this.runKey(u, run.id)) {
+				this.backend.runs.delete(key);
+			}
+		}
+		const traceIds = new Set<string>();
+		for (const [spanId, span] of this.backend.spans) {
+			if (span.ownerId === u && span.sessionId === sessionId) {
+				traceIds.add(span.traceId);
+				this.backend.spans.delete(spanId);
+			}
+		}
+		for (const traceId of traceIds) {
+			const summary = this.backend.summaries.get(traceId);
+			if (summary?.ownerId === u) this.backend.summaries.delete(traceId);
 		}
 	}
 
