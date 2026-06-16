@@ -1,4 +1,4 @@
-import type { NamespaceGrantPolicy } from "@agntz/core";
+import type { ModelProvider, NamespaceGrantPolicy } from "@agntz/contracts";
 
 export type NamespaceGrant = string;
 
@@ -197,4 +197,12 @@ export interface MemrezOptions {
 	store?: MemoryStore;
 	reasoner?: MemrezReasoner;
 	namespacePolicy?: NamespaceGrantPolicy;
+	/**
+	 * Model provider backing the default built-in reasoner's direct model calls
+	 * (tagging + curation). Hosts (worker/SDK) inject their concrete provider —
+	 * e.g. core's `AISDKModelProvider` — so memrez never depends on `@agntz/core`.
+	 * Ignored when an explicit `reasoner` is supplied. When neither is set, the
+	 * default reasoner throws a clear setup error if a model call is attempted.
+	 */
+	modelProvider?: ModelProvider;
 }

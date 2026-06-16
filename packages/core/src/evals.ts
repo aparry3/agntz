@@ -12,14 +12,17 @@ import type {
 	EvalLatestScore,
 	EvalOutcome,
 	EvalRun,
-	EvalRunListFilters,
-	EvalRunListResult,
 	EvalRunSummary,
 	EvalStore,
 	ModelConfig,
 	TokenUsage,
 } from "./types.js";
 import { generateId } from "./utils/id.js";
+
+// `listEvalRunsInProcess` is a pure, store-agnostic helper that now lives in
+// `@agntz/contracts` (the SQL store adapters use it). Re-exported here so core's
+// public surface and internal imports (e.g. the in-memory store) are unchanged.
+export { listEvalRunsInProcess } from "@agntz/contracts";
 
 const DEFAULT_PASS_THRESHOLD = 0.7;
 const DEFAULT_JUDGE_MODEL: ModelConfig = {
@@ -183,59 +186,6 @@ export function latestScoreFromEvalRun(run: EvalRun): EvalLatestScore {
 		endedAt: run.endedAt,
 		updatedAt: new Date().toISOString(),
 	};
-}
-
-export function listEvalRunsInProcess(
-	runs: EvalRun[],
-	filters: EvalRunListFilters = {},
-): EvalRunListResult {
-	const limit = Math.min(Math.max(filters.limit ?? 50, 1), 200);
-	let rows = runs.filter((run) => {
-		if (filters.agentId && run.agentId !== filters.agentId) return false;
-		if (filters.evalId && run.evalId !== filters.evalId) return false;
-		if (filters.evalVersion && run.evalVersion !== filters.evalVersion)
-			return false;
-		if (filters.datasetId && run.datasetId !== filters.datasetId) return false;
-		if (filters.datasetVersion && run.datasetVersion !== filters.datasetVersion)
-			return false;
-		if (filters.agentVersion && run.agentVersion !== filters.agentVersion)
-			return false;
-		if (filters.status && run.status !== filters.status) return false;
-		if (filters.startedAfter && run.startedAt < filters.startedAfter)
-			return false;
-		if (filters.startedBefore && run.startedAt > filters.startedBefore)
-			return false;
-		return true;
-	});
-	rows = rows
-		.slice()
-		.sort(
-			(a, b) =>
-				b.startedAt.localeCompare(a.startedAt) || b.id.localeCompare(a.id),
-		);
-
-	let startIdx = 0;
-	if (filters.cursor) {
-		const decoded = decodeEvalRunCursor(filters.cursor);
-		if (decoded) {
-			startIdx = rows.findIndex(
-				(r) =>
-					r.startedAt < decoded.startedAt ||
-					(r.startedAt === decoded.startedAt && r.id < decoded.id),
-			);
-			if (startIdx === -1) startIdx = rows.length;
-		}
-	}
-
-	const page = rows.slice(startIdx, startIdx + limit);
-	const cursor =
-		page.length === limit && startIdx + limit < rows.length
-			? encodeEvalRunCursor({
-					startedAt: page[page.length - 1].startedAt,
-					id: page[page.length - 1].id,
-				})
-			: undefined;
-	return { rows: page, cursor };
 }
 
 export async function runEval(
@@ -930,26 +880,4 @@ function formatError(error: unknown): string {
 
 function formatScore(score: number): string {
 	return clampScore(score).toFixed(2);
-}
-
-function encodeEvalRunCursor(cursor: {
-	startedAt: string;
-	id: string;
-}): string {
-	return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
-}
-
-function decodeEvalRunCursor(
-	cursor: string,
-): { startedAt: string; id: string } | null {
-	try {
-		const parsed = JSON.parse(
-			Buffer.from(cursor, "base64url").toString("utf8"),
-		) as { startedAt?: unknown; id?: unknown };
-		if (typeof parsed.startedAt !== "string" || typeof parsed.id !== "string")
-			return null;
-		return { startedAt: parsed.startedAt, id: parsed.id };
-	} catch {
-		return null;
-	}
 }

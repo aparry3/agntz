@@ -14,6 +14,7 @@
 export * from "./agent-ref.js";
 export * from "./crypto.js";
 export * from "./errors.js";
+export * from "./eval-runs.js";
 export * from "./http-auth.js";
 export * from "./http-tool.js";
 export * from "./namespace.js";
@@ -21,3 +22,4 @@ export * from "./outbound-url.js";
 export * from "./skill.js";
 export * from "./span.js";
 export * from "./tools.js";
+export * from "./types.js";

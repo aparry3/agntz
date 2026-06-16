@@ -1,9 +1,9 @@
-import { createRunner, defineAgent } from "@agntz/core";
 import type {
 	GenerateTextOptions,
 	GenerateTextResult,
 	ModelProvider,
-} from "@agntz/core";
+} from "@agntz/contracts";
+import { createRunner, defineAgent } from "@agntz/core";
 import { describe, expect, it } from "vitest";
 import { createMemrez } from "../src/index.js";
 import type {

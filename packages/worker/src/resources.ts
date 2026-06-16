@@ -1,4 +1,4 @@
-import type { ResourceProvider } from "@agntz/core";
+import { AISDKModelProvider, type ResourceProvider } from "@agntz/core";
 import {
 	DeterministicReasoner,
 	InMemoryMemoryStore,
@@ -36,13 +36,19 @@ export function getResourceProviders(): Record<string, ResourceProvider> {
 
 	// memrez's built-in LLM reasoner (direct model calls, env-key auth) is the
 	// default. MEMREZ_REASONER=deterministic is the emergency kill-switch:
-	// writes file under "general" and curation becomes a no-op.
+	// writes file under "general" and curation becomes a no-op. memrez no longer
+	// depends on @agntz/core, so the host injects the model provider the default
+	// reasoner runs its direct tagger/curator calls through.
 	const reasoner =
 		resolveMemrezReasonerKind() === "deterministic"
 			? new DeterministicReasoner()
 			: undefined;
 
-	_memrez = createMemrez({ store, reasoner });
+	_memrez = createMemrez({
+		store,
+		reasoner,
+		modelProvider: new AISDKModelProvider(),
+	});
 	_resources = { memory: _memrez.provider() };
 	return _resources;
 }

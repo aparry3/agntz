@@ -1,4 +1,4 @@
-import type { InvokeResult, Run } from "@agntz/core";
+import type { InvokeResult, Run } from "@agntz/contracts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PostgresStore } from "../src/postgres-store.js";
 

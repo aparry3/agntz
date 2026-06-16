@@ -1,4 +1,4 @@
-import type { AgentDefinition } from "@agntz/core";
+import type { AgentDefinition } from "@agntz/contracts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PostgresStore } from "../src/postgres-store.js";
 

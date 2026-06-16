@@ -42,13 +42,11 @@
   "homepage": "https://github.com/aparry3/agntz#readme",
   "author": "Aaron Bidworthy",
   "dependencies": {
+    "@agntz/contracts": "workspace:*",
     "@agntz/db": "workspace:*",
     "better-sqlite3": "^11.8.1",
     "pg": "^8.20.0",
     "zod": "^3.25.0"
-  },
-  "peerDependencies": {
-    "@agntz/core": ">=1.6.0"
   },
   "devDependencies": {
     "@agntz/core": "workspace:*",

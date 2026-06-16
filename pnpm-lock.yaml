@@ -122,6 +122,10 @@ importers:
         version: 3.2.4(@types/debug@4.1.13)(@types/node@22.19.15)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.22.3)(yaml@2.8.3)
 
   packages/contracts:
+    dependencies:
+      zod:
+        specifier: ^3.25.0
+        version: 3.25.76
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -235,6 +239,9 @@ importers:
 
   packages/memrez:
     dependencies:
+      '@agntz/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@agntz/db':
         specifier: workspace:*
         version: link:../db
@@ -346,6 +353,9 @@ importers:
 
   packages/store-postgres:
     dependencies:
+      '@agntz/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@agntz/db':
         specifier: workspace:*
         version: link:../db
@@ -353,9 +363,6 @@ importers:
         specifier: ^8.20.0
         version: 8.20.0
     devDependencies:
-      '@agntz/core':
-        specifier: workspace:*
-        version: link:../core
       '@types/pg':
         specifier: ^8.11.0
         version: 8.18.0
@@ -371,6 +378,9 @@ importers:
 
   packages/store-sqlite:
     dependencies:
+      '@agntz/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@agntz/db':
         specifier: workspace:*
         version: link:../db
@@ -378,9 +388,6 @@ importers:
         specifier: ^11.8.1
         version: 11.10.0
     devDependencies:
-      '@agntz/core':
-        specifier: workspace:*
-        version: link:../core
       '@types/better-sqlite3':
         specifier: ^7.6.12
         version: 7.6.13

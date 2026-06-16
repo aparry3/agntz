@@ -7,7 +7,7 @@ import {
 	getLastFour,
 	listEvalRunsInProcess,
 	normalizeNamespaceGrant,
-} from "@agntz/core";
+} from "@agntz/contracts";
 import type {
 	AgentDefinition,
 	AgentVersionSummary,
@@ -48,7 +48,7 @@ import type {
 	TraceSummary,
 	UnifiedStore,
 	WebhookDelivery,
-} from "@agntz/core";
+} from "@agntz/contracts";
 import { createSqliteDatabase, runSqliteMigrations } from "@agntz/db/sqlite";
 import type { Database as DatabaseType } from "better-sqlite3";
 

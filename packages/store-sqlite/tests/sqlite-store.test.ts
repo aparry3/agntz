@@ -1,4 +1,4 @@
-import { _resetCryptoKeyCache } from "@agntz/core";
+import { _resetCryptoKeyCache } from "@agntz/contracts";
 import type {
 	AgentDefinition,
 	ContextEntry,
@@ -8,7 +8,7 @@ import type {
 	InvocationLog,
 	Message,
 	SecretDefinition,
-} from "@agntz/core";
+} from "@agntz/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SqliteStore } from "../src/sqlite-store.js";
 

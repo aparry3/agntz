@@ -7,7 +7,7 @@ import {
 	getLastFour,
 	listEvalRunsInProcess,
 	normalizeNamespaceGrant,
-} from "@agntz/core";
+} from "@agntz/contracts";
 import type {
 	AgentDefinition,
 	AgentVersionSummary,
@@ -48,7 +48,7 @@ import type {
 	TraceSummary,
 	UnifiedStore,
 	WebhookDelivery,
-} from "@agntz/core";
+} from "@agntz/contracts";
 import { PostgresMigrator, createPostgresPool } from "@agntz/db/postgres";
 import type pg from "pg";
 
