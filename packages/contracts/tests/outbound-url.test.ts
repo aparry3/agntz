@@ -4,7 +4,7 @@ import {
 	assertOutboundUrlAllowed,
 	fetchWithOutboundPolicy,
 	validateOutboundUrl,
-} from "../src/utils/outbound-url.js";
+} from "../src/outbound-url.js";
 
 describe("outbound URL policy", () => {
 	it.each([

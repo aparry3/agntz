@@ -1,7 +1,7 @@
 {
-  "name": "@agntz/manifest",
-  "version": "7.0.0",
-  "description": "YAML manifest engine for agntz: parser, template engine, state management, and pipeline execution",
+  "name": "@agntz/contracts",
+  "version": "0.0.0",
+  "description": "Shared-vocabulary kernel for agntz — zero-dependency types and leaf utilities shared by @agntz/core and @agntz/manifest",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -20,27 +20,26 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "biome check src tests --no-errors-on-unmatched",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "tsup"
   },
-  "license": "MIT",
+  "keywords": [
+    "agntz",
+    "contracts",
+    "types"
+  ],
   "publishConfig": {
     "access": "public"
   },
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/aparry3/agntz.git",
-    "directory": "packages/manifest"
+    "directory": "packages/contracts"
   },
-  "dependencies": {
-    "@agntz/contracts": "workspace:*",
-    "yaml": "^2.8.0"
-  },
-  "peerDependencies": {
-    "@agntz/core": ">=1.6.0"
-  },
+  "homepage": "https://github.com/aparry3/agntz#readme",
+  "author": "Aaron Bidworthy",
   "devDependencies": {
-    "@agntz/core": "workspace:*",
-    "@biomejs/biome": "^1.9.0",
     "@types/node": "^22.0.0",
     "tsup": "^8.5.0",
     "typescript": "^5.9.0",

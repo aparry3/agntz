@@ -1,9 +1,9 @@
 import {
 	type OutboundUrlPolicyOptions,
 	fetchWithOutboundPolicy,
-	parseAgentRef,
 	validateOutboundUrl,
-} from "@agntz/core";
+} from "@agntz/contracts";
+import { parseAgentRef } from "@agntz/core";
 import { parse as parseYAML } from "yaml";
 import { parseUrlPlaceholders } from "./http-url.js";
 import { normalizeManifest } from "./parser.js";

@@ -1,4 +1,4 @@
-import type { OutboundUrlPolicyOptions } from "@agntz/core";
+import type { OutboundUrlPolicyOptions } from "@agntz/contracts";
 import { parse as parseYAML } from "yaml";
 import { normalizeSkill } from "./skill-parser.js";
 import type { ManifestToolEntry } from "./types.js";

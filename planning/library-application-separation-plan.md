@@ -1,9 +1,14 @@
 # Library vs. Application Separation
 
-**Status:** analysis + proposed direction (no code changes yet)
+**Status:** in progress — Move 1 landed; Move 2 seeded (see Implementation status)
 **Date:** 2026-06-15
 **Scope:** how to draw clean boundaries between `@agntz/core`, `@agntz/manifest`, the resource layer (`@agntz/memrez`, future RAG), and the application/worker — across both the TypeScript packages and the Python port.
 **First move (decided):** extract a shared `@agntz/db` plumbing layer, after the in-flight memory/session delete work lands.
+
+## Implementation status (2026-06-15)
+
+- **Move 1 — `@agntz/db` (TS): ✅ landed.** New package with `@agntz/db/postgres` + `@agntz/db/sqlite` subpaths (drivers as optional peer deps). All four stores (`store-postgres`, `store-sqlite`, `memrez/postgres`, `memrez/sqlite`) migrated onto it. Verified: typecheck + lint green; store-sqlite 95/95, memrez 42/42 and store-postgres 48/48 against a real local Postgres; `@agntz/db` unit tests cover the migrator's reset-on-failure. Full library build + bundle externalization confirmed. Python `agntz._db` mirror NOT yet done. Per-query single-retry on connection-terminated NOT yet done (the migration **reset-on-failure** poison fix + keepAlive/timeouts/max + idle-error handler are in).
+- **Move 2 — `@agntz/contracts` (TS): 🟡 seeded.** Kernel package created (zero runtime deps) and the **outbound-URL policy** moved into it; core re-exports from the original path (public surface unchanged), manifest imports it from the kernel. Verified green (contracts 15/15, core 465/465, manifest 213/213). **Deferred (with reasons):** the HTTP-tool/auth vocabulary dedup (`HTTPToolEntry`/`AgentState`/`ToolReference`/`SkillDefinition` + `HTTPAuth`) is **blocked by a real structural drift** — manifest's `TokenExchangeAuth.apply` is *required* while core's mirror made it *optional*, and core's `token-resolver` is built around `apply` being optional (it defaults a missing `apply`). Unifying forces a behavior/API change on one side, so it needs its own reconciliation PR, not a "pure move." `parseAgentRef` deferred (it would drag the `AgntzError` base into the kernel — a separate decision on where the error hierarchy roots). `SpanEmitter` deferred (a live core class manifest *invokes*, not a leaf type). manifest still imports `parseAgentRef` + `SpanEmitter` from core.
 
 Related decisions (captured previously): the **agntz ↔ memrez interface model** (three layers, two scoping axes, two-primitive delete), the deferred ancestor-semantics removal, and the namespace-roots cross-tenant bounding work.
 
@@ -205,20 +210,20 @@ Independent and value-first. Each is shippable on its own.
 
 ### Move 1 — `@agntz/db` plumbing extraction (FIRST, after delete work)
 
-- [ ] Create `@agntz/db` exposing: a pool/connection factory (postgres + sqlite), a migration runner + version-table helper, and parameterized-query helpers.
-- [ ] Bake the outage hardening in **once**: SSL/timeout/keepAlive/max config, an error handler on idle clients, single retry on connection-terminated, and **reset of the migration promise on failure** (no permanent poison).
-- [ ] Migrate `store-postgres`, `store-sqlite`, `memrez/postgres.ts`, `memrez/sqlite.ts` onto it. Table ownership unchanged (`ar_*` vs `memrez_*`).
-- [ ] Behavior-preserving; covered by existing store conformance tests.
+- [x] Create `@agntz/db` exposing: a pool/connection factory (postgres + sqlite), a migration runner + version-table helper. (Parameterized-query helpers left in the stores for now — the real cross-package duplication was pool + migrations.)
+- [x] Bake the outage hardening in **once**: timeout/keepAlive/max config, an error handler on idle clients, and **reset of the migration promise on failure** (no permanent poison). SSL kept as a passthrough (deployment concern). _Per-query single-retry on connection-terminated still TODO._
+- [x] Migrate `store-postgres`, `store-sqlite`, `memrez/postgres.ts`, `memrez/sqlite.ts` onto it. Table ownership unchanged (`ar_*` vs `memrez_*`).
+- [x] Behavior-preserving; covered by existing store conformance tests (verified against a real local Postgres) + new `@agntz/db` unit tests.
 - [ ] Mirror in Python as `agntz._db` (shared base for the four store classes).
 
 ### Move 2 — extract `@agntz/contracts` (shared kernel)
 
-- [ ] New **zero-runtime-dep** package `@agntz/contracts` holding the shared vocabulary + leaf utilities both core and manifest need: types `SkillDefinition`/`ToolReference`/`OutboundUrlPolicyOptions`/`HTTPToolEntry`/`AgentState` (plus the `SpanEmitter` type referenced by `ExecutionContext`); functions `parseAgentRef`, `validateOutboundUrl`, `fetchWithOutboundPolicy`.
-- [ ] Repoint manifest's `@agntz/core` imports → `@agntz/contracts`.
-- [ ] Delete core's structural mirrors (`http-tool.ts:40,57`, `auth/types.ts`) and import the canonical shapes from `@agntz/contracts` — removes the bidirectional duplication (finding H).
-- [ ] Result: `core → contracts` and `manifest → contracts`; neither depends on the other. The diamond's apex becomes the tiny kernel, not the runtime.
+- [x] New **zero-runtime-dep** package `@agntz/contracts`, seeded with the outbound-URL policy: `validateOutboundUrl`, `assertOutboundUrlAllowed`, `fetchWithOutboundPolicy`, `OutboundUrlPolicyOptions`, `OutboundUrlPolicyError`. Name `contracts` over `types` because it ships runtime values, not just type declarations.
+- [x] Repoint manifest's outbound-URL imports → `@agntz/contracts`; core re-exports from the original path so its public surface and internal imports are unchanged. Behavior-preserving (verified green).
+- [ ] **Vocabulary dedup (BLOCKED — needs its own PR).** Move `HTTPToolEntry`/`AgentState`/`ToolReference`/`SkillDefinition` + the declarative auth config (`HTTPAuth` and variants) into the kernel and delete core's structural mirrors (`http-tool.ts`, `auth/types.ts`). Blocker: `TokenExchangeAuth.apply` is *required* in manifest but *optional* in core's mirror, and core's `token-resolver` defaults a missing `apply` — so a single canonical type forces a behavior/API change on one side. Decide which shape wins (likely core's `apply?` optional, since the runtime supports omission) and update the other side + tests.
+- [ ] `parseAgentRef` → kernel. Deferred: it throws `InvalidAgentRefError`, so moving it cleanly means relocating the `AgntzError` base into the kernel — a separate decision on where the error hierarchy roots. manifest still imports `parseAgentRef` from core for now.
+- [ ] `SpanEmitter` → kernel. Deferred: it's a live core *class* that manifest invokes (`startManifest`/`startStep`), not a leaf type; extracting it means moving the telemetry span graph. manifest still imports the `SpanEmitter` type from core for now.
 - [ ] `AgentDefinition` stays in core — manifest never imports it, it *converts to* it via the bridge — so the kernel stays minimal.
-- [ ] Behavior-preserving (pure type/util move). Name `contracts` over `types` because it ships runtime values (`parseAgentRef`, outbound-url), not just type declarations.
 - [ ] Mirror in Python as an `agntz.contracts` module if pursuing the Python boundaries (Move 6).
 
 ### Move 3 — drop the app's dead Runner/store
