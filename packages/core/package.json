@@ -13,6 +13,10 @@
     "./templates": {
       "types": "./dist/templates/index.d.ts",
       "import": "./dist/templates/index.js"
+    },
+    "./manifest": {
+      "types": "./dist/manifest/index.d.ts",
+      "import": "./dist/manifest/index.js"
     }
   },
   "files": [
@@ -48,8 +52,10 @@
   "homepage": "https://github.com/aparry3/agntz#readme",
   "author": "Aaron Bidworthy",
   "dependencies": {
+    "@agntz/contracts": "workspace:*",
     "ai": "^6.0.0",
     "nanoid": "^5.1.0",
+    "yaml": "^2.8.0",
     "zod": "^3.25.0",
     "@ai-sdk/openai": "^3.0.0",
     "@ai-sdk/anthropic": "^3.0.0",

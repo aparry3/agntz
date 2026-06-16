@@ -1,6 +1,6 @@
 import { AuthRequiredError, requireUserContext, workerIdentity } from "@/lib/user";
 import { workerEditAgent, workerValidateManifest } from "@/lib/worker-client";
-import type { ManifestSelection } from "@agntz/manifest";
+import type { ManifestSelection } from "@agntz/core/manifest";
 import { type NextRequest, NextResponse } from "next/server";
 import { parse as parseYAML } from "yaml";
 

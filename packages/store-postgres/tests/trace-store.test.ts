@@ -14,7 +14,7 @@ describe.skipIf(!hasDb)("PostgresStore trace tests", () => {
 		// Wait for migration to complete so tables exist before beforeEach truncation.
 		// insertSpansBatch with empty array is a no-op that still calls ensureMigrated.
 		await (
-			admin as unknown as import("@agntz/core").TraceStore
+			admin as unknown as import("@agntz/contracts").TraceStore
 		).insertSpansBatch([]);
 	});
 
@@ -42,6 +42,6 @@ describe.skipIf(!hasDb)("PostgresStore trace tests", () => {
 	});
 
 	runTraceStoreConformance("PostgresStore (integration)", async () => {
-		return admin as unknown as import("@agntz/core").TraceStore;
+		return admin as unknown as import("@agntz/contracts").TraceStore;
 	});
 });

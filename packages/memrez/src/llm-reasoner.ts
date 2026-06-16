@@ -1,5 +1,4 @@
-import { AISDKModelProvider } from "@agntz/core";
-import type { ModelProvider } from "@agntz/core";
+import type { ModelProvider } from "@agntz/contracts";
 import type {
 	CurateOp,
 	CuratorInput,
@@ -12,10 +11,12 @@ import type {
  * Built-in LLM reasoner — the default for createMemrez(). memory handling is
  * memrez's job, not the calling agent's: every write is tagged (namespace,
  * topics, type, normalization, dedup) and every curate pass is reasoned by
- * the definitions below, executed as single direct model calls through
- * core's AISDKModelProvider. No agntz client or runner is involved, so
- * memrez stays strictly below the agent layer — an agent's memory_write can
- * never re-enter the agent platform.
+ * the definitions below, executed as single direct model calls through an
+ * injected `ModelProvider`. The host (worker/SDK) supplies the concrete
+ * provider — typically core's `AISDKModelProvider` — so memrez never depends
+ * on `@agntz/core`. No agntz client or runner is involved, so memrez stays
+ * strictly below the agent layer — an agent's memory_write can never re-enter
+ * the agent platform.
  *
  * This is intentionally not run through the agntz agent loop. Tagging and
  * curation are bounded structured model calls owned by memrez, which avoids
@@ -28,7 +29,12 @@ export interface ReasonerModelConfig {
 }
 
 export interface LlmReasonerOptions {
-	/** Defaults to core's AISDKModelProvider resolving keys from env vars. */
+	/**
+	 * Model provider backing the direct tagger/curator model calls. Hosts inject
+	 * a concrete provider (e.g. core's `AISDKModelProvider`, which resolves keys
+	 * from env vars). When omitted, the reasoner falls back to deterministic
+	 * tagging and throws a clear setup error if a real model call is required.
+	 */
 	modelProvider?: ModelProvider;
 	/** Override the tagger model. Default: openai/gpt-5.4-mini. */
 	taggerModel?: ReasonerModelConfig;
@@ -119,7 +125,15 @@ const DEFAULT_CORE_TOPIC = "core";
 
 export function llmReasoner(options: LlmReasonerOptions = {}): MemrezReasoner {
 	const usingEnvKeys = options.modelProvider === undefined;
-	const modelProvider = options.modelProvider ?? new AISDKModelProvider();
+	// memrez no longer constructs a provider itself (that would pull in
+	// `@agntz/core`). Hosts inject one via `modelProvider`; if a real model call
+	// is reached without one, fail loud with a clear setup error.
+	const resolveModelProvider = (): ModelProvider => {
+		if (options.modelProvider) return options.modelProvider;
+		throw new Error(
+			"memrez's default reasoner needs a ModelProvider. Pass createMemrez({ modelProvider }) / llmReasoner({ modelProvider }) — hosts typically supply core's AISDKModelProvider — or pass a custom reasoner.",
+		);
+	};
 	const taggerModel = options.taggerModel ?? DEFAULT_TAGGER_MODEL;
 	const curatorModel = options.curatorModel ?? DEFAULT_CURATOR_MODEL;
 
@@ -128,7 +142,7 @@ export function llmReasoner(options: LlmReasonerOptions = {}): MemrezReasoner {
 			// A missing key is a setup bug — fail loud, never silently degrade.
 			assertProviderKey(taggerModel, usingEnvKeys);
 			try {
-				const result = await modelProvider.generateText({
+				const result = await resolveModelProvider().generateText({
 					model: taggerModel,
 					messages: [
 						{ role: "system", content: TAGGER_INSTRUCTION },
@@ -155,7 +169,7 @@ export function llmReasoner(options: LlmReasonerOptions = {}): MemrezReasoner {
 			assertProviderKey(curatorModel, usingEnvKeys);
 			// No fallback — there is no deterministic curation. Errors propagate
 			// to the curate caller (sweep/endpoint), which reports them.
-			const result = await modelProvider.generateText({
+			const result = await resolveModelProvider().generateText({
 				model: curatorModel,
 				messages: [
 					{ role: "system", content: CURATOR_INSTRUCTION },

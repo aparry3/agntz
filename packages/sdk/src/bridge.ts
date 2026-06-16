@@ -12,7 +12,7 @@ import type {
 	ExecutionContext,
 	LLMAgentManifest,
 	ToolCallConfig,
-} from "@agntz/manifest";
+} from "@agntz/core/manifest";
 import { manifestToAgentDefinition } from "./manifest-to-agent.js";
 
 export interface CreateExecutionContextOptions {

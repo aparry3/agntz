@@ -1,7 +1,7 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
-import { parseManifest, validateManifest } from "@agntz/manifest";
-import type { AgentManifest } from "@agntz/manifest";
+import { parseManifest, validateManifest } from "@agntz/core/manifest";
+import type { AgentManifest } from "@agntz/core/manifest";
 
 /**
  * Loads agent manifests from a directory of `.yaml`/`.yml` files.

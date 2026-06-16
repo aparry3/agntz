@@ -16,7 +16,7 @@ import { I } from "@/components/v3/icons";
 import { Btn, Mono, Tag, ag } from "@/components/v3/primitives";
 import { YamlEditor } from "@/components/yaml-editor";
 import { useCatalog } from "@/lib/use-catalog";
-import type { ManifestSelection } from "@agntz/manifest";
+import type { ManifestSelection } from "@agntz/core/manifest";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { parse as parseYAML, stringify as stringifyYAML } from "yaml";

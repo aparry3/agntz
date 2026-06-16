@@ -5,7 +5,6 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: path.join(__dirname, "../.."),
   transpilePackages: [
     "@agntz/core",
-    "@agntz/manifest",
   ],
   serverExternalPackages: [
     "@agntz/store-postgres",

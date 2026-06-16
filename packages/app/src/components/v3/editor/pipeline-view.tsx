@@ -27,7 +27,7 @@ import {
 	ag,
 } from "@/components/v3/primitives";
 import type { Catalog } from "@/lib/use-catalog";
-import type { ManifestSelection } from "@agntz/manifest";
+import type { ManifestSelection } from "@agntz/core/manifest";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {

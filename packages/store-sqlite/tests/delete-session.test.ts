@@ -1,4 +1,4 @@
-import type { Run } from "@agntz/core";
+import type { Run } from "@agntz/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SqliteStore } from "../src/sqlite-store.js";
 

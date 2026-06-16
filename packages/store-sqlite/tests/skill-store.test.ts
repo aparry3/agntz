@@ -1,4 +1,4 @@
-import type { SkillDefinition } from "@agntz/core";
+import type { SkillDefinition } from "@agntz/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SqliteStore } from "../src/sqlite-store.js";
 

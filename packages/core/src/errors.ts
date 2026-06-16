@@ -1,20 +1,18 @@
 // ═══════════════════════════════════════════════════════════════════════
 // agntz — Typed Errors
 // ═══════════════════════════════════════════════════════════════════════
+//
+// The base `AgntzError` and `InvalidAgentRefError` (thrown by the shared
+// `parseAgentRef`) live in `@agntz/contracts`; re-exported here so core's
+// error surface and `instanceof` checks are unchanged. The runtime-specific
+// subclasses below extend the same base.
+import { AgntzError } from "@agntz/contracts";
 
-/**
- * Base error for all agntz errors.
- * Catch this to handle any SDK error.
- */
-export class AgntzError extends Error {
-	readonly code: string;
-
-	constructor(code: string, message: string, options?: ErrorOptions) {
-		super(message, options);
-		this.name = "AgntzError";
-		this.code = code;
-	}
-}
+export {
+	AgntzError,
+	InvalidAgentRefError,
+	NamespaceGrantError,
+} from "@agntz/contracts";
 
 /**
  * Thrown when an agent is not found in registered agents or the store.
@@ -47,37 +45,6 @@ export class AgentVersionNotFoundError extends AgntzError {
 		this.name = "AgentVersionNotFoundError";
 		this.agentId = agentId;
 		this.version = version;
-	}
-}
-
-/**
- * Thrown when an agent reference string is malformed.
- * The accepted forms are `<id>`, `<id>@latest`, and `<id>@<ISO timestamp>`.
- */
-export class InvalidAgentRefError extends AgntzError {
-	readonly input: string;
-
-	constructor(input: string, detail: string) {
-		super("INVALID_AGENT_REF", `Invalid agent reference "${input}": ${detail}`);
-		this.name = "InvalidAgentRefError";
-		this.input = input;
-	}
-}
-
-/**
- * Thrown when a namespace grant is malformed or a child invocation attempts
- * to widen beyond the parent invocation's grant set.
- */
-export class NamespaceGrantError extends AgntzError {
-	readonly input: unknown;
-
-	constructor(input: unknown, detail: string) {
-		super(
-			"NAMESPACE_GRANT_INVALID",
-			`Invalid namespace grant "${String(input)}": ${detail}`,
-		);
-		this.name = "NamespaceGrantError";
-		this.input = input;
 	}
 }
 

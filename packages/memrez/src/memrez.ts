@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { NamespaceGrantPolicy, ResourceProvider } from "@agntz/core";
+import type { NamespaceGrantPolicy, ResourceProvider } from "@agntz/contracts";
 import {
 	assertWritableScope,
 	normalizeGrants,
@@ -38,8 +38,11 @@ export class Memrez {
 		// every curate pass is reasoned by the built-in LLM reasoner (direct
 		// model calls, env-key auth). Pass `reasoner` to override — e.g.
 		// llmReasoner({ taggerModel, curatorModel }) for custom models, or
-		// DeterministicReasoner for tests / kill-switch behavior.
-		this.reasoner = options.reasoner ?? llmReasoner();
+		// DeterministicReasoner for tests / kill-switch behavior. The default
+		// reasoner's model calls run through `options.modelProvider`, which hosts
+		// inject (e.g. core's AISDKModelProvider) so memrez stays core-free.
+		this.reasoner =
+			options.reasoner ?? llmReasoner({ modelProvider: options.modelProvider });
 		this.namespacePolicy = options.namespacePolicy;
 	}
 

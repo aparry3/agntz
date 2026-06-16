@@ -1,9 +1,23 @@
 # Library vs. Application Separation
 
-**Status:** analysis + proposed direction (no code changes yet)
+**Status:** in progress — Moves 1 & 2 landed; manifest merged into core; store/resource ports extracted into the contracts kernel (adapters are core-free)
 **Date:** 2026-06-15
 **Scope:** how to draw clean boundaries between `@agntz/core`, `@agntz/manifest`, the resource layer (`@agntz/memrez`, future RAG), and the application/worker — across both the TypeScript packages and the Python port.
 **First move (decided):** extract a shared `@agntz/db` plumbing layer, after the in-flight memory/session delete work lands.
+
+## Implementation status (2026-06-15)
+
+- **Move 1 — `@agntz/db` (TS): ✅ landed.** New package with `@agntz/db/postgres` + `@agntz/db/sqlite` subpaths (drivers as optional peer deps). All four stores (`store-postgres`, `store-sqlite`, `memrez/postgres`, `memrez/sqlite`) migrated onto it. Verified: typecheck + lint green; store-sqlite 95/95, memrez 42/42 and store-postgres 48/48 against a real local Postgres; `@agntz/db` unit tests cover the migrator's reset-on-failure. Full library build + bundle externalization confirmed. **Python `agntz._db` mirror landed** — shared driver loaders (`load_psycopg`/`load_jsonb`) + connection factories (`connect_postgres`/`connect_sqlite`) dedup the lazy-import + connect plumbing across all four Python store classes (basedpyright + pytest green). It's intentionally thinner than TS: Python stores use a single connection (no pool) and run sync idempotent migrations in `__init__`, so there's no pool or migration-promise poison to share. Per-query single-retry on connection-terminated NOT yet done (the TS migration **reset-on-failure** poison fix + keepAlive/timeouts/max + idle-error handler are in).
+- **Move 2 — `@agntz/contracts` (TS): ✅ landed.** Zero-runtime-dep kernel holding the full shared vocabulary: outbound-URL policy, agent-ref parser, base errors (`AgntzError`/`InvalidAgentRefError`), the HTTP-tool/auth/skill config (`HTTPToolEntry`/`AgentState`/`ToolReference`/`SkillDefinition`/`HTTPAuth` + variants), and a structural `ExecutionSpanEmitter`. **Finding H is fully resolved** — core's hand-copied structural mirrors are deleted and both core and manifest import the canonical shapes. The `TokenExchangeAuth.apply` drift was resolved to **optional** (the token-resolver already defaults a missing `apply`, and manifest's own validator only checked subfields when present — so it's behavior-preserving on both sides). `parseAgentRef` moved too (the `AgntzError` base went to the kernel as shared error vocabulary; core re-exports it). `SpanEmitter` stays a core class; manifest types against the structural `ExecutionSpanEmitter` instead. **Net: `@agntz/manifest` no longer depends on `@agntz/core` at all** (contracts-only) — the diamond is closed. Verified: full workspace typecheck + test green (contracts 15/15, core 465/465, manifest 213/213, sdk 29/29, worker 117/117); bundles confirm manifest imports contracts and never core. **Python `agntz.contracts` mirror is N/A** — Python's layering is reversed (`core → manifest`; manifest imports nothing from core), so `agntz.manifest` already *is* the shared-vocabulary base. There are no structural mirrors, no `HTTPToolEntry`/`HTTPAuth`/`ToolReference`/`SkillDefinition` types, and no outbound-URL module, so finding H simply doesn't exist in Python — a contracts module would be cosmetic. (Decided 2026-06-15.)
+
+### Architecture consolidation (post-Move-2, 2026-06-15)
+
+After the discussion below (§4 evolved): the package count came down and `@agntz/contracts` grew into the real kernel.
+
+- **`@agntz/manifest` merged into `@agntz/core`** — the YAML DSL now ships at the `@agntz/core/manifest` subpath; the standalone package is removed. Rationale: manifest and the runtime are always consumed together (via the SDK/worker), and core is already heavy (≈12 AI-SDK provider deps), so the separate package was ceremony. core/sdk/worker/app repointed; core 678 tests (incl. the 213 manifest tests) green.
+- **`@agntz/contracts` is now the full ports + data kernel** (the store/resource ports extraction): it owns `UnifiedStore` + all sub-store interfaces, `ResourceProvider`/`ResourceToolContext`/`ResourceProviderToolDefinition`, every entity type (`AgentDefinition`, `Run`/`Session`/`Message`/`Trace`/`Span`, `Secret*`, `ApiKeyRecord`, `Connection*`, `Eval*`, `InvokeResult`, …), the model-call shapes (`ModelProvider`, `GenerateText*`), and the leaf utils (secret crypto, namespace grants, `defineSkill`, `listEvalRunsInProcess`). It gains a **type-only `zod` dependency** (for `ResourceProviderToolDefinition.input`). The **runtime execution types stay in core** (`ToolDefinition`/`ToolContext`/`InvokeOptions`, `RunRegistry`, streaming, telemetry sinks) — the cut follows the *execution context*: resource tools get a pure-data `ResourceToolContext`, runtime tools get the full `ToolContext` (which hands them `RunRegistry`/`invoke`). core re-exports everything from `./types.js`, so its public surface is unchanged.
+- **The store/resource adapters are now `@agntz/contracts`-only**: `store-postgres`, `store-sqlite`, and `memrez` no longer depend on `@agntz/core` (no transitive AI-SDK deps). **Finding F done** — memrez's reasoner accepts an injected `ModelProvider` (new `modelProvider` option) instead of constructing core's `AISDKModelProvider`; the worker injects it. (memrez keeps `@agntz/core` only as a *test* devDependency.)
+- Verified: full workspace typecheck + test green; real local Postgres store-postgres 48/48 + memrez 42/42; adapter bundles import `@agntz/contracts`, never `@agntz/core`.
 
 Related decisions (captured previously): the **agntz ↔ memrez interface model** (three layers, two scoping axes, two-primitive delete), the deferred ancestor-semantics removal, and the namespace-roots cross-tenant bounding work.
 
@@ -205,21 +219,21 @@ Independent and value-first. Each is shippable on its own.
 
 ### Move 1 — `@agntz/db` plumbing extraction (FIRST, after delete work)
 
-- [ ] Create `@agntz/db` exposing: a pool/connection factory (postgres + sqlite), a migration runner + version-table helper, and parameterized-query helpers.
-- [ ] Bake the outage hardening in **once**: SSL/timeout/keepAlive/max config, an error handler on idle clients, single retry on connection-terminated, and **reset of the migration promise on failure** (no permanent poison).
-- [ ] Migrate `store-postgres`, `store-sqlite`, `memrez/postgres.ts`, `memrez/sqlite.ts` onto it. Table ownership unchanged (`ar_*` vs `memrez_*`).
-- [ ] Behavior-preserving; covered by existing store conformance tests.
-- [ ] Mirror in Python as `agntz._db` (shared base for the four store classes).
+- [x] Create `@agntz/db` exposing: a pool/connection factory (postgres + sqlite), a migration runner + version-table helper. (Parameterized-query helpers left in the stores for now — the real cross-package duplication was pool + migrations.)
+- [x] Bake the outage hardening in **once**: timeout/keepAlive/max config, an error handler on idle clients, and **reset of the migration promise on failure** (no permanent poison). SSL kept as a passthrough (deployment concern). _Per-query single-retry on connection-terminated still TODO._
+- [x] Migrate `store-postgres`, `store-sqlite`, `memrez/postgres.ts`, `memrez/sqlite.ts` onto it. Table ownership unchanged (`ar_*` vs `memrez_*`).
+- [x] Behavior-preserving; covered by existing store conformance tests (verified against a real local Postgres) + new `@agntz/db` unit tests.
+- [x] Mirrored in Python as `agntz._db` — shared driver loaders (`load_psycopg`/`load_jsonb`) + connection factories (`connect_postgres`/`connect_sqlite`) used by all four store classes. Thinner than TS (single connection, no pool; sync idempotent migrations, so no versioned migrator/poison fix to share).
 
 ### Move 2 — extract `@agntz/contracts` (shared kernel)
 
-- [ ] New **zero-runtime-dep** package `@agntz/contracts` holding the shared vocabulary + leaf utilities both core and manifest need: types `SkillDefinition`/`ToolReference`/`OutboundUrlPolicyOptions`/`HTTPToolEntry`/`AgentState` (plus the `SpanEmitter` type referenced by `ExecutionContext`); functions `parseAgentRef`, `validateOutboundUrl`, `fetchWithOutboundPolicy`.
-- [ ] Repoint manifest's `@agntz/core` imports → `@agntz/contracts`.
-- [ ] Delete core's structural mirrors (`http-tool.ts:40,57`, `auth/types.ts`) and import the canonical shapes from `@agntz/contracts` — removes the bidirectional duplication (finding H).
-- [ ] Result: `core → contracts` and `manifest → contracts`; neither depends on the other. The diamond's apex becomes the tiny kernel, not the runtime.
-- [ ] `AgentDefinition` stays in core — manifest never imports it, it *converts to* it via the bridge — so the kernel stays minimal.
-- [ ] Behavior-preserving (pure type/util move). Name `contracts` over `types` because it ships runtime values (`parseAgentRef`, outbound-url), not just type declarations.
-- [ ] Mirror in Python as an `agntz.contracts` module if pursuing the Python boundaries (Move 6).
+- [x] New **zero-runtime-dep** package `@agntz/contracts`, seeded with the outbound-URL policy: `validateOutboundUrl`, `assertOutboundUrlAllowed`, `fetchWithOutboundPolicy`, `OutboundUrlPolicyOptions`, `OutboundUrlPolicyError`. Name `contracts` over `types` because it ships runtime values, not just type declarations.
+- [x] Repoint manifest's outbound-URL imports → `@agntz/contracts`; core re-exports from the original path so its public surface and internal imports are unchanged. Behavior-preserving (verified green).
+- [x] **Vocabulary dedup (DONE).** Moved `HTTPToolEntry`/`AgentState`/`ToolReference`/`SkillDefinition` + the declarative auth config (`HTTPAuth` + variants) into the kernel and deleted core's structural mirrors (`http-tool.ts`, `auth/types.ts`) and manifest's originals; both now import the canonical shapes. The `TokenExchangeAuth.apply` drift was resolved to **optional** — behavior-preserving, since the token-resolver already defaults a missing `apply` and manifest's validator only checked subfields when present.
+- [x] `parseAgentRef` → kernel, along with the `AgntzError` base + `InvalidAgentRefError` (shared error vocabulary). core re-exports them so its error surface and `instanceof` behavior are unchanged.
+- [x] `SpanEmitter` — left as a core class; instead added a structural `ExecutionSpanEmitter` interface in the kernel that core's `SpanEmitter` satisfies, so manifest types against that. Net: **manifest no longer depends on `@agntz/core`** (contracts-only).
+- [x] `AgentDefinition` stays in core — manifest never imports it, it *converts to* it via the bridge — so the kernel stays minimal.
+- [x] Python `agntz.contracts`: **N/A** (decided). Python's layering is reversed (`core → manifest`); `agntz.manifest` already serves as the shared-vocabulary kernel, and there are no mirrors / HTTP-tool-auth types / outbound-URL module to dedup. A contracts module would be cosmetic.
 
 ### Move 3 — drop the app's dead Runner/store
 
@@ -240,7 +254,8 @@ Independent and value-first. Each is shippable on its own.
 
 ### Move 6 — Python module boundaries
 
-- [ ] Mirror the TS boundaries inside the single distribution: `agntz.contracts`, `agntz.resources.memrez`, `agntz.hosted`, keep `agntz.core` pure. Stop top-level-exporting memrez as if it were core.
+- [x] `agntz._db` extracted (Move 1 mirror).
+- [ ] Mirror the remaining TS boundaries inside the single distribution where they apply: `agntz.resources.memrez`, `agntz.hosted`; stop top-level-exporting memrez as if it were core. **Note:** `agntz.contracts` is N/A — Python's layering is reversed (`core → manifest`), so `agntz.manifest` is already the shared-vocabulary kernel (no mirrors/diamond to break). `agntz.core` is *not* pure today (it imports manifest's vocabulary + `interpolate`); making it pure would mean factoring shared vocabulary out of manifest, which has no functional payoff in Python.
 
 ### Parallel / independent
 

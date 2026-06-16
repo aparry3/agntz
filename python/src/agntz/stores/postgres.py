@@ -8,6 +8,7 @@ import secrets
 from datetime import UTC, datetime
 from typing import Any
 
+from agntz._db import connect_postgres, load_jsonb
 from agntz.client.models import (
     AgentDefinition,
     AgentVersionSummary,
@@ -42,10 +43,8 @@ class PostgresStore:
         self.dsn = dsn
         self.user_id = user_id
         self.table_prefix = table_prefix
-        self._psycopg = _import_psycopg()
-        self._json = _import_json()
-        self._conn = self._psycopg.connect(dsn)
-        self._conn.autocommit = True
+        self._json = load_jsonb()
+        self._conn = connect_postgres(dsn)
         self._last_ts = 0
         if not skip_migration:
             self._migrate()
@@ -1151,22 +1150,6 @@ class PostgresStore:
             """,
         ]:
             self._conn.execute(statement)
-
-
-def _import_psycopg() -> Any:
-    try:
-        import psycopg
-    except ImportError as exc:
-        raise RuntimeError(
-            "PostgresStore requires the postgres extra: pip install 'agntz[postgres]'"
-        ) from exc
-    return psycopg
-
-
-def _import_json() -> Any:
-    from psycopg.types.json import Jsonb
-
-    return Jsonb
 
 
 def _sha256(value: str) -> str:

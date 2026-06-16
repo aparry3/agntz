@@ -1,4 +1,4 @@
-import type { SkillDefinition } from "@agntz/core";
+import type { SkillDefinition } from "@agntz/contracts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PostgresStore } from "../src/postgres-store.js";
 

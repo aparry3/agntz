@@ -4,5 +4,5 @@ import { SqliteStore } from "../src/sqlite-store.js";
 runTraceStoreConformance("SqliteStore", async () => {
 	// In-memory SQLite DB so tests don't touch disk.
 	const store = new SqliteStore(":memory:");
-	return store as unknown as import("@agntz/core").TraceStore;
+	return store as unknown as import("@agntz/contracts").TraceStore;
 });

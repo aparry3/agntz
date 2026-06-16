@@ -1,0 +1,54 @@
+{
+  "name": "@agntz/contracts",
+  "version": "0.0.0",
+  "description": "Shared-vocabulary kernel for agntz — zero-dependency types and leaf utilities shared by @agntz/core and @agntz/manifest",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "biome check src tests --no-errors-on-unmatched",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "tsup"
+  },
+  "keywords": [
+    "agntz",
+    "contracts",
+    "types"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aparry3/agntz.git",
+    "directory": "packages/contracts"
+  },
+  "homepage": "https://github.com/aparry3/agntz#readme",
+  "author": "Aaron Bidworthy",
+  "dependencies": {
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

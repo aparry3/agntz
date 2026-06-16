@@ -9,11 +9,11 @@
 // The semantics MUST stay in lockstep with manifest's `http-url.ts` and
 // `template.ts`; both are tiny and locked by spec, so drift is unlikely.
 //
-// The `HTTPToolEntry` and `AgentState` shapes are mirrored here as local
-// structural types — TypeScript structural typing means callers passing a
-// `@agntz/manifest` `HTTPToolEntry` interoperate seamlessly without core
-// taking a runtime dep on manifest.
+// `HTTPToolEntry` and `AgentState` (re-exported below) come from the shared
+// `@agntz/contracts` kernel, so core and manifest share one canonical shape
+// without core taking a runtime dep on manifest.
 // ═══════════════════════════════════════════════════════════════════════
+import type { AgentState, HTTPToolEntry } from "@agntz/contracts";
 import { z } from "zod";
 import {
 	type AppliedAuth,
@@ -36,26 +36,7 @@ import {
 	fetchWithOutboundPolicy,
 } from "./utils/outbound-url.js";
 
-/**
- * Structural mirror of `HTTPToolEntry` from `@agntz/manifest`. Kept in
- * lockstep — see top-of-file comment.
- */
-export interface HTTPToolEntry {
-	kind: "http";
-	name: string;
-	url: string;
-	method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-	description?: string;
-	params?: Record<string, string>;
-	headers?: Record<string, string>;
-	body_type?: "json" | "form" | "query";
-	body?: unknown;
-	/** Dynamic auth — opaque here; the runner resolves and applies it. */
-	auth?: unknown;
-}
-
-/** Structural mirror of `AgentState` from `@agntz/manifest`. */
-export type AgentState = Record<string, unknown>;
+export type { AgentState, HTTPToolEntry } from "@agntz/contracts";
 
 /** Rough 4-chars-per-token estimate for response truncation. */
 const MAX_TOKENS = 10_000;

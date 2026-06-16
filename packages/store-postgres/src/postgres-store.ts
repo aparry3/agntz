@@ -7,7 +7,7 @@ import {
 	getLastFour,
 	listEvalRunsInProcess,
 	normalizeNamespaceGrant,
-} from "@agntz/core";
+} from "@agntz/contracts";
 import type {
 	AgentDefinition,
 	AgentVersionSummary,
@@ -48,13 +48,12 @@ import type {
 	TraceSummary,
 	UnifiedStore,
 	WebhookDelivery,
-} from "@agntz/core";
-import pg from "pg";
+} from "@agntz/contracts";
+import { PostgresMigrator, createPostgresPool } from "@agntz/db/postgres";
+import type pg from "pg";
 
-const { Pool } = pg;
 type PoolType = InstanceType<typeof pg.Pool>;
 type PoolConfig = pg.PoolConfig;
-type PoolClientType = pg.PoolClient;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Schema Migrations
@@ -620,8 +619,7 @@ export class PostgresStore implements UnifiedStore {
 	private pool: PoolType;
 	private ownsPool: boolean;
 	private prefix: string;
-	private migrated = false;
-	private migratePromise: Promise<void> | null = null;
+	private migrator: PostgresMigrator;
 	private lastTs = 0;
 	readonly userId: string | null;
 
@@ -632,49 +630,61 @@ export class PostgresStore implements UnifiedStore {
 		return new Date(next).toISOString();
 	}
 
-	constructor(options: PostgresStoreOptions | string) {
+	constructor(
+		options: PostgresStoreOptions | string,
+		_internal?: {
+			pool: PoolType;
+			migrator: PostgresMigrator;
+			prefix: string;
+			userId: string;
+		},
+	) {
+		// forUser() path: share the parent's pool + migrator so scoped views await
+		// the same migration (and never end a pool they only borrowed).
+		if (_internal) {
+			this.pool = _internal.pool;
+			this.ownsPool = false;
+			this.prefix = _internal.prefix;
+			this.migrator = _internal.migrator;
+			this.userId = _internal.userId;
+			return;
+		}
+
 		const opts: PostgresStoreOptions =
 			typeof options === "string" ? { connection: options } : options;
 
 		this.prefix = opts.tablePrefix ?? "ar_";
 		this.userId = opts.userId ?? null;
 
-		if (typeof opts.connection === "string") {
-			this.pool = new Pool({ connectionString: opts.connection });
-			this.ownsPool = true;
-		} else if (opts.connection instanceof Pool) {
-			this.pool = opts.connection;
-			this.ownsPool = false;
-		} else {
-			this.pool = new Pool(opts.connection);
-			this.ownsPool = true;
-		}
+		// Pool creation, connection hardening, and the idle-client error handler
+		// all live in @agntz/db.
+		const { pool, ownsPool } = createPostgresPool(opts.connection);
+		this.pool = pool;
+		this.ownsPool = ownsPool;
 
-		if (this.ownsPool) {
-			// Idle clients can error after a database/proxy restart. The pool will
-			// discard them; this listener prevents an unhandled EventEmitter error.
-			this.pool.on("error", (err) => {
-				console.warn("PostgresStore idle client error:", err.message);
-			});
-		}
+		this.migrator = new PostgresMigrator({
+			pool: this.pool,
+			migrations: MIGRATIONS,
+			versionTable: this.t("schema_version"),
+			lockName: this.prefix,
+			transform: (sql) => sql.replace(/ar_/g, this.prefix),
+		});
 
 		if (!opts.skipMigration) {
-			this.startMigration();
+			this.migrator.start();
 		}
 	}
 
 	forUser(userId: string): PostgresStore {
-		const scoped = new PostgresStore({
-			connection: this.pool,
-			tablePrefix: this.prefix,
-			skipMigration: true,
-			userId,
-		});
-		// Share the parent's migration state so scoped calls await any in-flight
-		// migration kicked off by the admin's constructor rather than racing it.
-		scoped.migrated = this.migrated;
-		scoped.migratePromise = this.migratePromise;
-		return scoped;
+		return new PostgresStore(
+			{ connection: this.pool },
+			{
+				pool: this.pool,
+				migrator: this.migrator,
+				prefix: this.prefix,
+				userId,
+			},
+		);
 	}
 
 	private requireUser(): string {
@@ -688,80 +698,8 @@ export class PostgresStore implements UnifiedStore {
 		return `${this.prefix}${name}`;
 	}
 
-	private async ensureMigrated(): Promise<void> {
-		if (this.migrated) return;
-		if (!this.migratePromise) {
-			this.startMigration();
-		}
-		await this.migratePromise;
-	}
-
-	private startMigration(): void {
-		const promise = this.migrate().catch((err) => {
-			if (this.migratePromise === promise) {
-				this.migratePromise = null;
-			}
-			throw err;
-		});
-		this.migratePromise = promise;
-		// Mark the promise as handled so a migration failure doesn't crash the
-		// process as an unhandled rejection. ensureMigrated() awaits the same
-		// promise and will surface the error on the first real operation.
-		promise.catch(() => {});
-	}
-
-	private async migrate(): Promise<void> {
-		// Hold a single connection so the advisory lock and migration queries
-		// run on the same session — pg_advisory_lock is session-scoped.
-		const client = await this.pool.connect();
-		try {
-			const lockKey = this.migrationLockKey();
-			// Serializes migrations across all processes sharing this database
-			// (e.g., app + worker booting concurrently on Railway).
-			await client.query("SELECT pg_advisory_lock($1)", [lockKey]);
-			try {
-				const currentVersion = await this.getSchemaVersion(client);
-				// Heal stale rows from prior failed/racing migrations: schema_version
-				// is meant to hold exactly one row, but if v1's INSERT ever ran twice
-				// (pre-fix code) the table can have multiple rows, which then breaks
-				// every "UPDATE ar_schema_version SET version = N" (PK conflict).
-				if (currentVersion > 0) {
-					await client.query(
-						`DELETE FROM ${this.t("schema_version")} WHERE version < $1`,
-						[currentVersion],
-					);
-				}
-				for (let i = currentVersion; i < MIGRATIONS.length; i++) {
-					const sql = MIGRATIONS[i].replace(/ar_/g, this.prefix);
-					await client.query(sql);
-				}
-				this.migrated = true;
-			} finally {
-				await client.query("SELECT pg_advisory_unlock($1)", [lockKey]);
-			}
-		} finally {
-			client.release();
-		}
-	}
-
-	private migrationLockKey(): string {
-		const hash = createHash("sha256")
-			.update(`agntz-migration:${this.prefix}`)
-			.digest();
-		return hash.readBigInt64BE(0).toString();
-	}
-
-	private async getSchemaVersion(
-		executor: PoolType | PoolClientType = this.pool,
-	): Promise<number> {
-		try {
-			const result = await executor.query(
-				`SELECT version FROM ${this.t("schema_version")} ORDER BY version DESC LIMIT 1`,
-			);
-			return result.rows[0]?.version ?? 0;
-		} catch {
-			return 0;
-		}
+	private ensureMigrated(): Promise<void> {
+		return this.migrator.ensureMigrated();
 	}
 
 	// ═══ AgentStore ═══

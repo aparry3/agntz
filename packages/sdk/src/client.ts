@@ -42,8 +42,8 @@ import type {
 	ToolDefinition,
 	UnifiedStore,
 } from "@agntz/core";
-import { type AgentManifest, execute } from "@agntz/manifest";
-import { createInitialState, renderTemplate } from "@agntz/manifest";
+import { type AgentManifest, execute } from "@agntz/core/manifest";
+import { createInitialState, renderTemplate } from "@agntz/core/manifest";
 import type {
 	CurateOptions,
 	CurateReport,

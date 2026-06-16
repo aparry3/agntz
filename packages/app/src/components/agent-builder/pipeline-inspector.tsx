@@ -28,7 +28,7 @@ import {
 	type ToolEntryKind,
 } from "@/lib/manifest-catalog";
 import type { Catalog } from "@/lib/use-catalog";
-import { parseUrlPlaceholders } from "@agntz/manifest";
+import { parseUrlPlaceholders } from "@agntz/core/manifest";
 import { type ReactNode, useMemo, useState } from "react";
 import { HeadersEditor } from "./headers-editor";
 import { ParamsEditor } from "./params-editor";

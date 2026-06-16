@@ -1,4 +1,4 @@
-import type { LLMAgentManifest } from "@agntz/manifest";
+import type { LLMAgentManifest } from "@agntz/core/manifest";
 import { describe, expect, it } from "vitest";
 import { manifestToAgentDefinition } from "../src/manifest-to-agent.js";
 

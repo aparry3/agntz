@@ -3,8 +3,8 @@ import {
 	namespaceAncestors,
 	normalizeNamespaceGrant,
 	normalizeNamespaceGrants,
-} from "@agntz/core";
-import type { NamespaceGrantPolicy } from "@agntz/core";
+} from "@agntz/contracts";
+import type { NamespaceGrantPolicy } from "@agntz/contracts";
 import type { NamespaceGrant, WritePolicy } from "./types.js";
 
 export class MemrezScopeError extends Error {

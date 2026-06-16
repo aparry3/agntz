@@ -1,0 +1,77 @@
+{
+  "name": "@agntz/db",
+  "version": "0.0.0",
+  "description": "Shared database plumbing for agntz stores — pooling, migrations, and connection hardening for Postgres and SQLite",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./postgres": {
+      "types": "./dist/postgres.d.ts",
+      "import": "./dist/postgres.js"
+    },
+    "./sqlite": {
+      "types": "./dist/sqlite.d.ts",
+      "import": "./dist/sqlite.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "biome check src tests --no-errors-on-unmatched",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "tsup"
+  },
+  "keywords": [
+    "agntz",
+    "postgres",
+    "sqlite",
+    "database",
+    "migrations",
+    "connection-pool"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aparry3/agntz.git",
+    "directory": "packages/db"
+  },
+  "homepage": "https://github.com/aparry3/agntz#readme",
+  "author": "Aaron Bidworthy",
+  "peerDependencies": {
+    "better-sqlite3": "^11.8.1",
+    "pg": "^8.20.0"
+  },
+  "peerDependenciesMeta": {
+    "better-sqlite3": {
+      "optional": true
+    },
+    "pg": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/pg": "^8.11.0",
+    "better-sqlite3": "^11.8.1",
+    "pg": "^8.20.0",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

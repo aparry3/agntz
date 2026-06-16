@@ -1,4 +1,4 @@
-import Database from "better-sqlite3";
+import { createSqliteDatabase, runSqliteMigrations } from "@agntz/db/sqlite";
 import type { Database as DatabaseType } from "better-sqlite3";
 import type {
 	DirtyTopic,
@@ -87,17 +87,11 @@ export class SqliteMemoryStore implements MemoryStore {
 	constructor(options: SqliteMemoryStoreOptions | string) {
 		const opts: SqliteMemoryStoreOptions =
 			typeof options === "string" ? { path: options } : options;
-		this.db = new Database(opts.path, {
-			verbose: opts.verbose ? console.log : undefined,
+		this.db = createSqliteDatabase({
+			path: opts.path,
+			verbose: opts.verbose,
+			wal: opts.wal,
 		});
-		this.db.pragma("foreign_keys = ON");
-		this.db.pragma("busy_timeout = 5000");
-		this.db.pragma("journal_mode = WAL");
-		this.db.pragma("synchronous = NORMAL");
-
-		if (opts.wal === false) {
-			this.db.pragma("journal_mode = DELETE");
-		}
 
 		this.migrate();
 	}
@@ -364,23 +358,9 @@ export class SqliteMemoryStore implements MemoryStore {
 	}
 
 	private migrate(): void {
-		const currentVersion = this.getSchemaVersion();
-		for (let i = currentVersion; i < MIGRATIONS.length; i++) {
-			this.db.exec(MIGRATIONS[i]);
-		}
-	}
-
-	private getSchemaVersion(): number {
-		try {
-			const row = this.db
-				.prepare(
-					"SELECT version FROM memrez_schema_version ORDER BY version DESC LIMIT 1",
-				)
-				.get() as { version: number } | undefined;
-			return row?.version ?? 0;
-		} catch {
-			return 0;
-		}
+		runSqliteMigrations(this.db, MIGRATIONS, {
+			versionTable: "memrez_schema_version",
+		});
 	}
 
 	private findTopicMeta(

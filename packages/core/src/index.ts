@@ -202,8 +202,9 @@ export type { NormalizeImageBlocksOptions } from "./image-fetcher.js";
 
 // Sentinel prefix used by SQL stores to encode a ContentBlock[]
 // `InvocationLog.input` inside the legacy `input TEXT` column without a
-// second column. Shared so all stores stay in lockstep.
-export const INVOCATION_LOG_BLOCKS_PREFIX = "__agntz_blocks__:";
+// second column. Now lives in `@agntz/contracts` (the SQL store adapters use
+// it); re-exported here so core's public surface is unchanged.
+export { INVOCATION_LOG_BLOCKS_PREFIX } from "@agntz/contracts";
 
 // Types
 export type {

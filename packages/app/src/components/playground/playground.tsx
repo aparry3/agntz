@@ -3,7 +3,7 @@
 import { EditableSelect } from "@/components/v3/editor/editable-fields";
 import { I } from "@/components/v3/icons";
 import { Btn, Mono, Spinner, ag } from "@/components/v3/primitives";
-import type { ManifestSelection } from "@agntz/manifest";
+import type { ManifestSelection } from "@agntz/core/manifest";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { InputForm } from "./input-form";
 import { LiveTrace } from "./live-trace";

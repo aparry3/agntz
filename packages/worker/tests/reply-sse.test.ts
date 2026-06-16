@@ -8,7 +8,7 @@ import {
 	createRunner,
 	defineAgent,
 } from "@agntz/core";
-import type { AgentManifest, LLMAgentManifest } from "@agntz/manifest";
+import type { AgentManifest, LLMAgentManifest } from "@agntz/core/manifest";
 import { describe, expect, it } from "vitest";
 import { createWorkerAPI } from "../src/routes.js";
 

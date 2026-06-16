@@ -1,8 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AgentManifest } from "@agntz/manifest";
-import { parseManifest } from "@agntz/manifest";
+import type { AgentManifest } from "@agntz/core/manifest";
+import { parseManifest } from "@agntz/core/manifest";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 

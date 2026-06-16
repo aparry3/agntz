@@ -1,4 +1,4 @@
-import type { ResourceProvider, ResourceToolContext } from "@agntz/core";
+import type { ResourceProvider, ResourceToolContext } from "@agntz/contracts";
 import { z } from "zod";
 import type { Memrez } from "./memrez.js";
 import type { EntryType, MemoryEntry, WritePolicy } from "./types.js";

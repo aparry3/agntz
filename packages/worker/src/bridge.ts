@@ -13,8 +13,8 @@ import type {
 	ExecutionContext,
 	LLMAgentManifest,
 	ToolCallConfig,
-} from "@agntz/manifest";
-import { parseManifest } from "@agntz/manifest";
+} from "@agntz/core/manifest";
+import { parseManifest } from "@agntz/core/manifest";
 
 export interface CreateExecutionContextOptions {
 	/**
