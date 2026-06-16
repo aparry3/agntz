@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from agntz._db import connect_sqlite
 from agntz.client.models import (
     AgentDefinition,
     AgentVersionSummary,
@@ -38,8 +39,7 @@ class SQLiteStore:
         self.path = Path(path)
         self.user_id = user_id
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self.path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
+        self._conn = connect_sqlite(self.path, check_same_thread=False)
         self._migrate()
 
     def close(self) -> None:

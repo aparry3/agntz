@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from agntz._db import connect_sqlite
+
 from .memrez import DirtyTopic, EntryType, MemoryEntry, Source, TopicMeta, TopicSummary
 
 
@@ -24,8 +26,7 @@ class SqliteMemoryStore:
             SqliteMemoryStoreOptions(path=options) if isinstance(options, str | Path) else options
         )
         self.path = str(opts.path)
-        self._conn = sqlite3.connect(self.path)
-        self._conn.row_factory = sqlite3.Row
+        self._conn = connect_sqlite(self.path)
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.execute("PRAGMA busy_timeout = 5000")
         journal_mode = "PRAGMA journal_mode = WAL" if opts.wal else "PRAGMA journal_mode = DELETE"

@@ -9,6 +9,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
+from agntz._db import connect_postgres, load_jsonb
+
 from .memrez import DirtyTopic, EntryType, MemoryEntry, Source, TopicMeta, TopicSummary
 
 _IDENTIFIER_PREFIX_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
@@ -27,14 +29,9 @@ class PostgresMemoryStore:
             PostgresMemoryStoreOptions(connection=options) if isinstance(options, str) else options
         )
         self.prefix = _normalize_table_prefix(opts.table_prefix)
-        self._psycopg = _load_psycopg()
+        self._jsonb = load_jsonb()
         rows = importlib.import_module("psycopg.rows")
-        self._jsonb = importlib.import_module("psycopg.types.json").Jsonb
-        self._conn = self._psycopg.connect(
-            opts.connection,
-            autocommit=True,
-            row_factory=rows.dict_row,
-        )
+        self._conn = connect_postgres(opts.connection, row_factory=rows.dict_row)
         if opts.run_migrations:
             self._migrate()
 
@@ -433,16 +430,6 @@ class PostgresMemoryStore:
 
     def _index(self, name: str) -> str:
         return _quote_identifier(f"{self.prefix}idx_memrez_{name}")
-
-
-def _load_psycopg() -> Any:
-    try:
-        return importlib.import_module("psycopg")
-    except ModuleNotFoundError as exc:
-        raise RuntimeError(
-            "PostgresMemoryStore requires psycopg. Install agntz[postgres] "
-            "or psycopg[binary]>=3.2.0."
-        ) from exc
 
 
 def _normalize_table_prefix(prefix: str) -> str:
