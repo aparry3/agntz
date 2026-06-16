@@ -35,7 +35,6 @@
   },
   "dependencies": {
     "@agntz/core": "workspace:*",
-    "@agntz/manifest": "workspace:*",
     "@agntz/memrez": "workspace:*",
     "@agntz/store-postgres": "workspace:*",
     "@hono/node-server": "^1.19.0",

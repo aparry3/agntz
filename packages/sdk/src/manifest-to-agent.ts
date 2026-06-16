@@ -4,7 +4,7 @@ import type {
 	LLMAgentManifest,
 	AgentRef as ManifestAgentRef,
 	ManifestToolEntry,
-} from "@agntz/manifest";
+} from "@agntz/core/manifest";
 
 /**
  * Convert a parsed agent manifest into the `AgentDefinition` shape the core

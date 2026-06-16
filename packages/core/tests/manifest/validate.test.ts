@@ -1,8 +1,11 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { validateManifest, validateManifestFull } from "../src/validate.js";
-import type { ValidationContext } from "../src/validate.js";
+import {
+	validateManifest,
+	validateManifestFull,
+} from "../../src/manifest/validate.js";
+import type { ValidationContext } from "../../src/manifest/validate.js";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Level 1: Structural
@@ -540,7 +543,7 @@ steps:
 		const yaml = readFileSync(
 			join(
 				__dirname,
-				"../../worker/src/defaults/agents/agent-builder/manifest.yaml",
+				"../../../worker/src/defaults/agents/agent-builder/manifest.yaml",
 			),
 			"utf-8",
 		);

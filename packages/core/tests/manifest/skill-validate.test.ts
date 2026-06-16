@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { validateSkill, validateSkillFull } from "../src/skill-validate.js";
-import type { SkillValidationContext } from "../src/skill-validate.js";
+import {
+	validateSkill,
+	validateSkillFull,
+} from "../../src/manifest/skill-validate.js";
+import type { SkillValidationContext } from "../../src/manifest/skill-validate.js";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Level 1: Structural validation (validateSkill)

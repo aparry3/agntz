@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildHttpUrl, parseUrlPlaceholders } from "../src/http-url.js";
+import {
+	buildHttpUrl,
+	parseUrlPlaceholders,
+} from "../../src/manifest/http-url.js";
 
 describe("parseUrlPlaceholders", () => {
 	it("returns empty list for a plain URL with no placeholders", () => {

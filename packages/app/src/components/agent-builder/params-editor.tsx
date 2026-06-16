@@ -1,6 +1,6 @@
 "use client";
 
-import type { Placeholder } from "@agntz/manifest";
+import type { Placeholder } from "@agntz/core/manifest";
 import { useId, useMemo } from "react";
 import { Field, SmallButton, TextInput } from "./form-controls";
 import { type HeadersEditorSecret, appendSecretRef } from "./headers-editor";

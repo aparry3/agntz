@@ -4,7 +4,7 @@ import {
 	parseManifest,
 	selectManifestBlock,
 	selectionKey,
-} from "../src/index.js";
+} from "../../src/manifest/index.js";
 
 const yaml = `
 id: root

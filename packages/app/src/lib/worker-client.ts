@@ -3,7 +3,7 @@ import type {
 	AgentManifest,
 	ManifestSelection,
 	ValidationResult,
-} from "@agntz/manifest";
+} from "@agntz/core/manifest";
 import { type WorkerIdentity, signWorkerIdentity } from "./internal-auth";
 
 const WORKER_URL = process.env.WORKER_URL ?? "http://localhost:4001";

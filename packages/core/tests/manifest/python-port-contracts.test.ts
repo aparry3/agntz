@@ -7,7 +7,7 @@ import {
 	getStateKey,
 	interpolate,
 	parseManifest,
-} from "../src/index.js";
+} from "../../src/manifest/index.js";
 
 const CONTRACTS = join(process.cwd(), "..", "..", "contracts", "python-port");
 

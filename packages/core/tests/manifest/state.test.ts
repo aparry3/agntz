@@ -5,7 +5,7 @@ import {
 	createInitialState,
 	getStateKey,
 	normalizeId,
-} from "../src/state.js";
+} from "../../src/manifest/state.js";
 
 describe("normalizeId", () => {
 	it("converts kebab-case to camelCase", () => {

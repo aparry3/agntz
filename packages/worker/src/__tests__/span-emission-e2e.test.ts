@@ -1,7 +1,7 @@
 import { MemoryStore, SpanEmitter, createRunner } from "@agntz/core";
 import type { ModelProvider, Span, TraceStore } from "@agntz/core";
-import { execute } from "@agntz/manifest";
-import type { SequentialAgentManifest } from "@agntz/manifest";
+import { execute } from "@agntz/core/manifest";
+import type { SequentialAgentManifest } from "@agntz/core/manifest";
 /**
  * End-to-end span emission integration test.
  *

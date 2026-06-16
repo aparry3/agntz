@@ -5,7 +5,7 @@ import {
 	type ModelProvider,
 	createRunner,
 } from "@agntz/core";
-import type { AgentManifest } from "@agntz/manifest";
+import type { AgentManifest } from "@agntz/core/manifest";
 import { describe, expect, it } from "vitest";
 import { createWorkerAPI } from "../src/routes.js";
 

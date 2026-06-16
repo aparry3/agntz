@@ -5,7 +5,7 @@ import {
 	type ModelProvider,
 	createRunner,
 } from "@agntz/core";
-import { parseManifest } from "@agntz/manifest";
+import { parseManifest } from "@agntz/core/manifest";
 import { createMemrez } from "@agntz/memrez";
 import type { MemrezReasoner, TaggerInput, TaggerResult } from "@agntz/memrez";
 import { describe, expect, it } from "vitest";

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseManifest } from "../src/parser.js";
+import { parseManifest } from "../../src/manifest/parser.js";
 
 describe("parseManifest", () => {
 	it("parses a simple LLM agent", () => {

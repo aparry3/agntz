@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { evaluateCondition } from "../src/conditions.js";
+import { evaluateCondition } from "../../src/manifest/conditions.js";
 
 describe("evaluateCondition", () => {
 	it("evaluates truthiness", () => {

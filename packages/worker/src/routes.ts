@@ -46,8 +46,8 @@ import {
 	parseManifest,
 	selectManifestBlock,
 	validateManifestFull,
-} from "@agntz/manifest";
-import type { AgentManifest, ManifestSelection } from "@agntz/manifest";
+} from "@agntz/core/manifest";
+import type { AgentManifest, ManifestSelection } from "@agntz/core/manifest";
 import {
 	MemrezCorrectionError,
 	MemrezEntryNotFoundError,

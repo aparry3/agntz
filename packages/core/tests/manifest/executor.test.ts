@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { execute } from "../src/executor.js";
+import { execute } from "../../src/manifest/executor.js";
 import type {
 	AgentManifest,
 	ExecutionContext,
 	LLMAgentManifest,
-} from "../src/types.js";
+} from "../../src/manifest/types.js";
 
 function createMockCtx(
 	overrides?: Partial<ExecutionContext>,

@@ -46,7 +46,7 @@ import type {
 import {
 	type ManifestSelection,
 	findSelectionsByAgentId,
-} from "@agntz/manifest";
+} from "@agntz/core/manifest";
 import { agntz } from "./client.js";
 import { loadManifestFromFile, parseManifestString } from "./loader.js";
 

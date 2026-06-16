@@ -4,7 +4,7 @@ import {
 	isTruthy,
 	renderTemplate,
 	resolvePath,
-} from "../src/template.js";
+} from "../../src/manifest/template.js";
 
 describe("resolvePath", () => {
 	it("resolves top-level properties", () => {

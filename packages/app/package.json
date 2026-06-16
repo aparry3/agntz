@@ -10,7 +10,6 @@
   },
   "dependencies": {
     "@agntz/core": "workspace:*",
-    "@agntz/manifest": "workspace:*",
     "@agntz/store-postgres": "workspace:*",
     "@clerk/nextjs": "^7.4.1",
     "@uiw/react-md-editor": "^4.1.0",

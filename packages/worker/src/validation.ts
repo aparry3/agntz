@@ -5,7 +5,7 @@ import {
 	listToolsOnServer,
 	resolveMCPServer,
 } from "@agntz/core";
-import type { ValidationContext } from "@agntz/manifest";
+import type { ValidationContext } from "@agntz/core/manifest";
 import { LOCAL_TOOL_NAMES } from "./tools/registry.js";
 
 export interface BuildValidationContextOptions {

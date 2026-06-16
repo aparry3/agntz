@@ -1,6 +1,6 @@
 "use client";
 
-import { type Placeholder, parseUrlPlaceholders } from "@agntz/manifest";
+import { type Placeholder, parseUrlPlaceholders } from "@agntz/core/manifest";
 import { useMemo } from "react";
 
 interface PlaceholderPreviewProps {

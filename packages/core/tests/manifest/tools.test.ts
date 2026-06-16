@@ -3,8 +3,8 @@ import {
 	buildToolParams,
 	resolveToolEntries,
 	stripPinnedParams,
-} from "../src/tools.js";
-import type { ManifestToolEntry } from "../src/types.js";
+} from "../../src/manifest/tools.js";
+import type { ManifestToolEntry } from "../../src/manifest/types.js";
 
 describe("resolveToolEntries", () => {
 	it("resolves plain MCP tools", () => {

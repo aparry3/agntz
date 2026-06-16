@@ -54,7 +54,6 @@
     "yaml": "^2.8.0",
     "zod": "^3.25.0",
     "@agntz/core": "workspace:*",
-    "@agntz/manifest": "workspace:*",
     "@agntz/client": "workspace:*"
   },
   "peerDependencies": {

@@ -1,5 +1,5 @@
 import { defineTool } from "@agntz/core";
-import { validateManifest } from "@agntz/manifest";
+import { validateManifest } from "@agntz/core/manifest";
 import { z } from "zod";
 
 /**
