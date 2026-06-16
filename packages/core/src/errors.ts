@@ -8,7 +8,11 @@
 // subclasses below extend the same base.
 import { AgntzError } from "@agntz/contracts";
 
-export { AgntzError, InvalidAgentRefError } from "@agntz/contracts";
+export {
+	AgntzError,
+	InvalidAgentRefError,
+	NamespaceGrantError,
+} from "@agntz/contracts";
 
 /**
  * Thrown when an agent is not found in registered agents or the store.
@@ -41,23 +45,6 @@ export class AgentVersionNotFoundError extends AgntzError {
 		this.name = "AgentVersionNotFoundError";
 		this.agentId = agentId;
 		this.version = version;
-	}
-}
-
-/**
- * Thrown when a namespace grant is malformed or a child invocation attempts
- * to widen beyond the parent invocation's grant set.
- */
-export class NamespaceGrantError extends AgntzError {
-	readonly input: unknown;
-
-	constructor(input: unknown, detail: string) {
-		super(
-			"NAMESPACE_GRANT_INVALID",
-			`Invalid namespace grant "${String(input)}": ${detail}`,
-		);
-		this.name = "NamespaceGrantError";
-		this.input = input;
 	}
 }
 

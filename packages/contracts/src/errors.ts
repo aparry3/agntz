@@ -34,3 +34,20 @@ export class InvalidAgentRefError extends AgntzError {
 		this.input = input;
 	}
 }
+
+/**
+ * Thrown when a namespace grant is malformed or a child invocation attempts
+ * to widen beyond the parent invocation's grant set.
+ */
+export class NamespaceGrantError extends AgntzError {
+	readonly input: unknown;
+
+	constructor(input: unknown, detail: string) {
+		super(
+			"NAMESPACE_GRANT_INVALID",
+			`Invalid namespace grant "${String(input)}": ${detail}`,
+		);
+		this.name = "NamespaceGrantError";
+		this.input = input;
+	}
+}
