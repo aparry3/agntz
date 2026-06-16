@@ -1,7 +1,7 @@
 {
-  "name": "@agntz/memrez",
-  "version": "4.0.0",
-  "description": "Durable tagged memory layer for agntz agents",
+  "name": "@agntz/db",
+  "version": "0.0.0",
+  "description": "Shared database plumbing for agntz stores — pooling, migrations, and connection hardening for Postgres and SQLite",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -9,6 +9,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./postgres": {
+      "types": "./dist/postgres.d.ts",
+      "import": "./dist/postgres.js"
+    },
+    "./sqlite": {
+      "types": "./dist/sqlite.d.ts",
+      "import": "./dist/sqlite.js"
     }
   },
   "files": [
@@ -20,15 +28,16 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "biome check src tests --no-errors-on-unmatched",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "tsup"
   },
   "keywords": [
-    "ai",
-    "agents",
-    "memory",
     "agntz",
+    "postgres",
     "sqlite",
-    "postgres"
+    "database",
+    "migrations",
+    "connection-pool"
   ],
   "publishConfig": {
     "access": "public"
@@ -37,25 +46,27 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/aparry3/agntz.git",
-    "directory": "packages/memrez"
+    "directory": "packages/db"
   },
   "homepage": "https://github.com/aparry3/agntz#readme",
   "author": "Aaron Bidworthy",
-  "dependencies": {
-    "@agntz/db": "workspace:*",
-    "better-sqlite3": "^11.8.1",
-    "pg": "^8.20.0",
-    "zod": "^3.25.0"
-  },
   "peerDependencies": {
-    "@agntz/core": ">=1.6.0"
+    "better-sqlite3": "^11.8.1",
+    "pg": "^8.20.0"
+  },
+  "peerDependenciesMeta": {
+    "better-sqlite3": {
+      "optional": true
+    },
+    "pg": {
+      "optional": true
+    }
   },
   "devDependencies": {
-    "@agntz/core": "workspace:*",
-    "@biomejs/biome": "^1.9.0",
     "@types/better-sqlite3": "^7.6.12",
-    "@types/node": "^22.0.0",
     "@types/pg": "^8.11.0",
+    "better-sqlite3": "^11.8.1",
+    "pg": "^8.20.0",
     "tsup": "^8.5.0",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"

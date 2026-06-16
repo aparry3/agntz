@@ -6,5 +6,5 @@ export default defineConfig({
   dts: true,
   clean: true,
   sourcemap: true,
-  external: ["pg", "@agntz/core"],
+  external: ["pg", "@agntz/core", "@agntz/db", "@agntz/db/postgres"],
 });

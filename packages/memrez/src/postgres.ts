@@ -1,4 +1,5 @@
-import pg from "pg";
+import { PostgresMigrator, createPostgresPool } from "@agntz/db/postgres";
+import type pg from "pg";
 import type {
 	DirtyTopic,
 	EntryType,
@@ -8,10 +9,8 @@ import type {
 	TopicSummary,
 } from "./types.js";
 
-const { Pool } = pg;
 type PoolType = InstanceType<typeof pg.Pool>;
 type PoolConfig = pg.PoolConfig;
-type PoolClientType = pg.PoolClient;
 
 export interface PostgresMemoryStoreOptions {
 	connection: string | PoolConfig | PoolType;
@@ -46,25 +45,32 @@ export class PostgresMemoryStore implements MemoryStore {
 	private readonly pool: PoolType;
 	private readonly ownedPool: boolean;
 	private readonly prefix: string;
-	private readonly ready: Promise<void>;
+	private readonly migrator: PostgresMigrator;
 
 	constructor(options: PostgresMemoryStoreOptions | string) {
 		const opts: PostgresMemoryStoreOptions =
 			typeof options === "string" ? { connection: options } : options;
 		this.prefix = normalizeTablePrefix(opts.tablePrefix);
-		if (typeof opts.connection === "string") {
-			this.pool = new Pool({ connectionString: opts.connection });
-			this.ownedPool = true;
-		} else if ("query" in opts.connection && "connect" in opts.connection) {
-			this.pool = opts.connection as PoolType;
-			this.ownedPool = false;
+
+		// Pool creation + connection hardening + idle-client error handler.
+		const { pool, ownsPool } = createPostgresPool(opts.connection);
+		this.pool = pool;
+		this.ownedPool = ownsPool;
+
+		// Schema setup is a single idempotent step. Running it through the shared
+		// migrator adds the cross-process advisory lock and, crucially, clears a
+		// failed migration so a transient outage can't poison the store forever.
+		this.migrator = new PostgresMigrator({
+			pool: this.pool,
+			migrations: [this.migrationSql()],
+			versionTable: this.table("schema_version"),
+			lockName: `${this.prefix}memrez`,
+		});
+		if (opts.runMigrations === false) {
+			this.migrator.markMigrated();
 		} else {
-			this.pool = new Pool(opts.connection);
-			this.ownedPool = true;
+			this.migrator.start();
 		}
-		this.ready =
-			opts.runMigrations === false ? Promise.resolve() : this.migrate();
-		this.ready.catch(() => {});
 	}
 
 	async close(): Promise<void> {
@@ -74,7 +80,7 @@ export class PostgresMemoryStore implements MemoryStore {
 	}
 
 	async putEntry(entry: MemoryEntry): Promise<void> {
-		await this.ready;
+		await this.migrator.ensureMigrated();
 		const client = await this.pool.connect();
 		try {
 			await client.query("BEGIN");
@@ -126,7 +132,7 @@ export class PostgresMemoryStore implements MemoryStore {
 	}
 
 	async getEntry(id: string): Promise<MemoryEntry | null> {
-		await this.ready;
+		await this.migrator.ensureMigrated();
 		const result = await this.pool.query<EntryRow>(
 			`SELECT * FROM ${this.table("entries")} WHERE id = $1`,
 			[id],
@@ -135,7 +141,7 @@ export class PostgresMemoryStore implements MemoryStore {
 	}
 
 	async supersede(ids: string[], byId: string): Promise<void> {
-		await this.ready;
+		await this.migrator.ensureMigrated();
 		if (ids.length === 0) return;
 		await this.pool.query(
 			`UPDATE ${this.table("entries")}
@@ -146,7 +152,7 @@ export class PostgresMemoryStore implements MemoryStore {
 	}
 
 	async deleteEntry(id: string): Promise<boolean> {
-		await this.ready;
+		await this.migrator.ensureMigrated();
 		// entry_topics rows cascade away (FK ON DELETE CASCADE).
 		const result = await this.pool.query(
 			`DELETE FROM ${this.table("entries")} WHERE id = $1`,
@@ -159,7 +165,7 @@ export class PostgresMemoryStore implements MemoryStore {
 		scopePrefix: string,
 		opts: { recursive?: boolean } = {},
 	): Promise<{ entries: number; topicMeta: number }> {
-		await this.ready;
+		await this.migrator.ensureMigrated();
 		const client = await this.pool.connect();
 		try {
 			await client.query("BEGIN");
@@ -200,7 +206,7 @@ export class PostgresMemoryStore implements MemoryStore {
 	}
 
 	async listTopics(scopePaths: string[]): Promise<TopicSummary[]> {
-		await this.ready;
+		await this.migrator.ensureMigrated();
 		if (scopePaths.length === 0) return [];
 		const result = await this.pool.query<TopicRow & { has_uncurated: boolean }>(
 			`SELECT t.topic AS topic, COUNT(*) AS count, MAX(e.updated_at) AS last_updated_at,
@@ -233,7 +239,7 @@ export class PostgresMemoryStore implements MemoryStore {
 		topic: string,
 		limit = 20,
 	): Promise<MemoryEntry[]> {
-		await this.ready;
+		await this.migrator.ensureMigrated();
 		if (scopePaths.length === 0) return [];
 		const result = await this.pool.query<EntryRow>(
 			`SELECT e.*
@@ -253,7 +259,7 @@ export class PostgresMemoryStore implements MemoryStore {
 		scope: string,
 		topic: string,
 	): Promise<Omit<TopicSummary, "count"> | null> {
-		await this.ready;
+		await this.migrator.ensureMigrated();
 		const result = await this.pool.query<{
 			topic: string;
 			blurb: string | null;
@@ -280,7 +286,7 @@ export class PostgresMemoryStore implements MemoryStore {
 		topic: string,
 		meta: { blurb?: string; lastUpdatedAt?: string },
 	): Promise<void> {
-		await this.ready;
+		await this.migrator.ensureMigrated();
 		await this.pool.query(
 			`INSERT INTO ${this.table("topic_meta")} (scope, topic, blurb, last_updated_at)
        VALUES ($1, $2, $3, $4)
@@ -300,7 +306,7 @@ export class PostgresMemoryStore implements MemoryStore {
 		scopePaths: string[],
 		opts: { topics?: string[]; includeSuperseded?: boolean } = {},
 	): Promise<MemoryEntry[]> {
-		await this.ready;
+		await this.migrator.ensureMigrated();
 		if (scopePaths.length === 0) return [];
 		const conditions = ["e.scope = ANY($1::text[])"];
 		const params: unknown[] = [scopePaths];
@@ -329,7 +335,7 @@ export class PostgresMemoryStore implements MemoryStore {
 	async listEntries(
 		opts: { includeSuperseded?: boolean } = {},
 	): Promise<MemoryEntry[]> {
-		await this.ready;
+		await this.migrator.ensureMigrated();
 		const where = opts.includeSuperseded ? "" : "WHERE status = 'active'";
 		const result = await this.pool.query<EntryRow>(
 			`SELECT *
@@ -341,7 +347,7 @@ export class PostgresMemoryStore implements MemoryStore {
 	}
 
 	async listDirtyTopics(): Promise<DirtyTopic[]> {
-		await this.ready;
+		await this.migrator.ensureMigrated();
 		const result = await this.pool.query<{ scope: string; topic: string }>(
 			`SELECT e.scope AS scope, t.topic AS topic
        FROM ${this.table("entries")} e
@@ -355,8 +361,8 @@ export class PostgresMemoryStore implements MemoryStore {
 		return result.rows;
 	}
 
-	private async migrate(): Promise<void> {
-		await this.pool.query(`
+	private migrationSql(): string {
+		return `
       CREATE TABLE IF NOT EXISTS ${this.table("entries")} (
         id            TEXT PRIMARY KEY,
         scope         TEXT NOT NULL,
@@ -395,7 +401,7 @@ export class PostgresMemoryStore implements MemoryStore {
       INSERT INTO ${this.table("schema_version")} (version)
       VALUES (1)
       ON CONFLICT DO NOTHING;
-    `);
+    `;
 	}
 
 	private async rowToEntry(row: EntryRow): Promise<MemoryEntry> {

@@ -24,6 +24,7 @@
     "prepublishOnly": "tsup"
   },
   "dependencies": {
+    "@agntz/db": "workspace:*",
     "better-sqlite3": "^11.8.1"
   },
   "devDependencies": {

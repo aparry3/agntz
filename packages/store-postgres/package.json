@@ -24,6 +24,7 @@
     "prepublishOnly": "tsup"
   },
   "dependencies": {
+    "@agntz/db": "workspace:*",
     "pg": "^8.20.0"
   },
   "devDependencies": {

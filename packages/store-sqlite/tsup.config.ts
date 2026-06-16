@@ -6,5 +6,5 @@ export default defineConfig({
   dts: true,
   clean: true,
   sourcemap: true,
-  external: ["better-sqlite3", "@agntz/core"],
+  external: ["better-sqlite3", "@agntz/core", "@agntz/db", "@agntz/db/sqlite"],
 });

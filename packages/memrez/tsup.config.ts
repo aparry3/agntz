@@ -7,4 +7,5 @@ export default defineConfig({
   sourcemap: true,
   clean: true,
   target: "node22",
+  external: ["@agntz/db", "@agntz/db/sqlite", "@agntz/db/postgres"],
 });
