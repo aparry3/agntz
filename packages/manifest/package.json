@@ -35,11 +35,7 @@
     "@agntz/contracts": "workspace:*",
     "yaml": "^2.8.0"
   },
-  "peerDependencies": {
-    "@agntz/core": ">=1.6.0"
-  },
   "devDependencies": {
-    "@agntz/core": "workspace:*",
     "@biomejs/biome": "^1.9.0",
     "@types/node": "^22.0.0",
     "tsup": "^8.5.0",

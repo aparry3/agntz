@@ -1,4 +1,4 @@
-import type { SkillDefinition, ToolReference } from "@agntz/core";
+import type { SkillDefinition, ToolReference } from "@agntz/contracts";
 import { parse as parseYAML } from "yaml";
 import type { MCPToolRef, ManifestToolEntry } from "./types.js";
 

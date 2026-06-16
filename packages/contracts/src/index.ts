@@ -6,8 +6,15 @@
  * and manifest depend on this kernel; neither has to depend on the other for
  * the vocabulary it holds.
  *
- * Today it owns the outbound-URL policy (SSRF guard + hardened fetch). Other
- * shared vocabulary (HTTP-tool / auth config, agent-ref parsing) will migrate
- * here incrementally — see the library/application separation plan.
+ * It owns the outbound-URL policy (SSRF guard + hardened fetch), the agent-ref
+ * parser, the base error vocabulary, and the declarative HTTP-tool / auth /
+ * skill vocabulary shared by core (which resolves it at runtime) and manifest
+ * (which parses it from YAML).
  */
+export * from "./agent-ref.js";
+export * from "./errors.js";
+export * from "./http-auth.js";
+export * from "./http-tool.js";
 export * from "./outbound-url.js";
+export * from "./span.js";
+export * from "./tools.js";

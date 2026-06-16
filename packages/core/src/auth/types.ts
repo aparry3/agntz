@@ -1,53 +1,22 @@
 // ═══════════════════════════════════════════════════════════════════════
-// HTTP tool auth — runtime types (structural mirror of @agntz/manifest).
+// HTTP tool auth.
 //
-// Mirrored locally for the same reason as HTTPToolEntry in http-tool.ts:
-// @agntz/core cannot depend on @agntz/manifest (manifest is the dependant).
-// TypeScript structural typing means values from the manifest package flow
-// through with zero conversion.
+// The declarative auth config (HTTPAuth + variants) is shared vocabulary and
+// now lives in @agntz/contracts — both core (which resolves it at runtime) and
+// manifest (which parses it from YAML) consume the one canonical type. It is
+// re-exported here so core's public surface (via auth/index.ts) is unchanged.
+// The runtime types below stay in core.
 // ═══════════════════════════════════════════════════════════════════════
+import type { HTTPAuth } from "@agntz/contracts";
 
-export type HTTPAuth = OAuth2ClientCredentialsAuth | TokenExchangeAuth;
-
-export interface OAuth2ClientCredentialsAuth {
-	type: "oauth2_client_credentials";
-	token_url: string;
-	client_id: string;
-	client_secret: string;
-	scope?: string;
-	creds_location?: "basic_header" | "body";
-	cache_ttl?: number;
-	refresh_on?: number[];
-}
-
-export interface TokenExchangeAuth {
-	type: "token_exchange";
-	request: TokenExchangeRequest;
-	extract: TokenExchangeExtract;
-	apply?: TokenExchangeApply;
-	cache_ttl?: number;
-	refresh_on?: number[];
-}
-
-export interface TokenExchangeRequest {
-	url: string;
-	method?: "GET" | "POST" | "PUT" | "PATCH";
-	headers?: Record<string, string>;
-	body_type?: "json" | "form" | "query";
-	body?: unknown;
-}
-
-export interface TokenExchangeExtract {
-	response_format?: "json" | "text";
-	token_path?: string;
-	expires_path?: string;
-}
-
-export interface TokenExchangeApply {
-	location?: "header" | "query";
-	name?: string;
-	format?: string;
-}
+export type {
+	HTTPAuth,
+	OAuth2ClientCredentialsAuth,
+	TokenExchangeApply,
+	TokenExchangeAuth,
+	TokenExchangeExtract,
+	TokenExchangeRequest,
+} from "@agntz/contracts";
 
 // ─── Runtime types ───────────────────────────────────────────────────
 

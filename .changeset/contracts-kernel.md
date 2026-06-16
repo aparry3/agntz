@@ -1,11 +1,11 @@
 ---
 "@agntz/contracts": minor
 "@agntz/core": patch
-"@agntz/manifest": patch
+"@agntz/manifest": minor
 ---
 
-Introduce `@agntz/contracts`, the shared-vocabulary kernel.
+Introduce `@agntz/contracts`, the shared-vocabulary kernel, and route `@agntz/core` and `@agntz/manifest` through it.
 
-- **@agntz/contracts** (new): a zero-runtime-dependency package for vocabulary and pure leaf utilities shared by `@agntz/core` and `@agntz/manifest`. It seeds with the outbound-URL policy (the SSRF guard + hardened redirect-following fetch: `validateOutboundUrl`, `assertOutboundUrlAllowed`, `fetchWithOutboundPolicy`, `OutboundUrlPolicyOptions`, `OutboundUrlPolicyError`).
-- **@agntz/core**: the outbound-URL policy now lives in `@agntz/contracts`; core re-exports it from the original module path, so core's public surface and internal imports are unchanged.
-- **@agntz/manifest**: imports the outbound-URL policy from `@agntz/contracts` instead of `@agntz/core`, removing that part of its dependency on core.
+- **@agntz/contracts** (new): a zero-runtime-dependency package for the vocabulary and pure leaf utilities both core and manifest need — the outbound-URL policy (SSRF guard + hardened fetch), the agent-ref parser (`parseAgentRef`/`formatAgentRef`/`ParsedAgentRef`), the base error types (`AgntzError`, `InvalidAgentRefError`), the declarative HTTP-tool / auth / skill config (`HTTPToolEntry`, `AgentState`, `ToolReference`, `SkillDefinition`, `HTTPAuth` and its variants), and a structural `ExecutionSpanEmitter` interface.
+- **@agntz/core**: the moved vocabulary/utilities now live in `@agntz/contracts`; core imports the canonical shapes from there and re-exports them from their original module paths, so core's public surface and `instanceof` behavior are unchanged. This deletes the hand-copied structural mirrors of manifest's `HTTPToolEntry`/`AgentState`/`HTTPAuth` types (the bidirectional duplication is gone). The `TokenExchangeAuth.apply` mirror drift is resolved to optional, matching the token resolver, which already defaults a missing `apply`.
+- **@agntz/manifest**: now depends only on `@agntz/contracts` (plus `yaml`) — its `@agntz/core` dependency is removed. It imports the shared vocabulary from the kernel and defines no local copies, and types its `ExecutionContext.spanEmitter` against the structural `ExecutionSpanEmitter` (which core's concrete `SpanEmitter` satisfies).

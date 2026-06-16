@@ -1,4 +1,4 @@
-import { parseAgentRef } from "@agntz/core";
+import { parseAgentRef } from "@agntz/contracts";
 import { parse as parseYAML } from "yaml";
 import type {
 	AgentManifest,

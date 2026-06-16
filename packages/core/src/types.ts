@@ -1,5 +1,5 @@
+import type { SkillDefinition, ToolReference } from "@agntz/contracts";
 import type { ZodSchema } from "zod";
-import type { HTTPToolEntry } from "./http-tool.js";
 import type { NamespaceGrantPolicy } from "./namespace.js";
 import type { TelemetryConfig } from "./telemetry.js";
 import type { SpanEmitter } from "./telemetry.js";
@@ -178,16 +178,9 @@ export interface ResourceProvider {
 // Tool System
 // ═══════════════════════════════════════════════════════════════════════
 
-export type ToolReference =
-	| { type: "inline"; name: string }
-	| {
-			type: "mcp";
-			server: string;
-			tools?: string[];
-			headers?: Record<string, string>;
-	  }
-	| { type: "agent"; agentId: string }
-	| { type: "http"; entry: HTTPToolEntry };
+// `ToolReference` and `SkillDefinition` are shared vocabulary — imported above
+// and re-exported here from `@agntz/contracts`.
+export type { SkillDefinition, ToolReference };
 
 /**
  * Reference to an agent that can be spawned as a child Run.
@@ -736,20 +729,8 @@ export interface AgentStore {
 // the runner registers when an agent declares skills.
 // ═══════════════════════════════════════════════════════════════════════
 
-export interface SkillDefinition {
-	/** lowercase-kebab-case; unique per user; identifier */
-	name: string;
-	/** Surfaced to the LLM via the system prompt's "Available skills" section. */
-	description: string;
-	/** Returned as the use_skill tool result when the LLM loads the skill. */
-	instructions: string;
-	/** Tools registered into the live tool registry when the skill is loaded. */
-	tools?: ToolReference[];
-	metadata?: Record<string, unknown>;
-	createdAt?: string;
-	updatedAt?: string;
-}
-
+// `SkillDefinition` is shared vocabulary — see its re-export from
+// `@agntz/contracts` in the Tool System section above.
 export interface SkillStore {
 	getSkill(name: string): Promise<SkillDefinition | null>;
 	listSkills(): Promise<Array<{ name: string; description: string }>>;
