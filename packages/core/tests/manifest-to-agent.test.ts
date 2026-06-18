@@ -1,6 +1,6 @@
-import type { LLMAgentManifest } from "@agntz/core/manifest";
 import { describe, expect, it } from "vitest";
 import { manifestToAgentDefinition } from "../src/manifest-to-agent.js";
+import type { LLMAgentManifest } from "../src/manifest/index.js";
 
 function baseLlm(extras: Partial<LLMAgentManifest> = {}): LLMAgentManifest {
 	return {
@@ -17,7 +17,9 @@ describe("manifestToAgentDefinition — tool kind conversion", () => {
 		const manifest = baseLlm({
 			tools: [{ kind: "local", tools: ["calc"] }],
 		});
-		const def = manifestToAgentDefinition(manifest, new Set(["calc"]));
+		const def = manifestToAgentDefinition(manifest, {
+			localToolNames: new Set(["calc"]),
+		});
 		expect(def.tools).toEqual([{ type: "inline", name: "calc" }]);
 	});
 
@@ -29,7 +31,9 @@ describe("manifestToAgentDefinition — tool kind conversion", () => {
 			headers: { Authorization: "Bearer {{env.TOK}}" },
 		};
 		const manifest = baseLlm({ tools: [httpEntry] });
-		const def = manifestToAgentDefinition(manifest, new Set());
+		const def = manifestToAgentDefinition(manifest, {
+			localToolNames: new Set(),
+		});
 		expect(def.tools).toEqual([{ type: "http", entry: httpEntry }]);
 	});
 
@@ -44,7 +48,9 @@ describe("manifestToAgentDefinition — tool kind conversion", () => {
 				},
 			],
 		});
-		const def = manifestToAgentDefinition(manifest, new Set());
+		const def = manifestToAgentDefinition(manifest, {
+			localToolNames: new Set(),
+		});
 		expect(def.tools).toEqual([
 			{
 				type: "mcp",
@@ -59,11 +65,13 @@ describe("manifestToAgentDefinition — tool kind conversion", () => {
 		const manifest = baseLlm({
 			tools: [{ kind: "agent", agent: "reviewer" }],
 		});
-		const def = manifestToAgentDefinition(manifest, new Set());
+		const def = manifestToAgentDefinition(manifest, {
+			localToolNames: new Set(),
+		});
 		expect(def.tools).toEqual([{ type: "agent", agentId: "reviewer" }]);
 	});
 
-	it("converts manifest outputSchema to strict JSON Schema for embedded runs", () => {
+	it("converts manifest outputSchema to strict JSON Schema", () => {
 		const manifest = baseLlm({
 			outputSchema: {
 				answer: "string",
@@ -77,7 +85,9 @@ describe("manifestToAgentDefinition — tool kind conversion", () => {
 			},
 		});
 
-		const def = manifestToAgentDefinition(manifest, new Set());
+		const def = manifestToAgentDefinition(manifest, {
+			localToolNames: new Set(),
+		});
 
 		expect(def.outputSchema).toEqual({
 			type: "object",
@@ -112,7 +122,9 @@ describe("manifestToAgentDefinition — tool kind conversion", () => {
 				},
 			],
 		});
-		const def = manifestToAgentDefinition(manifest, new Set());
+		const def = manifestToAgentDefinition(manifest, {
+			localToolNames: new Set(),
+		});
 		expect(def.spawnable).toHaveLength(2);
 		expect(def.spawnable?.[0]).toEqual({ kind: "ref", agentId: "reviewer" });
 		expect(def.spawnable?.[1].kind).toBe("inline");
@@ -133,7 +145,63 @@ describe("manifestToAgentDefinition — tool kind conversion", () => {
 				},
 			},
 		});
-		const def = manifestToAgentDefinition(manifest, new Set());
+		const def = manifestToAgentDefinition(manifest, {
+			localToolNames: new Set(),
+		});
 		expect(def.resources).toEqual(manifest.resources);
+	});
+});
+
+describe("manifestToAgentDefinition — host-specific options", () => {
+	it("throws on a non-llm manifest kind", () => {
+		const manifest = { id: "seq", kind: "sequential" } as unknown as Parameters<
+			typeof manifestToAgentDefinition
+		>[0];
+		expect(() => manifestToAgentDefinition(manifest)).toThrow(/only 'llm'/);
+	});
+
+	it("uses manifest.instruction as systemPrompt by default", () => {
+		const def = manifestToAgentDefinition(baseLlm());
+		expect(def.systemPrompt).toBe("be helpful");
+	});
+
+	it("uses the systemPrompt override when provided (pre-rendered instruction)", () => {
+		const def = manifestToAgentDefinition(baseLlm(), {
+			systemPrompt: "RENDERED: be helpful to Alice",
+		});
+		expect(def.systemPrompt).toBe("RENDERED: be helpful to Alice");
+		// `userPromptTemplate` still tracks the manifest's prompt template.
+		expect(def.userPromptTemplate).toBeUndefined();
+	});
+
+	it("validates local tool names only when localToolNames is supplied (embedded)", () => {
+		const manifest = baseLlm({
+			tools: [{ kind: "local", tools: ["missing"] }],
+		});
+		expect(() =>
+			manifestToAgentDefinition(manifest, {
+				localToolNames: new Set(["calc"]),
+			}),
+		).toThrow(/local tool 'missing'/);
+	});
+
+	it("passes local tool refs through unchecked when localToolNames is omitted (worker)", () => {
+		const manifest = baseLlm({
+			tools: [{ kind: "local", tools: ["anything"] }],
+		});
+		const def = manifestToAgentDefinition(manifest);
+		expect(def.tools).toEqual([{ type: "inline", name: "anything" }]);
+	});
+
+	it("rejects skills when rejectSkills is set (embedded SDK has no SkillStore)", () => {
+		const manifest = baseLlm({ skills: ["researcher"] });
+		expect(() =>
+			manifestToAgentDefinition(manifest, { rejectSkills: true }),
+		).toThrow(/declares skills/);
+	});
+
+	it("allows skills when rejectSkills is not set (worker resolves via SkillStore)", () => {
+		const manifest = baseLlm({ skills: ["researcher"] });
+		expect(() => manifestToAgentDefinition(manifest)).not.toThrow();
 	});
 });

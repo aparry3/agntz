@@ -1,11 +1,10 @@
 import type {
 	AgentDefinition,
-	AgentRef as CoreAgentRef,
 	Reply,
 	RunRegistry,
 	Runner,
 } from "@agntz/core";
-import { buildHttpToolDefinition } from "@agntz/core";
+import { buildHttpToolDefinition, manifestToAgentDefinition } from "@agntz/core";
 import type {
 	AgentManifest,
 	AgentRef,
@@ -117,7 +116,9 @@ export function createExecutionContext(
 			// rendered text in as the user input directly, so the AgentDefinition's
 			// `userPromptTemplate` must be cleared to prevent core from re-wrapping
 			// (or sending the unrendered template literally).
-			const agentDef = manifestToAgentDefinition(manifest, renderedInstruction);
+			const agentDef = manifestToAgentDefinition(manifest, {
+				systemPrompt: renderedInstruction,
+			});
 			agentDef.userPromptTemplate = undefined;
 
 			// Register it temporarily (or use inline invoke)
@@ -284,70 +285,6 @@ function resolveManifestFromAgent(
 	);
 }
 
-/**
- * Convert a LLMAgentManifest into a core AgentDefinition for the Runner.
- *
- * `userPromptTemplate` is set from `manifest.prompt` when present so that
- * spawnable children (which bypass `executeLLM` and go directly through the
- * core runner) get template behavior via core's `{{input}}` substitution. For
- * top-level invocations (called from `invokeLLM`), the manifest layer has
- * already rendered the prompt with full state — the caller passes the rendered
- * string as the user input directly, so `userPromptTemplate` is a no-op there
- * (no `{{input}}` markers remain in rendered text).
- */
-function manifestToAgentDefinition(
-	manifest: LLMAgentManifest,
-	renderedInstruction: string,
-) {
-	return {
-		id: manifest.id,
-		name: manifest.name ?? manifest.id,
-		systemPrompt: renderedInstruction,
-		userPromptTemplate: manifest.prompt,
-		model: {
-			provider: manifest.model.provider,
-			name: manifest.model.name,
-			temperature: manifest.model.temperature,
-			maxTokens: manifest.model.maxTokens,
-			topP: manifest.model.topP,
-		},
-		examples: manifest.examples,
-		outputSchema: manifest.outputSchema
-			? manifestSchemaToJsonSchema(manifest.outputSchema)
-			: undefined,
-		tools: manifest.tools ? manifestToolsToToolRefs(manifest.tools) : undefined,
-		spawnable: manifest.spawnable
-			? manifestSpawnableToCore(manifest.spawnable)
-			: undefined,
-		resources: manifest.resources,
-		reply: manifest.reply,
-	};
-}
-
-/**
- * Translate manifest-layer AgentRef[] (with inline LLMAgentManifest) into the
- * core AgentRef[] shape (with inline AgentDefinition). Inline children are
- * registered by the runner's own resolveSpawnable path; we just give them the
- * shape it expects. Ref children pass through unchanged.
- */
-function manifestSpawnableToCore(spawnable: AgentRef[]): CoreAgentRef[] {
-	return spawnable.map((ref) => {
-		if (ref.kind === "ref") {
-			return ref.version
-				? { kind: "ref", agentId: ref.agentId, version: ref.version }
-				: { kind: "ref", agentId: ref.agentId };
-		}
-		// Inline LLM children: validator forbids template variables in the
-		// instruction, so we use it verbatim as the systemPrompt.
-		return {
-			kind: "inline",
-			definition: manifestToAgentDefinition(
-				ref.definition,
-				ref.definition.instruction,
-			) as AgentDefinition,
-		};
-	});
-}
 
 /**
  * Pre-register each ref-kind spawnable child as a working AgentDefinition
@@ -398,99 +335,7 @@ async function preregisterSpawnableRefs(
 			);
 			continue;
 		}
-		const def = manifestToAgentDefinition(
-			childManifest,
-			childManifest.instruction,
-		) as AgentDefinition;
+		const def = manifestToAgentDefinition(childManifest, {});
 		runner.registerAgent(def);
 	}
-}
-
-/**
- * Convert the flat manifest outputSchema to a proper JSON Schema.
- */
-function manifestSchemaToJsonSchema(
-	schema: Record<string, unknown>,
-): Record<string, unknown> {
-	const properties: Record<string, unknown> = {};
-	const required: string[] = [];
-
-	for (const [key, value] of Object.entries(schema)) {
-		if (typeof value === "string") {
-			properties[key] = { type: value };
-		} else {
-			properties[key] = enforceStrictObject(value);
-		}
-		required.push(key);
-	}
-
-	return {
-		type: "object",
-		properties,
-		required,
-		additionalProperties: false,
-	};
-}
-
-/**
- * OpenAI strict structured output requires `additionalProperties: false` on every
- * nested object schema. Walk the schema and enforce it.
- */
-function enforceStrictObject(value: unknown): unknown {
-	if (!value || typeof value !== "object") return value;
-	const obj = value as Record<string, unknown>;
-	const out: Record<string, unknown> = { ...obj };
-
-	if (obj.type === "object") {
-		if (!("additionalProperties" in out)) out.additionalProperties = false;
-		const props = obj.properties as Record<string, unknown> | undefined;
-		if (props) {
-			const walked: Record<string, unknown> = {};
-			for (const [k, v] of Object.entries(props))
-				walked[k] = enforceStrictObject(v);
-			out.properties = walked;
-		}
-	}
-	if (obj.type === "array" && obj.items) {
-		out.items = enforceStrictObject(obj.items);
-	}
-	return out;
-}
-
-/**
- * Convert manifest tool entries to core ToolReference format.
- */
-function manifestToolsToToolRefs(tools: LLMAgentManifest["tools"]) {
-	if (!tools) return [];
-
-	const refs: Array<Record<string, unknown>> = [];
-	for (const entry of tools) {
-		switch (entry.kind) {
-			case "mcp":
-				refs.push({
-					type: "mcp",
-					server: entry.server,
-					tools: entry.tools
-						? entry.tools.map((t) => (typeof t === "string" ? t : t.tool))
-						: undefined,
-					headers: entry.headers,
-				});
-				break;
-			case "local":
-				for (const name of entry.tools) {
-					refs.push({ type: "inline", name });
-				}
-				break;
-			case "agent":
-				refs.push({ type: "agent", agentId: entry.agent });
-				break;
-			case "http":
-				// HTTP entries pass the full entry through to the core runner so
-				// `buildHttpToolDefinition` can build the per-invocation
-				// `ToolDefinition` with `state.secrets` baked in.
-				refs.push({ type: "http", entry });
-				break;
-		}
-	}
-	return refs;
 }

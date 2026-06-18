@@ -1,0 +1,8 @@
+id: child
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: |
+  MARKER:CHILD
+  You are the child agent. Produce a short result.

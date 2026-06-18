@@ -195,6 +195,11 @@ export {
 } from "./agent-ref.js";
 export type { ParsedAgentRef } from "./agent-ref.js";
 
+// Manifest → AgentDefinition bridge. The canonical lowering shared by every
+// host (embedded SDK + hosted worker); see `./manifest-to-agent.ts`.
+export { manifestToAgentDefinition } from "./manifest-to-agent.js";
+export type { ManifestToAgentOptions } from "./manifest-to-agent.js";
+
 // Multimodal — image content blocks + fetcher
 export { isContentBlockArray } from "./types.js";
 export { normalizeImageBlocks, ImageFetchError } from "./image-fetcher.js";

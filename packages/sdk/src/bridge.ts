@@ -1,6 +1,10 @@
-import { buildHttpToolDefinition } from "@agntz/core";
+import {
+	buildHttpToolDefinition,
+	manifestToAgentDefinition,
+} from "@agntz/core";
 import type {
 	Reply,
+	RunRegistry,
 	Runner,
 	SpanEmitter,
 	ToolContext,
@@ -13,13 +17,22 @@ import type {
 	LLMAgentManifest,
 	ToolCallConfig,
 } from "@agntz/core/manifest";
-import { manifestToAgentDefinition } from "./manifest-to-agent.js";
 
 export interface CreateExecutionContextOptions {
 	spanEmitter?: SpanEmitter;
 	sessionId?: string;
 	context?: string[];
 	signal?: AbortSignal;
+	/**
+	 * When wired, each `invokeLLM` step runs through this registry as a CHILD
+	 * Run of `parentRunId`, so its lifecycle events flow to the root's
+	 * multiplexed feed (`runs.stream`). Omitted for plain synchronous runs.
+	 */
+	runRegistry?: RunRegistry;
+	/** Root Run id — inner LLM steps attach to it as children. */
+	parentRunId?: string;
+	/** Tenant id threaded onto child Runs (single-operator in embedded use). */
+	userId?: string;
 	/**
 	 * Local-tool implementations registered with `agntz({ tools: ... })`.
 	 * Used by `invokeTool` to dispatch `kind: local` pipeline tool steps
@@ -70,10 +83,11 @@ export function createExecutionContext(
 			// temp agent under a unique id with the rendered instruction baked in,
 			// invoke, then deregister. Same pattern as the hosted worker bridge.
 			const tempId = `__pipeline_${manifest.id}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-			const def = manifestToAgentDefinition(
-				{ ...manifest, instruction: renderedInstruction },
+			const def = manifestToAgentDefinition(manifest, {
 				localToolNames,
-			);
+				rejectSkills: true,
+				systemPrompt: renderedInstruction,
+			});
 			def.id = tempId;
 			def.userPromptTemplate = undefined; // we pass the rendered user message ourselves
 			runner.registerAgent(def);
@@ -89,6 +103,10 @@ export function createExecutionContext(
 					context,
 					...(opts.signal ? { signal: opts.signal } : {}),
 					...(opts.spanEmitter ? { spanEmitter: opts.spanEmitter } : {}),
+					...(opts.runRegistry
+						? { runRegistry: opts.runRegistry, parentRunId: opts.parentRunId }
+						: {}),
+					...(opts.userId ? { userId: opts.userId } : {}),
 				});
 				if (opts.replyCollector && result.replies?.length) {
 					opts.replyCollector.push(...result.replies);
