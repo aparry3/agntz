@@ -1,14 +1,13 @@
+import { getTenantStore } from "@/lib/store";
 import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import { NextResponse } from "next/server";
 
 export async function GET() {
 	try {
-		const { runner } = await requireUserContext();
-		if (!runner.connections) {
-			return NextResponse.json([]);
-		}
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 
-		const connections = await runner.connections.listConnections("mcp");
+		const connections = await store.listConnections("mcp");
 		const servers = connections.map((c) => ({
 			id: c.id,
 			displayName: c.displayName,

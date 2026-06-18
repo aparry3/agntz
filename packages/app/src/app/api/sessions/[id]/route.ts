@@ -1,3 +1,4 @@
+import { getTenantStore } from "@/lib/store";
 import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import { type NextRequest, NextResponse } from "next/server";
 
@@ -7,8 +8,9 @@ export async function GET(
 ) {
 	try {
 		const { id } = await params;
-		const { runner } = await requireUserContext();
-		const messages = await runner.sessions.getMessages(id);
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
+		const messages = await store.getMessages(id);
 		return NextResponse.json({ sessionId: id, messages });
 	} catch (error) {
 		if (error instanceof AuthRequiredError) {
@@ -27,8 +29,9 @@ export async function DELETE(
 ) {
 	try {
 		const { id } = await params;
-		const { runner } = await requireUserContext();
-		await runner.sessions.deleteSession(id);
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
+		await store.deleteSession(id);
 		return NextResponse.json({ id, deleted: true });
 	} catch (error) {
 		if (error instanceof AuthRequiredError) {

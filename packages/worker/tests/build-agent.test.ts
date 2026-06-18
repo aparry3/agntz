@@ -1,4 +1,4 @@
-import { MemoryStore } from "@agntz/core";
+import { PlatformMemoryStore as MemoryStore } from "@agntz/platform/memory";
 import { describe, expect, it } from "vitest";
 import { createWorkerAPI } from "../src/routes.js";
 

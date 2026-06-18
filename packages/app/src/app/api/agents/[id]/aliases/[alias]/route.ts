@@ -1,3 +1,4 @@
+import { getTenantStore } from "@/lib/store";
 import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import { getVersion, removeAlias, setAlias } from "@/lib/versions";
 import { isAliasName } from "@agntz/core";
@@ -30,7 +31,8 @@ export async function PUT(
 			);
 		}
 
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 		const exists = await getVersion(store, id, body.createdAt);
 		if (!exists) {
 			return NextResponse.json(
@@ -59,7 +61,8 @@ export async function DELETE(
 	try {
 		const { id, alias: rawAlias } = await params;
 		const alias = decodeURIComponent(rawAlias);
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 		await removeAlias(store, id, alias);
 		return NextResponse.json({ agentId: id, alias, removed: true });
 	} catch (error) {

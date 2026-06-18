@@ -15,9 +15,7 @@
   "bin": {
     "agntz-worker": "./dist/server.js"
   },
-  "files": [
-    "dist"
-  ],
+  "files": ["dist"],
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
@@ -41,7 +39,8 @@
     "dotenv": "^16.5.0",
     "hono": "^4.12.23",
     "yaml": "^2.8.0",
-    "zod": "^3.25.0"
+    "zod": "^3.25.0",
+    "@agntz/platform": "workspace:*"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",

@@ -1,3 +1,4 @@
+import { getTenantStore } from "@/lib/store";
 import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import { type NextRequest, NextResponse } from "next/server";
 
@@ -7,7 +8,8 @@ export async function GET(
 ) {
 	try {
 		const { runId } = await params;
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 		const row = await store.getEvalRun(runId);
 		if (!row) {
 			return NextResponse.json(

@@ -1,10 +1,8 @@
-import type {
-	AgentDefinition,
-	Reply,
-	RunRegistry,
-	Runner,
+import type { AgentDefinition, Reply, RunRegistry, Runner } from "@agntz/core";
+import {
+	buildHttpToolDefinition,
+	manifestToAgentDefinition,
 } from "@agntz/core";
-import { buildHttpToolDefinition, manifestToAgentDefinition } from "@agntz/core";
 import type {
 	AgentManifest,
 	AgentRef,
@@ -284,7 +282,6 @@ function resolveManifestFromAgent(
 		`Agent "${agentDef.id}" does not have a manifest. Store agents with metadata.manifest (YAML string).`,
 	);
 }
-
 
 /**
  * Pre-register each ref-kind spawnable child as a working AgentDefinition

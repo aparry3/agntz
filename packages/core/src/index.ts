@@ -66,7 +66,8 @@ export type {
 } from "./auth/index.js";
 
 // Stores
-export { MemoryStore } from "./stores/memory.js";
+export { MemoryStore, createMemoryBackend } from "./stores/memory.js";
+export type { MemoryBackend } from "./stores/memory.js";
 
 // ID utilities — exposed so workers/SDKs can pre-allocate session/run ids
 // before invoking the runner (e.g. to include them in immediate responses).
@@ -148,22 +149,6 @@ export type {
 	ProtectedNamespaceRule,
 } from "./namespace.js";
 export { makeResourceToolName, resourceToolPrefix } from "./resource.js";
-
-// Webhooks
-export {
-	createWebhookDispatcher,
-	signBody,
-	WEBHOOK_SIGNATURE_HEADER,
-	WEBHOOK_DELIVERY_ID_HEADER,
-	WEBHOOK_IDEMPOTENCY_HEADER,
-	DEFAULT_RETRY_DELAYS_MS,
-	DEFAULT_TIMEOUT_MS,
-} from "./webhooks/dispatcher.js";
-export type {
-	WebhookDispatcher,
-	WebhookDispatcherOptions,
-	WebhookEvent,
-} from "./webhooks/dispatcher.js";
 
 // Errors
 export {
@@ -263,21 +248,15 @@ export type {
 	ConnectionKind,
 	ConnectionConfig,
 	MCPConnectionConfig,
-	ApiKeyStore,
-	ApiKeyRecord,
-	NamespaceRootStore,
 	ScopableStore,
 	UnifiedStore,
 	// Skills
 	SkillDefinition,
 	SkillStore,
-	// Secrets (used for both HTTP-tool auth and webhook HMAC signing keys)
+	// Secrets
 	SecretDefinition,
 	SecretMetadata,
 	SecretStore,
-	// Webhooks
-	WebhookDelivery,
-	WebhookDeliveryStore,
 	// Replies
 	Reply,
 	// Runs

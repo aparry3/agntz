@@ -1,3 +1,4 @@
+import { getTenantStore } from "@/lib/store";
 import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import { NextResponse } from "next/server";
 
@@ -6,7 +7,8 @@ export async function POST(
 	{ params }: { params: Promise<{ evalId: string; version: string }> },
 ) {
 	try {
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 		const { evalId, version } = await params;
 		const id = decodeURIComponent(evalId);
 		const resolvedVersion = await resolveEvalVersionRef(
@@ -28,7 +30,7 @@ export async function POST(
 }
 
 async function resolveEvalVersionRef(
-	store: Awaited<ReturnType<typeof requireUserContext>>["store"],
+	store: Awaited<ReturnType<typeof getTenantStore>>,
 	evalId: string,
 	version: string,
 ): Promise<string | null> {

@@ -1,9 +1,9 @@
-import type { UnifiedStore } from "@agntz/core";
+import type { ApiKeyStore } from "@agntz/platform";
 import type { Context, MiddlewareHandler } from "hono";
 import { verifyInternalAuthToken } from "./internal-auth.js";
 
 export interface AuthDeps {
-	store: UnifiedStore;
+	store: ApiKeyStore;
 	internalSecret: string;
 }
 

@@ -1,4 +1,9 @@
-import { AuthRequiredError, requireUserContext, workerIdentity } from "@/lib/user";
+import { getTenantStore } from "@/lib/store";
+import {
+	AuthRequiredError,
+	requireUserContext,
+	workerIdentity,
+} from "@/lib/user";
 import { workerValidateManifest } from "@/lib/worker-client";
 import { type NextRequest, NextResponse } from "next/server";
 
@@ -29,8 +34,9 @@ export async function GET(
 		const { id } = await params;
 		const bad = rejectVersionSuffix(id);
 		if (bad) return bad;
-		const { runner } = await requireUserContext();
-		const agent = await runner.agents.getAgent(id);
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
+		const agent = await store.getAgent(id);
 
 		if (!agent) {
 			return NextResponse.json(
@@ -54,7 +60,7 @@ export async function PUT(
 		const bad = rejectVersionSuffix(id);
 		if (bad) return bad;
 		const ctx = await requireUserContext();
-		const { runner } = ctx;
+		const store = await getTenantStore(ctx);
 		const body = await req.json();
 		const { name, manifest, ...rest } = body;
 
@@ -81,7 +87,7 @@ export async function PUT(
 			);
 		}
 
-		await runner.agents.putAgent({
+		await store.putAgent({
 			id,
 			name: name ?? id,
 			systemPrompt: "",
@@ -107,8 +113,9 @@ export async function DELETE(
 		const { id } = await params;
 		const bad = rejectVersionSuffix(id);
 		if (bad) return bad;
-		const { runner } = await requireUserContext();
-		await runner.agents.deleteAgent(id);
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
+		await store.deleteAgent(id);
 		return NextResponse.json({ id, deleted: true });
 	} catch (error) {
 		return errorResponse(error);

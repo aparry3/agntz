@@ -1,4 +1,3 @@
-import { MemoryStore } from "@agntz/core";
 import { createMemrez } from "@agntz/memrez";
 import type {
 	CurateOp,
@@ -6,6 +5,7 @@ import type {
 	TaggerInput,
 	TaggerResult,
 } from "@agntz/memrez";
+import { PlatformMemoryStore as MemoryStore } from "@agntz/platform/memory";
 import { describe, expect, it } from "vitest";
 import { signInternalAuthToken } from "../src/middleware/internal-auth.js";
 import { createWorkerAPI } from "../src/routes.js";

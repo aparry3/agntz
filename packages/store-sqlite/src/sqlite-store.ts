@@ -11,7 +11,6 @@ import {
 import type {
 	AgentDefinition,
 	AgentVersionSummary,
-	ApiKeyRecord,
 	Connection,
 	ConnectionConfig,
 	ConnectionKind,
@@ -47,9 +46,9 @@ import type {
 	TraceFilter,
 	TraceSummary,
 	UnifiedStore,
-	WebhookDelivery,
 } from "@agntz/contracts";
 import { createSqliteDatabase, runSqliteMigrations } from "@agntz/db/sqlite";
+import type { ApiKeyRecord, WebhookDelivery } from "@agntz/platform";
 import type { Database as DatabaseType } from "better-sqlite3";
 
 const MIGRATIONS = [

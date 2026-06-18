@@ -1,3 +1,4 @@
+import { getTenantStore } from "@/lib/store";
 import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import { type NextRequest, NextResponse } from "next/server";
 
@@ -7,15 +8,10 @@ export async function GET(
 ) {
 	try {
 		const { id } = await params;
-		const { runner } = await requireUserContext();
-		if (!runner.providers) {
-			return NextResponse.json(
-				{ error: "Provider store not available" },
-				{ status: 501 },
-			);
-		}
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 
-		const provider = await runner.providers.getProvider(id);
+		const provider = await store.getProvider(id);
 		if (!provider) {
 			return NextResponse.json({ id, configured: false });
 		}
@@ -38,13 +34,8 @@ export async function PUT(
 ) {
 	try {
 		const { id } = await params;
-		const { runner } = await requireUserContext();
-		if (!runner.providers) {
-			return NextResponse.json(
-				{ error: "Provider store not available" },
-				{ status: 501 },
-			);
-		}
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 
 		const body = await req.json();
 		const { apiKey, baseUrl, config } = body;
@@ -56,7 +47,7 @@ export async function PUT(
 			);
 		}
 
-		await runner.providers.putProvider({ id, apiKey, baseUrl, config });
+		await store.putProvider({ id, apiKey, baseUrl, config });
 		return NextResponse.json({ id, configured: true });
 	} catch (error) {
 		return errorResponse(error);
@@ -69,15 +60,10 @@ export async function DELETE(
 ) {
 	try {
 		const { id } = await params;
-		const { runner } = await requireUserContext();
-		if (!runner.providers) {
-			return NextResponse.json(
-				{ error: "Provider store not available" },
-				{ status: 501 },
-			);
-		}
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 
-		await runner.providers.deleteProvider(id);
+		await store.deleteProvider(id);
 		return NextResponse.json({ id, deleted: true });
 	} catch (error) {
 		return errorResponse(error);

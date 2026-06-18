@@ -1,3 +1,4 @@
+import { getTenantStore } from "@/lib/store";
 import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import { listVersions } from "@/lib/versions";
 import { type NextRequest, NextResponse } from "next/server";
@@ -8,7 +9,8 @@ export async function GET(
 ) {
 	try {
 		const { id } = await params;
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 		const versions = await listVersions(store, id);
 		return NextResponse.json(versions);
 	} catch (error) {

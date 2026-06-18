@@ -1,4 +1,5 @@
 import { assertEvalDatasetScope, normalizeEvalDefinition } from "@/lib/evals";
+import { getTenantStore } from "@/lib/store";
 import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import { type NextRequest, NextResponse } from "next/server";
 
@@ -8,7 +9,8 @@ export async function GET(
 ) {
 	try {
 		const { evalId } = await params;
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 		const row = await store.getEval(evalId);
 		if (!row) {
 			return NextResponse.json({ error: "Eval not found" }, { status: 404 });
@@ -25,7 +27,8 @@ export async function PUT(
 ) {
 	try {
 		const { evalId } = await params;
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 		const existing = await store.getEval(evalId);
 		if (!existing) {
 			return NextResponse.json({ error: "Eval not found" }, { status: 404 });
@@ -48,7 +51,8 @@ export async function DELETE(
 ) {
 	try {
 		const { evalId } = await params;
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 		await store.deleteEval(evalId);
 		return NextResponse.json({ id: evalId, deleted: true });
 	} catch (error) {

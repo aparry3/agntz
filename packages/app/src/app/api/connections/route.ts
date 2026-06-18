@@ -4,19 +4,15 @@ import {
 	pingConnection,
 	validateConnectionInput,
 } from "@/lib/connections";
+import { getTenantStore } from "@/lib/store";
 import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import type { ConnectionKind } from "@agntz/core";
 import { type NextRequest, NextResponse } from "next/server";
 
 export async function GET(req: NextRequest) {
 	try {
-		const { runner } = await requireUserContext();
-		if (!runner.connections) {
-			return NextResponse.json(
-				{ error: "Connection store not available" },
-				{ status: 501 },
-			);
-		}
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 
 		const kindParam = req.nextUrl.searchParams.get("kind");
 		const kind = kindParam as ConnectionKind | null;
@@ -27,7 +23,7 @@ export async function GET(req: NextRequest) {
 			);
 		}
 
-		const all = await runner.connections.listConnections(kind ?? undefined);
+		const all = await store.listConnections(kind ?? undefined);
 		return NextResponse.json(
 			all.map((c) => ({
 				id: c.id,
@@ -46,13 +42,8 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
 	try {
-		const { runner } = await requireUserContext();
-		if (!runner.connections) {
-			return NextResponse.json(
-				{ error: "Connection store not available" },
-				{ status: 501 },
-			);
-		}
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 
 		const body = await req.json();
 		const { kind, id, displayName, description, config } = body ?? {};
@@ -67,7 +58,7 @@ export async function POST(req: NextRequest) {
 			return NextResponse.json({ error: validationError }, { status: 400 });
 		}
 
-		const existing = await runner.connections.getConnection(kind, id);
+		const existing = await store.getConnection(kind, id);
 		if (existing) {
 			return NextResponse.json(
 				{ error: `Connection '${id}' already exists for kind '${kind}'` },
@@ -76,7 +67,7 @@ export async function POST(req: NextRequest) {
 		}
 
 		const now = new Date().toISOString();
-		await runner.connections.putConnection({
+		await store.putConnection({
 			id,
 			kind,
 			displayName,

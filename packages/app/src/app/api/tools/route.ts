@@ -3,9 +3,8 @@ import { NextResponse } from "next/server";
 
 export async function GET() {
 	try {
-		const { runner } = await requireUserContext();
-		const tools = runner.tools.list();
-		return NextResponse.json(tools);
+		await requireUserContext();
+		return NextResponse.json([]);
 	} catch (error) {
 		if (error instanceof AuthRequiredError) {
 			return NextResponse.json(

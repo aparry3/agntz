@@ -1,11 +1,11 @@
 import {
 	type GenerateTextOptions,
 	type GenerateTextResult,
-	MemoryStore,
 	type ModelProvider,
 	createRunner,
 } from "@agntz/core";
 import type { AgentManifest } from "@agntz/core/manifest";
+import { PlatformMemoryStore as MemoryStore } from "@agntz/platform/memory";
 import { describe, expect, it } from "vitest";
 import { createWorkerAPI } from "../src/routes.js";
 

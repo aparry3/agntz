@@ -1,4 +1,9 @@
-import { AuthRequiredError, requireUserContext, workerIdentity } from "@/lib/user";
+import { getTenantStore } from "@/lib/store";
+import {
+	AuthRequiredError,
+	requireUserContext,
+	workerIdentity,
+} from "@/lib/user";
 import { workerEditAgent, workerValidateManifest } from "@/lib/worker-client";
 import type { ManifestSelection } from "@agntz/core/manifest";
 import { type NextRequest, NextResponse } from "next/server";
@@ -20,8 +25,8 @@ export async function POST(
 	try {
 		const { id } = await params;
 		const ctx = await requireUserContext();
-		const { runner } = ctx;
-		const existing = await runner.agents.getAgent(id);
+		const store = await getTenantStore(ctx);
+		const existing = await store.getAgent(id);
 		if (!existing) {
 			return NextResponse.json(
 				{ error: `Agent "${id}" not found` },

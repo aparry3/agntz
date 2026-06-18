@@ -1,3 +1,4 @@
+import { getTenantStore } from "@/lib/store";
 import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import { NextResponse } from "next/server";
 
@@ -6,7 +7,8 @@ export async function POST(
 	{ params }: { params: Promise<{ datasetId: string; version: string }> },
 ) {
 	try {
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 		const { datasetId, version } = await params;
 		const id = decodeURIComponent(datasetId);
 		const resolvedVersion = await resolveDatasetVersionRef(
@@ -28,7 +30,7 @@ export async function POST(
 }
 
 async function resolveDatasetVersionRef(
-	store: Awaited<ReturnType<typeof requireUserContext>>["store"],
+	store: Awaited<ReturnType<typeof getTenantStore>>,
 	datasetId: string,
 	version: string,
 ): Promise<string | null> {

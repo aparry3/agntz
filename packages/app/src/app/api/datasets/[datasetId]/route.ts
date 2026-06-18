@@ -1,4 +1,5 @@
 import { normalizeEvalDataset } from "@/lib/evals";
+import { getTenantStore } from "@/lib/store";
 import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import { type NextRequest, NextResponse } from "next/server";
 
@@ -8,7 +9,8 @@ export async function GET(
 ) {
 	try {
 		const { datasetId } = await params;
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 		const row = await store.getDataset(datasetId);
 		if (!row) {
 			return NextResponse.json({ error: "Dataset not found" }, { status: 404 });
@@ -25,7 +27,8 @@ export async function PUT(
 ) {
 	try {
 		const { datasetId } = await params;
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 		const existing = await store.getDataset(datasetId);
 		if (!existing) {
 			return NextResponse.json({ error: "Dataset not found" }, { status: 404 });
@@ -47,7 +50,8 @@ export async function DELETE(
 ) {
 	try {
 		const { datasetId } = await params;
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 		await store.deleteDataset(datasetId);
 		return NextResponse.json({ id: datasetId, deleted: true });
 	} catch (error) {

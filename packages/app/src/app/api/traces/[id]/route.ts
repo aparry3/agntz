@@ -1,3 +1,4 @@
+import { getTenantStore } from "@/lib/store";
 import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import { type NextRequest, NextResponse } from "next/server";
 
@@ -6,7 +7,9 @@ export async function GET(
 	context: { params: Promise<{ id: string }> },
 ) {
 	try {
-		const { userId, store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const { userId } = ctx;
+		const store = await getTenantStore(ctx);
 		const { id: traceId } = await context.params;
 		const summary = await store.getSummary(traceId, userId);
 		if (!summary) {

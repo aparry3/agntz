@@ -11,7 +11,6 @@ import {
 import type {
 	AgentDefinition,
 	AgentVersionSummary,
-	ApiKeyRecord,
 	Connection,
 	ConnectionConfig,
 	ConnectionKind,
@@ -47,9 +46,9 @@ import type {
 	TraceFilter,
 	TraceSummary,
 	UnifiedStore,
-	WebhookDelivery,
 } from "@agntz/contracts";
 import { PostgresMigrator, createPostgresPool } from "@agntz/db/postgres";
+import type { ApiKeyRecord, WebhookDelivery } from "@agntz/platform";
 import type pg from "pg";
 
 type PoolType = InstanceType<typeof pg.Pool>;

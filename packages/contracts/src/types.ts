@@ -1067,55 +1067,6 @@ export interface TraceStore {
 	deleteOlderThan(ownerId: string, before: Date): Promise<number>;
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// Multi-tenancy: per-user scoping + API keys
-// ═══════════════════════════════════════════════════════════════════════
-
-export interface ApiKeyRecord {
-	id: string;
-	userId: string;
-	name: string;
-	keyPrefix: string;
-	createdAt: string;
-	lastUsedAt: string | null;
-	revokedAt: string | null;
-}
-
-/**
- * API key management. `createApiKey`/`listApiKeys`/`revokeApiKey` require an
- * explicit userId (they're admin-style calls, not scoped reads).
- * `resolveApiKey` is the worker's inbound auth path — given a raw key, return
- * the user it belongs to.
- */
-export interface ApiKeyStore {
-	createApiKey(params: { userId: string; name: string }): Promise<{
-		record: ApiKeyRecord;
-		rawKey: string;
-	}>;
-	listApiKeys(userId: string): Promise<ApiKeyRecord[]>;
-	revokeApiKey(params: { userId: string; keyId: string }): Promise<void>;
-	resolveApiKey(
-		rawKey: string,
-	): Promise<{ userId: string; keyId: string } | null>;
-}
-
-/**
- * Per-tenant namespace ownership for the hosted multi-tenant worker. Records the
- * namespace-grant roots a tenant (`userId`) is allowed to operate within, so an
- * API-key caller can be bounded to its own namespaces (the worker narrows
- * inbound grants/scopes to these roots). Hosted-only in practice: the local SDK
- * has a single trusted operator and does not enforce roots, but the methods live
- * here alongside `ApiKeyStore` so every `UnifiedStore` backend provides them.
- */
-export interface NamespaceRootStore {
-	/** The namespace roots this tenant owns (normalized grant strings). */
-	listNamespaceRoots(userId: string): Promise<string[]>;
-	/** Register a root for the tenant. Idempotent. */
-	addNamespaceRoot(userId: string, root: string): Promise<void>;
-	/** Remove a previously registered root. No-op if absent. */
-	removeNamespaceRoot(userId: string, root: string): Promise<void>;
-}
-
 /**
  * Stores that can be scoped to a user. `forUser(userId)` returns a new store
  * instance where every AgentStore/SessionStore/ContextStore/LogStore/
@@ -1134,63 +1085,12 @@ export type UnifiedStore = AgentStore &
 	LogStore &
 	ProviderStore &
 	ConnectionStore &
-	ApiKeyStore &
-	NamespaceRootStore &
 	RunStore &
 	TraceStore &
 	SkillStore &
 	SecretStore &
-	WebhookDeliveryStore &
 	EvalStore &
 	ScopableStore;
-
-// ═══════════════════════════════════════════════════════════════════════
-// Webhook deliveries — outbox table for outbound webhook POSTs.
-//
-// Webhook signing secrets live in the unified `SecretStore` (per-user,
-// AES-256-GCM encrypted at rest). The dispatcher resolves the active secret
-// by name at each delivery attempt — so an out-of-band rotation (via
-// SecretStore.putSecret) is picked up on the next attempt without any
-// pinning machinery.
-// ═══════════════════════════════════════════════════════════════════════
-
-export interface WebhookDelivery {
-	id: string;
-	runId: string;
-	callbackUrl: string;
-	/** Name of the SecretStore entry whose plaintext is the HMAC signing key. */
-	secretName: string;
-	payload: Record<string, unknown>;
-	attempts: number;
-	lastAttemptAt?: string;
-	status: "pending" | "delivered" | "failed_permanent";
-	lastError?: string;
-	createdAt: string;
-}
-
-export interface WebhookDeliveryStore {
-	/** Insert a new pending delivery; returns the row id. */
-	insert(
-		delivery: Omit<WebhookDelivery, "attempts" | "status" | "createdAt"> & {
-			payload: Record<string, unknown>;
-		},
-	): Promise<string>;
-	updateStatus(
-		id: string,
-		status: WebhookDelivery["status"],
-		lastError?: string,
-	): Promise<void>;
-	/** Increment attempts and stamp `lastAttemptAt`; updates `lastError` opportunistically. */
-	incrementAttempt(id: string, lastError?: string): Promise<void>;
-	/**
-	 * Return pending deliveries, oldest first. `olderThan` is an ISO timestamp;
-	 * when set, rows with `createdAt >= olderThan` are excluded (useful for
-	 * future drain workers that re-attempt stale rows).
-	 */
-	listPending(filter?: { olderThan?: string; limit?: number }): Promise<
-		WebhookDelivery[]
-	>;
-}
 
 // ═══════════════════════════════════════════════════════════════════════
 // Model Provider

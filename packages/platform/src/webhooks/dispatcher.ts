@@ -1,91 +1,49 @@
 import { createHmac, randomBytes } from "node:crypto";
-import type { SpanEmitter } from "../telemetry.js";
-import type {
-	InvokeResult,
-	Reply,
-	SecretStore,
-	WebhookDeliveryStore,
-} from "../types.js";
+import type { InvokeResult, Reply, SecretStore } from "@agntz/contracts";
 import {
 	OutboundUrlPolicyError,
 	type OutboundUrlPolicyOptions,
 	fetchWithOutboundPolicy,
-} from "../utils/outbound-url.js";
+} from "@agntz/contracts";
+import type { WebhookDeliveryStore } from "../types.js";
 
-// ═══════════════════════════════════════════════════════════════════════
-// Webhook dispatcher — signs and POSTs outbound webhook events for a run.
-// Each `dispatch(event)` call inserts an outbox row, then attempts delivery
-// with bounded retries. Failures are recorded but do not throw — webhook
-// failures must never fail the originating run.
-// ═══════════════════════════════════════════════════════════════════════
-
-/**
- * Header names emitted on every webhook POST. Centralized so tests and
- * consumer SDKs can reference the canonical strings.
- */
 export const WEBHOOK_SIGNATURE_HEADER = "X-Agntz-Signature";
 export const WEBHOOK_DELIVERY_ID_HEADER = "X-Agntz-Delivery-Id";
-/** Mirrors the standard Webhooks header so consumers can dedupe replays. */
 export const WEBHOOK_IDEMPOTENCY_HEADER = "Idempotency-Key";
 
-/**
- * Default retry schedule. The first entry is the initial attempt (no delay);
- * subsequent entries are inter-attempt waits. So `[0, 5000, 30000]` means:
- * try immediately, wait 5s on failure, then wait 30s on second failure, then
- * give up after the third attempt.
- */
 export const DEFAULT_RETRY_DELAYS_MS: readonly number[] = [0, 5000, 30000];
-
-/** Default per-attempt timeout. */
 export const DEFAULT_TIMEOUT_MS = 10_000;
+
+export interface WebhookInvokeSpan {
+	end(): void;
+	error(err: Error | string): void;
+}
+
+export interface WebhookSpanEmitter {
+	startInvoke(params: {
+		agentId: string;
+		invocationId: string;
+		model: string;
+		ownerId?: string;
+		runId?: string | null;
+	}): WebhookInvokeSpan;
+}
 
 export interface WebhookDispatcherOptions {
 	deliveryStore: WebhookDeliveryStore;
-	/**
-	 * Unified secrets store. The dispatcher resolves the HMAC signing key by
-	 * `secretName` at each delivery attempt and decrypts it inline, so an
-	 * out-of-band rotation flows through naturally without per-run pinning.
-	 */
 	secretStore: SecretStore;
-	/**
-	 * Name of the SecretStore entry whose plaintext is the HMAC signing key.
-	 * Caller validates existence before invoke (typically 400 on a missing
-	 * name from `POST /runs`).
-	 */
 	secretName: string;
-	/** Where to POST the payload. Pinned per dispatcher instance. */
 	callbackUrl: string;
-	/** Run id for outbox correlation. */
 	runId: string;
-	/** Fetch override (tests). Defaults to global `fetch`. */
 	fetch?: typeof fetch;
-	/** Override outbound URL policy. Custom test fetches skip DNS by default. */
 	outboundUrlPolicy?: OutboundUrlPolicyOptions;
-	/** Per-attempt timeout (ms). Default 10_000. */
 	timeoutMs?: number;
-	/**
-	 * Inter-attempt delays in ms. First entry is delay before the first attempt
-	 * (use 0 for "try immediately"). Length determines max attempts.
-	 * Default `[0, 5000, 30000]` → 3 attempts.
-	 */
 	retryDelaysMs?: readonly number[];
-	/**
-	 * Optional SpanEmitter used to record a `webhook_delivery` span per dispatch.
-	 * The span ends with `status="error"` on permanent failure.
-	 */
-	spanEmitter?: SpanEmitter;
-	/** Tenant scoping for the emitted span. Required when `spanEmitter` is set. */
+	spanEmitter?: WebhookSpanEmitter;
 	ownerId?: string;
-	/** Optional `setTimeout` override (tests). */
 	setTimeoutImpl?: (cb: () => void, ms: number) => unknown;
 }
 
-/**
- * One outbound webhook event. The shape stays close to the on-the-wire payload
- * a consumer receives — the dispatcher serializes the event verbatim (minus
- * the `type` discriminator routing) so receivers see the same JSON the
- * dispatcher signs.
- */
 export type WebhookEvent =
 	| {
 			type: "reply";
@@ -106,13 +64,7 @@ export type WebhookEvent =
 	  };
 
 export interface WebhookDispatcher {
-	/**
-	 * Queue an event for delivery. Returns a promise that resolves when the
-	 * delivery loop has finished (either delivered or marked failed_permanent).
-	 * Callers may choose not to await this — the run continues regardless.
-	 */
 	dispatch(event: WebhookEvent): Promise<void>;
-	/** Returns a promise that resolves when all in-flight dispatches settle. */
 	drain(): Promise<void>;
 }
 
@@ -164,27 +116,20 @@ export function createWebhookDispatcher(
 					})
 				: null;
 
-		const job = (async () => {
-			try {
-				await runDeliveryLoop({
-					deliveryId,
-					payload,
-					callbackUrl: opts.callbackUrl,
-					secretName: opts.secretName,
-					secretStore: opts.secretStore,
-					deliveryStore: opts.deliveryStore,
-					fetchImpl,
-					outboundUrlPolicy,
-					timeoutMs,
-					retryDelaysMs,
-					sleep,
-					span,
-				});
-			} finally {
-				// Job always settles — failures are caught and recorded in the store.
-				// Span ending happens in runDeliveryLoop's status branches.
-			}
-		})();
+		const job = runDeliveryLoop({
+			deliveryId,
+			payload,
+			callbackUrl: opts.callbackUrl,
+			secretName: opts.secretName,
+			secretStore: opts.secretStore,
+			deliveryStore: opts.deliveryStore,
+			fetchImpl,
+			outboundUrlPolicy,
+			timeoutMs,
+			retryDelaysMs,
+			sleep,
+			span,
+		});
 
 		inFlight.add(job);
 		job.finally(() => inFlight.delete(job));
@@ -199,16 +144,9 @@ export function createWebhookDispatcher(
 	return { dispatch, drain };
 }
 
-/**
- * Verbatim JSON sent to the consumer. The wire payload IS the signed body.
- */
 function eventToPayload(event: WebhookEvent): Record<string, unknown> {
 	return { ...event } as Record<string, unknown>;
 }
-
-// ───────────────────────────────────────────────────────────────────────
-// Delivery loop
-// ───────────────────────────────────────────────────────────────────────
 
 interface DeliveryLoopOpts {
 	deliveryId: string;
@@ -222,15 +160,10 @@ interface DeliveryLoopOpts {
 	timeoutMs: number;
 	retryDelaysMs: readonly number[];
 	sleep: (ms: number) => Promise<void>;
-	span: ReturnType<SpanEmitter["startInvoke"]> | null;
+	span: WebhookInvokeSpan | null;
 }
 
 async function runDeliveryLoop(o: DeliveryLoopOpts): Promise<void> {
-	// Resolve secret once before the loop. We sign with the value as it is now;
-	// any out-of-band rotation will be picked up on the next attempt of a
-	// future delivery. (We deliberately don't re-resolve between retries of
-	// this delivery — the consumer who got our first signature should be able
-	// to verify the second too.)
 	const plaintext = await o.secretStore.getSecretValue(o.secretName);
 	if (plaintext == null) {
 		const err = `webhook secret not found: ${o.secretName}`;
@@ -276,7 +209,6 @@ async function runDeliveryLoop(o: DeliveryLoopOpts): Promise<void> {
 			);
 			return;
 		}
-		// outcome === "retry" → continue loop
 	}
 
 	await o.deliveryStore.updateStatus(
@@ -326,43 +258,22 @@ async function attemptDelivery(o: AttemptOpts): Promise<AttemptResult> {
 				policy: o.outboundUrlPolicy,
 			},
 		);
-		if (res.status >= 200 && res.status < 300) {
-			return { outcome: "success" };
-		}
-		// 429 → retry as 5xx. Other 4xx → permanent (consumer rejected).
+		if (res.status >= 200 && res.status < 300) return { outcome: "success" };
 		if (res.status === 429 || res.status >= 500) {
-			return {
-				outcome: "retry",
-				errorMessage: `HTTP ${res.status}`,
-			};
+			return { outcome: "retry", errorMessage: `HTTP ${res.status}` };
 		}
-		return {
-			outcome: "permanent",
-			errorMessage: `HTTP ${res.status}`,
-		};
+		return { outcome: "permanent", errorMessage: `HTTP ${res.status}` };
 	} catch (err) {
 		if (err instanceof OutboundUrlPolicyError) {
-			return {
-				outcome: "permanent",
-				errorMessage: err.message,
-			};
+			return { outcome: "permanent", errorMessage: err.message };
 		}
-		// Abort, network error, or DNS failure → retry-eligible.
 		const message = err instanceof Error ? err.message : String(err);
-		return {
-			outcome: "retry",
-			errorMessage: message || "fetch error",
-		};
+		return { outcome: "retry", errorMessage: message || "fetch error" };
 	} finally {
 		clearTimeout(timer);
 	}
 }
 
-/**
- * HMAC-SHA256 over the request body, prefixed with `sha256=`. Mirrors the
- * Stripe-style signature header consumers can verify with the raw secret they
- * captured at create/rotate time.
- */
 export function signBody(rawSecret: string, body: string): string {
 	const hmac = createHmac("sha256", rawSecret);
 	hmac.update(body, "utf8");
