@@ -185,6 +185,14 @@ export type { ParsedAgentRef } from "./agent-ref.js";
 export { manifestToAgentDefinition } from "./manifest-to-agent.js";
 export type { ManifestToAgentOptions } from "./manifest-to-agent.js";
 
+// Manifest → runner execution bridge. The shared invokeLLM/invokeTool mechanics
+// behind both hosts' `createExecutionContext`; see `./manifest-execution-context.ts`.
+export { createManifestExecutionContext } from "./manifest-execution-context.js";
+export type {
+	ManifestBridgeHooks,
+	ManifestExecutionContextOptions,
+} from "./manifest-execution-context.js";
+
 // Multimodal — image content blocks + fetcher
 export { isContentBlockArray } from "./types.js";
 export { normalizeImageBlocks, ImageFetchError } from "./image-fetcher.js";
