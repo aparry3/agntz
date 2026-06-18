@@ -1,9 +1,11 @@
+import { getTenantStore } from "@/lib/store";
 import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import { type NextRequest, NextResponse } from "next/server";
 
 export async function GET(req: NextRequest) {
 	try {
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 		const search = req.nextUrl.searchParams;
 		const rows = await store.listEvalLatestScores({
 			agentId: search.get("agentId") ?? undefined,

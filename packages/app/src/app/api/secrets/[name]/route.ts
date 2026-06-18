@@ -1,3 +1,4 @@
+import { getTenantStore } from "@/lib/store";
 import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import { getLastFour } from "@agntz/core";
 import { type NextRequest, NextResponse } from "next/server";
@@ -8,7 +9,8 @@ export async function GET(
 ) {
 	try {
 		const { name } = await params;
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 		const metadata = await store.getSecretMetadata(name);
 		if (!metadata) {
 			return NextResponse.json(
@@ -28,7 +30,8 @@ export async function PUT(
 ) {
 	try {
 		const { name } = await params;
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 		const body = await req.json();
 		const { value, description } = body ?? {};
 
@@ -110,7 +113,8 @@ export async function DELETE(
 ) {
 	try {
 		const { name } = await params;
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 		await store.deleteSecret(name);
 		return NextResponse.json({ name, deleted: true });
 	} catch (error) {

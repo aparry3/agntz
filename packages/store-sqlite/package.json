@@ -11,9 +11,7 @@
       "import": "./dist/index.js"
     }
   },
-  "files": [
-    "dist"
-  ],
+  "files": ["dist"],
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
@@ -26,7 +24,8 @@
   "dependencies": {
     "@agntz/contracts": "workspace:*",
     "@agntz/db": "workspace:*",
-    "better-sqlite3": "^11.8.1"
+    "better-sqlite3": "^11.8.1",
+    "@agntz/platform": "workspace:*"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
@@ -34,13 +33,7 @@
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
   },
-  "keywords": [
-    "agntz",
-    "sqlite",
-    "store",
-    "ai",
-    "agents"
-  ],
+  "keywords": ["agntz", "sqlite", "store", "ai", "agents"],
   "publishConfig": {
     "access": "public"
   },

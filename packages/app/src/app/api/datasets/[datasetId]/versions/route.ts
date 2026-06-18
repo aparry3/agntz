@@ -1,3 +1,4 @@
+import { getTenantStore } from "@/lib/store";
 import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import { NextResponse } from "next/server";
 
@@ -6,7 +7,8 @@ export async function GET(
 	{ params }: { params: Promise<{ datasetId: string }> },
 ) {
 	try {
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 		const { datasetId } = await params;
 		return NextResponse.json(
 			await store.listDatasetVersions(decodeURIComponent(datasetId)),

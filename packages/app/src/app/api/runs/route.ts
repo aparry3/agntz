@@ -1,10 +1,12 @@
+import { getTenantStore } from "@/lib/store";
 import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import type { RunListFilters, RunStatus } from "@agntz/core";
 import { type NextRequest, NextResponse } from "next/server";
 
 export async function GET(req: NextRequest) {
 	try {
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 		const params = req.nextUrl.searchParams;
 
 		let limit: number | undefined;

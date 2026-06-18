@@ -4,6 +4,7 @@ import {
 	pingConnection,
 	validateConnectionInput,
 } from "@/lib/connections";
+import { getTenantStore } from "@/lib/store";
 import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import type { ConnectionKind } from "@agntz/core";
 import { type NextRequest, NextResponse } from "next/server";
@@ -13,15 +14,10 @@ type RouteParams = { params: Promise<{ kind: string; id: string }> };
 export async function GET(_req: NextRequest, { params }: RouteParams) {
 	try {
 		const { kind, id } = await parseParams(await params);
-		const { runner } = await requireUserContext();
-		if (!runner.connections) {
-			return NextResponse.json(
-				{ error: "Connection store not available" },
-				{ status: 501 },
-			);
-		}
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 
-		const connection = await runner.connections.getConnection(kind, id);
+		const connection = await store.getConnection(kind, id);
 		if (!connection) {
 			return NextResponse.json({ error: "Not found" }, { status: 404 });
 		}
@@ -43,15 +39,10 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
 export async function PATCH(req: NextRequest, { params }: RouteParams) {
 	try {
 		const { kind, id } = await parseParams(await params);
-		const { runner } = await requireUserContext();
-		if (!runner.connections) {
-			return NextResponse.json(
-				{ error: "Connection store not available" },
-				{ status: 501 },
-			);
-		}
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 
-		const existing = await runner.connections.getConnection(kind, id);
+		const existing = await store.getConnection(kind, id);
 		if (!existing) {
 			return NextResponse.json({ error: "Not found" }, { status: 404 });
 		}
@@ -71,7 +62,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
 			return NextResponse.json({ error: validationError }, { status: 400 });
 		}
 
-		await runner.connections.putConnection({
+		await store.putConnection({
 			id,
 			kind,
 			displayName,
@@ -96,15 +87,10 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
 export async function DELETE(_req: NextRequest, { params }: RouteParams) {
 	try {
 		const { kind, id } = await parseParams(await params);
-		const { runner } = await requireUserContext();
-		if (!runner.connections) {
-			return NextResponse.json(
-				{ error: "Connection store not available" },
-				{ status: 501 },
-			);
-		}
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 
-		await runner.connections.deleteConnection(kind, id);
+		await store.deleteConnection(kind, id);
 		return NextResponse.json({ id, kind, deleted: true });
 	} catch (error) {
 		return errorResponse(error);

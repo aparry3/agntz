@@ -1,25 +1,33 @@
-import { buildHttpToolDefinition } from "@agntz/core";
+import {
+	createManifestExecutionContext,
+	narrowNamespaceGrants,
+	normalizeNamespaceGrants,
+} from "@agntz/core";
 import type {
 	Reply,
+	RunRegistry,
 	Runner,
 	SpanEmitter,
 	ToolContext,
 	ToolDefinition,
 } from "@agntz/core";
-import type {
-	AgentManifest,
-	AgentState,
-	ExecutionContext,
-	LLMAgentManifest,
-	ToolCallConfig,
-} from "@agntz/core/manifest";
-import { manifestToAgentDefinition } from "./manifest-to-agent.js";
+import type { AgentManifest, ExecutionContext } from "@agntz/core/manifest";
 
 export interface CreateExecutionContextOptions {
 	spanEmitter?: SpanEmitter;
 	sessionId?: string;
 	context?: string[];
 	signal?: AbortSignal;
+	/**
+	 * When wired, each `invokeLLM` step runs through this registry as a CHILD
+	 * Run of `parentRunId`, so its lifecycle events flow to the root's
+	 * multiplexed feed (`runs.stream`). Omitted for plain synchronous runs.
+	 */
+	runRegistry?: RunRegistry;
+	/** Root Run id — inner LLM steps attach to it as children. */
+	parentRunId?: string;
+	/** Tenant id threaded onto child Runs (single-operator in embedded use). */
+	userId?: string;
 	/**
 	 * Local-tool implementations registered with `agntz({ tools: ... })`.
 	 * Used by `invokeTool` to dispatch `kind: local` pipeline tool steps
@@ -35,13 +43,15 @@ export interface CreateExecutionContextOptions {
 }
 
 /**
- * Build the `ExecutionContext` the `@agntz/manifest` executor needs to
- * dispatch across all four agent kinds. Mirrors `packages/worker/src/bridge.ts`
- * but trimmed for single-tenant embedded use:
+ * Build the `ExecutionContext` the manifest executor needs, for single-tenant
+ * embedded use. A thin wrapper over `@agntz/core`'s shared
+ * `createManifestExecutionContext`; the only embedded-specific seams are:
  *
- *  - No run-registry / multi-Run orchestration (one invocation = one Run)
- *  - No user scoping (single-process, single-tenant)
- *  - resolveAgent reads from the runner's in-memory registered map
+ *  - `resolveAgent` reads from the in-memory loaded-manifests map
+ *  - local tools dispatch through the `agntz({ tools })` map (strict: an
+ *    unregistered `kind: local` step throws), with grant-narrowing ToolContexts
+ *  - eager local-tool validation + skill rejection (no in-process SkillStore)
+ *  - the default temp-agent cleanup (`runner.deregisterAgent`) is correct here
  */
 export function createExecutionContext(
 	runner: Runner,
@@ -49,118 +59,26 @@ export function createExecutionContext(
 	localToolNames: Set<string>,
 	opts: CreateExecutionContextOptions = {},
 ): ExecutionContext {
-	const context = normalizeLocalNamespaceGrants(opts.context);
-	return {
-		spanEmitter: opts.spanEmitter,
+	const context = normalizeNamespaceGrants(opts.context);
+	return createManifestExecutionContext(runner, {
 		resolveAgent: async (id: string) => {
 			const manifest = manifests.get(id);
 			if (!manifest)
 				throw new Error(`Agent "${id}" not loaded from agents directory`);
 			return manifest;
 		},
-
-		invokeLLM: async (
-			manifest: LLMAgentManifest,
-			renderedInstruction: string,
-			renderedPrompt: string | undefined,
-			state: AgentState,
-		) => {
-			// The executor has pre-rendered the instruction with full state. The
-			// core runner expects a static systemPrompt, so we synthesize a
-			// temp agent under a unique id with the rendered instruction baked in,
-			// invoke, then deregister. Same pattern as the hosted worker bridge.
-			const tempId = `__pipeline_${manifest.id}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-			const def = manifestToAgentDefinition(
-				{ ...manifest, instruction: renderedInstruction },
-				localToolNames,
-			);
-			def.id = tempId;
-			def.userPromptTemplate = undefined; // we pass the rendered user message ourselves
-			runner.registerAgent(def);
-
-			try {
-				const userInput =
-					renderedPrompt ??
-					(state.userQuery != null
-						? String(state.userQuery)
-						: JSON.stringify(state));
-				const result = await runner.invoke(tempId, userInput, {
-					...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
-					context,
-					...(opts.signal ? { signal: opts.signal } : {}),
-					...(opts.spanEmitter ? { spanEmitter: opts.spanEmitter } : {}),
-				});
-				if (opts.replyCollector && result.replies?.length) {
-					opts.replyCollector.push(...result.replies);
-				}
-				// For LLM steps with an outputSchema, try to JSON-parse so downstream
-				// pipeline steps see structured fields rather than a string blob.
-				if (manifest.outputSchema) {
-					try {
-						return JSON.parse(result.output);
-					} catch {
-						return result.output;
-					}
-				}
-				return result.output;
-			} finally {
-				runner.deregisterAgent(tempId);
-			}
-		},
-
-		invokeTool: async (config: ToolCallConfig, state: AgentState) => {
-			switch (config.kind) {
-				case "local": {
-					const tool = opts.localTools?.get(config.name);
-					if (!tool) {
-						throw new Error(
-							`Pipeline tool step references local tool '${config.name}' but no handler was registered.`,
-						);
-					}
-					const ctx = makeDirectToolContext(runner, config.name, context);
-					return tool.execute(config.params ?? {}, ctx);
-				}
-				case "http": {
-					if (!config.url)
-						throw new Error("HTTP pipeline tool config missing 'url'");
-					// The tool's execute closes over state so secrets/env refs are
-					// resolved at call time using the runner's pre-fetched values.
-					const tool = buildHttpToolDefinition(
-						{
-							kind: "http",
-							name: config.name,
-							url: config.url,
-							method: config.method,
-							description: config.description,
-							params: config.params,
-							headers: config.headers,
-							body_type: config.body_type,
-							body: config.body,
-							auth: config.auth,
-						},
-						state,
-						{
-							tokenResolver: runner.tokenResolver,
-							tokenCache: runner.tokenCache,
-						},
-					);
-					return (
-						tool.execute as (a: unknown, c: ToolContext) => Promise<unknown>
-					)({}, makeDirectToolContext(runner, `http__${config.name}`, context));
-				}
-				case "mcp": {
-					// MCP tools are registered in the runner's tool registry on first
-					// resolution (via the runner's MCP manager). Route through the
-					// public tools.execute API, namespacing the tool name with the
-					// server so the registry finds the right adapter.
-					const toolName = config.server
-						? `${config.server}:${config.name}`
-						: config.name;
-					return runner.tools.execute(toolName, config.params ?? {});
-				}
-			}
-		},
-	};
+		manifestToAgent: { localToolNames, rejectSkills: true },
+		localTools: opts.localTools,
+		toolContext: (toolName) => makeDirectToolContext(runner, toolName, context),
+		spanEmitter: opts.spanEmitter,
+		sessionId: opts.sessionId,
+		context,
+		signal: opts.signal,
+		runRegistry: opts.runRegistry,
+		parentRunId: opts.parentRunId,
+		userId: opts.userId,
+		replyCollector: opts.replyCollector,
+	});
 }
 
 function makeDirectToolContext(
@@ -175,61 +93,7 @@ function makeDirectToolContext(
 		invoke: (id, input, options) =>
 			runner.invoke(id, input, {
 				...options,
-				context: narrowLocalNamespaceGrants(context, options?.context),
+				context: narrowNamespaceGrants(context, options?.context),
 			}),
 	};
-}
-
-function normalizeLocalNamespaceGrants(
-	input: readonly string[] | undefined,
-): string[] {
-	if (input === undefined) return [];
-	const seen = new Set<string>();
-	const out: string[] = [];
-	for (const raw of input) {
-		if (typeof raw !== "string" || raw.length === 0) {
-			throw new Error(
-				"Invalid namespace grant: grant must be a non-empty string",
-			);
-		}
-		if (
-			raw.trim() !== raw ||
-			raw.startsWith("/") ||
-			raw.endsWith("/") ||
-			raw.includes("//")
-		) {
-			throw new Error(`Invalid namespace grant "${raw}"`);
-		}
-		for (const segment of raw.split("/")) {
-			if (
-				segment === "." ||
-				segment === ".." ||
-				segment.includes("*") ||
-				/\s/.test(segment)
-			) {
-				throw new Error(`Invalid namespace grant "${raw}"`);
-			}
-		}
-		if (!seen.has(raw)) {
-			seen.add(raw);
-			out.push(raw);
-		}
-	}
-	return out;
-}
-
-function narrowLocalNamespaceGrants(
-	parent: readonly string[],
-	requested: readonly string[] | undefined,
-): string[] {
-	if (requested === undefined) return [...parent];
-	const normalized = normalizeLocalNamespaceGrants(requested);
-	for (const grant of normalized) {
-		if (!parent.some((p) => grant === p || grant.startsWith(`${p}/`))) {
-			throw new Error(
-				`Invalid namespace grant "${grant}": grant is not within parent context [${parent.join(", ")}]`,
-			);
-		}
-	}
-	return normalized;
 }

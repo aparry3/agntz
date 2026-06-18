@@ -11,9 +11,7 @@
       "import": "./dist/index.js"
     }
   },
-  "files": [
-    "dist"
-  ],
+  "files": ["dist"],
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
@@ -26,7 +24,8 @@
   "dependencies": {
     "@agntz/contracts": "workspace:*",
     "@agntz/db": "workspace:*",
-    "pg": "^8.20.0"
+    "pg": "^8.20.0",
+    "@agntz/platform": "workspace:*"
   },
   "devDependencies": {
     "@types/pg": "^8.11.0",
@@ -34,14 +33,7 @@
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
   },
-  "keywords": [
-    "agntz",
-    "postgres",
-    "postgresql",
-    "store",
-    "ai",
-    "agents"
-  ],
+  "keywords": ["agntz", "postgres", "postgresql", "store", "ai", "agents"],
   "publishConfig": {
     "access": "public"
   },

@@ -1,10 +1,12 @@
 import { assertEvalDatasetScope, normalizeEvalDefinition } from "@/lib/evals";
+import { getTenantStore } from "@/lib/store";
 import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import { type NextRequest, NextResponse } from "next/server";
 
 export async function GET(req: NextRequest) {
 	try {
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 		const agentId = req.nextUrl.searchParams.get("agentId") ?? undefined;
 		return NextResponse.json(await store.listEvals({ agentId }));
 	} catch (error) {
@@ -14,7 +16,8 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
 	try {
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 		const definition = normalizeEvalDefinition(await req.json());
 		await assertEvalDatasetScope(store, definition);
 		await store.putEval(definition);

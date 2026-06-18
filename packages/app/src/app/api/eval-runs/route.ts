@@ -1,11 +1,17 @@
 import { evalRunFiltersFromSearch } from "@/lib/evals";
-import { AuthRequiredError, requireUserContext, workerIdentity } from "@/lib/user";
+import { getTenantStore } from "@/lib/store";
+import {
+	AuthRequiredError,
+	requireUserContext,
+	workerIdentity,
+} from "@/lib/user";
 import { workerEvalRun } from "@/lib/worker-client";
 import { type NextRequest, NextResponse } from "next/server";
 
 export async function GET(req: NextRequest) {
 	try {
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 		return NextResponse.json(
 			await store.listEvalRuns(
 				evalRunFiltersFromSearch(req.nextUrl.searchParams),

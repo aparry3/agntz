@@ -1,3 +1,4 @@
+import { getTenantStore } from "@/lib/store";
 import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import { listToolsOnServer } from "@agntz/core";
 import { type NextRequest, NextResponse } from "next/server";
@@ -7,15 +8,10 @@ type RouteParams = { params: Promise<{ id: string }> };
 export async function GET(_req: NextRequest, { params }: RouteParams) {
 	try {
 		const { id } = await params;
-		const { runner } = await requireUserContext();
-		if (!runner.connections) {
-			return NextResponse.json(
-				{ error: "Connection store not available" },
-				{ status: 501 },
-			);
-		}
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 
-		const connection = await runner.connections.getConnection("mcp", id);
+		const connection = await store.getConnection("mcp", id);
 		if (!connection) {
 			return NextResponse.json({ error: "Not found" }, { status: 404 });
 		}

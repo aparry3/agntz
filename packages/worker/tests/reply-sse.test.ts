@@ -2,13 +2,13 @@ import {
 	type GenerateTextOptions,
 	type GenerateTextResult,
 	InMemoryRunRegistry,
-	MemoryStore,
 	type ModelProvider,
 	type Runner,
 	createRunner,
 	defineAgent,
 } from "@agntz/core";
 import type { AgentManifest, LLMAgentManifest } from "@agntz/core/manifest";
+import { PlatformMemoryStore as MemoryStore } from "@agntz/platform/memory";
 import { describe, expect, it } from "vitest";
 import { createWorkerAPI } from "../src/routes.js";
 

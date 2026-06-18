@@ -1,11 +1,8 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { listEvalRunsInProcess } from "../evals.js";
-import { normalizeNamespaceGrant } from "../namespace.js";
 import { defineSkill } from "../skill.js";
 import type {
 	AgentDefinition,
 	AgentVersionSummary,
-	ApiKeyRecord,
 	Connection,
 	ConnectionKind,
 	ContextEntry,
@@ -38,7 +35,6 @@ import type {
 	TraceFilter,
 	TraceSummary,
 	UnifiedStore,
-	WebhookDelivery,
 } from "../types.js";
 import { decryptSecret, encryptSecret, getLastFour } from "../utils/crypto.js";
 import { listRunsInProcess } from "./list-runs.js";
@@ -69,17 +65,6 @@ interface SessionRow {
 	updatedAt: string;
 }
 
-interface ApiKeyRow {
-	id: string;
-	userId: string;
-	name: string;
-	keyPrefix: string;
-	keyHash: string;
-	createdAt: string;
-	lastUsedAt: string | null;
-	revokedAt: string | null;
-}
-
 interface SecretRow {
 	/** Encrypted ciphertext as `base64(iv):base64(tag):base64(ct)`. */
 	encrypted: string;
@@ -92,7 +77,7 @@ interface SecretRow {
 /**
  * Shared backing state across MemoryStore instances created via forUser().
  */
-interface MemoryBackend {
+export interface MemoryBackend {
 	agentVersions: Map<string, Map<string, AgentVersion[]>>; // userId -> agentId -> versions
 	agentAliases: Map<string, Map<string, Map<string, string>>>; // userId -> agentId -> alias -> createdAt
 	sessions: Map<string, SessionRow>; // sessionId -> row (row carries userId)
@@ -100,15 +85,11 @@ interface MemoryBackend {
 	logs: Array<{ userId: string; log: InvocationLog }>;
 	providers: Map<string, Map<string, ProviderConfig>>; // userId -> providerId -> config
 	connections: Map<string, Map<string, Connection>>; // userId -> `${kind}:${id}` -> connection
-	apiKeys: Map<string, ApiKeyRow>; // id -> row
-	apiKeyByHash: Map<string, ApiKeyRow>; // sha256(rawKey) -> row
-	namespaceRoots: Map<string, Set<string>>; // userId -> registered roots
 	runs: Map<string, Run>; // `${userId}:${runId}` -> run
 	spans: Map<string, Span>; // spanId -> span
 	summaries: Map<string, TraceSummary>; // traceId -> summary
 	skills: Map<string, Map<string, SkillDefinition>>; // userId -> name -> skill
 	secrets: Map<string, Map<string, SecretRow>>; // userId -> name -> row
-	webhookDeliveries: Map<string, WebhookDelivery>; // id -> delivery
 	evals: Map<string, Map<string, EvalDefinition>>; // userId -> evalId -> eval
 	evalVersions: Map<string, Map<string, EvalVersion[]>>; // userId -> evalId -> versions
 	evalAliases: Map<string, Map<string, Map<string, string>>>; // userId -> evalId -> alias -> createdAt
@@ -119,7 +100,7 @@ interface MemoryBackend {
 	evalLatestScores: Map<string, EvalLatestScore>; // `${userId}:${evalId}:${evalVersion}:${datasetId}:${datasetVersion}:${agentVersion}` -> score
 }
 
-function createBackend(): MemoryBackend {
+export function createMemoryBackend(): MemoryBackend {
 	return {
 		agentVersions: new Map(),
 		agentAliases: new Map(),
@@ -128,15 +109,11 @@ function createBackend(): MemoryBackend {
 		logs: [],
 		providers: new Map(),
 		connections: new Map(),
-		apiKeys: new Map(),
-		apiKeyByHash: new Map(),
-		namespaceRoots: new Map(),
 		runs: new Map(),
 		spans: new Map(),
 		summaries: new Map(),
 		skills: new Map(),
 		secrets: new Map(),
-		webhookDeliveries: new Map(),
 		evals: new Map(),
 		evalVersions: new Map(),
 		evalAliases: new Map(),
@@ -157,14 +134,14 @@ function createBackend(): MemoryBackend {
 const DEFAULT_USER_ID = "__default__";
 
 export class MemoryStore implements UnifiedStore {
-	private backend: MemoryBackend;
+	protected backend: MemoryBackend;
 	readonly userId: string | null;
 	private lastTs = 0;
 
 	constructor(
 		opts: { userId?: string; backend?: MemoryBackend; strict?: boolean } = {},
 	) {
-		this.backend = opts.backend ?? createBackend();
+		this.backend = opts.backend ?? createMemoryBackend();
 		if (opts.userId !== undefined) {
 			this.userId = opts.userId;
 		} else if (opts.strict) {
@@ -697,74 +674,6 @@ export class MemoryStore implements UnifiedStore {
 
 	async deleteSecret(name: string): Promise<void> {
 		this.secretMap().delete(name);
-	}
-
-	// ═══ ApiKeyStore (unscoped admin) ═══
-
-	async createApiKey(params: { userId: string; name: string }): Promise<{
-		record: ApiKeyRecord;
-		rawKey: string;
-	}> {
-		const rawKey = `ar_live_${randomBytes(24).toString("base64url")}`;
-		const keyPrefix = rawKey.slice(0, 14);
-		const keyHash = createHash("sha256").update(rawKey).digest("hex");
-		const row: ApiKeyRow = {
-			id: randomUUID(),
-			userId: params.userId,
-			name: params.name,
-			keyPrefix,
-			keyHash,
-			createdAt: new Date().toISOString(),
-			lastUsedAt: null,
-			revokedAt: null,
-		};
-		this.backend.apiKeys.set(row.id, row);
-		this.backend.apiKeyByHash.set(keyHash, row);
-		return { record: rowToRecord(row), rawKey };
-	}
-
-	async listApiKeys(userId: string): Promise<ApiKeyRecord[]> {
-		return Array.from(this.backend.apiKeys.values())
-			.filter((r) => r.userId === userId)
-			.map(rowToRecord)
-			.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-	}
-
-	async revokeApiKey(params: { userId: string; keyId: string }): Promise<void> {
-		const row = this.backend.apiKeys.get(params.keyId);
-		if (!row || row.userId !== params.userId) return;
-		row.revokedAt = new Date().toISOString();
-	}
-
-	async resolveApiKey(
-		rawKey: string,
-	): Promise<{ userId: string; keyId: string } | null> {
-		const keyHash = createHash("sha256").update(rawKey).digest("hex");
-		const row = this.backend.apiKeyByHash.get(keyHash);
-		if (!row || row.revokedAt) return null;
-		row.lastUsedAt = new Date().toISOString();
-		return { userId: row.userId, keyId: row.id };
-	}
-
-	// ═══ NamespaceRootStore ═══
-
-	async listNamespaceRoots(userId: string): Promise<string[]> {
-		return Array.from(this.backend.namespaceRoots.get(userId) ?? []).sort();
-	}
-
-	async addNamespaceRoot(userId: string, root: string): Promise<void> {
-		const normalized = normalizeNamespaceGrant(root);
-		let roots = this.backend.namespaceRoots.get(userId);
-		if (!roots) {
-			roots = new Set();
-			this.backend.namespaceRoots.set(userId, roots);
-		}
-		roots.add(normalized);
-	}
-
-	async removeNamespaceRoot(userId: string, root: string): Promise<void> {
-		const normalized = normalizeNamespaceGrant(root);
-		this.backend.namespaceRoots.get(userId)?.delete(normalized);
 	}
 
 	// ═══ RunStore ═══
@@ -1352,73 +1261,6 @@ export class MemoryStore implements UnifiedStore {
 		}
 		return traceIdsToDelete.length;
 	}
-
-	// ═══ WebhookDeliveryStore ═══
-
-	async insert(
-		delivery: Omit<WebhookDelivery, "attempts" | "status" | "createdAt"> & {
-			payload: Record<string, unknown>;
-		},
-	): Promise<string> {
-		this.requireUser();
-		const now = new Date().toISOString();
-		const row: WebhookDelivery = {
-			id: delivery.id,
-			runId: delivery.runId,
-			callbackUrl: delivery.callbackUrl,
-			secretName: delivery.secretName,
-			payload: delivery.payload,
-			attempts: 0,
-			status: "pending",
-			createdAt: now,
-		};
-		this.backend.webhookDeliveries.set(delivery.id, row);
-		return delivery.id;
-	}
-
-	async updateStatus(
-		id: string,
-		status: WebhookDelivery["status"],
-		lastError?: string,
-	): Promise<void> {
-		const row = this.backend.webhookDeliveries.get(id);
-		if (!row) return;
-		row.status = status;
-		if (lastError !== undefined) row.lastError = lastError;
-	}
-
-	async incrementAttempt(id: string, lastError?: string): Promise<void> {
-		const row = this.backend.webhookDeliveries.get(id);
-		if (!row) return;
-		row.attempts += 1;
-		row.lastAttemptAt = new Date().toISOString();
-		if (lastError !== undefined) row.lastError = lastError;
-	}
-
-	async listPending(filter?: { olderThan?: string; limit?: number }): Promise<
-		WebhookDelivery[]
-	> {
-		const rows: WebhookDelivery[] = [];
-		for (const r of this.backend.webhookDeliveries.values()) {
-			if (r.status !== "pending") continue;
-			if (filter?.olderThan && r.createdAt >= filter.olderThan) continue;
-			rows.push({ ...r });
-		}
-		rows.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-		return filter?.limit ? rows.slice(0, filter.limit) : rows;
-	}
-}
-
-function rowToRecord(row: ApiKeyRow): ApiKeyRecord {
-	return {
-		id: row.id,
-		userId: row.userId,
-		name: row.name,
-		keyPrefix: row.keyPrefix,
-		createdAt: row.createdAt,
-		lastUsedAt: row.lastUsedAt,
-		revokedAt: row.revokedAt,
-	};
 }
 
 function cloneJson<T>(value: T): T {

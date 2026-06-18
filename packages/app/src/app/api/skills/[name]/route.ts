@@ -1,3 +1,4 @@
+import { getTenantStore } from "@/lib/store";
 import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import { type NextRequest, NextResponse } from "next/server";
 
@@ -7,7 +8,8 @@ export async function GET(
 ) {
 	try {
 		const { name } = await params;
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 		const skill = await store.getSkill(name);
 		if (!skill) {
 			return NextResponse.json(
@@ -27,7 +29,8 @@ export async function PUT(
 ) {
 	try {
 		const { name } = await params;
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 		const body = await req.json();
 		const { description, instructions, tools, metadata } = body ?? {};
 
@@ -58,7 +61,8 @@ export async function DELETE(
 ) {
 	try {
 		const { name } = await params;
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 		await store.deleteSkill(name);
 		return NextResponse.json({ name, deleted: true });
 	} catch (error) {

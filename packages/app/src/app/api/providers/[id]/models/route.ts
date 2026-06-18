@@ -2,6 +2,7 @@ import {
 	type ProviderModel,
 	fetchProviderCatalog,
 } from "@/lib/provider-catalogs";
+import { getTenantStore } from "@/lib/store";
 import { findSupportedProvider } from "@/lib/supported-providers";
 import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import { type NextRequest, NextResponse } from "next/server";
@@ -15,7 +16,6 @@ import { type NextRequest, NextResponse } from "next/server";
  * Response shape:
  *   200 → { models: ProviderModel[], source: "live" | "fallback" }
  *   409 → { error: "not_configured" } when an authenticated provider has no key
- *   501 → { error: "no_provider_store" } when the runner lacks a ProviderStore
  */
 export async function GET(
 	_req: NextRequest,
@@ -23,12 +23,11 @@ export async function GET(
 ) {
 	const { id } = await params;
 	try {
-		const { userId, runner } = await requireUserContext();
-		if (!runner.providers) {
-			return NextResponse.json({ error: "no_provider_store" }, { status: 501 });
-		}
+		const ctx = await requireUserContext();
+		const { userId } = ctx;
+		const store = await getTenantStore(ctx);
 
-		const stored = await runner.providers.getProvider(id);
+		const stored = await store.getProvider(id);
 		const apiKey = stored?.apiKey;
 
 		const supported = findSupportedProvider(id);

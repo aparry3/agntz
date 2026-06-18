@@ -1,3 +1,4 @@
+import { getTenantStore } from "@/lib/store";
 import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import { activateVersion, getVersion } from "@/lib/versions";
 import { type NextRequest, NextResponse } from "next/server";
@@ -9,7 +10,8 @@ export async function POST(
 	try {
 		const { id, timestamp } = await params;
 		const decodedTimestamp = decodeURIComponent(timestamp);
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 
 		const agent = await getVersion(store, id, decodedTimestamp);
 		if (!agent) {

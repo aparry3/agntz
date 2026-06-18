@@ -17,7 +17,8 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "svix": "^1.90.0",
-    "yaml": "^2.8.0"
+    "yaml": "^2.8.0",
+    "@agntz/platform": "workspace:*"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.2.0",

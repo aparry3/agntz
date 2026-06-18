@@ -1,3 +1,4 @@
+import { getTenantStore } from "@/lib/store";
 import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import { type NextRequest, NextResponse } from "next/server";
 
@@ -6,7 +7,8 @@ export async function PUT(
 	{ params }: { params: Promise<{ datasetId: string; alias: string }> },
 ) {
 	try {
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 		const { datasetId, alias } = await params;
 		const body = (await req.json()) as { version?: string; createdAt?: string };
 		const version = body.version ?? body.createdAt;
@@ -32,7 +34,8 @@ export async function DELETE(
 	{ params }: { params: Promise<{ datasetId: string; alias: string }> },
 ) {
 	try {
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 		const { datasetId, alias } = await params;
 		await store.removeDatasetVersionAlias(
 			decodeURIComponent(datasetId),

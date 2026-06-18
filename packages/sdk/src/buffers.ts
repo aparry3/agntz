@@ -35,6 +35,21 @@ class RingBuffer<T> {
 	size(): number {
 		return this.items.length;
 	}
+
+	/** Replace the first item matching `sameId`, or push if none matches. */
+	upsert(item: T, sameId: (existing: T) => boolean): void {
+		const idx = this.items.findIndex(sameId);
+		if (idx >= 0) this.items[idx] = item;
+		else this.push(item);
+	}
+
+	/** Remove the first item matching `match`. Returns true if one was removed. */
+	remove(match: (existing: T) => boolean): boolean {
+		const idx = this.items.findIndex(match);
+		if (idx < 0) return false;
+		this.items.splice(idx, 1);
+		return true;
+	}
 }
 
 export interface RunsBufferOptions {
@@ -54,6 +69,15 @@ export class RunsBuffer {
 
 	record(run: Run): void {
 		this.buf.push(run);
+	}
+
+	/**
+	 * Insert or replace a run by id. Used by the registry's `persistRun` hook so
+	 * a Run started via `runs.start` (which transitions pending→running→terminal)
+	 * lands once and is updated in place, not duplicated.
+	 */
+	upsert(run: Run): void {
+		this.buf.upsert(run, (existing) => existing.id === run.id);
 	}
 
 	list(filter: RunListFilter = {}): RunListResult {
@@ -122,6 +146,11 @@ export class TracesBuffer {
 		const found = this.buf.all().find((t) => t.summary.traceId === traceId);
 		if (!found) return null;
 		return { summary: found.summary, spans: found.spans };
+	}
+
+	/** Remove a trace by id. Returns true if one was removed. */
+	delete(traceId: string): boolean {
+		return this.buf.remove((t) => t.summary.traceId === traceId);
 	}
 }
 

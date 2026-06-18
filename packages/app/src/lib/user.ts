@@ -1,4 +1,3 @@
-import { type Runner, type UnifiedStore, createRunner } from "@agntz/core";
 import { auth } from "@clerk/nextjs/server";
 import {
 	type AgntzPermission,
@@ -7,11 +6,9 @@ import {
 	permissionsForRole,
 } from "./authz";
 import type { WorkerIdentity } from "./internal-auth";
-import { getStore } from "./store";
 
 /**
- * Resolve the active user for the current request and return a store + Runner
- * scoped to the active tenant.
+ * Resolve the active user for the current request.
  *
  * Compatibility note: `userId` remains the storage owner key used by the
  * current store interfaces. In hosted Cloud it is the active Clerk org id when
@@ -29,8 +26,6 @@ export interface UserContext {
 	orgRole?: string;
 	roles: AgntzRole[];
 	permissions: AgntzPermission[];
-	store: UnifiedStore;
-	runner: Runner;
 }
 
 export class AuthRequiredError extends Error {
@@ -51,18 +46,6 @@ export async function requireUserContext(): Promise<UserContext> {
 	const role = normalizeAgntzRole(authState.orgRole, Boolean(orgId));
 	const permissions = permissionsForRole(role);
 
-	const adminStore = await getStore();
-	const store = adminStore.forUser(tenantId);
-	const runner = createRunner({
-		store,
-		defaults: {
-			model: {
-				provider: process.env.DEFAULT_MODEL_PROVIDER ?? "openai",
-				name: process.env.DEFAULT_MODEL_NAME ?? "gpt-5.4-mini",
-			},
-		},
-	});
-
 	return {
 		userId: tenantId,
 		actorUserId,
@@ -72,8 +55,6 @@ export async function requireUserContext(): Promise<UserContext> {
 		...(authState.orgRole ? { orgRole: authState.orgRole } : {}),
 		roles: [role],
 		permissions,
-		store,
-		runner,
 	};
 }
 

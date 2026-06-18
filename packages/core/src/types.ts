@@ -545,21 +545,15 @@ export type {
 	ConnectionKind,
 	ConnectionConfig,
 	MCPConnectionConfig,
-	ApiKeyStore,
-	ApiKeyRecord,
-	NamespaceRootStore,
 	ScopableStore,
 	UnifiedStore,
 	// Skills
 	SkillDefinition,
 	SkillStore,
-	// Secrets (used for both HTTP-tool auth and webhook HMAC signing keys)
+	// Secrets
 	SecretDefinition,
 	SecretMetadata,
 	SecretStore,
-	// Webhooks
-	WebhookDelivery,
-	WebhookDeliveryStore,
 	// Replies
 	Reply,
 	// Runs

@@ -1,0 +1,11 @@
+id: parent
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: |
+  MARKER:PARENT
+  You are the parent agent. Spawn the child agent, then summarize its result.
+spawnable:
+  - kind: ref
+    agentId: child

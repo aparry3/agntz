@@ -25,11 +25,9 @@ import {
 	SpanEmitter,
 	type TraceFilter,
 	type UnifiedStore,
-	type WebhookDispatcher,
 	assertOutboundUrlAllowed,
 	createEvalJudgeAgent,
 	createRunner,
-	createWebhookDispatcher,
 	criterionGateMinimum,
 	criterionRubric,
 	evalPassPolicyMinimum,
@@ -54,6 +52,11 @@ import {
 	MemrezScopeError,
 } from "@agntz/memrez";
 import type { CurateReport, MemoryEntry, Memrez } from "@agntz/memrez";
+import {
+	type PlatformUnifiedStore,
+	type WebhookDispatcher,
+	createWebhookDispatcher,
+} from "@agntz/platform";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { cors } from "hono/cors";
@@ -96,7 +99,7 @@ const EDIT_AGENT_MAX_DESCRIPTION_LENGTH = 4096;
 const EDIT_AGENT_MAX_MANIFEST_LENGTH = 64_000;
 
 export interface WorkerAPIOptions {
-	store: UnifiedStore;
+	store: PlatformUnifiedStore;
 	internalSecret: string;
 	/**
 	 * Process-wide RunRegistry used by the /runs/* endpoints. If omitted, the

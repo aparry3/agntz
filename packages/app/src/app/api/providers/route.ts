@@ -1,13 +1,13 @@
+import { getTenantStore } from "@/lib/store";
 import { SUPPORTED_PROVIDERS } from "@/lib/supported-providers";
 import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import { NextResponse } from "next/server";
 
 export async function GET() {
 	try {
-		const { runner } = await requireUserContext();
-		const stored = runner.providers
-			? await runner.providers.listProviders()
-			: [];
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
+		const stored = await store.listProviders();
 		const storedMap = new Map(stored.map((p) => [p.id, p.configured]));
 
 		const providers = SUPPORTED_PROVIDERS.map((p) => ({

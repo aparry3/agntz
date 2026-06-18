@@ -66,7 +66,8 @@ export type {
 } from "./auth/index.js";
 
 // Stores
-export { MemoryStore } from "./stores/memory.js";
+export { MemoryStore, createMemoryBackend } from "./stores/memory.js";
+export type { MemoryBackend } from "./stores/memory.js";
 
 // ID utilities — exposed so workers/SDKs can pre-allocate session/run ids
 // before invoking the runner (e.g. to include them in immediate responses).
@@ -149,22 +150,6 @@ export type {
 } from "./namespace.js";
 export { makeResourceToolName, resourceToolPrefix } from "./resource.js";
 
-// Webhooks
-export {
-	createWebhookDispatcher,
-	signBody,
-	WEBHOOK_SIGNATURE_HEADER,
-	WEBHOOK_DELIVERY_ID_HEADER,
-	WEBHOOK_IDEMPOTENCY_HEADER,
-	DEFAULT_RETRY_DELAYS_MS,
-	DEFAULT_TIMEOUT_MS,
-} from "./webhooks/dispatcher.js";
-export type {
-	WebhookDispatcher,
-	WebhookDispatcherOptions,
-	WebhookEvent,
-} from "./webhooks/dispatcher.js";
-
 // Errors
 export {
 	AgntzError,
@@ -194,6 +179,19 @@ export {
 	isAliasName,
 } from "./agent-ref.js";
 export type { ParsedAgentRef } from "./agent-ref.js";
+
+// Manifest → AgentDefinition bridge. The canonical lowering shared by every
+// host (embedded SDK + hosted worker); see `./manifest-to-agent.ts`.
+export { manifestToAgentDefinition } from "./manifest-to-agent.js";
+export type { ManifestToAgentOptions } from "./manifest-to-agent.js";
+
+// Manifest → runner execution bridge. The shared invokeLLM/invokeTool mechanics
+// behind both hosts' `createExecutionContext`; see `./manifest-execution-context.ts`.
+export { createManifestExecutionContext } from "./manifest-execution-context.js";
+export type {
+	ManifestBridgeHooks,
+	ManifestExecutionContextOptions,
+} from "./manifest-execution-context.js";
 
 // Multimodal — image content blocks + fetcher
 export { isContentBlockArray } from "./types.js";
@@ -258,21 +256,15 @@ export type {
 	ConnectionKind,
 	ConnectionConfig,
 	MCPConnectionConfig,
-	ApiKeyStore,
-	ApiKeyRecord,
-	NamespaceRootStore,
 	ScopableStore,
 	UnifiedStore,
 	// Skills
 	SkillDefinition,
 	SkillStore,
-	// Secrets (used for both HTTP-tool auth and webhook HMAC signing keys)
+	// Secrets
 	SecretDefinition,
 	SecretMetadata,
 	SecretStore,
-	// Webhooks
-	WebhookDelivery,
-	WebhookDeliveryStore,
 	// Replies
 	Reply,
 	// Runs

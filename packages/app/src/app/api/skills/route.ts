@@ -1,9 +1,11 @@
+import { getTenantStore } from "@/lib/store";
 import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import { type NextRequest, NextResponse } from "next/server";
 
 export async function GET() {
 	try {
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 		const skills = await store.listSkills();
 		return NextResponse.json(skills);
 	} catch (error) {
@@ -13,7 +15,8 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
 	try {
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 		const body = await req.json();
 		const { name, description, instructions, tools, metadata } = body ?? {};
 

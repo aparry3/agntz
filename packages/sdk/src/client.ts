@@ -1,4 +1,9 @@
 import type {
+	AgentImportInput,
+	AgentImportResponse,
+	AgentImportResult,
+	AgentSummary,
+	AgentDefinition as ClientAgentDefinition,
 	EvalDataset,
 	EvalDatasetListFilter,
 	EvalDefinition,
@@ -10,42 +15,60 @@ import type {
 	EvalRunInput,
 	EvalRunListFilter,
 	EvalRunListResult,
+	MemoryImportInput,
+	MemoryImportResponse,
+	MemoryImportResult,
+	MultiplexedRunEvent,
 	Run,
 	RunInput,
 	RunListFilter,
 	RunListResult,
 	RunResult,
+	RunsStartInput,
+	RunsStreamInput,
+	SessionImportInput,
+	SessionImportResponse,
+	SessionImportResult,
 	StreamEvent,
 	TraceDetail,
 	TraceFilter,
+	TraceLiveEvent,
 	TracesListResult,
 } from "@agntz/client";
 import {
+	InMemoryRunRegistry,
 	MemoryStore,
 	SpanEmitter,
 	createRunner,
 	latestScoreFromEvalRun,
+	manifestToAgentDefinition,
 	runEval,
 	summarizeEvalRun,
 } from "@agntz/core";
 import type { TokenCache } from "@agntz/core";
 import type {
 	EvalRun as CoreEvalRun,
+	Run as CoreRun,
 	StreamEvent as CoreStreamEvent,
 	InvokeResult,
 	Message,
 	ModelProvider,
 	Reply,
 	ResourceProvider,
+	RunRegistry,
 	Runner,
 	SessionSummary,
 	ToolDefinition,
 	UnifiedStore,
 } from "@agntz/core";
-import { type AgentManifest, execute } from "@agntz/core/manifest";
+import {
+	type AgentManifest,
+	type LLMAgentManifest,
+	execute,
+	parseManifest,
+} from "@agntz/core/manifest";
 import { createInitialState, renderTemplate } from "@agntz/core/manifest";
 import type {
-	CurateOptions,
 	CurateReport,
 	ListOptions,
 	MemoryEntry,
@@ -57,7 +80,6 @@ import type {
 import { createExecutionContext } from "./bridge.js";
 import { RunsBuffer, TracesBuffer, buildRunRecord } from "./buffers.js";
 import { loadManifestsFromDir } from "./loader.js";
-import { manifestToAgentDefinition } from "./manifest-to-agent.js";
 import { createTraceAggregator } from "./trace-aggregator.js";
 
 export interface AgntzLocalOptions {
@@ -113,6 +135,9 @@ export interface LocalClient {
 export interface LocalAgentsResource {
 	run(input: RunInput): Promise<RunResult>;
 	stream(input: RunInput): AsyncGenerator<StreamEvent, void, void>;
+	list(): Promise<AgentSummary[]>;
+	get(agentId: string): Promise<ClientAgentDefinition>;
+	import(input: AgentImportInput): Promise<AgentImportResponse>;
 }
 
 export interface LocalDatasetsResource {
@@ -141,22 +166,36 @@ export interface LocalEvalsResource {
 
 export interface LocalRunsResource {
 	list(filter?: RunListFilter): Promise<RunListResult>;
-	get(id: string): Promise<Run | null>;
+	get(id: string): Promise<Run>;
+	/** Start a run and return its handle immediately (status: "running"). */
+	start(input: RunsStartInput): Promise<Run>;
+	/** Multiplexed live feed for a run's subtree (mirrors the hosted SSE feed). */
+	stream(
+		input: RunsStreamInput,
+	): AsyncGenerator<MultiplexedRunEvent, void, void>;
+	/** Cancel a run and cascade to all descendants. */
+	cancel(runId: string): Promise<Run>;
 }
 
 export interface LocalTracesResource {
 	list(filter?: TraceFilter): Promise<TracesListResult>;
 	get(traceId: string): Promise<TraceDetail | null>;
+	/** Live feed for a trace. Embedded runs complete synchronously, so this
+	 *  replays the finished trace as a single `snapshot` event, then closes. */
+	stream(traceId: string): AsyncGenerator<TraceLiveEvent, void, void>;
+	delete(traceId: string): Promise<void>;
 }
 
 export interface LocalSessionsResource {
 	list(agentId?: string): Promise<SessionSummary[]>;
 	get(id: string): Promise<{ sessionId: string; messages: Message[] }>;
+	import(input: SessionImportInput): Promise<SessionImportResponse>;
 	/** Erases the session and everything linked to it (the store's teardown). */
 	delete(id: string): Promise<void>;
 }
 
 export interface LocalMemoryResource {
+	import(input: MemoryImportInput): Promise<MemoryImportResponse>;
 	scan(
 		grants: string[],
 		opts?: ScanOptions,
@@ -181,7 +220,10 @@ export interface LocalMemoryResource {
 		scope: string;
 		recursive: boolean;
 	}>;
-	curate(grants: string[], opts?: CurateOptions): Promise<CurateReport>;
+	curate(
+		grants: string[],
+		opts?: { topics?: string[]; signal?: AbortSignal },
+	): Promise<CurateReport>;
 	correct(
 		grants: string[],
 		id: string,
@@ -190,7 +232,9 @@ export interface LocalMemoryResource {
 }
 
 export async function agntz(opts: AgntzLocalOptions): Promise<LocalClient> {
-	const manifests = await loadManifestsFromDir(opts.agents);
+	// Mutable so `agents.import` can register manifests at runtime. The public
+	// `LocalClient.manifests` exposes it as a ReadonlyMap.
+	const manifests = new Map(await loadManifestsFromDir(opts.agents));
 	const toolDefs: ToolDefinition[] = opts.tools ?? [];
 	const localToolNames = new Set(toolDefs.map((t) => t.name));
 
@@ -226,7 +270,10 @@ export async function agntz(opts: AgntzLocalOptions): Promise<LocalClient> {
 	// don't need a pre-registration step.
 	for (const manifest of manifests.values()) {
 		if (manifest.kind === "llm") {
-			const def = manifestToAgentDefinition(manifest, localToolNames);
+			const def = manifestToAgentDefinition(manifest, {
+				localToolNames,
+				rejectSkills: true,
+			});
 			runner.registerAgent(def);
 		}
 	}
@@ -256,7 +303,7 @@ class LocalClientImpl implements LocalClient {
 	readonly memory?: LocalMemoryResource;
 	constructor(
 		readonly _runner: Runner,
-		readonly manifests: ReadonlyMap<string, AgentManifest>,
+		readonly manifests: Map<string, AgentManifest>,
 		localToolsMap: Map<string, ToolDefinition>,
 		localToolNames: Set<string>,
 		store: UnifiedStore,
@@ -266,6 +313,37 @@ class LocalClientImpl implements LocalClient {
 		const tracesBuffer = new TracesBuffer({ capacity: opts.tracesCapacity });
 		const traceSink = createTraceAggregator(tracesBuffer);
 
+		// One in-process Run registry — the same primitive the worker wires
+		// process-wide. Every Run started via `runs.start` is first-class: its
+		// lifecycle + multiplexed events flow through here, and `persistRun`
+		// mirrors each transition into the buffer so `runs.list/get` see it.
+		const runRegistry = new InMemoryRunRegistry({
+			persistRun: (run) => {
+				// Buffer only top-level Runs. Inner LLM steps are child Runs (temp
+				// agent ids) that live in the registry for the subtree feed
+				// (`runs.stream`) but would be noise in `runs.list`/`runs.get`.
+				if (run.rootId === run.id) runsBuffer.upsert(run as unknown as Run);
+			},
+		});
+
+		// Shared run executor — one execution path for every invocation type.
+		// `agents.run` awaits it; `runs.start` fires it; `agents.stream` streams
+		// natively but wires the same registry. Inner LLM steps attach to the root
+		// Run as children, so spawn_agent + the multiplexed feed work everywhere.
+		const runManifest: RunExecutorFn = (input, root, sessionId, signal) =>
+			runManifestForRegistry({
+				runner: _runner,
+				manifests,
+				localToolNames,
+				localTools: localToolsMap,
+				traceSink,
+				runRegistry,
+				input,
+				root,
+				sessionId,
+				signal,
+			});
+
 		this.agents = new AgentsResourceImpl(
 			_runner,
 			manifests,
@@ -274,10 +352,12 @@ class LocalClientImpl implements LocalClient {
 			runsBuffer,
 			traceSink,
 			opts.onEvent,
+			runRegistry,
+			runManifest,
 		);
 		this.datasets = new DatasetsResourceImpl(store);
 		this.evals = new EvalsResourceImpl(_runner, store);
-		this.runs = new RunsResourceImpl(runsBuffer);
+		this.runs = new RunsResourceImpl(runRegistry, runsBuffer, runManifest);
 		this.traces = new TracesResourceImpl(tracesBuffer);
 		this.sessions = new SessionsResourceImpl(_runner);
 		// Memory admin is only available when a memrez handle was supplied.
@@ -299,6 +379,46 @@ class SessionsResourceImpl implements LocalSessionsResource {
 		};
 	}
 
+	async import(input: SessionImportInput): Promise<SessionImportResponse> {
+		const results: SessionImportResult[] = [];
+		for (const snapshot of input.sessions) {
+			const existing = await this.runner.sessions
+				.getMessages(snapshot.sessionId)
+				.catch(() => [] as Message[]);
+			const exists = existing.length > 0;
+			if (exists && input.onConflict === "fail") {
+				throw new Error(`Session already exists: ${snapshot.sessionId}`);
+			}
+			if (exists && input.onConflict === "skip") {
+				results.push({
+					sessionId: snapshot.sessionId,
+					agentId: snapshot.agentId,
+					action: "skip",
+					messageCount: 0,
+				});
+				continue;
+			}
+			if (!input.dryRun) {
+				await this.runner.sessions.getOrCreateSession(snapshot.sessionId);
+				await this.runner.sessions.append(
+					snapshot.sessionId,
+					snapshot.messages as unknown as Message[],
+				);
+			}
+			results.push({
+				sessionId: snapshot.sessionId,
+				agentId: snapshot.agentId,
+				action: exists ? "update" : "create",
+				messageCount: snapshot.messages.length,
+			});
+		}
+		return {
+			dryRun: input.dryRun ?? false,
+			results,
+			counts: countActions(results),
+		};
+	}
+
 	delete(id: string): Promise<void> {
 		return this.runner.sessions.deleteSession(id);
 	}
@@ -306,6 +426,31 @@ class SessionsResourceImpl implements LocalSessionsResource {
 
 class MemoryResourceImpl implements LocalMemoryResource {
 	constructor(private readonly memrez: Memrez) {}
+
+	async import(input: MemoryImportInput): Promise<MemoryImportResponse> {
+		// Mirror the worker's POST /memory/import: write RAW pre-formed entries
+		// straight to the store (NOT memrez.write, which re-tags). The worker's
+		// per-tenant namespace-root bounding is a hosted-only concern — the
+		// embedded SDK has a single trusted operator, so it's omitted here.
+		const results: MemoryImportResult[] = [];
+		for (const entry of input.entries) {
+			const existing = await this.memrez.store.getEntry(entry.id);
+			if (!input.dryRun) {
+				await this.memrez.store.putEntry(entry as unknown as MemoryEntry);
+			}
+			results.push({
+				id: entry.id,
+				scope: entry.scope,
+				action: existing ? "update" : "create",
+				status: entry.status,
+			});
+		}
+		return {
+			dryRun: input.dryRun ?? false,
+			results,
+			counts: countActions(results),
+		};
+	}
 
 	scan(grants: string[], opts?: ScanOptions) {
 		return this.memrez.scan(grants, opts);
@@ -331,8 +476,11 @@ class MemoryResourceImpl implements LocalMemoryResource {
 		return this.memrez.deleteScope(grants, prefix, opts);
 	}
 
-	curate(grants: string[], opts?: CurateOptions) {
-		return this.memrez.curate(grants, opts);
+	curate(grants: string[], opts?: { topics?: string[]; signal?: AbortSignal }) {
+		return this.memrez.curate(
+			grants,
+			opts?.topics ? { topics: opts.topics } : undefined,
+		);
 	}
 
 	correct(grants: string[], id: string, content: string) {
@@ -488,111 +636,157 @@ class EvalsResourceImpl implements LocalEvalsResource {
 class AgentsResourceImpl implements LocalAgentsResource {
 	constructor(
 		private readonly runner: Runner,
-		private readonly manifests: ReadonlyMap<string, AgentManifest>,
+		private readonly manifests: Map<string, AgentManifest>,
 		private readonly localTools: Map<string, ToolDefinition>,
 		private readonly localToolNames: Set<string>,
 		private readonly runsBuffer: RunsBuffer,
-		private readonly traceSink: (
-			event: import("@agntz/client").TraceLiveEvent,
-		) => void,
+		private readonly traceSink: (event: TraceLiveEvent) => void,
 		private readonly onEvent: ((event: CoreStreamEvent) => void) | undefined,
+		private readonly registry: RunRegistry,
+		private readonly runManifest: RunExecutorFn,
 	) {}
 
-	async run(input: RunInput): Promise<RunResult> {
-		const runId = generateRunId();
-		const startedAt = Date.now();
-		const inputAsString = inputToString(input.input);
-		const replies: Reply[] = [];
+	async list(): Promise<AgentSummary[]> {
+		return [...this.manifests.values()].map((m) => ({
+			id: m.id,
+			name: m.name ?? m.id,
+			...(m.description ? { description: m.description } : {}),
+		}));
+	}
 
-		let manifest: AgentManifest;
+	async get(agentId: string): Promise<ClientAgentDefinition> {
+		const manifest = this.manifests.get(agentId);
+		if (!manifest) {
+			throw new Error(`Agent "${agentId}" not loaded from agents directory`);
+		}
+		return manifestToClientAgentDefinition(manifest);
+	}
+
+	async import(input: AgentImportInput): Promise<AgentImportResponse> {
+		const results: AgentImportResult[] = [];
+		for (const item of input.agents) {
+			const manifest = parseManifest(item.manifest);
+			const exists = this.manifests.has(manifest.id);
+			if (exists && input.onConflict === "fail") {
+				throw new Error(`Agent already exists: ${manifest.id}`);
+			}
+			if (exists && input.onConflict === "skip") {
+				results.push({
+					id: manifest.id,
+					sourcePath: item.sourcePath,
+					action: "skip",
+				});
+				continue;
+			}
+			if (!input.dryRun) {
+				this.manifests.set(manifest.id, manifest);
+				if (manifest.kind === "llm") {
+					this.runner.registerAgent(
+						manifestToAgentDefinition(manifest, {
+							localToolNames: this.localToolNames,
+							rejectSkills: true,
+						}),
+					);
+				}
+			}
+			results.push({
+				id: manifest.id,
+				sourcePath: item.sourcePath,
+				action: exists
+					? input.onConflict === "version"
+						? "version"
+						: "update"
+					: "create",
+			});
+		}
+		return {
+			dryRun: input.dryRun ?? false,
+			results,
+			counts: countActions(results),
+		};
+	}
+
+	async run(input: RunInput): Promise<RunResult> {
+		const inputAsString = inputToString(input.input);
+
+		// Pre-flight: a missing manifest surfaces as a failed run + throw — the
+		// same contract as before the registry rerouting.
 		try {
-			manifest = this.requireManifest(input.agentId);
+			this.requireManifest(input.agentId);
 		} catch (e) {
-			const endedAt = Date.now();
+			const now = Date.now();
 			this.runsBuffer.record(
 				buildRunRecord({
-					runId,
+					runId: generateRunId(),
 					agentId: input.agentId,
 					inputAsString,
 					status: "failed",
 					error: e instanceof Error ? e.message : String(e),
-					startedAt,
-					endedAt,
+					startedAt: now,
+					endedAt: now,
 				}),
 			);
 			throw e;
 		}
 
-		const spanEmitter = new SpanEmitter({ traceSink: this.traceSink });
+		// Same execution path as `runs.start`: create a first-class root Run and
+		// run the shared executor (inner LLM steps attach as children, so
+		// spawn_agent works) — but await the terminal state and return a
+		// `RunResult`. `RunResult.output` stays the RAW object from execute(); the
+		// Run record stores the stringified form.
 		const sessionId = input.sessionId ?? generateSessionId();
-
-		try {
-			const ctx = createExecutionContext(
-				this.runner,
-				this.manifests,
-				this.localToolNames,
-				{
-					spanEmitter,
-					sessionId,
-					context: input.context,
-					signal: input.signal,
-					localTools: this.localTools,
-					replyCollector: replies,
-				},
-			);
-			const result = await execute(manifest, input.input ?? "", ctx);
-			const endedAt = Date.now();
-			const synthetic: InvokeResult = synthesizeInvokeResult({
-				output: result.output,
-				sessionId,
-				startedAt,
-				endedAt,
-				model:
-					manifest.kind === "llm"
-						? `${manifest.model.provider}/${manifest.model.name}`
-						: "(pipeline)",
-				replies: replies.length > 0 ? replies : undefined,
-			});
-			this.runsBuffer.record(
-				buildRunRecord({
-					runId,
-					agentId: input.agentId,
-					inputAsString,
-					status: "completed",
-					result: synthetic,
-					startedAt,
-					endedAt,
-				}),
-			);
-			return invokeResultToRunResult(synthetic, result.output);
-		} catch (e) {
-			const endedAt = Date.now();
-			const message = e instanceof Error ? e.message : String(e);
-			this.runsBuffer.record(
-				buildRunRecord({
-					runId,
-					agentId: input.agentId,
-					inputAsString,
-					status: "failed",
-					error: message,
-					startedAt,
-					endedAt,
-				}),
-			);
-			throw e;
+		const root = this.registry.create({
+			agentId: input.agentId,
+			input: inputAsString,
+			sessionId,
+		});
+		// Bridge the caller's AbortSignal onto the Run's controller.
+		if (input.signal) {
+			if (input.signal.aborted) this.registry.cancel(root.id, "aborted");
+			else
+				input.signal.addEventListener(
+					"abort",
+					() => this.registry.cancel(root.id, "aborted"),
+					{ once: true },
+				);
 		}
+
+		let captured:
+			| { invokeResult: InvokeResult; output: unknown; replies: Reply[] }
+			| undefined;
+		let execErr: unknown;
+		this.registry.start(root, async (signal) => {
+			try {
+				captured = await this.runManifest(
+					{
+						agentId: input.agentId,
+						...(input.input !== undefined ? { input: input.input } : {}),
+						sessionId,
+						...(input.context ? { context: input.context } : {}),
+					},
+					root,
+					sessionId,
+					signal,
+				);
+				return captured.invokeResult;
+			} catch (e) {
+				execErr = e;
+				throw e;
+			}
+		});
+		await this.registry.waitForTerminal(root.id);
+		if (execErr) throw execErr;
+		if (!captured) throw new Error(`Run "${root.id}" produced no result`);
+		return invokeResultToRunResult(captured.invokeResult, captured.output);
 	}
 
 	async *stream(input: RunInput): AsyncGenerator<StreamEvent, void, void> {
 		const manifest = this.requireManifest(input.agentId);
-		const runId = generateRunId();
-		const startedAt = Date.now();
 		const inputAsString = inputToString(input.input);
 		const spanEmitter = new SpanEmitter({ traceSink: this.traceSink });
 
-		// Non-LLM kinds collapse to one `complete` event — the manifest
-		// executor's pipelines don't natively stream events. LLM agents go
-		// through runner.stream for native delta/reply emission.
+		// Non-LLM kinds don't natively stream — run to completion (registry-backed
+		// via `this.run`, which records the Run) and collapse to one `complete`.
 		if (manifest.kind !== "llm") {
 			if (input.sessionId) {
 				yield {
@@ -611,36 +805,38 @@ class AgentsResourceImpl implements LocalAgentsResource {
 					sessionId: result.sessionId,
 				};
 			} catch (e) {
-				const endedAt = Date.now();
-				const message = e instanceof Error ? e.message : String(e);
-				this.runsBuffer.record(
-					buildRunRecord({
-						runId,
-						agentId: input.agentId,
-						inputAsString,
-						status: "failed",
-						error: message,
-						startedAt,
-						endedAt,
-					}),
-				);
-				yield { type: "error", error: message };
+				yield {
+					type: "error",
+					error: e instanceof Error ? e.message : String(e),
+				};
 				throw e;
 			}
 			return;
 		}
 
-		// LLM streaming path — render template, register temp agent, stream.
+		// LLM streaming path — render the template, register a temp agent, and
+		// stream natively for real token deltas, WIRED to the registry so the Run
+		// is first-class (listable/cancellable) and spawn_agent is available. The
+		// Run is attributed to the REAL agent id; the temp id only carries the
+		// rendered definition. `persistRun` records the Run on each transition.
+		const sessionId = input.sessionId ?? generateSessionId();
 		const state = createInitialState(input.input ?? "", manifest.inputSchema);
 		const renderedInstruction = renderTemplate(manifest.instruction, state);
 		const tempId = `__stream_${manifest.id}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-		const def = manifestToAgentDefinition(
-			{ ...manifest, instruction: renderedInstruction },
-			this.localToolNames,
-		);
+		const def = manifestToAgentDefinition(manifest, {
+			localToolNames: this.localToolNames,
+			rejectSkills: true,
+			systemPrompt: renderedInstruction,
+		});
 		def.id = tempId;
 		def.userPromptTemplate = undefined;
 		this.runner.registerAgent(def);
+
+		const root = this.registry.create({
+			agentId: input.agentId,
+			input: inputAsString,
+			sessionId,
+		});
 
 		if (input.sessionId) {
 			yield {
@@ -650,7 +846,6 @@ class AgentsResourceImpl implements LocalAgentsResource {
 				sessionId: input.sessionId,
 			};
 		}
-		let finalResult: InvokeResult | undefined;
 		try {
 			const userInput =
 				manifest.prompt != null
@@ -659,46 +854,23 @@ class AgentsResourceImpl implements LocalAgentsResource {
 						? String(state.userQuery)
 						: "";
 			const iter = this.runner.stream(tempId, userInput, {
-				sessionId: input.sessionId,
+				sessionId,
 				context: input.context,
 				signal: input.signal,
 				spanEmitter,
+				runRegistry: this.registry,
+				runId: root.id,
 			});
 			for await (const event of iter) {
 				this.onEvent?.(event);
-				if (event.type === "done") finalResult = event.result;
 				const mapped = mapCoreStreamEvent(event);
 				if (mapped) yield mapped;
 			}
-			const endedAt = Date.now();
-			if (finalResult) {
-				this.runsBuffer.record(
-					buildRunRecord({
-						runId,
-						agentId: input.agentId,
-						inputAsString,
-						status: "completed",
-						result: finalResult,
-						startedAt,
-						endedAt,
-					}),
-				);
-			}
 		} catch (e) {
-			const endedAt = Date.now();
-			const message = e instanceof Error ? e.message : String(e);
-			this.runsBuffer.record(
-				buildRunRecord({
-					runId,
-					agentId: input.agentId,
-					inputAsString,
-					status: "failed",
-					error: message,
-					startedAt,
-					endedAt,
-				}),
-			);
-			yield { type: "error", error: message };
+			yield {
+				type: "error",
+				error: e instanceof Error ? e.message : String(e),
+			};
 			throw e;
 		} finally {
 			this.runner.deregisterAgent(tempId);
@@ -714,13 +886,77 @@ class AgentsResourceImpl implements LocalAgentsResource {
 	}
 }
 
+type RunExecutorFn = (
+	input: RunsStartInput,
+	root: CoreRun,
+	sessionId: string,
+	signal: AbortSignal,
+) => Promise<{ invokeResult: InvokeResult; output: unknown; replies: Reply[] }>;
+
 class RunsResourceImpl implements LocalRunsResource {
-	constructor(private readonly buffer: RunsBuffer) {}
+	constructor(
+		private readonly registry: RunRegistry,
+		private readonly buffer: RunsBuffer,
+		private readonly runManifest: RunExecutorFn,
+	) {}
+
 	async list(filter: RunListFilter = {}): Promise<RunListResult> {
 		return this.buffer.list(filter);
 	}
-	async get(id: string): Promise<Run | null> {
-		return this.buffer.get(id);
+
+	async get(id: string): Promise<Run> {
+		const run =
+			(this.registry.get(id) as unknown as Run | undefined) ??
+			this.buffer.get(id);
+		if (!run) throw new Error(`Run not found: ${id}`);
+		return run;
+	}
+
+	async start(input: RunsStartInput): Promise<Run> {
+		const sessionId = input.sessionId ?? generateSessionId();
+		const root = this.registry.create({
+			agentId: input.agentId,
+			input: inputToString(input.input),
+			sessionId,
+		});
+		// Fire-and-forget: start() flips the Run to "running" synchronously and
+		// runs the executor on a microtask, so we return the running handle now.
+		this.registry.start(root, async (signal) => {
+			const { invokeResult } = await this.runManifest(
+				input,
+				root,
+				sessionId,
+				signal,
+			);
+			return invokeResult;
+		});
+		return (this.registry.get(root.id) ?? root) as unknown as Run;
+	}
+
+	async *stream(
+		input: RunsStreamInput,
+	): AsyncGenerator<MultiplexedRunEvent, void, void> {
+		const live = this.registry.get(input.runId);
+		if (!live) {
+			// Evicted or unknown — fall back to a one-shot snapshot if we still
+			// have the terminal Run buffered (mirrors the hosted SSE fallback).
+			const snapshot = this.buffer.get(input.runId);
+			if (snapshot) {
+				yield { type: "snapshot", run: snapshot } as MultiplexedRunEvent;
+			}
+			return;
+		}
+		for await (const event of this.registry.subscribe(
+			live.rootId,
+			input.since,
+		)) {
+			yield event as unknown as MultiplexedRunEvent;
+		}
+	}
+
+	async cancel(runId: string): Promise<Run> {
+		this.registry.cancel(runId, "cancelled by user");
+		return this.get(runId);
 	}
 }
 
@@ -731,6 +967,17 @@ class TracesResourceImpl implements LocalTracesResource {
 	}
 	async get(traceId: string): Promise<TraceDetail | null> {
 		return this.buffer.get(traceId);
+	}
+	async *stream(traceId: string): AsyncGenerator<TraceLiveEvent, void, void> {
+		// Embedded runs complete synchronously, so by the time a trace is
+		// streamable it is already finished — replay it as one `snapshot`.
+		const detail = this.buffer.get(traceId);
+		if (detail) {
+			yield { type: "snapshot", summary: detail.summary, spans: detail.spans };
+		}
+	}
+	async delete(traceId: string): Promise<void> {
+		this.buffer.delete(traceId);
 	}
 }
 
@@ -748,6 +995,110 @@ function inputToString(input: RunInput["input"]): string {
 	return JSON.stringify(input);
 }
 
+/**
+ * Executor body shared by `runs.start`. Mirrors the hosted worker's POST /runs:
+ * build an ExecutionContext wired to the registry (so inner LLM steps attach to
+ * the root as CHILD runs), execute the manifest, then synthesize the root's
+ * `InvokeResult` (the registry emits it as the `run-complete` event).
+ */
+async function runManifestForRegistry(args: {
+	runner: Runner;
+	manifests: ReadonlyMap<string, AgentManifest>;
+	localToolNames: Set<string>;
+	localTools: Map<string, ToolDefinition>;
+	traceSink: (event: TraceLiveEvent) => void;
+	runRegistry: RunRegistry;
+	input: RunsStartInput;
+	root: CoreRun;
+	sessionId: string;
+	signal: AbortSignal;
+}): Promise<{ invokeResult: InvokeResult; output: unknown; replies: Reply[] }> {
+	const manifest = args.manifests.get(args.input.agentId);
+	if (!manifest) {
+		throw new Error(
+			`Agent "${args.input.agentId}" not loaded from agents directory`,
+		);
+	}
+	const replies: Reply[] = [];
+	const spanEmitter = new SpanEmitter({ traceSink: args.traceSink });
+	const ctx = createExecutionContext(
+		args.runner,
+		args.manifests,
+		args.localToolNames,
+		{
+			spanEmitter,
+			sessionId: args.sessionId,
+			context: args.input.context,
+			signal: args.signal,
+			localTools: args.localTools,
+			replyCollector: replies,
+			runRegistry: args.runRegistry,
+			parentRunId: args.root.id,
+		},
+	);
+	const result = await execute(manifest, args.input.input ?? "", ctx);
+	if (args.signal.aborted) {
+		throw args.signal.reason instanceof Error
+			? args.signal.reason
+			: new Error(String(args.signal.reason ?? "aborted"));
+	}
+	const outputStr =
+		typeof result.output === "string"
+			? result.output
+			: JSON.stringify(result.output);
+	const invokeResult: InvokeResult = {
+		output: outputStr,
+		invocationId: args.root.id,
+		sessionId: args.sessionId,
+		toolCalls: [],
+		usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+		duration: Date.now() - args.root.startedAt,
+		model:
+			manifest.kind === "llm"
+				? `${manifest.model.provider}/${manifest.model.name}`
+				: "manifest",
+		...(replies.length > 0 ? { replies } : {}),
+	};
+	return { invokeResult, output: result.output, replies };
+}
+
+/** Build a client-shaped `AgentDefinition` from a parsed manifest. */
+function manifestToClientAgentDefinition(
+	manifest: AgentManifest,
+): ClientAgentDefinition {
+	const base: ClientAgentDefinition = {
+		id: manifest.id,
+		name: manifest.name ?? manifest.id,
+		...(manifest.description ? { description: manifest.description } : {}),
+	};
+	if (manifest.kind !== "llm") return base;
+	const llm = manifest as LLMAgentManifest;
+	return {
+		...base,
+		systemPrompt: llm.instruction,
+		model: {
+			provider: llm.model.provider,
+			name: llm.model.name,
+			...(llm.model.temperature !== undefined
+				? { temperature: llm.model.temperature }
+				: {}),
+			...(llm.model.maxTokens !== undefined
+				? { maxTokens: llm.model.maxTokens }
+				: {}),
+			...(llm.model.topP !== undefined ? { topP: llm.model.topP } : {}),
+		},
+	};
+}
+
+/** Tally `action` values for an import response's `counts` field. */
+function countActions(
+	results: Array<{ action: string }>,
+): Record<string, number> {
+	const counts: Record<string, number> = {};
+	for (const r of results) counts[r.action] = (counts[r.action] ?? 0) + 1;
+	return counts;
+}
+
 function invokeResultToRunResult(
 	result: InvokeResult,
 	output: unknown,
@@ -763,29 +1114,6 @@ function invokeResultToRunResult(
 		},
 		sessionId: result.sessionId,
 		replies: result.replies,
-	};
-}
-
-function synthesizeInvokeResult(args: {
-	output: unknown;
-	sessionId: string;
-	startedAt: number;
-	endedAt: number;
-	model: string;
-	replies?: Reply[];
-}): InvokeResult {
-	return {
-		output:
-			typeof args.output === "string"
-				? args.output
-				: JSON.stringify(args.output),
-		invocationId: `inv_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-		sessionId: args.sessionId,
-		toolCalls: [],
-		usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-		duration: args.endedAt - args.startedAt,
-		model: args.model,
-		replies: args.replies,
 	};
 }
 

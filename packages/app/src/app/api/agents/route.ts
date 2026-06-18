@@ -1,4 +1,9 @@
-import { AuthRequiredError, requireUserContext, workerIdentity } from "@/lib/user";
+import { getTenantStore } from "@/lib/store";
+import {
+	AuthRequiredError,
+	requireUserContext,
+	workerIdentity,
+} from "@/lib/user";
 import { workerValidateManifest } from "@/lib/worker-client";
 import { type NextRequest, NextResponse } from "next/server";
 import { parse as parseYAML } from "yaml";
@@ -43,8 +48,9 @@ function readManifestSummary(manifestSource: unknown): {
 
 export async function GET() {
 	try {
-		const { runner } = await requireUserContext();
-		const summaries = await runner.agents.listAgents();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
+		const summaries = await store.listAgents();
 
 		// Enrich each summary with kind/model/updatedAt by fetching the full def.
 		// Cheap for small lists; if this list grows, the store should expose a
@@ -52,7 +58,7 @@ export async function GET() {
 		const enriched: AgentListEntry[] = await Promise.all(
 			summaries.map(async (summary) => {
 				try {
-					const agent = await runner.agents.getAgent(summary.id);
+					const agent = await store.getAgent(summary.id);
 					if (!agent) return summary;
 					const manifestSource = isRecord(agent.metadata)
 						? agent.metadata.manifest
@@ -83,7 +89,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
 	try {
 		const ctx = await requireUserContext();
-		const { runner } = ctx;
+		const store = await getTenantStore(ctx);
 		const body = await req.json();
 		const { id, name, manifest, ...rest } = body;
 
@@ -116,7 +122,7 @@ export async function POST(req: NextRequest) {
 			);
 		}
 
-		await runner.agents.putAgent({
+		await store.putAgent({
 			id,
 			name: name ?? id,
 			systemPrompt: "",

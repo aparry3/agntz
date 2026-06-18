@@ -1,3 +1,4 @@
+import { getTenantStore } from "@/lib/store";
 import { AuthRequiredError, requireUserContext } from "@/lib/user";
 import { getLastFour } from "@agntz/core";
 import { type NextRequest, NextResponse } from "next/server";
@@ -6,7 +7,8 @@ const NAME_RE = /^[a-z][a-z0-9_]*$/;
 
 export async function GET() {
 	try {
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 		const secrets = await store.listSecrets();
 		return NextResponse.json(secrets);
 	} catch (error) {
@@ -16,7 +18,8 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
 	try {
-		const { store } = await requireUserContext();
+		const ctx = await requireUserContext();
+		const store = await getTenantStore(ctx);
 		const body = await req.json();
 		const { name, value, description } = body ?? {};
 

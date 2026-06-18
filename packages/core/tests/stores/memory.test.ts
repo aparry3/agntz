@@ -157,38 +157,4 @@ describe("MemoryStore", () => {
 			).rejects.toThrow(/different user/);
 		});
 	});
-
-	describe("ApiKeyStore", () => {
-		it("creates, resolves, and revokes", async () => {
-			const { record, rawKey } = await admin.createApiKey({
-				userId,
-				name: "default",
-			});
-			expect(rawKey).toMatch(/^ar_live_/);
-			expect(record.userId).toBe(userId);
-
-			expect(await admin.resolveApiKey(rawKey)).toEqual({
-				userId,
-				keyId: record.id,
-			});
-
-			await admin.revokeApiKey({ userId, keyId: record.id });
-			expect(await admin.resolveApiKey(rawKey)).toBeNull();
-		});
-
-		it("returns null for unknown keys", async () => {
-			expect(await admin.resolveApiKey("ar_live_bogus")).toBeNull();
-		});
-
-		it("listApiKeys returns only the target user's keys", async () => {
-			await admin.createApiKey({ userId, name: "A-key" });
-			await admin.createApiKey({ userId: "user_b", name: "B-key" });
-			expect((await admin.listApiKeys(userId)).map((k) => k.name)).toEqual([
-				"A-key",
-			]);
-			expect((await admin.listApiKeys("user_b")).map((k) => k.name)).toEqual([
-				"B-key",
-			]);
-		});
-	});
 });

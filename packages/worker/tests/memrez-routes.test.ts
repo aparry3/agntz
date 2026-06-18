@@ -1,13 +1,13 @@
 import {
 	type GenerateTextOptions,
 	type GenerateTextResult,
-	MemoryStore,
 	type ModelProvider,
 	createRunner,
 } from "@agntz/core";
 import { parseManifest } from "@agntz/core/manifest";
 import { createMemrez } from "@agntz/memrez";
 import type { MemrezReasoner, TaggerInput, TaggerResult } from "@agntz/memrez";
+import { PlatformMemoryStore as MemoryStore } from "@agntz/platform/memory";
 import { describe, expect, it } from "vitest";
 import { createWorkerAPI } from "../src/routes.js";
 

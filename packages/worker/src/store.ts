@@ -1,12 +1,12 @@
-import type { UnifiedStore } from "@agntz/core";
-import { MemoryStore } from "@agntz/core";
+import type { PlatformUnifiedStore } from "@agntz/platform";
+import { PlatformMemoryStore } from "@agntz/platform/memory";
 
-let _store: UnifiedStore | null = null;
+let _store: PlatformUnifiedStore | null = null;
 
 /**
  * Get the store instance. Lazily initialized from STORE env var.
  */
-export async function getStore(): Promise<UnifiedStore> {
+export async function getStore(): Promise<PlatformUnifiedStore> {
 	if (_store) return _store;
 
 	const storeType = process.env.STORE ?? "memory";
@@ -22,7 +22,7 @@ export async function getStore(): Promise<UnifiedStore> {
 			break;
 		}
 		default: {
-			_store = new MemoryStore();
+			_store = new PlatformMemoryStore();
 			break;
 		}
 	}
