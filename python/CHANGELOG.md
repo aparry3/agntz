@@ -1,5 +1,17 @@
 # agntz
 
+## Unreleased
+
+- Add Python hosted-platform boundaries: `agntz.platform` for API-key and
+  namespace-root protocols/policy helpers, plus `PlatformMemoryStore` for
+  hosted in-memory state.
+- Add canonical `agntz.resources.memrez` exports while preserving existing
+  top-level and `agntz.memrez*` import paths.
+- Add Pythonic `import_` parity methods for agents, sessions, and memory across
+  hosted and local clients; add matching Python server import endpoints.
+- Add local `runs.start`/`runs.stream`/`runs.cancel` and `traces.delete` parity
+  methods, plus trace deletion in the Python stores.
+
 ## 0.4.0
 
 - Remove agent-level memrez topic taxonomy config from the Python memory

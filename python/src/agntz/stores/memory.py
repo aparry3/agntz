@@ -208,6 +208,8 @@ class RunStore(Protocol):
 
     def get_trace(self, trace_id: str) -> LocalTraceRecord | None: ...
 
+    def delete_trace(self, trace_id: str) -> None: ...
+
     def list_traces(
         self,
         *,
@@ -740,6 +742,11 @@ class MemoryStore:
 
     def get_trace(self, trace_id: str) -> LocalTraceRecord | None:
         return self._backend.traces.get(self._key(trace_id))
+
+    def delete_trace(self, trace_id: str) -> None:
+        key = self._key(trace_id)
+        self._backend.traces.pop(key, None)
+        self._backend.trace_spans.pop(key, None)
 
     def list_traces(
         self,

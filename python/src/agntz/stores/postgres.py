@@ -667,6 +667,17 @@ class PostgresStore:
         ).fetchone()
         return _row_to_trace(row) if row else None
 
+    def delete_trace(self, trace_id: str) -> None:
+        user_id = self._require_user()
+        self._conn.execute(
+            f"DELETE FROM {self._table('trace_spans')} WHERE user_id = %s AND trace_id = %s",
+            (user_id, trace_id),
+        )
+        self._conn.execute(
+            f"DELETE FROM {self._table('traces')} WHERE user_id = %s AND trace_id = %s",
+            (user_id, trace_id),
+        )
+
     def list_traces(
         self,
         *,

@@ -26,6 +26,7 @@ from agntz.client.models import (
     EvalRun,
     EvalRunListResult,
     Event,
+    Run,
     RunResult,
 )
 from agntz.client.models import (
@@ -74,7 +75,7 @@ from agntz.manifest.types import (
 from agntz.manifest.types import (
     ModelConfig as ManifestModelConfig,
 )
-from agntz.memrez import MemoryEntry, Memrez
+from agntz.memrez import MemoryEntry, Memrez, Source
 from agntz.stores import (
     LocalMessageRecord,
     LocalRunRecord,
@@ -420,6 +421,42 @@ class LocalAgentsResource:
         list_agents = self._client.store.list_agents
         return list_agents()
 
+    def import_(
+        self,
+        *,
+        agents: Sequence[Mapping[str, Any]],
+        on_conflict: str | None = None,
+        dry_run: bool | None = None,
+        strict: bool | None = None,
+    ) -> dict[str, Any]:
+        del strict
+        conflict = _normalize_agent_conflict(on_conflict)
+        results: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for index, raw in enumerate(agents):
+            payload = dict(raw)
+            if not isinstance(payload.get("manifest"), str):
+                raise ValueError(f"agents[{index}].manifest must be a string")
+            agent = _agent_from_payload(payload)
+            if agent.id in seen:
+                raise ValueError(f"Duplicate agent id in import batch: {agent.id}")
+            seen.add(agent.id)
+            existing = self.get(agent.id)
+            if existing is not None and conflict == "fail":
+                raise ValueError(f'Agent "{agent.id}" already exists')
+            action = "create" if existing is None else ("skip" if conflict == "skip" else "version")
+            if not dry_run and action != "skip":
+                stored = self._client.store.put_agent(agent)
+                manifest_source = (stored.metadata or {}).get("manifest")
+                if isinstance(manifest_source, str):
+                    self._client.manifests[stored.id] = parse_manifest(manifest_source)
+            result = {"id": agent.id, "action": action, "warnings": []}
+            source_path = payload.get("sourcePath")
+            if isinstance(source_path, str):
+                result["sourcePath"] = source_path
+            results.append(result)
+        return {"dryRun": dry_run is True, "results": results, "counts": _count_actions(results)}
+
     def get(self, agent_id: str) -> StoredAgentDefinition | None:
         ref = parse_agent_ref(agent_id)
         getter = self._client.store.get_agent
@@ -684,6 +721,31 @@ class LocalRunsResource:
     def __init__(self, client: LocalClient) -> None:
         self._client = client
 
+    def start(
+        self,
+        *,
+        agent_id: str,
+        input: Any = None,
+        session_id: str | None = None,
+        context: list[str] | None = None,
+        callback_url: str | None = None,
+        webhook_secret_name: str | None = None,
+    ) -> Run:
+        if callback_url is not None or webhook_secret_name is not None:
+            raise NotImplementedError("Local Python runs do not support webhooks")
+        outcome = _run_blocking(
+            self._client._execute_with_metadata(
+                agent_id=agent_id,
+                input=input,
+                session_id=session_id,
+                context=context,
+            )
+        )
+        row = self._client.store.get_run(outcome.run_id)
+        if row is None:
+            raise KeyError(outcome.run_id)
+        return _run_model_from_local(row)
+
     def get(self, run_id: str) -> LocalRunRecord | None:
         return self._client.store.get_run(run_id)
 
@@ -694,6 +756,30 @@ class LocalRunsResource:
         status: str | None = None,
     ) -> list[LocalRunRecord]:
         return self._client.store.list_runs(agent_id=agent_id, status=status)
+
+    def stream(self, *, run_id: str, since: int | None = None) -> Iterator[Event]:
+        del since
+        row = self._client.store.get_run(run_id)
+        if row is not None:
+            yield Event(type="snapshot", run=_run_model_from_local(row).model_dump(by_alias=True))
+
+    def cancel(self, run_id: str) -> Run:
+        row = self._client.store.get_run(run_id)
+        if row is None:
+            raise KeyError(run_id)
+        if row.status == "running":
+            row = LocalRunRecord(
+                id=row.id,
+                root_id=row.root_id,
+                agent_id=row.agent_id,
+                session_id=row.session_id,
+                status="cancelled",
+                input=row.input,
+                output=row.output,
+                error=row.error,
+            )
+            self._client.store.put_run(row)
+        return _run_model_from_local(row)
 
 
 class LocalSessionsResource:
@@ -707,6 +793,41 @@ class LocalSessionsResource:
     ) -> list[LocalSessionSummary]:
         return self._client.store.list_sessions(agent_id=agent_id)
 
+    def import_(
+        self,
+        *,
+        sessions: Sequence[Mapping[str, Any]],
+        on_conflict: str | None = None,
+        dry_run: bool | None = None,
+    ) -> dict[str, Any]:
+        conflict = _normalize_snapshot_conflict(on_conflict)
+        results: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for index, raw in enumerate(sessions):
+            session_id = raw.get("sessionId")
+            if not isinstance(session_id, str) or not session_id:
+                raise ValueError(f"sessions[{index}].sessionId must be a non-empty string")
+            if session_id in seen:
+                raise ValueError(f"Duplicate session id in import batch: {session_id}")
+            seen.add(session_id)
+            messages = _messages_from_snapshot(session_id, raw, index)
+            existing = self._client.store.get_messages(session_id)
+            if existing and conflict == "fail":
+                raise ValueError(f'Session "{session_id}" already exists')
+            action = "skip" if existing else "create"
+            if not dry_run and action != "skip":
+                agent_id = raw.get("agentId") if isinstance(raw.get("agentId"), str) else None
+                self._client.store.append_messages(session_id, messages, agent_id=agent_id)
+            results.append(
+                {
+                    "sessionId": session_id,
+                    "agentId": raw.get("agentId") if isinstance(raw.get("agentId"), str) else None,
+                    "action": action,
+                    "messageCount": len(messages),
+                }
+            )
+        return {"dryRun": dry_run is True, "results": results, "counts": _count_actions(results)}
+
     def get_messages(self, session_id: str) -> list[LocalMessageRecord]:
         return self._client.store.get_messages(session_id)
 
@@ -719,6 +840,31 @@ class LocalMemoryResource:
 
     def __init__(self, memrez: Memrez) -> None:
         self._memrez = memrez
+
+    def import_(
+        self,
+        *,
+        entries: Sequence[Mapping[str, Any]],
+        dry_run: bool | None = None,
+    ) -> dict[str, Any]:
+        normalized = [
+            _memory_entry_from_mapping(entry, index)
+            for index, entry in enumerate(entries)
+        ]
+        results: list[dict[str, Any]] = []
+        for entry in normalized:
+            existing = self._memrez.store.get_entry(entry.id)
+            if not dry_run:
+                self._memrez.store.put_entry(entry)
+            results.append(
+                {
+                    "id": entry.id,
+                    "scope": entry.scope,
+                    "action": "update" if existing else "create",
+                    "status": entry.status,
+                }
+            )
+        return {"dryRun": dry_run is True, "results": results, "counts": _count_actions(results)}
 
     def scan(
         self,
@@ -826,6 +972,12 @@ class LocalTracesResource:
         detail = self.get(trace_id)
         if detail is not None:
             yield Event(type="snapshot", summary=detail["summary"], spans=detail["spans"])
+
+    def delete(self, trace_id: str) -> None:
+        delete_trace = getattr(self._client.store, "delete_trace", None)
+        if not callable(delete_trace):
+            raise RuntimeError("Configured store does not support trace deletion")
+        delete_trace(trace_id)
 
     def _summary(self, trace: LocalTraceRecord) -> dict[str, Any]:
         child_spans = self._client.store.list_trace_spans(trace.trace_id)
@@ -1610,6 +1762,145 @@ def _assert_eval_dataset_scope(store: Any, definition: EvalDefinition) -> None:
             f'Dataset "{dataset.id}" belongs to agent "{dataset.agent_id}", '
             f'not "{definition.agent_id}"'
         )
+
+
+def _normalize_agent_conflict(value: str | None) -> str:
+    if value is None:
+        return "version"
+    if value in {"version", "skip", "fail"}:
+        return value
+    raise ValueError("on_conflict must be one of: version, skip, fail")
+
+
+def _normalize_snapshot_conflict(value: str | None) -> str:
+    if value is None:
+        return "skip"
+    if value in {"skip", "fail"}:
+        return value
+    raise ValueError("on_conflict must be one of: skip, fail")
+
+
+def _count_actions(results: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for result in results:
+        action = str(result.get("action") or "")
+        counts[action] = counts.get(action, 0) + 1
+    return counts
+
+
+def _run_model_from_local(row: LocalRunRecord) -> Run:
+    body: dict[str, Any] = {
+        "id": row.id,
+        "rootId": row.root_id,
+        "agentId": row.agent_id,
+        "status": row.status,
+        "input": row.input,
+        "startedAt": int(time.time() * 1000),
+        "sessionId": row.session_id,
+        "depth": 0,
+    }
+    if row.output is not None:
+        body["result"] = {
+            "output": row.output,
+            "invocationId": f"inv_{nanoid()}",
+            "sessionId": row.session_id,
+            "toolCalls": [],
+            "usage": {"promptTokens": 0, "completionTokens": 0, "totalTokens": 0},
+            "duration": 0,
+            "model": "",
+        }
+    if row.error is not None:
+        body["error"] = row.error
+    return Run.model_validate(body)
+
+
+def _messages_from_snapshot(
+    session_id: str,
+    raw: Mapping[str, Any],
+    index: int,
+) -> list[LocalMessageRecord]:
+    messages = raw.get("messages")
+    if not isinstance(messages, list):
+        raise ValueError(f"sessions[{index}].messages must be an array")
+    agent_id = raw.get("agentId") if isinstance(raw.get("agentId"), str) else None
+    return [
+        _message_from_snapshot(session_id, agent_id, message, index, msg_index)
+        for msg_index, message in enumerate(messages)
+    ]
+
+
+def _message_from_snapshot(
+    session_id: str,
+    agent_id: str | None,
+    value: Any,
+    session_index: int,
+    message_index: int,
+) -> LocalMessageRecord:
+    path = f"sessions[{session_index}].messages[{message_index}]"
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{path} must be an object")
+    role = value.get("role")
+    if role not in {"system", "user", "assistant", "tool"}:
+        raise ValueError(f"{path}.role must be system, user, assistant, or tool")
+    content = value.get("content")
+    if not isinstance(content, str) and not isinstance(content, list):
+        raise ValueError(f"{path}.content must be a string or content-block array")
+    timestamp = value.get("timestamp")
+    if not isinstance(timestamp, str) or not timestamp:
+        raise ValueError(f"{path}.timestamp must be a non-empty string")
+    tool_calls = value.get("toolCalls", value.get("tool_calls"))
+    if tool_calls is not None and not isinstance(tool_calls, list):
+        raise ValueError(f"{path}.toolCalls must be an array when provided")
+    tool_call_id = value.get("toolCallId", value.get("tool_call_id"))
+    if tool_call_id is not None and not isinstance(tool_call_id, str):
+        raise ValueError(f"{path}.toolCallId must be a string when provided")
+    return LocalMessageRecord(
+        session_id=session_id,
+        agent_id=agent_id,
+        role=str(role),
+        content=content,
+        timestamp=timestamp,
+        tool_calls=tool_calls,
+        tool_call_id=tool_call_id,
+    )
+
+
+def _memory_entry_from_mapping(raw: Mapping[str, Any], index: int) -> MemoryEntry:
+    topics = raw.get("topics")
+    if not isinstance(topics, Sequence) or isinstance(topics, str) or not all(
+        isinstance(topic, str) for topic in topics
+    ):
+        raise ValueError(f"entries[{index}].topics must be a string array")
+    entry_type = _required_str(raw, "type", index)
+    if entry_type not in {"fact", "preference", "event", "summary"}:
+        raise ValueError(f"entries[{index}].type must be fact, preference, event, or summary")
+    status = _required_str(raw, "status", index)
+    if status not in {"active", "superseded"}:
+        raise ValueError(f"entries[{index}].status must be active or superseded")
+    source = raw.get("source")
+    normalized_source = cast(
+        Source | None,
+        dict(source) if isinstance(source, Mapping) else None,
+    )
+    return MemoryEntry(
+        id=_required_str(raw, "id", index),
+        scope=_required_str(raw, "scope", index),
+        content=_required_str(raw, "content", index),
+        topics=list(topics),
+        type=cast(Any, entry_type),
+        status=cast(Any, status),
+        created_at=_required_str(raw, "createdAt", index),
+        updated_at=_required_str(raw, "updatedAt", index),
+        source=normalized_source,
+        superseded_by=raw.get("supersededBy") if isinstance(raw.get("supersededBy"), str) else None,
+    )
+
+
+def _required_str(raw: Mapping[str, Any], key: str, index: int) -> str:
+    value = raw.get(key)
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"entries[{index}].{key} must be a non-empty string")
+    return value
 
 
 def _snake_to_camel(value: str) -> str:

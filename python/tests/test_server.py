@@ -12,6 +12,7 @@ from agntz import GenerateTextResult
 from agntz.core import ModelMessage, ModelTool, ToolResult
 from agntz.manifest import LLMAgentManifest
 from agntz.manifest.types import AgentState
+from agntz.memrez import DeterministicReasoner, InMemoryMemoryStore, create_memrez
 from agntz.server import create_app
 from agntz.stores import MemoryStore
 
@@ -162,6 +163,99 @@ async def test_server_agent_run_eval_and_latest_score_flow() -> None:
             },
         )
         assert cross_agent.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_server_import_endpoints_for_agents_sessions_and_memory() -> None:
+    store = MemoryStore()
+    store.add_namespace_root("u1", "acme")
+    key = store.create_api_key(user_id="u1", name="test")["rawKey"]
+    memrez = create_memrez(
+        store=InMemoryMemoryStore(),
+        reasoner=DeterministicReasoner(),
+    )
+    app = create_app(
+        store=store,
+        internal_secret="secret",
+        model_provider=ServerProvider(),
+        memrez=memrez,
+    )
+    headers = {"authorization": f"Bearer {key}"}
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        manifest = textwrap.dedent(
+            """
+            id: imported
+            kind: llm
+            model:
+              provider: openai
+              name: gpt-5.4
+            instruction: Help.
+            """
+        )
+        imported = await client.post(
+            "/agents/import",
+            headers=headers,
+            json={"agents": [{"manifest": manifest, "sourcePath": "agents/imported.yaml"}]},
+        )
+        assert imported.status_code == 200
+        assert imported.json()["results"][0]["action"] == "create"
+
+        skipped = await client.post(
+            "/agents/import",
+            headers=headers,
+            json={"agents": [{"manifest": manifest}], "onConflict": "skip"},
+        )
+        assert skipped.json()["counts"] == {"skip": 1}
+
+        sessions = await client.post(
+            "/sessions/import",
+            headers=headers,
+            json={
+                "sessions": [
+                    {
+                        "sessionId": "sess_imported",
+                        "agentId": "imported",
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": "hello",
+                                "timestamp": "2026-01-01T00:00:00Z",
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+        assert sessions.status_code == 200
+        assert sessions.json()["results"][0]["messageCount"] == 1
+        detail = await client.get("/sessions/sess_imported", headers=headers)
+        assert detail.json()["messages"][0]["content"] == "hello"
+
+        memory = await client.post(
+            "/memory/import",
+            headers=headers,
+            json={
+                "entries": [
+                    {
+                        "id": "m_imported",
+                        "scope": "acme/user",
+                        "content": "likes blue",
+                        "topics": ["prefs"],
+                        "type": "preference",
+                        "status": "active",
+                        "createdAt": "2026-01-01T00:00:00Z",
+                        "updatedAt": "2026-01-01T00:00:00Z",
+                    }
+                ]
+            },
+        )
+        assert memory.status_code == 200
+        assert memory.json()["results"][0]["action"] == "create"
+        assert memrez.store.get_entry("m_imported") is not None
 
 
 async def _poll_eval_run(

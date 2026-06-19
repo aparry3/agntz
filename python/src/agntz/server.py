@@ -8,7 +8,6 @@ import inspect
 import json
 import time
 from collections.abc import AsyncIterator, Mapping, Sequence
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, NoReturn
 
@@ -17,12 +16,7 @@ from agntz.client.models import (
     EvalRun,
     EvalRunSnapshots,
 )
-from agntz.context import (
-    NamespaceGrantError,
-    is_same_or_descendant_namespace,
-    narrow_namespace_grants,
-    normalize_namespace_grant,
-)
+from agntz.context import NamespaceGrantError, normalize_namespace_grant
 from agntz.core import ModelProvider, ResourceProvider, ToolDefinition
 from agntz.core.ids import nanoid
 from agntz.core.ids import session_id as new_session_id
@@ -43,6 +37,17 @@ from agntz.memrez import (
     MemrezScopeError,
     TopicSummary,
 )
+from agntz.platform import (
+    NAMESPACE_UNBOUNDED_PERMISSION,
+    AuthContext,
+    ForbiddenError,
+    assert_scope_within_roots,
+    narrow_to_roots,
+)
+from agntz.platform import (
+    resolve_allowed_roots as resolve_platform_allowed_roots,
+)
+from agntz.platform.memory import PlatformMemoryStore
 from agntz.sdk.local import (
     LocalClient,
     _agent_from_payload,
@@ -50,8 +55,10 @@ from agntz.sdk.local import (
     _eval_from_payload,
     _manifest_from_stored_agent,
 )
-from agntz.stores import MemoryStore, RunStore
-from agntz.stores.memory import LocalRunRecord
+from agntz.stores import RunStore
+from agntz.stores.memory import LocalMessageRecord, LocalRunRecord
+
+__all__ = ["NAMESPACE_UNBOUNDED_PERMISSION", "create_app"]
 
 
 def create_app(
@@ -75,7 +82,7 @@ def create_app(
     globals()["BackgroundTasks"] = BackgroundTasks
     globals()["Request"] = Request
 
-    backing_store = store or MemoryStore()
+    backing_store = store or PlatformMemoryStore()
     # Memory lives on the namespace axis, not the per-user axis: a single shared memrez instance
     # plus the tenant-scoped namespace roots are the ONLY isolation for memory/scope ops. So these
     # routes use `backing_store` (unscoped) for roots and the shared `memrez` for data — never
@@ -86,7 +93,7 @@ def create_app(
     app = FastAPI(title="Agntz Python Server")
     eval_cancelled: set[str] = set()
 
-    async def auth_context(request: Request) -> _AuthContext:
+    async def auth_context(request: Request) -> AuthContext:
         internal = request.headers.get("x-internal-secret")
         if internal and internal == internal_secret:
             body = await _json_body(request)
@@ -96,7 +103,7 @@ def create_app(
                     status_code=400,
                     detail="internal request missing userId in body or X-User-Id header",
                 )
-            return _AuthContext(
+            return AuthContext(
                 user_id=user_id,
                 auth_method="internal",
                 permissions=_permissions_from_request(request, body),
@@ -110,18 +117,15 @@ def create_app(
             user_id = resolved.get("user_id") or resolved.get("userId")
             if isinstance(user_id, str):
                 # An API key can NEVER claim cross-tenant (unbounded) access.
-                return _AuthContext(user_id=user_id, auth_method="api_key", permissions=[])
+                return AuthContext(user_id=user_id, auth_method="api_key", permissions=[])
         raise HTTPException(status_code=401, detail="missing authentication")
 
     async def user_id_from_auth(request: Request) -> str:
         ctx = await auth_context(request)
         return ctx.user_id
 
-    async def resolve_allowed_roots(ctx: _AuthContext) -> dict[str, Any]:
-        if ctx.auth_method != "api_key" and NAMESPACE_UNBOUNDED_PERMISSION in ctx.permissions:
-            return {"unbounded": True, "roots": []}
-        roots = await _call(backing_store.list_namespace_roots, ctx.user_id)
-        return {"unbounded": False, "roots": roots}
+    async def resolve_allowed_roots(ctx: AuthContext) -> Any:
+        return await _call(resolve_platform_allowed_roots, ctx, backing_store)
 
     def require_memrez() -> Memrez:
         if memrez is None:
@@ -164,6 +168,11 @@ def create_app(
     @app.post("/run")
     async def run(request: Request, user_id: str = Depends(user_id_from_auth)) -> Any:
         body = await _json_body(request)
+        if body.get("callbackUrl") is not None or body.get("webhookSecretName") is not None:
+            raise HTTPException(
+                status_code=501,
+                detail="Python server does not support run webhooks yet",
+            )
         agent_id = body.get("agentId")
         if not isinstance(agent_id, str) or not agent_id:
             raise HTTPException(status_code=400, detail="Missing required field: agentId")
@@ -214,6 +223,11 @@ def create_app(
         user_id: str = Depends(user_id_from_auth),
     ) -> Any:
         body = await _json_body(request)
+        if body.get("callbackUrl") is not None or body.get("webhookSecretName") is not None:
+            raise HTTPException(
+                status_code=501,
+                detail="Python server does not support run webhooks yet",
+            )
         agent_id = body.get("agentId")
         if not isinstance(agent_id, str) or not agent_id:
             raise HTTPException(status_code=400, detail="Missing required field: agentId")
@@ -276,6 +290,59 @@ def create_app(
         rows = await _call(scoped(user_id).list_runs, agent_id=agentId, status=status)
         return {"rows": [_run_record_json(row, user_id) for row in rows]}
 
+    @app.post("/sessions/import")
+    async def import_sessions(request: Request, user_id: str = Depends(user_id_from_auth)) -> Any:
+        body = await _json_body(request)
+        try:
+            snapshots = _normalize_session_import_items(body.get("sessions"))
+            on_conflict = _normalize_snapshot_conflict(body.get("onConflict"))
+            dry_run = body.get("dryRun") is True
+            scoped_store = scoped(user_id)
+            results: list[dict[str, Any]] = []
+            for snapshot in snapshots:
+                existing = await _call(scoped_store.get_messages, snapshot["sessionId"])
+                if existing and on_conflict == "fail":
+                    raise ConflictError(f'Session "{snapshot["sessionId"]}" already exists')
+                action = "skip" if existing else "create"
+                if not dry_run and action != "skip":
+                    await _call(
+                        scoped_store.append_messages,
+                        snapshot["sessionId"],
+                        snapshot["messages"],
+                        agent_id=snapshot.get("agentId"),
+                    )
+                results.append(
+                    {
+                        "sessionId": snapshot["sessionId"],
+                        "agentId": snapshot.get("agentId"),
+                        "action": action,
+                        "messageCount": len(snapshot["messages"]),
+                    }
+                )
+            return {"dryRun": dry_run, "results": results, "counts": _count_actions(results)}
+        except ConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/sessions")
+    async def list_sessions(
+        user_id: str = Depends(user_id_from_auth),
+        agentId: str | None = None,
+    ) -> Any:
+        rows = await _call(scoped(user_id).list_sessions, agent_id=agentId)
+        return {"sessions": [_session_summary_json(row) for row in rows]}
+
+    @app.get("/sessions/{session_id}")
+    async def get_session(session_id: str, user_id: str = Depends(user_id_from_auth)) -> Any:
+        messages = await _call(scoped(user_id).get_messages, session_id)
+        return {"sessionId": session_id, "messages": [_message_record_json(m) for m in messages]}
+
+    @app.delete("/sessions/{session_id}")
+    async def delete_session(session_id: str, user_id: str = Depends(user_id_from_auth)) -> Any:
+        await _call(scoped(user_id).delete_session, session_id)
+        return JSONResponse(status_code=204, content=None)
+
     @app.get("/agents")
     async def list_agents(user_id: str = Depends(user_id_from_auth)) -> Any:
         return await _call(scoped(user_id).list_agents)
@@ -285,6 +352,38 @@ def create_app(
         agent = _agent_from_payload(await _json_body(request))
         row = await _call(scoped(user_id).put_agent, agent)
         return JSONResponse(_dump(row), status_code=201)
+
+    @app.post("/agents/import")
+    async def import_agents(request: Request, user_id: str = Depends(user_id_from_auth)) -> Any:
+        body = await _json_body(request)
+        try:
+            items = _normalize_agent_import_items(body.get("agents"))
+            on_conflict = _normalize_agent_conflict(body.get("onConflict"))
+            dry_run = body.get("dryRun") is True
+            scoped_store = scoped(user_id)
+            results: list[dict[str, Any]] = []
+            for item in items:
+                existing = await _call(scoped_store.get_agent, item["id"])
+                if existing is not None and on_conflict == "fail":
+                    raise ConflictError(f'Agent "{item["id"]}" already exists')
+                action = "create" if existing is None else (
+                    "skip" if on_conflict == "skip" else "version"
+                )
+                if not dry_run and action != "skip":
+                    await _call(scoped_store.put_agent, item["agent"])
+                result = {
+                    "id": item["id"],
+                    "action": action,
+                    "warnings": [],
+                }
+                if item.get("sourcePath"):
+                    result["sourcePath"] = item["sourcePath"]
+                results.append(result)
+            return {"dryRun": dry_run, "results": results, "counts": _count_actions(results)}
+        except ConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/agents/{agent_id}")
     async def get_agent(agent_id: str, user_id: str = Depends(user_id_from_auth)) -> Any:
@@ -557,6 +656,48 @@ def create_app(
         spans = [span.as_dict() for span in await _call(scoped(user_id).list_trace_spans, trace_id)]
         return {"summary": trace.summary(span_count=1 + len(spans)), "spans": spans}
 
+    @app.delete("/traces/{trace_id}")
+    async def delete_trace(trace_id: str, user_id: str = Depends(user_id_from_auth)) -> Any:
+        delete = getattr(scoped(user_id), "delete_trace", None)
+        if not callable(delete):
+            raise HTTPException(status_code=501, detail="Configured store does not support traces")
+        await _call(delete, trace_id)
+        return JSONResponse(status_code=204, content=None)
+
+    @app.post("/memory/import")
+    async def memory_import(request: Request) -> Any:
+        ctx = await auth_context(request)
+        mz = require_memrez()
+        body = await _json_body(request)
+        try:
+            entries = _normalize_memory_import_entries(body.get("entries"))
+            dry_run = body.get("dryRun") is True
+            allowed = await resolve_allowed_roots(ctx)
+            planned: list[tuple[MemoryEntry, bool]] = []
+            for entry in entries:
+                assert_scope_within_roots(allowed, entry.scope)
+                existing = await _call(mz.store.get_entry, entry.id)
+                if existing is not None:
+                    assert_scope_within_roots(allowed, existing.scope)
+                planned.append((entry, existing is not None))
+            results: list[dict[str, Any]] = []
+            for entry, existing in planned:
+                if not dry_run:
+                    await _call(mz.store.put_entry, entry)
+                results.append(
+                    {
+                        "id": entry.id,
+                        "scope": entry.scope,
+                        "action": "update" if existing else "create",
+                        "status": entry.status,
+                    }
+                )
+            return {"dryRun": dry_run, "results": results, "counts": _count_actions(results)}
+        except _MEMORY_ERRORS as exc:
+            raise HTTPException(status_code=_memory_error_status(exc), detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.get("/memory/topics")
     async def memory_topics(request: Request) -> Any:
         ctx = await auth_context(request)
@@ -564,8 +705,8 @@ def create_app(
         grants = require_grants(request)
         try:
             allowed = await resolve_allowed_roots(ctx)
-            scoped_grants = _narrow_to_roots(allowed, grants)
-            result = await _call(mz.scan, scoped_grants, include_ancestors=allowed["unbounded"])
+            scoped_grants = narrow_to_roots(allowed, grants)
+            result = await _call(mz.scan, scoped_grants, include_ancestors=allowed.unbounded)
         except _MEMORY_ERRORS as exc:
             raise HTTPException(status_code=_memory_error_status(exc), detail=str(exc)) from exc
         return {
@@ -584,13 +725,13 @@ def create_app(
         offset = _clamp_int(request.query_params.get("offset"), default=0, minimum=0)
         try:
             allowed = await resolve_allowed_roots(ctx)
-            scoped_grants = _narrow_to_roots(allowed, grants)
+            scoped_grants = narrow_to_roots(allowed, grants)
             entries = await _call(
                 mz.list,
                 scoped_grants,
                 topics=topics or None,
                 include_superseded=include_superseded,
-                include_ancestors=allowed["unbounded"],
+                include_ancestors=allowed.unbounded,
             )
         except _MEMORY_ERRORS as exc:
             raise HTTPException(status_code=_memory_error_status(exc), detail=str(exc)) from exc
@@ -615,7 +756,7 @@ def create_app(
             raise HTTPException(status_code=400, detail="content must be a non-empty string")
         try:
             allowed = await resolve_allowed_roots(ctx)
-            scoped_grants = _narrow_to_roots(allowed, [str(grant) for grant in raw_grants])
+            scoped_grants = narrow_to_roots(allowed, [str(grant) for grant in raw_grants])
             result = await _call(mz.correct, scoped_grants, entry_id, content)
         except _MEMORY_ERRORS as exc:
             raise HTTPException(status_code=_memory_error_status(exc), detail=str(exc)) from exc
@@ -638,7 +779,7 @@ def create_app(
             )
         try:
             allowed = await resolve_allowed_roots(ctx)
-            scoped_grants = _narrow_to_roots(allowed, grants)
+            scoped_grants = narrow_to_roots(allowed, grants)
             result = await _call(mz.delete_entry, scoped_grants, entry_id)
         except _MEMORY_ERRORS as exc:
             raise HTTPException(status_code=_memory_error_status(exc), detail=str(exc)) from exc
@@ -654,21 +795,21 @@ def create_app(
             allowed = await resolve_allowed_roots(ctx)
             if raw_grants is None or raw_grants == []:
                 # Empty/absent grants = global sweep across every scope; super-admin only.
-                if not allowed["unbounded"]:
+                if not allowed.unbounded:
                     raise ForbiddenError("global curation requires unbounded (super-admin) access")
                 return await _call(_run_curation_sweep, mz)
             if not isinstance(raw_grants, list):
                 raise HTTPException(status_code=400, detail="grants must be an array")
             topics_raw = body.get("topics")
             topics = [str(t) for t in topics_raw] if isinstance(topics_raw, list) else None
-            scoped_grants = _narrow_to_roots(allowed, [str(grant) for grant in raw_grants])
+            scoped_grants = narrow_to_roots(allowed, [str(grant) for grant in raw_grants])
             report = await _call(
                 mz.curate,
                 scoped_grants,
                 topics=topics,
                 # Bounded callers curate EXACT grants only (include_descendants=True); the
                 # super-admin/unbounded path keeps ancestor expansion (False).
-                include_descendants=not allowed["unbounded"],
+                include_descendants=not allowed.unbounded,
             )
         except _MEMORY_ERRORS as exc:
             raise HTTPException(status_code=_memory_error_status(exc), detail=str(exc)) from exc
@@ -686,7 +827,7 @@ def create_app(
         recursive = body.get("recursive") is not False
         try:
             allowed = await resolve_allowed_roots(ctx)
-            normalized_scope = _assert_scope_within_roots(allowed, scope)
+            normalized_scope = assert_scope_within_roots(allowed, scope)
         except _MEMORY_ERRORS as exc:
             raise HTTPException(status_code=_memory_error_status(exc), detail=str(exc)) from exc
         by_resource: dict[str, int] = {}
@@ -733,6 +874,181 @@ def create_app(
         return {"roots": await _call(backing_store.list_namespace_roots, user_id)}
 
     return app
+
+
+class ConflictError(ValueError):
+    """Request conflicts with existing stored data."""
+
+
+def _count_actions(results: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for result in results:
+        action = str(result.get("action") or "")
+        counts[action] = counts.get(action, 0) + 1
+    return counts
+
+
+def _normalize_agent_conflict(value: Any) -> str:
+    if value is None:
+        return "version"
+    if value in {"version", "skip", "fail"}:
+        return str(value)
+    raise ValueError("onConflict must be one of: version, skip, fail")
+
+
+def _normalize_snapshot_conflict(value: Any) -> str:
+    if value is None:
+        return "skip"
+    if value in {"skip", "fail"}:
+        return str(value)
+    raise ValueError("onConflict must be one of: skip, fail")
+
+
+def _normalize_agent_import_items(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list) or not value:
+        raise ValueError("Body must include a non-empty agents array")
+    seen: set[str] = set()
+    output: list[dict[str, Any]] = []
+    for index, raw in enumerate(value):
+        if not isinstance(raw, dict):
+            raise ValueError(f"agents[{index}] must be an object")
+        manifest = raw.get("manifest")
+        if not isinstance(manifest, str) or not manifest.strip():
+            raise ValueError(f"agents[{index}].manifest must be a non-empty string")
+        payload: dict[str, Any] = {"manifest": manifest}
+        if isinstance(raw.get("id"), str) and raw["id"].strip():
+            payload["id"] = raw["id"].strip()
+        if isinstance(raw.get("sourcePath"), str) and raw["sourcePath"].strip():
+            payload["sourcePath"] = raw["sourcePath"].strip()
+        try:
+            agent = _agent_from_payload(payload)
+        except Exception as exc:
+            raise ValueError(f"agents[{index}].manifest could not be parsed: {exc}") from exc
+        if agent.id in seen:
+            raise ValueError(f"Duplicate agent id in import batch: {agent.id}")
+        seen.add(agent.id)
+        output.append(
+            {
+                "id": agent.id,
+                "agent": agent,
+                "sourcePath": payload.get("sourcePath"),
+            }
+        )
+    return output
+
+
+def _normalize_session_import_items(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list) or not value:
+        raise ValueError("Body must include a non-empty sessions array")
+    seen: set[str] = set()
+    output: list[dict[str, Any]] = []
+    for index, raw in enumerate(value):
+        if not isinstance(raw, dict):
+            raise ValueError(f"sessions[{index}] must be an object")
+        session_id = raw.get("sessionId")
+        if not isinstance(session_id, str) or not session_id.strip():
+            raise ValueError(f"sessions[{index}].sessionId must be a non-empty string")
+        if session_id in seen:
+            raise ValueError(f"Duplicate session id in import batch: {session_id}")
+        seen.add(session_id)
+        messages_raw = raw.get("messages")
+        if not isinstance(messages_raw, list):
+            raise ValueError(f"sessions[{index}].messages must be an array")
+        agent_id = raw.get("agentId") if isinstance(raw.get("agentId"), str) else None
+        messages = [
+            _normalize_session_message(
+                message,
+                f"sessions[{index}].messages[{msg_index}]",
+                session_id,
+                agent_id,
+            )
+            for msg_index, message in enumerate(messages_raw)
+        ]
+        output.append({"sessionId": session_id, "agentId": agent_id, "messages": messages})
+    return output
+
+
+def _normalize_session_message(
+    value: Any,
+    path: str,
+    session_id: str,
+    agent_id: str | None,
+) -> LocalMessageRecord:
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} must be an object")
+    role = value.get("role")
+    if role not in {"system", "user", "assistant", "tool"}:
+        raise ValueError(f"{path}.role must be system, user, assistant, or tool")
+    content = value.get("content")
+    if not isinstance(content, str) and not isinstance(content, list):
+        raise ValueError(f"{path}.content must be a string or content-block array")
+    timestamp = value.get("timestamp")
+    if not isinstance(timestamp, str) or not timestamp:
+        raise ValueError(f"{path}.timestamp must be a non-empty string")
+    tool_calls = value.get("toolCalls", value.get("tool_calls"))
+    if tool_calls is not None and not isinstance(tool_calls, list):
+        raise ValueError(f"{path}.toolCalls must be an array when provided")
+    tool_call_id = value.get("toolCallId", value.get("tool_call_id"))
+    if tool_call_id is not None and not isinstance(tool_call_id, str):
+        raise ValueError(f"{path}.toolCallId must be a string when provided")
+    return LocalMessageRecord(
+        session_id=session_id,
+        agent_id=agent_id,
+        role=str(role),
+        content=content,
+        timestamp=timestamp,
+        tool_calls=tool_calls,
+        tool_call_id=tool_call_id,
+    )
+
+
+def _normalize_memory_import_entries(value: Any) -> list[MemoryEntry]:
+    if not isinstance(value, list) or not value:
+        raise ValueError("Body must include a non-empty entries array")
+    seen: set[str] = set()
+    output: list[MemoryEntry] = []
+    for index, raw in enumerate(value):
+        if not isinstance(raw, dict):
+            raise ValueError(f"entries[{index}] must be an object")
+        entry_id = _required_str(raw, "id", f"entries[{index}]")
+        if entry_id in seen:
+            raise ValueError(f"Duplicate memory entry id in import batch: {entry_id}")
+        seen.add(entry_id)
+        topics = raw.get("topics")
+        if not isinstance(topics, list) or not all(isinstance(topic, str) for topic in topics):
+            raise ValueError(f"entries[{index}].topics must be a string array")
+        entry_type = _required_str(raw, "type", f"entries[{index}]")
+        if entry_type not in {"fact", "preference", "event", "summary"}:
+            raise ValueError(f"entries[{index}].type must be fact, preference, event, or summary")
+        status = _required_str(raw, "status", f"entries[{index}]")
+        if status not in {"active", "superseded"}:
+            raise ValueError(f"entries[{index}].status must be active or superseded")
+        source_raw = raw.get("source")
+        source = dict(source_raw) if isinstance(source_raw, dict) else None
+        output.append(
+            MemoryEntry(
+                id=entry_id,
+                scope=_required_str(raw, "scope", f"entries[{index}]"),
+                content=_required_str(raw, "content", f"entries[{index}]"),
+                topics=list(topics),
+                type=entry_type,  # type: ignore[arg-type]
+                status=status,  # type: ignore[arg-type]
+                created_at=_required_str(raw, "createdAt", f"entries[{index}]"),
+                updated_at=_required_str(raw, "updatedAt", f"entries[{index}]"),
+                source=source,  # type: ignore[arg-type]
+                superseded_by=(
+                    raw.get("supersededBy") if isinstance(raw.get("supersededBy"), str) else None
+                ),
+            )
+        )
+    return output
+
+
+def _required_str(raw: dict[str, Any], key: str, path: str) -> str:
+    value = raw.get(key)
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{path}.{key} must be a non-empty string")
+    return value
 
 
 async def _execute_background_run(
@@ -936,6 +1252,31 @@ def _run_record_json(row: LocalRunRecord, user_id: str) -> dict[str, Any]:
     return body
 
 
+def _session_summary_json(row: Any) -> dict[str, Any]:
+    return {
+        "sessionId": row.session_id,
+        "agentId": row.agent_id,
+        "messageCount": row.message_count,
+        "createdAt": row.created_at,
+        "updatedAt": row.updated_at,
+    }
+
+
+def _message_record_json(row: LocalMessageRecord) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "role": row.role,
+        "content": row.content,
+        "timestamp": row.timestamp,
+    }
+    if row.agent_id is not None:
+        body["agentId"] = row.agent_id
+    if row.tool_calls is not None:
+        body["toolCalls"] = row.tool_calls
+    if row.tool_call_id is not None:
+        body["toolCallId"] = row.tool_call_id
+    return body
+
+
 def _filter_params(params: dict[str, str]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for key, value in params.items():
@@ -948,24 +1289,6 @@ def _filter_params(params: dict[str, str]) -> dict[str, Any]:
 
 def _iso_now() -> str:
     return datetime.now(tz=UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-
-
-NAMESPACE_UNBOUNDED_PERMISSION = "namespace:unbounded"
-_NO_ROOTS_MESSAGE = (
-    "tenant has no registered namespace roots; register one before using "
-    "memory or scope operations"
-)
-
-
-class ForbiddenError(Exception):
-    """Raised when a bounded caller has no roots to authorize a memory/scope request."""
-
-
-@dataclass(frozen=True)
-class _AuthContext:
-    user_id: str
-    auth_method: str
-    permissions: list[str]
 
 
 _MEMORY_ERRORS = (
@@ -987,30 +1310,6 @@ def _permissions_from_request(request: Any, body: dict[str, Any]) -> list[str]:
     if isinstance(raw, list):
         return [str(item) for item in raw]
     return []
-
-
-def _narrow_to_roots(allowed: dict[str, Any], requested: Sequence[str]) -> list[str]:
-    if allowed.get("unbounded"):
-        return list(requested)
-    roots = allowed.get("roots") or []
-    if not roots:
-        raise ForbiddenError(_NO_ROOTS_MESSAGE)
-    return narrow_namespace_grants(roots, list(requested))
-
-
-def _assert_scope_within_roots(allowed: dict[str, Any], scope: str) -> str:
-    normalized = normalize_namespace_grant(scope)
-    if allowed.get("unbounded"):
-        return normalized
-    roots = allowed.get("roots") or []
-    if not roots:
-        raise ForbiddenError(_NO_ROOTS_MESSAGE)
-    if not any(is_same_or_descendant_namespace(normalized, root) for root in roots):
-        raise NamespaceGrantError(
-            normalized,
-            f"scope is not within tenant roots [{', '.join(roots)}]",
-        )
-    return normalized
 
 
 def _memory_error_status(exc: Exception) -> int:

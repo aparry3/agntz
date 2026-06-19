@@ -155,6 +155,11 @@ class SQLiteStore:
         ).fetchone()
         return _row_to_trace(row) if row is not None else None
 
+    def delete_trace(self, trace_id: str) -> None:
+        self._conn.execute("DELETE FROM trace_spans WHERE trace_id = ?", (trace_id,))
+        self._conn.execute("DELETE FROM traces WHERE trace_id = ?", (trace_id,))
+        self._conn.commit()
+
     def list_traces(
         self,
         *,

@@ -58,6 +58,7 @@ class AgntzClient:
         self.datasets = DatasetsResource(self)
         self.evals = EvalsResource(self)
         self.runs = RunsResource(self)
+        self.sessions = SessionsResource(self)
         self.traces = TracesResource(self)
         self.memory = MemoryResource(self)
 
@@ -141,6 +142,7 @@ class AsyncAgntzClient:
         self.datasets = AsyncDatasetsResource(self)
         self.evals = AsyncEvalsResource(self)
         self.runs = AsyncRunsResource(self)
+        self.sessions = AsyncSessionsResource(self)
         self.traces = AsyncTracesResource(self)
         self.memory = AsyncMemoryResource(self)
 
@@ -229,6 +231,21 @@ class AgentsResource:
     def list(self) -> list[dict[str, Any]]:
         response = self._client._request("GET", "/agents")
         return list(response.json())
+
+    def import_(
+        self,
+        *,
+        agents: Sequence[Mapping[str, Any]],
+        on_conflict: str | None = None,
+        dry_run: bool | None = None,
+        strict: bool | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"agents": [dict(agent) for agent in agents]}
+        _add_if_defined(body, "onConflict", on_conflict)
+        _add_if_defined(body, "dryRun", dry_run)
+        _add_if_defined(body, "strict", strict)
+        response = self._client._request("POST", "/agents/import", json_body=body)
+        return dict(response.json())
 
     def get(self, agent_id: str) -> AgentDefinition:
         response = self._client._request("GET", f"/agents/{_q(agent_id)}")
@@ -340,6 +357,21 @@ class AsyncAgentsResource:
         response = await self._client._request("GET", "/agents")
         return list(response.json())
 
+    async def import_(
+        self,
+        *,
+        agents: Sequence[Mapping[str, Any]],
+        on_conflict: str | None = None,
+        dry_run: bool | None = None,
+        strict: bool | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"agents": [dict(agent) for agent in agents]}
+        _add_if_defined(body, "onConflict", on_conflict)
+        _add_if_defined(body, "dryRun", dry_run)
+        _add_if_defined(body, "strict", strict)
+        response = await self._client._request("POST", "/agents/import", json_body=body)
+        return dict(response.json())
+
     async def get(self, agent_id: str) -> AgentDefinition:
         response = await self._client._request("GET", f"/agents/{_q(agent_id)}")
         return AgentDefinition.model_validate(response.json())
@@ -403,6 +435,75 @@ class AsyncAgentsResource:
             f"/agents/{_q(agent_id)}/aliases/{_q(alias)}",
         )
         return dict(response.json())
+
+
+class SessionsResource:
+    def __init__(self, client: AgntzClient) -> None:
+        self._client = client
+
+    def import_(
+        self,
+        *,
+        sessions: Sequence[Mapping[str, Any]],
+        on_conflict: str | None = None,
+        dry_run: bool | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"sessions": [dict(session) for session in sessions]}
+        _add_if_defined(body, "onConflict", on_conflict)
+        _add_if_defined(body, "dryRun", dry_run)
+        response = self._client._request("POST", "/sessions/import", json_body=body)
+        return dict(response.json())
+
+    def list(self, *, agent_id: str | None = None) -> list[dict[str, Any]]:
+        response = self._client._request("GET", _with_query("/sessions", {"agentId": agent_id}))
+        body = response.json()
+        return list(body.get("sessions", [])) if isinstance(body, dict) else list(body)
+
+    def get(self, session_id: str) -> dict[str, Any]:
+        response = self._client._request("GET", f"/sessions/{_q(session_id)}")
+        return dict(response.json())
+
+    def get_messages(self, session_id: str) -> list[dict[str, Any]]:
+        return list(self.get(session_id).get("messages", []))
+
+    def delete(self, session_id: str) -> None:
+        self._client._request("DELETE", f"/sessions/{_q(session_id)}")
+
+
+class AsyncSessionsResource:
+    def __init__(self, client: AsyncAgntzClient) -> None:
+        self._client = client
+
+    async def import_(
+        self,
+        *,
+        sessions: Sequence[Mapping[str, Any]],
+        on_conflict: str | None = None,
+        dry_run: bool | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"sessions": [dict(session) for session in sessions]}
+        _add_if_defined(body, "onConflict", on_conflict)
+        _add_if_defined(body, "dryRun", dry_run)
+        response = await self._client._request("POST", "/sessions/import", json_body=body)
+        return dict(response.json())
+
+    async def list(self, *, agent_id: str | None = None) -> list[dict[str, Any]]:
+        response = await self._client._request(
+            "GET",
+            _with_query("/sessions", {"agentId": agent_id}),
+        )
+        body = response.json()
+        return list(body.get("sessions", [])) if isinstance(body, dict) else list(body)
+
+    async def get(self, session_id: str) -> dict[str, Any]:
+        response = await self._client._request("GET", f"/sessions/{_q(session_id)}")
+        return dict(response.json())
+
+    async def get_messages(self, session_id: str) -> list[dict[str, Any]]:
+        return list((await self.get(session_id)).get("messages", []))
+
+    async def delete(self, session_id: str) -> None:
+        await self._client._request("DELETE", f"/sessions/{_q(session_id)}")
 
 
 class DatasetsResource:
@@ -1001,6 +1102,17 @@ class MemoryResource:
     def __init__(self, client: AgntzClient) -> None:
         self._client = client
 
+    def import_(
+        self,
+        *,
+        entries: Sequence[Mapping[str, Any]],
+        dry_run: bool | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"entries": [dict(entry) for entry in entries]}
+        _add_if_defined(body, "dryRun", dry_run)
+        response = self._client._request("POST", "/memory/import", json_body=body)
+        return dict(response.json())
+
     def scan(self, grants: Sequence[str]) -> MemoryScanResult:
         path = _with_query("/memory/topics", {"grants": _csv(grants)})
         response = self._client._request("GET", path)
@@ -1094,6 +1206,17 @@ class AsyncMemoryResource:
 
     def __init__(self, client: AsyncAgntzClient) -> None:
         self._client = client
+
+    async def import_(
+        self,
+        *,
+        entries: Sequence[Mapping[str, Any]],
+        dry_run: bool | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"entries": [dict(entry) for entry in entries]}
+        _add_if_defined(body, "dryRun", dry_run)
+        response = await self._client._request("POST", "/memory/import", json_body=body)
+        return dict(response.json())
 
     async def scan(self, grants: Sequence[str]) -> MemoryScanResult:
         path = _with_query("/memory/topics", {"grants": _csv(grants)})

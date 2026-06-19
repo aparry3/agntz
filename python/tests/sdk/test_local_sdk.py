@@ -19,12 +19,14 @@ from agntz import (
     ToolCall,
     ToolResult,
     agntz,
+    create_memrez,
     tool,
 )
 from agntz.core import format_litellm_model
 from agntz.core.litellm_provider import _usage_from_litellm
 from agntz.manifest import LLMAgentManifest
 from agntz.manifest.types import AgentState
+from agntz.memrez import DeterministicReasoner, InMemoryMemoryStore
 
 ROOT = Path(__file__).resolve().parents[3]
 MANIFESTS = ROOT / "contracts" / "python-port" / "manifests"
@@ -546,6 +548,73 @@ def test_local_sdk_runs_pipeline_and_streams_terminal_events(tmp_path: Path) -> 
     assert [event.type for event in events] == ["start", "complete"]
     assert events[0].agent_id == "review-pack"
     assert events[1].output == {"support": "Use the refund workflow.", "tone": "clear"}
+
+
+def test_local_sdk_import_and_resource_parity_methods(tmp_path: Path) -> None:
+    memrez = create_memrez(
+        store=InMemoryMemoryStore(),
+        reasoner=DeterministicReasoner(),
+    )
+    client = agntz(
+        agents=str(tmp_path),
+        model_provider=FakeProvider(),
+        memrez=memrez,
+    )
+    manifest = """
+id: imported
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: Help.
+"""
+
+    imported = client.agents.import_(agents=[{"manifest": manifest}])
+    assert imported["counts"] == {"create": 1}
+    assert client.agents.get("imported") is not None
+
+    sessions = client.sessions.import_(
+        sessions=[
+            {
+                "sessionId": "sess_imported",
+                "agentId": "imported",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "hello",
+                        "timestamp": "2026-01-01T00:00:00Z",
+                    }
+                ],
+            }
+        ]
+    )
+    assert sessions["results"][0]["messageCount"] == 1
+    assert client.sessions.get_messages("sess_imported")[0].content == "hello"
+
+    assert client.memory is not None
+    memory = client.memory.import_(
+        entries=[
+            {
+                "id": "m_imported",
+                "scope": "acme/user",
+                "content": "likes blue",
+                "topics": ["prefs"],
+                "type": "preference",
+                "status": "active",
+                "createdAt": "2026-01-01T00:00:00Z",
+                "updatedAt": "2026-01-01T00:00:00Z",
+            }
+        ]
+    )
+    assert memory["counts"] == {"create": 1}
+
+    run = client.runs.start(agent_id="imported", input="hello")
+    assert run.status == "completed"
+    assert list(client.runs.stream(run_id=run.id))[0].type == "snapshot"
+
+    trace_id = client.traces.list()["rows"][0]["traceId"]
+    client.traces.delete(trace_id)
+    assert client.traces.list()["rows"] == []
 
 
 def test_local_sdk_arun_inside_event_loop(tmp_path: Path) -> None:

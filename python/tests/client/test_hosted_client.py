@@ -230,6 +230,56 @@ def test_runs_and_traces_resources_use_expected_paths() -> None:
     ]
 
 
+def test_import_resources_use_expected_paths() -> None:
+    seen: list[tuple[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        seen.append((request.url.path, body))
+        return httpx.Response(
+            200,
+            json={"dryRun": False, "results": [{"action": "create"}], "counts": {"create": 1}},
+        )
+
+    client = AgntzClient(
+        api_key="test-key",
+        base_url="https://worker.test",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    client.agents.import_(agents=[{"manifest": "id: a\nkind: llm"}])
+    client.sessions.import_(
+        sessions=[
+            {
+                "sessionId": "s1",
+                "messages": [
+                    {"role": "user", "content": "hello", "timestamp": "2026-01-01T00:00:00Z"}
+                ],
+            }
+        ]
+    )
+    client.memory.import_(
+        entries=[
+            {
+                "id": "m1",
+                "scope": "acme/user",
+                "content": "likes blue",
+                "topics": ["prefs"],
+                "type": "preference",
+                "status": "active",
+                "createdAt": "2026-01-01T00:00:00Z",
+                "updatedAt": "2026-01-01T00:00:00Z",
+            }
+        ]
+    )
+
+    assert [path for path, _body in seen] == [
+        "/agents/import",
+        "/sessions/import",
+        "/memory/import",
+    ]
+
+
 def test_agent_version_dataset_and_eval_resources_use_expected_paths() -> None:
     seen: list[tuple[str, str, Any]] = []
     agent = {

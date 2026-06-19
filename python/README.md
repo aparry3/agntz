@@ -302,6 +302,10 @@ Bearer API keys resolve to user ids through the configured store. Internal
 worker calls use `X-Internal-Secret` plus `X-User-Id` or a `userId` field in the
 JSON request body.
 
+Hosted-only policy helpers live under `agntz.platform`. `create_app()` uses
+`PlatformMemoryStore` by default for in-memory hosted state, and SQLite/Postgres
+stores remain platform-capable for self-hosted deployments.
+
 ## Memrez
 
 The Python package includes namespace grants, the memrez core, memory resource
@@ -314,8 +318,7 @@ or no-LLM kill-switch behavior.
 
 ```python
 from agntz import LiteLLMModelProvider, agntz
-from agntz.memrez import create_memrez
-from agntz.memrez_sqlite import SqliteMemoryStore
+from agntz.resources.memrez import SqliteMemoryStore, create_memrez
 
 memrez = create_memrez(store=SqliteMemoryStore("./memory.db"))
 
@@ -397,12 +400,16 @@ Implemented in this package:
   timestamps, and aliases.
 - First-class datasets, eval definitions, eval runs, and latest-score tracking.
 - Runtime namespace grants, resource providers, and the memrez memory provider.
+- Hosted platform policy helpers in `agntz.platform`, including namespace-root
+  bounding and a hosted-capable `PlatformMemoryStore`.
 - Memrez LLM reasoner default, preload/topic policy, in-memory, SQLite, and
   Postgres memory stores.
 - LiteLLM-backed model execution with tool-call loop support.
 - Memory, SQLite, and Postgres stores for hosted service data including runs,
   traces, sessions, agent versions, aliases, eval data, latest scores, and API
-  keys.
+  keys and namespace roots.
+- Import surfaces for agents, sessions, and memory use Pythonic `import_`
+  methods on local and hosted clients.
 - Contract fixtures shared with the TypeScript manifest package.
 
 Still intentionally outside this first Python package slice:

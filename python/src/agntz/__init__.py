@@ -72,6 +72,7 @@ from .memrez_postgres import PostgresMemoryStore, PostgresMemoryStoreOptions
 from .memrez_provider import MemoryResourceProvider, create_memory_resource_provider
 from .memrez_reasoner import AgntzReasoner, agntz_reasoner, memrez_agents_path
 from .memrez_sqlite import SqliteMemoryStore, SqliteMemoryStoreOptions
+from .platform.memory import PlatformMemoryStore
 from .sdk import LocalClient, LocalMemoryResource, agntz
 from .stores import (
     LocalMessageRecord,
@@ -134,6 +135,7 @@ __all__ = [
     "PostgresStore",
     "PostgresMemoryStore",
     "PostgresMemoryStoreOptions",
+    "PlatformMemoryStore",
     "ProtectedNamespaceRule",
     "ReasonerModelConfig",
     "ResourceProvider",
@@ -162,4 +164,4 @@ __all__ = [
     "tool",
 ]
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
