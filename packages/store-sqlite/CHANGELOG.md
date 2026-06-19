@@ -1,5 +1,31 @@
 # @agntz/store-sqlite
 
+## 7.1.0
+
+### Minor Changes
+
+- 6d35efe: Make the store and resource adapters depend only on `@agntz/contracts` (ports-and-adapters).
+
+  - **@agntz/contracts** now owns the full data/contract layer: the storage **ports** (`UnifiedStore` + all sub-store interfaces, `ResourceProvider`/`ResourceToolContext`/`ResourceProviderToolDefinition`), the **entity types** (`AgentDefinition`, `Run`/`Session`/`Message`/`Trace`/`Span`, `Secret*`, `ApiKeyRecord`, `Connection*`, `ProviderConfig`, the full `Eval*` family, `InvokeResult`/`ContentBlock`/`TokenUsage`, …), the **model-call shapes** (`ModelProvider`, `GenerateTextOptions`/`Result`, `ModelStreamResult`), and the pure leaf utils (secret crypto, namespace grants, `defineSkill`, `listEvalRunsInProcess`). It gains a type-only `zod` dependency for `ResourceProviderToolDefinition.input`. The runtime execution types (`ToolDefinition`/`ToolContext`/`InvokeOptions`, `RunRegistry`, streaming, telemetry sinks) stay in `@agntz/core`.
+  - **@agntz/core** imports those shapes from `@agntz/contracts` and re-exports them from their original module paths — its public surface and `instanceof` behavior are unchanged.
+  - **@agntz/store-postgres / @agntz/store-sqlite** now depend on `@agntz/contracts` instead of `@agntz/core` — they implement the store ports without pulling in the runtime (no more transitive AI-SDK provider deps).
+  - **@agntz/memrez** depends on `@agntz/contracts` (not `@agntz/core`). Its reasoner no longer constructs core's `AISDKModelProvider`; instead it accepts an injected `ModelProvider` via the new `modelProvider` option on `createMemrez`/the reasoner. **Behavior change:** LLM-backed curation/tagging now requires a host to inject a `ModelProvider` (e.g. `new AISDKModelProvider()`); the worker does this automatically. Store/read/scan paths are unaffected.
+
+### Patch Changes
+
+- 0ed0d94: Extract shared database plumbing into a new `@agntz/db` package.
+
+  - **@agntz/db** (new): pooling, migrations, and connection hardening for Postgres and SQLite, exposed via `@agntz/db/postgres` and `@agntz/db/sqlite`. The drivers (`pg`, `better-sqlite3`) are optional peer dependencies, so a single-backend consumer never installs the one it doesn't use. The production connection hardening is now baked in once — `keepAlive`, connection/idle timeouts, an idle-client error handler, and a migration runner that **clears a failed migration instead of caching the rejection forever** (the fix for the "connection terminated unexpectedly" wedge).
+  - **store-postgres / store-sqlite / memrez**: migrated onto `@agntz/db` for pool creation and migrations. Table ownership is unchanged (`ar_*` vs `memrez_*`) and behavior is preserved. memrez's Postgres store additionally gains the advisory-locked, reset-on-failure migration path, fixing its latent poisoned-promise bug.
+
+- Updated dependencies [5f2a42e]
+- Updated dependencies [0ed0d94]
+- Updated dependencies [c27f2d9]
+- Updated dependencies [6d35efe]
+  - @agntz/contracts@0.1.0
+  - @agntz/db@0.1.0
+  - @agntz/platform@1.0.0
+
 ## 7.0.0
 
 ### Minor Changes

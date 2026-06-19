@@ -1,5 +1,40 @@
 # @agntz/core
 
+## 1.7.0
+
+### Minor Changes
+
+- cfae485: Deduplicate the manifest→runner execution bridge shared by the embedded SDK and the hosted worker.
+
+  - **@agntz/core** gains `createManifestExecutionContext(runner, opts)` (+ `ManifestExecutionContextOptions`, `ManifestBridgeHooks`) — the single shared implementation of the manifest `ExecutionContext` (`invokeLLM`/`invokeTool`, output parsing, temp-agent lifecycle). Both hosts previously re-implemented this; they now supply only their environment-specific seams (`resolveAgent` source, temp-agent cleanup, `spawnable` pre-registration, local-tool dispatch, observability hooks) and delegate the shared mechanics here. The exported `createExecutionContext` signatures in `@agntz/sdk` and `@agntz/worker` are unchanged, so call sites are untouched.
+  - **@agntz/worker** — parity/bug fix: `http` **pipeline tool steps** now forward `body`/`body_type`/`auth` and the runner's `tokenResolver`/`tokenCache`, which the worker previously dropped (authed or bodied http pipeline steps worked in the embedded SDK but silently misfired hosted). The `[llm]`/`[tool]` console breadcrumbs are preserved via the new hooks. Minor edge-case alignment: an explicit empty `state.userQuery` is now used verbatim as the user message (matching the SDK) instead of being replaced by the serialized state.
+  - **@agntz/sdk** — drops its hand-rolled namespace-grant validators in favor of `@agntz/contracts`' canonical `normalizeNamespaceGrants`/`narrowNamespaceGrants` (re-exported by `@agntz/core`). Validation rules are identical; malformed grants now throw a typed `NamespaceGrantError` instead of a plain `Error`.
+
+  Internal consolidation; no public API changes beyond the new `@agntz/core` exports.
+
+- e97fd52: Merge `@agntz/manifest` into `@agntz/core` and remove the standalone package.
+
+  The YAML manifest engine (parser, validator, template engine, state, and the graph executor) now ships as part of `@agntz/core`, exposed at the **`@agntz/core/manifest`** subpath. Import its API from there instead of `@agntz/manifest` — the standalone package is removed. The DSL itself is unchanged; this is a packaging consolidation (manifest and the runtime are always used together). `@agntz/sdk` and `@agntz/worker` are repointed to the subpath.
+
+### Patch Changes
+
+- 5f2a42e: Introduce `@agntz/contracts`, the shared-vocabulary kernel, and route `@agntz/core` through it.
+
+  - **@agntz/contracts** (new): a zero-runtime-dependency package for the vocabulary and pure leaf utilities both core and manifest need — the outbound-URL policy (SSRF guard + hardened fetch), the agent-ref parser (`parseAgentRef`/`formatAgentRef`/`ParsedAgentRef`), the base error types (`AgntzError`, `InvalidAgentRefError`), the declarative HTTP-tool / auth / skill config (`HTTPToolEntry`, `AgentState`, `ToolReference`, `SkillDefinition`, `HTTPAuth` and its variants), and a structural `ExecutionSpanEmitter` interface.
+  - **@agntz/core**: the moved vocabulary/utilities now live in `@agntz/contracts`; core imports the canonical shapes from there and re-exports them from their original module paths, so core's public surface and `instanceof` behavior are unchanged. This deletes the hand-copied structural mirrors of manifest's `HTTPToolEntry`/`AgentState`/`HTTPAuth` types (the bidirectional duplication is gone). The `TokenExchangeAuth.apply` mirror drift is resolved to optional, matching the token resolver, which already defaults a missing `apply`.
+  - The manifest DSL (which ships in `@agntz/core`) consumes the kernel's vocabulary directly — no local copies — and types its `ExecutionContext.spanEmitter` against the structural `ExecutionSpanEmitter` (which core's concrete `SpanEmitter` satisfies).
+
+- 6d35efe: Make the store and resource adapters depend only on `@agntz/contracts` (ports-and-adapters).
+
+  - **@agntz/contracts** now owns the full data/contract layer: the storage **ports** (`UnifiedStore` + all sub-store interfaces, `ResourceProvider`/`ResourceToolContext`/`ResourceProviderToolDefinition`), the **entity types** (`AgentDefinition`, `Run`/`Session`/`Message`/`Trace`/`Span`, `Secret*`, `ApiKeyRecord`, `Connection*`, `ProviderConfig`, the full `Eval*` family, `InvokeResult`/`ContentBlock`/`TokenUsage`, …), the **model-call shapes** (`ModelProvider`, `GenerateTextOptions`/`Result`, `ModelStreamResult`), and the pure leaf utils (secret crypto, namespace grants, `defineSkill`, `listEvalRunsInProcess`). It gains a type-only `zod` dependency for `ResourceProviderToolDefinition.input`. The runtime execution types (`ToolDefinition`/`ToolContext`/`InvokeOptions`, `RunRegistry`, streaming, telemetry sinks) stay in `@agntz/core`.
+  - **@agntz/core** imports those shapes from `@agntz/contracts` and re-exports them from their original module paths — its public surface and `instanceof` behavior are unchanged.
+  - **@agntz/store-postgres / @agntz/store-sqlite** now depend on `@agntz/contracts` instead of `@agntz/core` — they implement the store ports without pulling in the runtime (no more transitive AI-SDK provider deps).
+  - **@agntz/memrez** depends on `@agntz/contracts` (not `@agntz/core`). Its reasoner no longer constructs core's `AISDKModelProvider`; instead it accepts an injected `ModelProvider` via the new `modelProvider` option on `createMemrez`/the reasoner. **Behavior change:** LLM-backed curation/tagging now requires a host to inject a `ModelProvider` (e.g. `new AISDKModelProvider()`); the worker does this automatically. Store/read/scan paths are unaffected.
+
+- Updated dependencies [5f2a42e]
+- Updated dependencies [6d35efe]
+  - @agntz/contracts@0.1.0
+
 ## 1.6.0
 
 ### Minor Changes

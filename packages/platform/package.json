@@ -1,6 +1,6 @@
 {
   "name": "@agntz/platform",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "Hosted platform contracts and delivery utilities for agntz",
   "type": "module",
   "main": "./dist/index.js",

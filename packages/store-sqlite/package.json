@@ -1,6 +1,6 @@
 {
   "name": "@agntz/store-sqlite",
-  "version": "7.0.0",
+  "version": "7.1.0",
   "description": "SQLite store adapter for agntz — single-server production storage",
   "type": "module",
   "main": "./dist/index.js",
@@ -11,7 +11,9 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
@@ -33,7 +35,13 @@
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
   },
-  "keywords": ["agntz", "sqlite", "store", "ai", "agents"],
+  "keywords": [
+    "agntz",
+    "sqlite",
+    "store",
+    "ai",
+    "agents"
+  ],
   "publishConfig": {
     "access": "public"
   },

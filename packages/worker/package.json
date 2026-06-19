@@ -1,6 +1,6 @@
 {
   "name": "@agntz/worker",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "Hono server for agent execution — runs YAML-defined agents via the manifest engine",
   "type": "module",
@@ -15,7 +15,9 @@
   "bin": {
     "agntz-worker": "./dist/server.js"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",

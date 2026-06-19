@@ -1,5 +1,32 @@
 # @agntz/sdk
 
+## 8.0.0
+
+### Patch Changes
+
+- cfae485: Deduplicate the manifest→runner execution bridge shared by the embedded SDK and the hosted worker.
+
+  - **@agntz/core** gains `createManifestExecutionContext(runner, opts)` (+ `ManifestExecutionContextOptions`, `ManifestBridgeHooks`) — the single shared implementation of the manifest `ExecutionContext` (`invokeLLM`/`invokeTool`, output parsing, temp-agent lifecycle). Both hosts previously re-implemented this; they now supply only their environment-specific seams (`resolveAgent` source, temp-agent cleanup, `spawnable` pre-registration, local-tool dispatch, observability hooks) and delegate the shared mechanics here. The exported `createExecutionContext` signatures in `@agntz/sdk` and `@agntz/worker` are unchanged, so call sites are untouched.
+  - **@agntz/worker** — parity/bug fix: `http` **pipeline tool steps** now forward `body`/`body_type`/`auth` and the runner's `tokenResolver`/`tokenCache`, which the worker previously dropped (authed or bodied http pipeline steps worked in the embedded SDK but silently misfired hosted). The `[llm]`/`[tool]` console breadcrumbs are preserved via the new hooks. Minor edge-case alignment: an explicit empty `state.userQuery` is now used verbatim as the user message (matching the SDK) instead of being replaced by the serialized state.
+  - **@agntz/sdk** — drops its hand-rolled namespace-grant validators in favor of `@agntz/contracts`' canonical `normalizeNamespaceGrants`/`narrowNamespaceGrants` (re-exported by `@agntz/core`). Validation rules are identical; malformed grants now throw a typed `NamespaceGrantError` instead of a plain `Error`.
+
+  Internal consolidation; no public API changes beyond the new `@agntz/core` exports.
+
+- e97fd52: Merge `@agntz/manifest` into `@agntz/core` and remove the standalone package.
+
+  The YAML manifest engine (parser, validator, template engine, state, and the graph executor) now ships as part of `@agntz/core`, exposed at the **`@agntz/core/manifest`** subpath. Import its API from there instead of `@agntz/manifest` — the standalone package is removed. The DSL itself is unchanged; this is a packaging consolidation (manifest and the runtime are always used together). `@agntz/sdk` and `@agntz/worker` are repointed to the subpath.
+
+- Updated dependencies [cfae485]
+- Updated dependencies [5f2a42e]
+- Updated dependencies [0ed0d94]
+- Updated dependencies [c27f2d9]
+- Updated dependencies [e97fd52]
+- Updated dependencies [6d35efe]
+  - @agntz/core@1.7.0
+  - @agntz/store-sqlite@7.1.0
+  - @agntz/memrez@4.1.0
+  - @agntz/client@1.3.1
+
 ## 7.0.0
 
 ### Minor Changes
