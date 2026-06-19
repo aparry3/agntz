@@ -41,7 +41,7 @@ const OPTIONS: Option[] = [
 		tagline: "Skip the operations.",
 		bullets: [
 			"Visual agent builder + version history",
-			"Managed tracing, sessions, and planned evals",
+			"Managed tracing, sessions, and eval records",
 			"Team collaboration & access control",
 			"Auto-scaled, monitored, backed up",
 		],
@@ -57,8 +57,8 @@ const OPTIONS: Option[] = [
 		tagline: "Same UI, your perimeter.",
 		bullets: [
 			"Same hosted experience, your stack",
-			"Postgres + S3-compatible storage",
-			"SOC2-friendly deployment patterns",
+			"Postgres-backed app and worker",
+			"Namespace roots and API-key isolation",
 			"Full data control, no egress",
 		],
 		best: "Regulated environments, on-prem, air-gapped.",

@@ -8,7 +8,7 @@ import {
 	ServerIcon,
 	SparkIcon,
 } from "./icons";
-import { Card, Code, H2, Lede, Pill, Row, Section } from "./primitives";
+import { Card, H2, Lede, Pill, Row, Section } from "./primitives";
 import { ACCENTS, type AccentName, TOKENS } from "./tokens";
 
 type Cap = {
@@ -39,7 +39,7 @@ const CAPS: Cap[] = [
 	},
 	{
 		title: "Tools",
-		body: "MCP servers, HTTP APIs, and local TypeScript functions — declared the same way. OAuth2, refresh, and credential redaction included.",
+		body: "MCP servers, HTTP APIs, and local TypeScript or Python functions — declared the same way. OAuth2, refresh, and credential redaction included.",
 		icon: <ServerIcon />,
 		link: "tools",
 		href: "/docs/tools/local",
@@ -63,10 +63,10 @@ const CAPS: Cap[] = [
 	},
 	{
 		title: "Evals",
-		body: "Planned first-class eval records with reusable datasets, async runs, and version comparisons.",
+		body: "First-class eval records with reusable datasets, async runs, cancellation, and latest score queries.",
 		icon: <CheckIcon />,
 		link: "evals",
-		tag: "planned",
+		tag: "shipped",
 	},
 ];
 
@@ -97,8 +97,8 @@ export function RuntimeCapabilities({
 				</H2>
 				<Lede>
 					Everything the runtime handles so you don&apos;t have to build, test,
-					and maintain it. Shipped in v1.0. Items marked{" "}
-					<Code accent="amber">planned</Code> are next.
+					and maintain it. The cards link to the docs for the shipped runtime
+					surface.
 				</Lede>
 			</div>
 
@@ -207,13 +207,7 @@ export function RuntimeCapabilities({
 				<Pill accent="green" dot mono>
 					shipped
 				</Pill>
-				<span>= in @agntz/sdk@2.0.0.</span>
-				<Pill accent="amber" dot mono>
-					planned
-				</Pill>
-				<span>
-					= on the near-term roadmap, tracked in the public changelog.
-				</span>
+				<span>= available in the current Agntz packages.</span>
 			</Row>
 		</Section>
 	);

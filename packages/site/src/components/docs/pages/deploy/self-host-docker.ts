@@ -7,7 +7,7 @@ The whole stack is open source under MIT. The fastest way to get it running on y
 | Service | Role | Port |
 |---|---|---|
 | \`@agntz/app\` | Next.js 15 web UI (Clerk auth + organizations, agent editor, playground) | 3000 |
-| \`@agntz/worker\` | Hono HTTP worker — executes agents, exposes \`/run\` and \`/run/stream\` | 4001 |
+| \`@agntz/worker\` | Hono HTTP worker — executes agents, runs, traces, memory, and eval records | 4001 |
 | Postgres | Backing store for sessions, runs, traces, agents | 5432 |
 | \`@agntz/site\` | Marketing site (optional) | 3001 |
 
@@ -64,7 +64,7 @@ const client = new AgntzClient({
 
 - App logs: \`docker compose logs -f app\`
 - Worker logs: \`docker compose logs -f worker\`
-- Postgres data: the \`db_data\` named volume — \`docker volume inspect agntz_db_data\` to find it on disk.
+- Postgres data: the \`pgdata\` named volume — \`docker volume inspect agntz_pgdata\` to find it on disk.
 
 ## Resetting
 

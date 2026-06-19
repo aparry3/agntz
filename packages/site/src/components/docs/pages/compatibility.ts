@@ -23,12 +23,14 @@ What runs where, today. Embedded means in-process SDK execution: \`@agntz/sdk\` 
 | Reply tool (intermediate messages) | ✓ | persisted messages only | ✓ |
 | Sessions | ✓ (memory or sqlite) | ✓ (memory or sqlite) | ✓ (managed) |
 | Runs & traces | ✓ (ring buffer / sqlite) | ✓ (memory or sqlite) | ✓ (Postgres) |
+| Eval records / datasets | ✓ | ✓ | ✓ |
 | Local streaming for LLM agents | ✓ (full event stream) | start / complete snapshots | N/A |
 | Hosted SSE streaming | ✓ | ✓ | ✓ |
 | OpenTelemetry export | ✓ | not yet | ✓ |
 | \`{{env.X}}\` template refs | ✓ | not yet | opt-in per server |
 | \`{{secrets.X}}\` template refs | × | × | ✓ |
-| Versioning + pinning | × | × | ✓ |
+| Versioned refs | ✓ (persisted stores) | ✓ (persisted stores) | ✓ |
+| Version aliases | local store aliases | local store aliases | ✓ |
 | Multi-user isolation | × | × | ✓ |
 | API key auth | × | × | ✓ |
 | Web UI (editor, playground, traces) | × | × | ✓ |
@@ -43,6 +45,7 @@ Most of the way is a constructor change (see [Embedded SDK → Switching to host
 - **Local tools** — promote to HTTP endpoints or MCP servers. The YAML \`tools:\` block is the only place the change is visible.
 - **\`{{env.X}}\` → \`{{secrets.X}}\`** — multi-tenant workers do not share an environment with your code. Use \`{{secrets.X}}\` and configure values in **Settings → Secrets**.
 - **Resources** — make sure the hosted worker has the same provider kinds wired server-side. Runtime \`context\` grants still come from trusted application code.
+- **Version refs** — local persisted stores and hosted stores can resolve bare ids, \`@latest\`, exact version timestamps, and aliases. In-memory registered agents do not retain version history.
 
 ### TypeScript embedded → Python embedded
 
@@ -75,7 +78,7 @@ The hosted clients work against any worker — \`api.agntz.co\` or your own. Swi
 ## Resources
 
 - **GitHub:** [github.com/aparry3/agntz](https://github.com/aparry3/agntz) — source, issues, discussions.
-- **npm:** \`@agntz/sdk\`, \`@agntz/client\`, \`@agntz/store-sqlite\`, \`@agntz/store-postgres\`, \`@agntz/manifest\`.
+- **npm:** \`@agntz/sdk\`, \`@agntz/client\`, \`@agntz/core\`, \`@agntz/contracts\`, \`@agntz/db\`, \`@agntz/platform\`, \`@agntz/memrez\`, \`@agntz/store-sqlite\`, \`@agntz/store-postgres\`.
 - **Python:** \`agntz\` package with optional \`agntz[litellm]\` local model support.
 - **License:** MIT.
 - **AI-friendly:** Every page exposes its raw markdown via the Copy button; the full corpus is at [/llms.txt](/llms.txt).

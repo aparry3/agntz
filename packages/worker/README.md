@@ -1,76 +1,84 @@
 # @agntz/worker
 
-Hono HTTP worker that executes YAML-defined agents via the manifest engine. User-scoped — every request resolves to a `user_id` before hitting the store.
+Hono HTTP worker that executes YAML-defined agents through the
+`@agntz/core/manifest` runtime. Requests resolve to a tenant before they touch
+the store, then run with that tenant's agents, sessions, runs, traces, memory,
+eval records, API keys, and namespace roots.
 
-## Endpoints
+## Main endpoint groups
 
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| `GET` | `/health` | none | Liveness probe |
-| `POST` | `/run` | required | Execute an agent, return final output + state |
-| `POST` | `/run/stream` | required | Same, as Server-Sent Events |
+| Group | Examples |
+|---|---|
+| Health and authoring | `GET /health`, `POST /build-agent`, `POST /edit-agent`, `POST /validate` |
+| Agents and sessions | `GET /agents`, `POST /agents/import`, `GET /sessions`, `POST /sessions/import`, `DELETE /sessions/:id` |
+| Runs and streams | `POST /run`, `POST /run/stream`, `POST /runs`, `GET /runs/:id`, `GET /runs/:id/stream`, `POST /runs/:id/cancel` |
+| Traces | `GET /traces`, `GET /traces/:id`, `GET /traces/:id/stream`, `DELETE /traces/:id` |
+| Memory | `POST /memory/import`, `GET /memory/topics`, `GET /memory/entries`, `POST /memory/entries/:id/correct`, `DELETE /memory/entries/:id`, `POST /memory/curate`, `POST /scopes/delete` |
+| Evals | `GET/POST /datasets`, `GET/POST /evals`, `POST /eval-runs`, `GET /eval-runs`, `POST /eval-runs/:id/cancel`, `GET /eval-scores` |
+| System/webhooks | `GET /system/agents`, webhook secret routes |
 
-### Request shape
-
-```json
-{
-  "userId": "user_abc...",   // only required when using X-Internal-Secret auth
-  "agentId": "my-agent",
-  "input": { "description": "..." }
-}
-```
-
-Use `agentId: "system:<name>"` (e.g. `system:agent-builder`) to invoke a system agent bundled with the worker. System agents bypass the user store and run with ephemeral state.
+See the website HTTP API reference for request shapes and client-facing
+semantics.
 
 ## Authentication
 
-Two modes are accepted by the `workerAuth` middleware in `src/middleware/auth.ts`:
+Two modes are accepted:
 
-### Internal (app → worker)
+### Internal app-to-worker calls
 
-```
+```txt
 X-Internal-Secret: $WORKER_INTERNAL_SECRET
 ```
 
-The worker trusts the header and reads `userId` from the request body. This is what `@agntz/app` uses when proxying a signed-in user's request.
+The product app uses this for signed-in users. Current app calls include signed
+tenant context so the worker does not rely on browser-provided tenant data.
 
-### External (service → worker)
+### External API keys
 
-```
+```txt
 Authorization: Bearer ar_live_<token>
 ```
 
-Keys are created in the app's **Settings → API Keys** UI (they're sha256-hashed in `ar_api_keys`). The worker calls `store.resolveApiKey(rawKey)` to map the token to its user.
+The worker hashes the key, resolves it through the platform store, and bounds
+resource grants to the tenant's namespace roots.
 
-Any request without one of these is rejected with 401.
+## Environment
 
-## Env vars
-
-```bash
+```sh
 PORT=4001
 HOSTNAME=0.0.0.0
-WORKER_INTERNAL_SECRET=...        # required
-STORE=postgres                    # or memory (dev only)
-DATABASE_URL=postgres://...       # when STORE=postgres
+WORKER_INTERNAL_SECRET=...
+STORE=postgres
+DATABASE_URL=postgres://...
+
 MEMREZ_STORE=postgres             # postgres | memory | disabled; defaults to STORE
-MEMREZ_DATABASE_URL=postgres://... # optional: separate DB for memory
-MEMREZ_TABLE_PREFIX=              # optional: prefix for memrez_* tables
-MEMREZ_REASONER=llm               # llm | deterministic; default llm
+MEMREZ_DATABASE_URL=postgres://... # optional separate DB for memory
+MEMREZ_TABLE_PREFIX=              # optional prefix for memrez_* tables
+MEMREZ_REASONER=llm               # llm | deterministic
 MEMREZ_CURATE_INTERVAL=           # optional, e.g. 30m or 1h
-OPENAI_API_KEY=...                # used by default memrez LLM reasoner
+
 DEFAULT_MODEL_PROVIDER=openai
-DEFAULT_MODEL_NAME=gpt-5.4-mini
-BUILT_IN_AGENTS_DIR=...           # optional: extra YAMLs to seed per workspace
+DEFAULT_MODEL_NAME=gpt-4o-mini
+OPENAI_API_KEY=...
+ANTHROPIC_API_KEY=...
+GOOGLE_GENERATIVE_AI_API_KEY=...
+
+BUILT_IN_AGENTS_DIR=...           # optional extra system agents
 ```
 
-`MEMREZ_REASONER=llm` uses memrez's built-in direct model calls for tagging and curation. It is process-wide and reads provider keys from env vars, not per-user provider settings. Set `MEMREZ_REASONER=deterministic` only as a test/emergency kill switch; writes file under `general` and curation becomes a no-op.
+`MEMREZ_REASONER=llm` uses the configured model provider for tagging and
+curation. Set `MEMREZ_REASONER=deterministic` for tests or an emergency kill
+switch.
 
 ## System agents
 
-Default agents shipped in `src/defaults/agents/` (currently `agent-builder/manifest.yaml`) are available as **system agents** — invoke with `agentId: "system:<name>"`. The worker loads the YAML from disk and runs it with an ephemeral `MemoryStore`, bypassing the caller's user-scoped store entirely. Each system agent gets its own directory so prompt assets (e.g. `schema-reference.md`) ship alongside the manifest. To change the behavior, edit files in the agent's directory and redeploy.
+System agents live under `src/defaults/agents/` and are invoked with
+`agentId: "system:<name>"`. They bypass the caller's agent store and run with
+ephemeral state, while still using the worker's runtime and model provider.
 
 ## Run locally
 
-```bash
+```sh
 pnpm --filter @agntz/worker dev
+curl http://localhost:4001/health
 ```

@@ -13,8 +13,7 @@ import { type CSSProperties, type ReactNode, useMemo, useState } from "react";
 
 export type HTTPMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
 
-/** Structural mirror of @agntz/manifest's HTTPToolEntry. Defined locally to
- *  avoid pulling the manifest package into the app bundle. */
+/** Structural mirror of manifest HTTP tool entries used by the editor. */
 export interface HTTPToolEntry {
 	kind: "http";
 	/** Becomes `http__<name>` for the model. Must be a programming identifier. */

@@ -143,7 +143,7 @@ const client = await agntz({
 \`\`\`
 
 \`\`\`python {group=sdk-resources}
-from agntz.memrez import create_memrez
+from agntz.resources.memrez import create_memrez
 
 memrez = create_memrez()
 client = agntz(
@@ -217,6 +217,73 @@ client = agntz(
 \`\`\`
 
 The same store backs sessions, runs, and traces. Python's SQLite store persists messages and trace spans in the same file.
+
+Persisted stores also keep agent versions and aliases. References can be a bare id, \`agent@latest\`, an exact created-at version, or an alias. In-memory registered agents run by id only; use a store when you need version history.
+
+## Import and migration surfaces
+
+The embedded client mirrors the hosted import APIs so local state can move to a worker later.
+
+\`\`\`ts {group=sdk-import}
+await client.agents.import({
+  agents: [{ id: "support", manifest: supportYaml }],
+});
+
+await client.sessions.import({
+  sessions: [{ id: "user-42", messages }],
+});
+
+await client.memory?.import({
+  entries: exportedMemrezEntries,
+});
+\`\`\`
+
+\`\`\`python {group=sdk-import}
+client.agents.import_(
+    agents=[{"id": "support", "manifest": support_yaml}],
+)
+
+client.sessions.import_(
+    sessions=[{"id": "user-42", "messages": messages}],
+)
+
+if client.memory:
+    client.memory.import_(entries=exported_memrez_entries)
+\`\`\`
+
+The CLI uses the same resources for \`agntz publish agents sessions memory\`.
+
+## Datasets and eval records
+
+Local clients include the same dataset/eval resource shape as hosted clients. Use it to run evals before pushing an agent to a worker, then publish the definitions and results when you are ready.
+
+\`\`\`ts {group=sdk-evals}
+await client.datasets.create(dataset);
+await client.evals.create(definition);
+
+const run = await client.evals.run({
+  evalId: "support-quality",
+  datasetId: "refund-cases",
+});
+
+const scores = await client.evals.listLatestScores({
+  evalId: "support-quality",
+});
+\`\`\`
+
+\`\`\`python {group=sdk-evals}
+client.datasets.create(dataset)
+client.evals.create(definition)
+
+run = client.evals.run(
+    eval_id="support-quality",
+    dataset_id="refund-cases",
+)
+
+scores = client.evals.list_latest_scores(
+    eval_id="support-quality",
+)
+\`\`\`
 
 ## Errors
 

@@ -1,76 +1,98 @@
 # Publishing `@agntz/*` to npm
 
-This is a focused reference for publishing the npm packages. For the full deployment flow (packages + runtime services + DNS), see [`DEPLOY.md`](./DEPLOY.md).
+This is the npm package release checklist. Runtime/service deployment is covered
+in [`DEPLOY.md`](./DEPLOY.md).
 
-## Current State
+## Current package graph
 
 | Directory | Package name | Version | Publish status |
-|---|---|---|---|
-| `packages/core` | `@agntz/core` | 1.1.0 | publishable |
-| `packages/manifest` | `@agntz/manifest` | 2.0.0 | publishable |
-| `packages/sdk` | `@agntz/sdk` | 2.0.0 | publishable (was `@agntz/runner` v1.0.0; old `@agntz/runner` now deprecated on npm) |
-| `packages/client` | `@agntz/client` | 1.0.0 | publishable (was `@agntz/sdk` v1.0.0; old `@agntz/sdk` now deprecated on npm) |
-| `packages/store-postgres` | `@agntz/store-postgres` | 2.0.0 | publishable |
-| `packages/store-sqlite` | `@agntz/store-sqlite` | 2.0.0 | publishable |
-| `packages/worker` | `@agntz/worker` | 0.1.0 | private (deployed service) |
-| `packages/app` | `@agntz/app` | 0.1.0 | private (deployed service) |
-| `packages/site` | `@agntz/site` | 0.1.0 | private (deployed service) |
+|---|---|---:|---|
+| `packages/core` | `@agntz/core` | 1.6.0 | publishable |
+| `packages/sdk` | `@agntz/sdk` | 7.0.0 | publishable |
+| `packages/client` | `@agntz/client` | 1.3.0 | publishable |
+| `packages/contracts` | `@agntz/contracts` | 0.0.0 | publishable, first npm release pending |
+| `packages/db` | `@agntz/db` | 0.0.0 | publishable, first npm release pending |
+| `packages/platform` | `@agntz/platform` | 0.0.0 | publishable, first npm release pending |
+| `packages/memrez` | `@agntz/memrez` | 4.0.0 | publishable |
+| `packages/store-postgres` | `@agntz/store-postgres` | 7.0.0 | publishable |
+| `packages/store-sqlite` | `@agntz/store-sqlite` | 7.0.0 | publishable |
+| `packages/app` | `@agntz/app` | 0.1.10 | private service |
+| `packages/worker` | `@agntz/worker` | 0.2.1 | private service |
+| `packages/site` | `@agntz/site` | 0.1.0 | private site |
 
-All publishable packages:
-- Use the `@agntz/*` scope
-- Have `"publishConfig": { "access": "public" }`
-- Point `repository.url` at `https://github.com/aparry3/agntz.git`
+The standalone `@agntz/manifest` package has been merged into
+`@agntz/core/manifest`.
 
 ## Prerequisites
 
-- npm account with **2FA enabled** (required for publishing scoped public packages).
-- Membership in the `@agntz` npm organization (already owned).
-- `NPM_TOKEN` **automation token** set as a GitHub Actions secret on the `aparry3/agntz` repo. The token goes to `.github/workflows/release.yml:48`.
+- npm account with 2FA enabled.
+- Membership in the `@agntz` npm organization.
+- `NPM_TOKEN` automation token configured as a GitHub Actions secret on
+  `aparry3/agntz`.
 
-## Release flow (changesets)
+## Release flow
 
-Releases are driven by [changesets](https://github.com/changesets/changesets) and run automatically via `.github/workflows/release.yml` when changeset files land on `main`.
+Releases are driven by Changesets through `.github/workflows/release.yml`.
 
-1. On a feature branch, create a changeset describing what changed:
+1. Add a changeset for every publishable package whose code or npm README
+   changed:
    ```sh
    pnpm changeset
    ```
-   Select each package that should get a version bump, pick the semver level, and write a short note. This writes a markdown file to `.changeset/`.
-2. Commit + open a PR. Merge to `main`.
-3. The release workflow opens a **"Version Packages"** PR that bumps versions and rewrites `workspace:*` peer deps to concrete versions. Review it.
-4. Merge the Version Packages PR. On merge, the workflow runs `pnpm changeset publish`, which publishes each bumped package to npm in dependency order.
+2. Check the projected versions:
+   ```sh
+   pnpm changeset status
+   ```
+3. Merge the PR to `main`.
+4. The release workflow opens a "chore: release packages" PR that bumps package
+   versions and rewrites workspace dependencies.
+5. Merge the release PR. The workflow runs `pnpm changeset publish`.
 
-## Manual publish (escape hatch)
+## Manual publish order
 
-Only use this if the CI workflow is broken and you need a release out the door.
+Only use this if the release workflow is broken. Build first:
 
 ```sh
-npm login
 pnpm build
+```
 
-# From the package directory:
-cd packages/core && npm publish
+Publish in dependency order:
+
+```sh
+cd packages/contracts && npm publish
+cd ../db && npm publish
+cd ../client && npm publish
+cd ../core && npm publish
+cd ../platform && npm publish
+cd ../memrez && npm publish
 cd ../store-postgres && npm publish
 cd ../store-sqlite && npm publish
-cd ../manifest && npm publish
-cd ../client && npm publish
 cd ../sdk && npm publish
 ```
 
-Publish order matters for packages with `peerDependencies` on `@agntz/core`: publish core first, then the others.
+Do not publish private service packages (`@agntz/app`, `@agntz/worker`,
+`@agntz/site`) unless their package metadata is intentionally changed first.
 
 ## Verify a release
 
 ```sh
 npm view @agntz/core version
-npm view @agntz/manifest version
 npm view @agntz/sdk version
 npm view @agntz/client version
+npm view @agntz/contracts version
+npm view @agntz/db version
+npm view @agntz/platform version
+npm view @agntz/memrez version
 npm view @agntz/store-postgres version
 npm view @agntz/store-sqlite version
+```
 
-# Smoke test install
-mkdir /tmp/agntz-test && cd /tmp/agntz-test
+Smoke test published packages in a clean project:
+
+```sh
+tmpdir="$(mktemp -d)"
+cd "$tmpdir"
 npm init -y
-npm i @agntz/core @agntz/store-sqlite
+npm i @agntz/core @agntz/sdk @agntz/store-sqlite @agntz/memrez
+node -e 'import("@agntz/core").then(() => import("@agntz/sdk")).then(() => console.log("ok"))'
 ```

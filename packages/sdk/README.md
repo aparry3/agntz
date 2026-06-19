@@ -245,6 +245,25 @@ const client = await agntz({
 });
 ```
 
+## Imports, memory, and eval records
+
+The embedded client mirrors the hosted resource shape so local state can move to
+a worker later:
+
+```ts
+await client.agents.import({ agents: [{ id: "support", manifest: yaml }] });
+await client.sessions.import({ sessions });
+await client.memory?.import({ entries });
+
+await client.datasets.create(dataset);
+await client.evals.create(definition);
+const run = await client.evals.run({ evalId: "support-quality" });
+const scores = await client.evals.listLatestScores({ evalId: "support-quality" });
+```
+
+Use `agntz publish agents sessions memory` to migrate local manifests, sessions,
+and memrez entries to a hosted or self-hosted worker.
+
 ## Streaming
 
 ```ts
@@ -284,12 +303,14 @@ The `client.agents.run / .stream`, `client.runs.list / .get`, and `client.traces
 | Spawnable subagents | ✓ | ✓ |
 | Sessions | ✓ (memory or sqlite) | ✓ (managed) |
 | Runs / traces | ✓ (in-memory) | ✓ (persisted) |
+| Agent/session/memory import | ✓ | ✓ |
+| Memory admin with memrez | ✓ | ✓ |
+| Datasets / eval records | ✓ | ✓ |
 | Streaming for LLM agents | ✓ (full event stream) | ✓ |
 | Streaming for pipelines | ✓ (single `complete` event) | ✓ |
 | `{{env.X}}` template refs | ✓ | (opt-in per server) |
 | `{{secrets.X}}` template refs | × | ✓ |
-| Skills | × | ✓ |
-| Evals | × | (planned) |
+| Skills | ✓ | ✓ |
 | Multi-user isolation | × | ✓ |
 
 ## MCP tools

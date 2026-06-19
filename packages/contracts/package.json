@@ -1,7 +1,7 @@
 {
   "name": "@agntz/contracts",
   "version": "0.0.0",
-  "description": "Shared-vocabulary kernel for agntz — zero-dependency types and leaf utilities shared by @agntz/core and @agntz/manifest",
+  "description": "Shared-vocabulary kernel for agntz — types and leaf utilities shared by runtime, SDK, resource, and platform packages",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

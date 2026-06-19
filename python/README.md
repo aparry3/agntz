@@ -361,8 +361,12 @@ resources:
 Override the reasoner explicitly when needed:
 
 ```python
-from agntz.memrez import DeterministicReasoner, create_memrez
-from agntz.memrez_llm_reasoner import ReasonerModelConfig, llm_reasoner
+from agntz.resources.memrez import (
+    DeterministicReasoner,
+    ReasonerModelConfig,
+    create_memrez,
+    llm_reasoner,
+)
 
 memrez = create_memrez(
     reasoner=llm_reasoner(
@@ -410,7 +414,7 @@ Implemented in this package:
   keys and namespace roots.
 - Import surfaces for agents, sessions, and memory use Pythonic `import_`
   methods on local and hosted clients.
-- Contract fixtures shared with the TypeScript manifest package.
+- Contract fixtures shared with the TypeScript core manifest runtime.
 
 Still intentionally outside this first Python package slice:
 

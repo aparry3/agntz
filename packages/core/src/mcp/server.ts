@@ -25,7 +25,7 @@ export interface MCPServerOptions {
  * Usage with HTTP transport:
  * ```typescript
  * import { createRunner } from "@agntz/core";
- * import { createMCPServer } from "@agntz/core/mcp-server";
+ * import { createMCPServer } from "@agntz/core";
  *
  * const runner = createRunner({ ... });
  * const server = createMCPServer(runner);

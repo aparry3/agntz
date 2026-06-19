@@ -14,9 +14,6 @@
     "dev:app": "pnpm --filter @agntz/app dev",
     "dev:site": "pnpm --filter @agntz/site dev",
     "dev:worker": "pnpm --filter @agntz/worker dev",
-    "docs:dev": "vitepress dev docs",
-    "docs:build": "vitepress build docs",
-    "docs:preview": "vitepress preview docs",
     "changeset": "changeset",
     "release": "pnpm build && changeset publish"
   },
@@ -25,8 +22,7 @@
     "@changesets/changelog-git": "^0.2.1",
     "@changesets/cli": "^2.30.0",
     "lefthook": "^2.1.9",
-    "turbo": "^2.9.0",
-    "vitepress": "^1.6.4"
+    "turbo": "^2.9.0"
   },
   "pnpm": {
     "overrides": {

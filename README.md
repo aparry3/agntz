@@ -1,573 +1,155 @@
-# agntz
+# Agntz
 
-TypeScript and Python SDKs for defining and running AI agents. Agents are portable, JSON-serializable configurations — not code. Plug in any storage backend, any model provider, any tools.
-
-```typescript
-import { createRunner, defineAgent } from "agntz";
-
-const runner = createRunner();
-
-runner.registerAgent(defineAgent({
-  id: "greeter",
-  name: "Greeter",
-  systemPrompt: "You are a friendly greeter. Keep responses under 2 sentences.",
-  model: { provider: "openai", name: "gpt-5.4-mini" },
-}));
-
-const result = await runner.invoke("greeter", "Hello!");
-console.log(result.output);
-// → "Hey there! Welcome — great to have you here."
-```
-
-## Why agntz?
-
-| Problem | agntz's answer |
-|---|---|
-| Agents are code, not portable config | Agent definitions are JSON-serializable data |
-| Locked into one storage backend | Pluggable stores (memory, JSON files, SQLite, Postgres) |
-| MCP bolted on as an afterthought | MCP is a first-class tool source |
-| Testing belongs outside agent behavior | First-class eval records are being rebuilt separately from agent manifests |
-| No visual tooling | Bundled multi-tenant web UI (`packages/app`) |
-| Heavy framework overhead | Minimal library — import what you need |
+Agntz is a declarative runtime for production agents. Define agents in YAML, run
+them locally with TypeScript or Python, then move the same manifests to hosted
+or self-hosted workers when you need multi-user isolation, durable runs, traces,
+memory, and eval records.
 
 ## Install
 
-TypeScript:
+TypeScript embedded SDK:
 
-```bash
-npm install agntz
+```sh
+pnpm add @agntz/sdk
 ```
 
-Python:
+Python embedded SDK:
 
-```bash
-pip install agntz
-pip install "agntz[litellm]" # for local model execution through LiteLLM
+```sh
+pip install "agntz[litellm]"
 ```
 
-Set your API key:
+Hosted client:
 
-```bash
-export OPENAI_API_KEY=sk-...
-# or ANTHROPIC_API_KEY, GOOGLE_GENERATIVE_AI_API_KEY, etc.
+```sh
+pnpm add @agntz/client
 ```
 
-## Quick Start
+## Quickstart
 
-### 1. Basic Agent
+Create an agent manifest:
 
-```typescript
-import { createRunner, defineAgent } from "agntz";
+```yaml
+# agents/support.yaml
+id: support
+kind: llm
 
-const runner = createRunner();
+model:
+  provider: openai
+  name: gpt-4o-mini
 
-runner.registerAgent(defineAgent({
-  id: "writer",
-  name: "Writer",
-  systemPrompt: "You write concise, engaging copy.",
-  model: { provider: "openai", name: "gpt-5.4" },
-}));
-
-const { output } = await runner.invoke("writer", "Write a tagline for a coffee shop");
+instruction: |
+  You answer support questions concisely.
 ```
 
-### 2. With Tools
+Run it locally with TypeScript:
 
-```typescript
-import { createRunner, defineAgent, defineTool } from "agntz";
-import { z } from "zod";
+```ts
+import { agntz } from "@agntz/sdk";
 
-const lookupOrder = defineTool({
-  name: "lookup_order",
-  description: "Look up an order by ID",
-  input: z.object({
-    orderId: z.string(),
-  }),
-  async execute(input) {
-    return { status: "shipped", eta: "Tomorrow" };
-  },
+const client = await agntz({ agents: "./agents" });
+
+const result = await client.agents.run({
+  agentId: "support",
+  input: { message: "Can I change my shipping address?" },
 });
 
-const runner = createRunner({ tools: [lookupOrder] });
-
-runner.registerAgent(defineAgent({
-  id: "support",
-  name: "Support Agent",
-  systemPrompt: "You help customers with their orders. Use tools to look up order info.",
-  model: { provider: "openai", name: "gpt-5.4" },
-  tools: [{ type: "inline", name: "lookup_order" }],
-}));
-
-const result = await runner.invoke("support", "Where's my order #12345?");
 console.log(result.output);
-// → "Your order #12345 has shipped and should arrive tomorrow!"
-console.log(result.toolCalls);
-// → [{ name: "lookup_order", input: { orderId: "12345" }, output: { status: "shipped", eta: "Tomorrow" }, ... }]
 ```
 
-### 3. Sessions (Conversational Memory)
+Run the same manifest locally with Python:
 
-```typescript
-// First message
-await runner.invoke("support", "Hi, I need help", { sessionId: "sess_abc" });
+```py
+from agntz import LiteLLMModelProvider, agntz
 
-// Second message — agent remembers the conversation
-await runner.invoke("support", "My order is #12345", { sessionId: "sess_abc" });
+client = agntz(
+    agents="./agents",
+    model_provider=LiteLLMModelProvider(),
+)
+
+result = client.agents.run(
+    agent_id="support",
+    input={"message": "Can I change my shipping address?"},
+)
+
+print(result.output)
 ```
 
-### 4. Streaming
+Call a hosted or self-hosted worker:
 
-```typescript
-const stream = runner.stream("writer", "Write a short story about a robot");
+```ts
+import { AgntzClient } from "@agntz/client";
 
-for await (const event of stream) {
-  if (event.type === "text-delta") {
-    process.stdout.write(event.text);
-  } else if (event.type === "tool-call-start") {
-    console.log(`\nCalling tool: ${event.toolCall.name}`);
-  } else if (event.type === "done") {
-    console.log(`\nDone! Tokens used: ${event.result.usage.totalTokens}`);
-  }
-}
-
-// Or get the final result directly
-const result = await stream.result;
-```
-
-### 5. Agent Chains (Agent-as-Tool)
-
-```typescript
-runner.registerAgent(defineAgent({
-  id: "researcher",
-  name: "Researcher",
-  systemPrompt: "Research topics and return concise findings.",
-  model: { provider: "openai", name: "gpt-5.4" },
-}));
-
-runner.registerAgent(defineAgent({
-  id: "writer",
-  name: "Writer",
-  systemPrompt: "Write articles. Delegate research to the researcher.",
-  model: { provider: "anthropic", name: "claude-sonnet-4-6" },
-  tools: [{ type: "agent", agentId: "researcher" }],
-}));
-
-// Writer invokes researcher as a tool during execution
-const result = await runner.invoke("writer", "Write about MCP");
-```
-
-### 6. Shared Context
-
-Context lets agents share state without tight coupling:
-
-> Note: this section uses legacy `contextIds` scratchpad buckets. Runtime
-> resource access uses `context` namespace grants instead.
-
-```typescript
-runner.registerAgent(defineAgent({
-  id: "researcher",
-  name: "Researcher",
-  systemPrompt: "Research topics thoroughly.",
-  model: { provider: "openai", name: "gpt-5.4" },
-  contextWrite: true, // Output auto-writes to context
-}));
-
-// Researcher writes findings to context
-await runner.invoke("researcher", "Find info about MCP", {
-  contextIds: ["project-alpha"],
+const client = new AgntzClient({
+  apiKey: process.env.AGNTZ_API_KEY!,
+  baseUrl: "https://api.agntz.co",
 });
 
-// Writer reads the same context
-await runner.invoke("writer", "Write an article using the research", {
-  contextIds: ["project-alpha"],
+const result = await client.agents.run({
+  agentId: "support",
+  input: { message: "Can I change my shipping address?" },
 });
 ```
 
-### 7. Runtime Tool Context
+## Package map
 
-Pass runtime data to tools without going through the LLM:
-
-```typescript
-const updateProfile = defineTool({
-  name: "update_profile",
-  description: "Update the user's profile",
-  input: z.object({ field: z.string(), value: z.string() }),
-  async execute(input, ctx) {
-    // ctx.user comes from toolContext — injected at runtime
-    await db.users.update(ctx.user.id, { [input.field]: input.value });
-    return { success: true };
-  },
-});
-
-await runner.invoke("chat", message, {
-  toolContext: {
-    user: { id: "u_123", name: "Aaron" },
-  },
-});
-```
-
-### 8. Structured Output
-
-```typescript
-runner.registerAgent(defineAgent({
-  id: "analyzer",
-  name: "Sentiment Analyzer",
-  systemPrompt: "Analyze the sentiment of input text.",
-  model: { provider: "openai", name: "gpt-5.4" },
-  outputSchema: {
-    type: "object",
-    properties: {
-      sentiment: { type: "string", enum: ["positive", "negative", "neutral"] },
-      confidence: { type: "number" },
-    },
-    required: ["sentiment", "confidence"],
-  },
-}));
-
-const { output } = await runner.invoke("analyzer", "I love this!");
-const parsed = JSON.parse(output);
-// → { sentiment: "positive", confidence: 0.95 }
-```
-
-## Storage
-
-The default store is in-memory (great for testing). For persistence, use a database adapter:
-
-```typescript
-import { createRunner } from "agntz";
-import { SqliteStore } from "@agntz/store-sqlite";
-
-// SQLite — good for local dev and single-instance deployments
-const runner = createRunner({
-  store: new SqliteStore("./data.db"),
-});
-
-// Or split stores by concern
-const runner = createRunner({
-  agentStore: myPostgresStore,
-  sessionStore: myRedisStore,
-  logStore: myElasticsearchStore,
-});
-```
-
-### Custom Stores
-
-Implement the store interfaces:
-
-```typescript
-interface AgentStore {
-  getAgent(id: string): Promise<AgentDefinition | null>;
-  listAgents(): Promise<AgentSummary[]>;
-  putAgent(agent: AgentDefinition): Promise<void>;
-  deleteAgent(id: string): Promise<void>;
-}
-
-interface SessionStore {
-  getMessages(sessionId: string): Promise<Message[]>;
-  append(sessionId: string, messages: Message[]): Promise<void>;
-  deleteSession(sessionId: string): Promise<void>;
-  listSessions(agentId?: string): Promise<SessionSummary[]>;
-}
-
-// Also: ContextStore, LogStore
-// Or implement UnifiedStore for all-in-one
-```
-
-## Model Providers
-
-agntz uses the `ai` package internally — a client library that calls providers directly with your API keys. No middleman, no data routing.
-
-```typescript
-// Set provider in agent definition
-defineAgent({
-  model: { provider: "openai", name: "gpt-5.4" },      // needs OPENAI_API_KEY
-  // or
-  model: { provider: "anthropic", name: "claude-sonnet-4-6" }, // needs ANTHROPIC_API_KEY
-  // or
-  model: { provider: "google", name: "gemini-3-flash" },    // needs GOOGLE_GENERATIVE_AI_API_KEY
-  // or use OpenRouter for one-key access to 300+ models (OSS + commercial)
-  model: { provider: "openrouter", name: "meta-llama/llama-3.3-70b-instruct" }, // needs OPENROUTER_API_KEY
-});
-
-// Or bring your own model provider entirely
-const runner = createRunner({
-  modelProvider: myCustomProvider, // implements ModelProvider interface
-});
-```
-
-Supported providers: `openai`, `anthropic`, `google`, `openrouter`, `mistral`, `xai`, `groq`, `deepseek`, `perplexity`, `cohere`, `azure`.
-
-## Error Handling
-
-All errors extend `AgentRunnerError` with a `code` field:
-
-```typescript
-import {
-  AgentRunnerError,
-  AgentNotFoundError,
-  ToolExecutionError,
-  InvocationCancelledError,
-  MaxStepsExceededError,
-} from "agntz";
-
-try {
-  await runner.invoke("nonexistent", "hi");
-} catch (err) {
-  if (err instanceof AgentNotFoundError) {
-    console.log(err.agentId); // "nonexistent"
-    console.log(err.code);    // "AGENT_NOT_FOUND"
-  }
-}
-```
-
-## Stream Events
-
-The `stream()` method returns an async iterable of typed events:
-
-| Event | Description |
+| Package | Purpose |
 |---|---|
-| `text-delta` | Incremental text chunk from the model |
-| `tool-call-start` | Tool execution is starting |
-| `tool-call-end` | Tool execution completed (with result) |
-| `step-complete` | One iteration of the tool loop finished |
-| `done` | Final result with full InvokeResult |
+| `@agntz/sdk` | TypeScript embedded SDK, local client, CLI, and SQLite helper |
+| `@agntz/client` | TypeScript hosted/self-hosted HTTP client |
+| `@agntz/core` | Low-level runner, definitions, MCP helpers, telemetry, and `@agntz/core/manifest` |
+| `@agntz/contracts` | Shared type/kernel package for stores, resources, tools, evals, runs, and leaf utilities |
+| `@agntz/db` | Shared SQLite/Postgres connection and migration plumbing |
+| `@agntz/platform` | Hosted platform contracts for API keys, namespace roots, webhook delivery, and platform stores |
+| `@agntz/memrez` | Memory resource provider and memory stores |
+| `@agntz/store-sqlite` | SQLite implementation of Agntz store contracts |
+| `@agntz/store-postgres` | Postgres implementation of Agntz store contracts |
+| `agntz` | Python hosted client, embedded SDK/runtime, stores, memrez resources, and optional server |
 
-## Configuration
+The old standalone `@agntz/manifest` package has been merged into
+`@agntz/core/manifest`.
 
-```typescript
-const runner = createRunner({
-  // Storage
-  store: myStore,
+## Repository layout
 
-  // Inline tools
-  tools: [myTool1, myTool2],
-
-  // Session config
-  session: {
-    maxMessages: 50,       // Sliding window size
-    strategy: "sliding",   // "sliding" | "summary" | "none"
-  },
-
-  // Context config
-  context: {
-    maxEntries: 20,        // Max entries per context ID
-    maxTokens: 4000,       // Token budget for injection
-    strategy: "latest",    // "latest" | "summary" | "all"
-  },
-
-  // Default model (when agent doesn't specify)
-  defaults: {
-    model: { provider: "openai", name: "gpt-5.4-mini" },
-    temperature: 0.7,
-    maxTokens: 4096,
-  },
-});
-```
-
-## MCP Integration
-
-Use tools from any MCP-compatible server:
-
-```typescript
-const runner = createRunner({
-  mcp: {
-    servers: {
-      github: { url: "http://localhost:3001/mcp" },
-      filesystem: { command: "npx", args: ["-y", "@anthropic/mcp-fs"] },
-    },
-  },
-});
-
-runner.registerAgent(defineAgent({
-  id: "code-reviewer",
-  name: "Code Reviewer",
-  systemPrompt: "Review code from GitHub PRs...",
-  model: { provider: "anthropic", name: "claude-sonnet-4-6" },
-  tools: [
-    { type: "mcp", server: "github", tools: ["get_file_contents"] },
-  ],
-}));
-```
-
-Expose your agents as an MCP server:
-
-```typescript
-import { createMCPServer } from "agntz/mcp-server";
-const server = createMCPServer(runner);
-// Each agent becomes a callable MCP tool
-```
-
-## Evals
-
-The previous manifest-level eval API has been removed. Evals are being rebuilt
-as first-class records with separate datasets, async runs, snapshots, and run
-history so agent definitions stay focused on behavior.
-
-## Session Strategies
-
-Control how conversation history is managed:
-
-```typescript
-const runner = createRunner({
-  session: {
-    maxMessages: 50,
-    strategy: "sliding",   // Keep last N messages (default)
-    // strategy: "summary", // LLM-summarizes old messages, keeps recent
-    // strategy: "none",    // Keep all messages (no trimming)
-  },
-});
-```
-
-The `summary` strategy uses the agent's model to compress older messages while keeping recent context intact — great for long-running conversations.
-
-## Retry & Error Recovery
-
-Configurable retry with exponential backoff for transient failures:
-
-```typescript
-const result = await runner.invoke("writer", "Hello", {
-  retry: {
-    maxRetries: 3,
-    initialDelayMs: 1000,
-    backoffMultiplier: 2,
-  },
-});
-```
-
-## Graceful Shutdown
-
-Clean up MCP connections and flush stores:
-
-```typescript
-// Close all connections
-await runner.shutdown();
-
-// Or handle process signals
-process.on("SIGTERM", async () => {
-  await runner.shutdown();
-  process.exit(0);
-});
-```
-
-## CLI
-
-The CLI is published by `@agntz/sdk` and installs the `agntz` executable. Use it to generate YAML agents, run them locally, and manage hosted runs/traces.
-
-```bash
-# Run without installing
-npx @agntz/sdk --help
-
-# Or install globally
-npm i -g @agntz/sdk
-agntz --help
-```
-
-Local-first workflow:
-
-```bash
-agntz create "Answer support questions in a concise tone" -o ./agents/support.yaml
-agntz run ./agents/support.yaml --input "How do I reset my password?"
-agntz run ./agents/support.yaml --input "Walk me through it" --stream
-```
-
-When an agent needs local tools, resource providers, or app-specific runtime context, run it from service code with `@agntz/sdk` and pass those handlers to `agntz({ tools, resources })`.
-
-## Web UI (`packages/app`)
-
-`packages/app` is the hosted web UI — Next.js 15 app with Clerk auth and per-workspace multi-tenancy. It pairs with `packages/worker` (Hono) for agent execution. Built for deployment (Vercel + Railway + Neon) and separate from this core SDK.
-
-**Features:** agent editor, playground, tool catalog, sessions + logs browser, API keys per workspace, sign-in/sign-up, Organization switching.
-
-**Run locally:**
-```bash
-# root .env.local with CLERK_*, DATABASE_URL, WORKER_INTERNAL_SECRET
-pnpm --filter @agntz/worker dev    # :4001
-pnpm --filter @agntz/app dev       # :3000
-```
-
-See `packages/app/README.md` for deployment.
-
-## SQLite Store
-
-For production single-server deployments:
-
-```bash
-npm install @agntz/store-sqlite
-```
-
-```typescript
-import { SqliteStore } from "@agntz/store-sqlite";
-
-const runner = createRunner({
-  store: new SqliteStore("./data.db"),
-});
-```
-
-WAL mode enabled by default, automatic migrations, full-text search on logs.
-
-### PostgreSQL Store
-
-For multi-server production deployments:
-
-```bash
-npm install @agntz/store-postgres
-```
-
-```typescript
-import { PostgresStore } from "@agntz/store-postgres";
-
-const runner = createRunner({
-  store: new PostgresStore("postgresql://user:pass@localhost:5432/mydb"),
-});
-
-// Or pass an existing pg.Pool for connection sharing:
-import pg from "pg";
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
-
-const runner = createRunner({
-  store: new PostgresStore({ connection: pool }),
-});
-```
-
-Automatic migrations, JSONB for agent definitions, configurable table prefix, connection pooling.
-
-## OpenTelemetry
-
-Opt-in observability with OpenTelemetry. Install `@opentelemetry/api` and pass your tracer:
-
-```typescript
-import { trace } from "@opentelemetry/api";
-
-const runner = createRunner({
-  telemetry: {
-    tracer: trace.getTracer("my-app"),
-    recordIO: false,      // Don't log input/output (privacy default)
-    recordToolIO: false,   // Don't log tool I/O
-    baseAttributes: {      // Added to every span
-      "service.name": "my-app",
-      "deployment.environment": "production",
-    },
-  },
-});
-```
-
-**Span hierarchy:**
-- `agent.invoke` — root span per invocation (agent ID, model, tokens, duration)
-  - `agent.model.call` — each LLM API call (usage, finish reason)
-  - `agent.tool.execute` — each tool execution (tool name, duration, errors)
-
-Zero overhead when telemetry is not configured — all span operations become no-ops.
-
-## Packages
-
-| Package | Description |
+| Path | Purpose |
 |---|---|
-| `agntz` | Core SDK — createRunner, invoke, agents, tools, stores |
-| `@agntz/manifest` | YAML agent manifest parser + executor |
-| `@agntz/store-sqlite` | SQLite store adapter (single-server) |
-| `@agntz/store-postgres` | PostgreSQL store adapter (production, multi-tenant) |
-| `@agntz/worker` | Hono HTTP worker — executes agents over `/run` and `/run/stream` |
-| `@agntz/app` | Next.js web UI — multi-tenant, Clerk auth, API keys |
+| `packages/site` | Marketing site and canonical public docs |
+| `packages/app` | Hosted product UI |
+| `packages/worker` | Hosted execution worker |
+| `packages/*` | TypeScript packages |
+| `python` | Python package |
+| `examples` | Example agents and integrations |
+| `planning` | Active and historical implementation plans |
+
+## Common commands
+
+```sh
+pnpm install
+pnpm build
+pnpm test
+pnpm --filter @agntz/site build
+```
+
+Python validation:
+
+```sh
+cd python
+python -m pip install -e '.[dev]'
+python -m pytest
+python -m ruff check .
+python -m basedpyright
+```
+
+## Documentation
+
+- Public docs: `packages/site/src/components/docs/pages`
+- Website: `pnpm --filter @agntz/site dev`
+- npm publishing: [`PUBLISH.md`](./PUBLISH.md)
+- PyPI publishing: [`PYTHON_PUBLISH.md`](./PYTHON_PUBLISH.md)
+- Deployment: [`DEPLOY.md`](./DEPLOY.md)
+
+Every public docs page is also exposed as markdown by the site, and the
+agent-facing corpus is available at `/llms.txt`.
 
 ## License
 

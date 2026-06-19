@@ -39,6 +39,7 @@ import deploySelfHostProduction from "./pages/deploy/self-host-production";
 
 import compatibility from "./pages/compatibility";
 import models from "./pages/models";
+import packages from "./pages/packages";
 
 export type DocsPage = {
 	slug: string;
@@ -271,6 +272,13 @@ export const DOCS_GROUPS: DocsGroup[] = [
 				title: "Compatibility matrix",
 				description: "What runs where, today.",
 				markdown: compatibility,
+			},
+			{
+				slug: "packages",
+				title: "Package architecture",
+				description:
+					"Which package owns which layer: SDK, client, core, contracts, db, platform, stores, and Python.",
+				markdown: packages,
 			},
 		],
 	},

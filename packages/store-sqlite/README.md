@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen.svg)](https://nodejs.org)
 
-SQLite storage adapter for [agntz](https://github.com/aparry3/agntz). Zero-config persistent storage for single-server deployments with WAL mode, automatic migrations, and full-text search on logs.
+SQLite storage adapter for [agntz](https://github.com/aparry3/agntz). Zero-config persistent storage for single-server deployments with WAL mode, automatic migrations, runs, traces, eval records, secrets, providers, connections, API keys, and namespace roots.
 
 Built on [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) for synchronous, high-performance access.
 
@@ -77,7 +77,7 @@ const store = new SqliteStore({
 
 ### `SqliteStore`
 
-Implements `UnifiedStore` from `@agntz/core` — provides `AgentStore`, `SessionStore`, `ContextStore`, and `LogStore` in a single class.
+Implements `UnifiedStore` from `@agntz/contracts` plus hosted platform store methods from `@agntz/platform` in a single class. The runner can still receive it through `@agntz/core` or `@agntz/sdk`.
 
 #### Constructor
 
@@ -114,21 +114,18 @@ new SqliteStore(options: SqliteStoreOptions)
 | `deleteSession(sessionId)` | Delete a session and its messages |
 | `listSessions(agentId?)` | List sessions, optionally filtered by agent |
 
-**ContextStore:**
+**Runtime and resource stores:**
 
 | Method | Description |
 |---|---|
-| `getContext(contextId)` | Get all entries for a context bucket |
-| `addContext(contextId, entry)` | Add an entry to a context bucket |
-| `clearContext(contextId)` | Clear all entries in a context bucket |
-
-**LogStore:**
-
-| Method | Description |
-|---|---|
-| `log(entry)` | Write an invocation log |
-| `getLogs(filter?)` | Query logs with optional filters (agentId, sessionId, since, limit, offset) |
-| `getLog(id)` | Get a single log by ID |
+| `runs.*` methods | Persist run records, status transitions, snapshots, and cancellation state |
+| `traces.*` methods | Persist traces and spans |
+| `evals.*` methods | Persist datasets, eval definitions, eval runs, case results, summaries, and latest scores |
+| `secrets.*` methods | Store encrypted secret values |
+| `providers/connections` methods | Store provider and connection configuration |
+| `context/log` methods | Preserve legacy scratchpad context and invocation logs |
+| `createApiKey` / `resolveApiKey` | Hosted API-key issuance and lookup |
+| `listNamespaceRoots` / `addNamespaceRoot` / `removeNamespaceRoot` | Tenant namespace root administration |
 
 **Lifecycle:**
 
@@ -143,11 +140,17 @@ The store creates the following tables automatically:
 
 | Table | Description |
 |---|---|
-| `agents` | Agent definitions stored as JSON text |
+| `agents` / `agent_versions` / `agent_aliases` | Agent definitions, immutable versions, and aliases |
 | `sessions` | Session metadata with timestamps |
 | `messages` | Conversation messages with JSON tool calls |
-| `context_entries` | Shared context entries between agents |
-| `invocation_logs` | Full invocation logs with token usage |
+| `runs` | First-class run records and snapshots |
+| `traces` / `spans` | Trace timeline data |
+| `eval_*` tables | Datasets, eval definitions, eval runs, case results, summaries, latest scores |
+| `secrets` | Encrypted secret values |
+| `providers` / `connections` | Provider and connection configuration |
+| `api_keys` | Hashed hosted API keys |
+| `namespace_roots` | Tenant grant-bounding roots |
+| `context_entries` / `invocation_logs` | Legacy context buckets and invocation logs |
 | `schema_version` | Migration version tracking |
 
 **Indexes** on `messages(session_id)`, `context_entries(context_id)`, `invocation_logs(agent_id)`, `invocation_logs(session_id)`, and `invocation_logs(timestamp)`.

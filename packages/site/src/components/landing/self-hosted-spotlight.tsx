@@ -5,39 +5,48 @@ import { ACCENTS, type AccentName, TOKENS } from "./tokens";
 
 const COMPOSE = `# docker-compose.yml
 services:
-  runner:
-    image: agntz/runner:1.0.0
-    depends_on: [postgres, blob]
-    environment:
-      - DATABASE_URL=postgres://agntz:****@postgres/agntz
-      - BLOB_URL=s3://agntz?endpoint=http://blob:9000
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.app
     ports: ["3000:3000"]
+    environment:
+      - DATABASE_URL=postgres://postgres:postgres@db:5432/agntz
+      - WORKER_URL=http://worker:4001
 
-  control:
-    image: agntz/control:1.0.0
-    depends_on: [postgres]
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    ports: ["4001:4001"]
+    environment:
+      - DATABASE_URL=postgres://postgres:postgres@db:5432/agntz
+      - WORKER_INTERNAL_SECRET=change-me
+
+  site:
+    build:
+      context: .
+      dockerfile: Dockerfile.site
     ports: ["3001:3001"]
 
-  postgres:
-    image: postgres:14
-    volumes: [./data/pg:/var/lib/postgresql/data]
-
-  blob:
-    image: minio/minio
-    command: server /data
-    volumes: [./data/blob:/data]`;
+  db:
+    image: postgres:17-alpine
+    environment:
+      - POSTGRES_DB=agntz
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres`;
 
 const SERVICES = [
-	{ name: "runner", image: "agntz/runner:1.0.0", up: "2d 14h", port: "3000" },
-	{ name: "control", image: "agntz/control:1.0.0", up: "2d 14h", port: "3001" },
-	{ name: "postgres", image: "postgres:14", up: "2d 14h", port: "5432" },
-	{ name: "blob", image: "minio/minio", up: "2d 14h", port: "9000" },
+	{ name: "app", image: "Dockerfile.app", up: "2d 14h", port: "3000" },
+	{ name: "worker", image: "Dockerfile.worker", up: "2d 14h", port: "4001" },
+	{ name: "site", image: "Dockerfile.site", up: "2d 14h", port: "3001" },
+	{ name: "db", image: "postgres:17-alpine", up: "2d 14h", port: "5432" },
 ];
 
 const REQS: [string, string][] = [
-	["Postgres 14+", "agent + session store"],
-	["Node 20+", "runner + control plane"],
-	["S3-compatible blob", "trace & artifact storage"],
+	["Postgres 17+", "agents, sessions, runs, traces"],
+	["Node 22+", "app, site, worker builds"],
+	["Worker secret", "signed app-to-worker calls"],
 	["Docker · Kubernetes", "deploy pattern of your choice"],
 ];
 
@@ -67,8 +76,8 @@ export function SelfHostedSpotlight({
 						<span style={{ color: TOKENS.muted }}>yourself.</span>
 					</H2>
 					<Lede>
-						Same Docker image, same features, your infrastructure. No vendor
-						lock-in. No data leaving your perimeter.
+						Same app, site, and worker packages, your infrastructure. No vendor
+						lock-in, and no data leaving your perimeter.
 					</Lede>
 
 					<Stack gap={6} style={{ marginTop: 4 }}>

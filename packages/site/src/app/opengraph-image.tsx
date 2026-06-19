@@ -99,7 +99,7 @@ export default async function Image() {
 	const ledeText =
 		"A declarative runtime for production agents. Define agents in YAML, call your existing APIs, and run anywhere.";
 	const monoText =
-		"agntz agntz.co v1.0.0 — released declarative runtime open source local hosted self-host valid · ready to run weather-bot.yaml runner.ts agent.yaml";
+		"agntz agntz.co TS + Python runtimes declarative runtime open source local hosted self-host valid · ready to run weather-bot.yaml runner.ts agent.yaml";
 
 	const sansGlyphs = uniqueChars(headlineText, ledeText);
 	const monoGlyphs = uniqueChars(monoText, HERO_YAML);
@@ -227,7 +227,7 @@ export default async function Image() {
 									background: green.fg,
 								}}
 							/>
-							v1.0.0 — released
+							TS + Python runtimes
 						</div>
 						<div
 							style={{

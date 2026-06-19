@@ -1,6 +1,6 @@
 export default `# CLI reference
 
-The \`agntz\` CLI ships inside \`@agntz/sdk\`. It creates YAML manifests, runs agents locally, and manages hosted runs and traces from the terminal.
+The \`agntz\` CLI ships inside \`@agntz/sdk\`. It creates YAML manifests, runs agents locally, publishes local state, and manages hosted runs, traces, and evals from the terminal.
 
 \`\`\`bash
 # Run without installing
@@ -21,8 +21,10 @@ For the first local workflow, start with [CLI getting started](/docs/cli-quickst
 | \`run <path>\` | ✓ | - | No | Run a local YAML file or single-agent directory. |
 | \`run <id>\` | - | ✓ | Yes | Run a hosted agent by id. |
 | \`login\` / \`logout\` / \`whoami\` | - | ✓ | Mixed | Manage hosted API credentials. |
+| \`publish\` | ✓ | ✓ | Yes | Import local agents, sessions, and memrez memory into hosted storage. |
 | \`runs\` | - | ✓ | Yes | List, inspect, stream, or cancel hosted runs. |
 | \`traces\` | - | ✓ | Yes | List, inspect, or delete hosted traces. |
+| \`eval\` | - | ✓ | Yes | Run hosted evals and inspect eval runs or latest scores. |
 
 Every command supports terminal help:
 
@@ -30,8 +32,10 @@ Every command supports terminal help:
 agntz create --help
 agntz run --help
 agntz login --help
+agntz publish --help
 agntz runs --help
 agntz traces --help
+agntz eval --help
 \`\`\`
 
 ## Auth and configuration
@@ -152,6 +156,32 @@ agntz logout
 
 Browser-based login is not implemented in the current CLI. Paste an API key from the hosted or self-hosted dashboard.
 
+## \`publish\`
+
+Migrates local manifests, persisted sessions, and memrez memory into hosted storage. Requires \`AGNTZ_API_KEY\` or \`agntz login\`.
+
+\`\`\`bash
+agntz publish [all|agents|sessions|memory...] [options]
+\`\`\`
+
+Common options:
+
+| Flag | Description |
+|---|---|
+| \`--agents <dir>\` | Local agents directory. Default: \`./agents\`. |
+| \`--db <path>\` | Local SDK SQLite store for sessions. |
+| \`--memory-db <path>\` | Local memrez SQLite store. Default: \`./memory.db\` or \`./memrez.db\` if present. |
+| \`--dry-run\` | Report what would be imported without writing hosted state. |
+| \`--include-superseded\` | Include superseded memory entries. |
+
+Examples:
+
+\`\`\`bash
+agntz publish all --dry-run
+agntz publish agents sessions memory --db ./agntz.db --memory-db ./memory.db
+agntz publish memory --memory-db ./memrez.db
+\`\`\`
+
 ## \`runs\`
 
 Hosted run management. Requires \`AGNTZ_API_KEY\` or \`agntz login\`. Output is JSON.
@@ -192,15 +222,30 @@ agntz traces get trace_123
 agntz traces delete trace_123
 \`\`\`
 
-## Current CLI boundary
+## \`eval\`
 
-The current CLI command surface is intentionally small:
+Hosted eval management. Requires \`AGNTZ_API_KEY\` or \`agntz login\`.
 
-\`\`\`text
-create, run, login, logout, whoami, runs, traces
+\`\`\`bash
+agntz eval run    <evalId> [--dataset <id>] [--version <agentVersion>]
+agntz eval runs   [--agent <id>] [--eval <id>] [--dataset <id>] [--status <s>] [--limit <n>] [--cursor <c>]
+agntz eval cancel <runId>
+agntz eval scores [--agent <id>] [--eval <id>] [--dataset <id>] [--version <createdAt>]
+agntz eval get    <evalId>
 \`\`\`
 
-The current CLI does not provide project scaffolding, eval execution, validation-only execution, an interactive playground, or a Studio launcher. Use the SDK docs for in-process validation/runtime wiring, and use the hosted app for managed agent editing.
+Examples:
+
+\`\`\`bash
+agntz eval run support-quality --dataset refund-cases
+agntz eval runs --agent support --limit 10
+agntz eval scores --eval support-quality --dataset refund-cases
+agntz eval get support-quality
+\`\`\`
+
+## Current CLI boundary
+
+The CLI covers manifest generation, local execution, hosted execution, state publishing, hosted run/trace inspection, and hosted eval execution. It does not provide project scaffolding, validation-only execution, an interactive playground, or a Studio launcher. Use the SDK docs for in-process validation/runtime wiring, and use the hosted app for managed agent editing.
 
 ## Exit behavior
 

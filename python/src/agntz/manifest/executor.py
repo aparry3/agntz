@@ -1,4 +1,4 @@
-"""Async manifest executor matching the TypeScript manifest package."""
+"""Async manifest executor matching the TypeScript core manifest runtime."""
 
 from __future__ import annotations
 

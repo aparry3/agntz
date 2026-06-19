@@ -23,7 +23,7 @@ Copy the private \`DATABASE_URL\` and the public TCP proxy URL from the Variable
 Same Railway project → **Add Service** → **GitHub Repo** → select your fork.
 
 - **Root directory:** \`/\`
-- **Build:** Dockerfile, target stage \`worker\`
+- **Build:** \`Dockerfile.worker\`
 - **Port:** \`4001\`
 - **Env vars:**
   - \`STORE=postgres\`
@@ -31,7 +31,7 @@ Same Railway project → **Add Service** → **GitHub Repo** → select your for
   - \`PORT=4001\`
   - \`WORKER_INTERNAL_SECRET=$(openssl rand -base64 32)\`
   - \`DEFAULT_MODEL_PROVIDER=openai\`
-  - \`DEFAULT_MODEL_NAME=gpt-5.4\`
+  - \`DEFAULT_MODEL_NAME=gpt-4o\`
   - \`OPENAI_API_KEY=sk-...\`
   - \`MEMREZ_STORE=postgres\`
   - \`MEMREZ_REASONER=llm\`
@@ -71,7 +71,7 @@ WORKER_INTERNAL_SECRET=...           # MUST match the worker
 STORE=postgres
 DATABASE_URL=...                     # Railway public TCP proxy URL
 DEFAULT_MODEL_PROVIDER=openai
-DEFAULT_MODEL_NAME=gpt-5.4
+DEFAULT_MODEL_NAME=gpt-4o
 OPENAI_API_KEY=sk-...
 \`\`\`
 

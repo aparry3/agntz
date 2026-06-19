@@ -14,7 +14,7 @@ pnpm add @agntz/memrez
 pip install "agntz[litellm]"
 \`\`\`
 
-The TypeScript package is published as \`@agntz/memrez\`. The Python package exports matching core storage and provider primitives from \`agntz.memrez\`, \`agntz.memrez_llm_reasoner\`, \`agntz.memrez_sqlite\`, \`agntz.memrez_postgres\`, and \`agntz.memrez_provider\`.
+The TypeScript package is published as \`@agntz/memrez\`. The Python package exports matching storage, reasoner, and provider primitives from the canonical \`agntz.resources.memrez\` module, with older \`agntz.memrez*\` imports kept for compatibility.
 
 ## Declare a memory resource
 
@@ -55,8 +55,7 @@ const client = await agntz({
 
 \`\`\`python [main.py] {group=memrez-provider}
 from agntz import LiteLLMModelProvider, agntz
-from agntz.memrez import create_memrez
-from agntz.memrez_sqlite import SqliteMemoryStore
+from agntz.resources.memrez import SqliteMemoryStore, create_memrez
 
 memrez = create_memrez(store=SqliteMemoryStore("./memory.db"))
 
@@ -137,8 +136,7 @@ const memrez = createMemrez({
 
 \`\`\`python {group=memrez-store}
 import os
-from agntz.memrez import create_memrez
-from agntz.memrez_postgres import PostgresMemoryStore
+from agntz.resources.memrez import PostgresMemoryStore, create_memrez
 
 memrez = create_memrez(
     store=PostgresMemoryStore(os.environ["DATABASE_URL"]),
@@ -215,8 +213,12 @@ createMemrez({ store, reasoner: new DeterministicReasoner() }); // no LLM (tests
 \`\`\`
 
 \`\`\`python
-from agntz.memrez import DeterministicReasoner, create_memrez
-from agntz.memrez_llm_reasoner import ReasonerModelConfig, llm_reasoner
+from agntz.resources.memrez import (
+    DeterministicReasoner,
+    ReasonerModelConfig,
+    create_memrez,
+    llm_reasoner,
+)
 
 create_memrez(
     store=store,

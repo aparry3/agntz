@@ -1,74 +1,139 @@
 export default `# HTTP API reference
 
-The worker exposes a small HTTP surface. The SDK (\`@agntz/client\`) wraps it; you can also call it directly.
+The hosted client wraps the worker HTTP API. You can call the API directly from trusted server-side code, or point \`@agntz/client\` / Python \`AgntzClient\` at your own worker.
 
-## Endpoints
+## Endpoint groups
+
+### Health and authoring
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | \`GET\` | \`/health\` | none | Liveness probe |
-| \`POST\` | \`/run\` | required | Execute an agent, return final output + state |
-| \`POST\` | \`/run/stream\` | required | Same, as Server-Sent Events |
-| \`POST\` | \`/runs\` | required | Start a run, return its handle immediately |
+| \`POST\` | \`/build-agent\` | none | Public agent-builder endpoint used by \`agntz create\` |
+| \`POST\` | \`/edit-agent\` | required | Edit an existing manifest from instructions |
+| \`POST\` | \`/validate\` | required | Validate a manifest before saving or publishing |
+
+### Agents and sessions
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| \`GET\` | \`/agents\` | required | List agents visible to the caller |
+| \`GET\` | \`/agents/:id\` | required | Fetch an agent definition |
+| \`POST\` | \`/agents/import\` | required | Import one or more local manifests into hosted storage |
+| \`GET\` | \`/sessions\` | required | List sessions |
+| \`GET\` | \`/sessions/:id\` | required | Fetch a session and messages |
+| \`POST\` | \`/sessions/import\` | required | Import persisted local sessions |
+| \`DELETE\` | \`/sessions/:id\` | required | Delete a hosted session |
+
+Some self-hosted app/server deployments also expose create/update/delete agent routes and version/alias administration. The public clients use the import and run surfaces first, so those are the portable routes.
+
+### Runs and streams
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| \`POST\` | \`/run\` | required | Execute an agent and return final output + state |
+| \`POST\` | \`/run/block\` | required | Blocking run alias used by compatibility clients |
+| \`POST\` | \`/run/stream\` | required | Execute an agent as Server-Sent Events |
+| \`POST\` | \`/run/block/stream\` | required | Blocking stream alias used by compatibility clients |
+| \`POST\` | \`/runs\` | required | Start an async run and return its handle |
+| \`GET\` | \`/runs\` | required | List runs |
 | \`GET\` | \`/runs/:id\` | required | Fetch current state of a run |
 | \`POST\` | \`/runs/:id/cancel\` | required | Cancel a run and cascade to descendants |
-| \`GET\` | \`/runs\` | required | List runs (filters: \`agentId\`, \`status\`, time range) |
 | \`GET\` | \`/runs/:id/stream\` | required | Multiplexed event stream for a run subtree |
+
+### Traces
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
 | \`GET\` | \`/traces\` | required | List traces |
 | \`GET\` | \`/traces/:id\` | required | Trace detail with spans |
 | \`GET\` | \`/traces/:id/stream\` | required | Live trace events while running |
 | \`DELETE\` | \`/traces/:id\` | required | Delete a trace |
-| \`POST\` | \`/build-agent\` | none | Public agent-builder endpoint used by \`agntz create\` |
+
+### Memory and namespace roots
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| \`POST\` | \`/memory/import\` | required | Import raw memory entries from a local memrez store |
+| \`GET\` | \`/memory/topics\` | required | Scan memory topics visible to grants |
+| \`GET\` | \`/memory/entries\` | required | List memory entries visible to grants |
+| \`DELETE\` | \`/memory/entries/:id\` | required | Delete a memory entry |
+| \`POST\` | \`/memory/entries/:id/correct\` | required | Correct an entry and supersede the previous value |
+| \`POST\` | \`/memory/curate\` | required | Run memrez curation for granted scopes |
+| \`POST\` | \`/scopes/delete\` | required | Cascade-delete a granted namespace scope |
+| \`GET\` | \`/namespace-roots\` | required | List tenant namespace roots where exposed by the app/server |
+| \`POST\` | \`/namespace-roots\` | required | Add a tenant namespace root |
+| \`DELETE\` | \`/namespace-roots/:root\` | required | Remove a tenant namespace root |
+
+Namespace-root administration is app/server owned. The worker enforces bounded grants when roots are available, and self-hosted deployments decide which admin route shape they expose.
+
+### Datasets and evals
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| \`GET\` | \`/datasets\` | required | List datasets |
+| \`POST\` | \`/datasets\` | required | Create or update a dataset |
+| \`GET\` | \`/datasets/:id\` | required | Fetch dataset detail |
+| \`PUT\` | \`/datasets/:id\` | required | Update dataset |
+| \`DELETE\` | \`/datasets/:id\` | required | Delete dataset |
+| \`GET\` | \`/evals\` | required | List eval definitions |
+| \`POST\` | \`/evals\` | required | Create or update an eval definition |
+| \`GET\` | \`/evals/:id\` | required | Fetch eval detail |
+| \`PUT\` | \`/evals/:id\` | required | Update eval definition |
+| \`DELETE\` | \`/evals/:id\` | required | Delete eval definition |
+| \`POST\` | \`/eval-runs\` | required | Start an eval run |
+| \`GET\` | \`/eval-runs\` | required | List eval runs |
+| \`GET\` | \`/eval-runs/:id\` | required | Fetch eval run detail |
+| \`POST\` | \`/eval-runs/:id/cancel\` | required | Cancel an eval run |
+| \`GET\` | \`/eval-scores/latest\` | required | Latest scores by agent/eval/dataset/version |
+| \`GET\` | \`/eval-scores\` | required | Score history |
+
+### System agents and webhooks
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| \`GET\` | \`/system/agents\` | required | List bundled system agents |
+| \`GET\` | \`/system/agents/:id\` | required | Fetch a bundled system agent |
+| \`GET\` | \`/webhook-secrets\` | required | List webhook secrets |
+| \`POST\` | \`/webhook-secrets\` | required | Create or rotate a webhook secret |
+| \`DELETE\` | \`/webhook-secrets/:name\` | required | Delete a webhook secret |
 
 ## Authentication
 
-The worker accepts two auth modes:
+The worker accepts two auth modes.
 
-### External — Bearer token
+### External bearer token
 
 \`\`\`
 Authorization: Bearer ar_live_<token>
 \`\`\`
 
-The worker sha256-hashes the key on receipt, looks it up in the API keys table, and resolves the request to a user id. This is what \`@agntz/client\` sends.
+The worker hashes the key, looks it up in the API-key store, resolves the tenant, and bounds namespace grants to that tenant's roots. This is what hosted clients send.
 
-### Internal — shared secret + userId
+### Internal app-to-worker secret
 
 \`\`\`
 X-Internal-Secret: <WORKER_INTERNAL_SECRET>
 \`\`\`
 
-Used by the app calling the worker on behalf of a signed-in user. The body must include \`userId\` (the Clerk user id):
+The product app uses this when calling the worker for a signed-in user. Current deployments sign and forward tenant context rather than trusting browser-provided tenant data. Do not expose this secret to clients.
+
+## Run request shape
 
 \`\`\`json
 {
-  "userId": "user_abc...",
-  "agentId": "my-agent",
-  "input": { "message": "Hello" }
-}
-\`\`\`
-
-Don't expose this secret to clients — it's app-to-worker only.
-
-## Request shape
-
-\`\`\`json
-{
-  "userId": "user_abc...",        // required with internal auth; ignored with Bearer
-  "agentId": "my-agent",
+  "agentId": "support",
   "input": { "message": "Hello" },
   "sessionId": "optional-session-id",
   "context": ["app/user/u_123"]
 }
 \`\`\`
 
-\`input\` accepts either a plain string (when the agent has no \`inputSchema\`) or an object matching the agent's schema.
+\`input\` accepts either a plain string or an object matching the agent schema. \`context\` is a namespace grant array minted by trusted server-side code and passed to resource providers such as memory.
 
-\`context\` is optional. When present, it is a namespace grant array passed to resource providers such as memory. Mint it from trusted server-side state, such as the authenticated user or workspace. Do not ask the model or a browser client to choose grants.
+Run endpoints accept the same core fields. Async runs also accept callback and webhook fields when webhook delivery is configured.
 
-\`/run\`, \`/run/stream\`, and \`/runs\` all accept the same \`agentId\`, \`input\`, \`sessionId\`, and \`context\` fields. \`/runs\` also accepts webhook fields such as \`callbackUrl\` and \`webhookSecretName\`.
-
-## Stream format (SSE)
+## Stream format
 
 \`/run/stream\`, \`/runs/:id/stream\`, and \`/traces/:id/stream\` emit Server-Sent Events.
 
@@ -80,36 +145,17 @@ event: stream
 data: {"type": "complete", "output": "Hello, world!", "state": {...}}
 \`\`\`
 
-Reconnect with the \`Last-Event-ID\` header (or \`?since=<seq>\` for the multiplexed run stream) to resume from where you left off. Servers may send \`:keepalive\` comments every 15s to defeat proxy idle timeouts.
-
-## System agents
-
-Invoke a system agent — bundled with the worker, not user-defined — by prefixing the id with \`system:\`:
-
-\`\`\`json
-{ "agentId": "system:agent-builder", "input": { "description": "..." } }
-\`\`\`
-
-The default \`agent-builder\` powers the UI's "Create from description" feature and the CLI's \`agntz create\` command. System agents bypass the user's store and run with ephemeral in-memory state.
-
-## Public endpoints
-
-A couple of endpoints are intentionally unauthenticated:
-
-- \`GET /health\` — for load balancers and uptime checks.
-- \`POST /build-agent\` — the public agent-builder, called by \`agntz create\` (no login). Rate-limited by IP.
-
-Everything else requires an API key or the internal secret.
+Reconnect with \`Last-Event-ID\` or \`?since=<seq>\` where supported. Servers may send keepalive comments to avoid proxy idle timeouts.
 
 ## Errors
 
-The worker returns JSON error bodies with a stable \`code\`:
+The worker returns JSON error bodies with stable codes:
 
 \`\`\`json
 {
   "error": {
     "code": "AGENT_NOT_FOUND",
-    "message": "No agent with id 'unknown' in workspace ws_xxx",
+    "message": "No agent with id 'unknown'",
     "status": 404
   }
 }
@@ -121,8 +167,8 @@ The worker returns JSON error bodies with a stable \`code\`:
 | 401 | \`AUTH_MISSING\`, \`AUTH_INVALID\` |
 | 404 | \`AGENT_NOT_FOUND\`, \`RUN_NOT_FOUND\` |
 | 409 | \`RUN_CANCELLED\` |
-| 429 | \`RATE_LIMITED\` (includes \`Retry-After\` header) |
+| 429 | \`RATE_LIMITED\` |
 | 500 | \`INTERNAL\` |
 
-The SDK maps these to typed errors (\`AuthenticationError\`, \`NotFoundError\`, \`RateLimitError\`, ...). See [@agntz/client → Errors](/docs/sdk-cli/client#errors).
+The clients map these to typed errors. See [Hosted client → Errors](/docs/sdk-cli/client#errors).
 `;

@@ -22,8 +22,7 @@ await memory.write(grants, 'Prefers email.');`;
 
 const PY_RUNTIME = `import os
 
-from agntz.memrez import create_memrez
-from agntz.memrez_postgres import PostgresMemoryStore
+from agntz.resources.memrez import PostgresMemoryStore, create_memrez
 
 memory = create_memrez(
     store=PostgresMemoryStore(os.environ["DATABASE_URL"]),

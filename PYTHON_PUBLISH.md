@@ -1,13 +1,14 @@
 # Publishing `agntz` to PyPI
 
-The Python SDK is published as a single PyPI package:
+The Python SDK is published as a single PyPI package.
 
-| Directory | Package name | Version | Publish status |
-|---|---|---:|---|
-| `python` | `agntz` | 0.1.0 | publishable |
+| Directory | Package name | Local version | Published version | Publish status |
+|---|---|---:|---:|---|
+| `python` | `agntz` | 0.5.0 | 0.1.0 | publishable |
 
-The package includes the hosted client, local SDK/runtime, memrez, namespace
-grant security, SQLite memory support, and Postgres memory support.
+The package includes the hosted client, local SDK/runtime, manifest execution,
+memrez resources, namespace grant security, SQLite/Postgres stores, and the
+optional FastAPI server.
 
 ## Prerequisites
 
@@ -19,24 +20,25 @@ grant security, SQLite memory support, and Postgres memory support.
   - Workflow name: `python-release.yml`
   - Environment name: `pypi`
 
-For the first release, configure this as a pending publisher from the PyPI
-account publishing settings. The pending publisher creates the `agntz` project
-when the workflow publishes the first distribution.
-
 ## Release flow
 
-1. Update `python/pyproject.toml` with the next version.
-2. Update the Python release notes. Use `python/README.md` for the first release;
-   add `python/CHANGELOG.md` when release notes need more structure.
-3. Open and merge a PR with the version and documentation changes.
-4. Run the release workflow:
-
+1. Confirm `python/pyproject.toml` has the next version.
+2. Move `python/CHANGELOG.md` entries from `Unreleased` into that version.
+3. Run local validation:
+   ```sh
+   cd python
+   python -m pip install -e '.[dev]'
+   python -m pytest
+   python -m ruff check .
+   python -m basedpyright
+   python -m build
+   ```
+4. Merge the version and documentation PR.
+5. Run the release workflow:
    ```sh
    gh workflow run python-release.yml --ref main --repo aparry3/agntz
    ```
-
-5. Watch the run:
-
+6. Watch the run:
    ```sh
    gh run list --workflow "Python Release" --limit 1 --repo aparry3/agntz
    ```
@@ -50,11 +52,12 @@ tmpdir="$(mktemp -d)"
 cd "$tmpdir"
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install "agntz[postgres,litellm]"
+python -m pip install "agntz[postgres,litellm,server]"
 python - <<'PY'
 from agntz import AgntzClient, AsyncAgntzClient, agntz
-from agntz.memrez import create_memrez
+from agntz.resources.memrez import create_memrez
 
+print(AgntzClient, AsyncAgntzClient, agntz, create_memrez)
 print("ok")
 PY
 ```

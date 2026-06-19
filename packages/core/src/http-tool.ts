@@ -3,15 +3,15 @@
 // plus a pre-resolved state object (containing secrets and any other
 // state values referenced by `params`/`headers` templates).
 //
-// The runtime is intentionally decoupled from `@agntz/manifest`: the small
-// URL parser and template interpolator are inlined here to avoid a
-// workspace circular dependency (manifest already has a peer dep on core).
-// The semantics MUST stay in lockstep with manifest's `http-url.ts` and
-// `template.ts`; both are tiny and locked by spec, so drift is unlikely.
+// The runtime is intentionally decoupled from the manifest pipeline internals:
+// the small URL parser and template interpolator are inlined here so core
+// helpers can build HTTP tools without importing the executor. The semantics
+// MUST stay in lockstep with manifest `http-url.ts` and `template.ts`; both are
+// tiny and locked by spec, so drift is unlikely.
 //
 // `HTTPToolEntry` and `AgentState` (re-exported below) come from the shared
-// `@agntz/contracts` kernel, so core and manifest share one canonical shape
-// without core taking a runtime dep on manifest.
+// `@agntz/contracts` kernel, so core and the manifest runtime share one
+// canonical shape.
 // ═══════════════════════════════════════════════════════════════════════
 import type { AgentState, HTTPToolEntry } from "@agntz/contracts";
 import { z } from "zod";

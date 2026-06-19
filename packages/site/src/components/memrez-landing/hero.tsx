@@ -68,8 +68,7 @@ const { output } = await client.agents.run({
 
 const HERO_RUNNER_PY = `# runner.py — wire memrez into your agntz runner.
 from agntz import LiteLLMModelProvider, agntz
-from agntz.memrez import create_memrez
-from agntz.memrez_sqlite import SqliteMemoryStore
+from agntz.resources.memrez import SqliteMemoryStore, create_memrez
 
 memory = create_memrez(store=SqliteMemoryStore("./memory.db"))
 

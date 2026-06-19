@@ -2,7 +2,9 @@
 
 **Status:** Draft for review
 **Date:** 2026-06-12
-**Scope:** `@agntz/memrez`, `@agntz/core`, `@agntz/store-postgres`, `@agntz/store-sqlite`, `@agntz/manifest`, `@agntz/worker`
+**Scope:** `@agntz/memrez`, `@agntz/core`, `@agntz/core/manifest`, `@agntz/contracts`, `@agntz/platform`, `@agntz/store-postgres`, `@agntz/store-sqlite`, `@agntz/worker`
+
+> Refresh note (2026-06-18): this draft predates the namespace-root and platform-boundary work. Re-check any statements about unbounded grants, manifest package boundaries, and store ownership before implementation.
 
 ---
 
@@ -32,7 +34,7 @@ What already exists and shapes the design:
 - **`user_id` is the tenant.** In the hosted worker, `user_id` is the agntz account (Clerk id / API-key owner) — end users of a customer app (e.g. trainees in the personal-trainer app) are invisible to agntz except through sessionIds and namespace strings.
 - **The worker hosts memrez.** `packages/worker/src/resources.ts` builds one process-wide provider — `createMemrez({ store })` exposed as `resources.memory` — and every runner the worker creates receives it. The store follows `MEMREZ_STORE`/`STORE` (postgres in prod) and connects via `MEMREZ_DATABASE_URL ?? DATABASE_URL`, i.e. **memrez tables live in the worker's own database by default**, beside `ar_sessions`/`ar_messages`. Manifests declaring `resources.memory` activate it (`bridge.ts` passes `manifest.resources` through). Hosted memrez uses the built-in `llmReasoner()` by default (`MEMREZ_REASONER=llm`) for direct model-call tagging and curation, keyed from worker env provider keys. `MEMREZ_REASONER=deterministic` is the test/emergency kill switch; it files writes under `general` and curation is a no-op.
 - **Grants are caller-supplied and unprefixed.** Run requests carry namespace grants as `context: string[]`; `WorkerAPIOptions.namespacePolicy` exists but `server.ts` sets none. The hosted memrez store is shared across tenants with scope as the only partition — nothing today stops two tenants from asserting the same scope string. See §5 for why encryption turns this from an isolation bug into a key-sharing hazard.
-- **The integration seams for manifest-level config exist.** The manifest parser already handles a `resources` block (`packages/manifest/src/parser.ts:72-102`), and the worker's execution bridge threads namespace grants for resource providers (`packages/worker/src/bridge.ts:50` — `context?: string[]`).
+- **The integration seams for manifest-level config exist.** The manifest parser under `@agntz/core/manifest` already handles a `resources` block, and the worker's execution bridge threads namespace grants for resource providers.
 
 ## 3. Threat model
 

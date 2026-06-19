@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen.svg)](https://nodejs.org)
 
-PostgreSQL storage adapter for [agntz](https://github.com/aparry3/agntz). Production-ready persistent storage for multi-server deployments with automatic migrations, JSONB storage, connection pooling, and configurable table prefixes.
+PostgreSQL storage adapter for [agntz](https://github.com/aparry3/agntz). Production-ready persistent storage for multi-server deployments with automatic migrations, JSONB storage, connection pooling, runs, traces, eval records, secrets, providers, connections, API keys, namespace roots, and configurable table prefixes.
 
 ## Install
 
@@ -111,7 +111,7 @@ const store = new PostgresStore({
 
 ### `PostgresStore`
 
-Implements `UnifiedStore` from `@agntz/core` — provides `AgentStore`, `SessionStore`, `ContextStore`, and `LogStore` in a single class.
+Implements `UnifiedStore` from `@agntz/contracts` plus hosted platform store methods from `@agntz/platform` in a single class. The runner can still receive it through `@agntz/core` or `@agntz/sdk`.
 
 #### Constructor
 
@@ -148,21 +148,18 @@ new PostgresStore(options: PostgresStoreOptions)
 | `deleteSession(sessionId)` | Delete a session and its messages |
 | `listSessions(agentId?)` | List sessions, optionally filtered by agent |
 
-**ContextStore:**
+**Runtime and resource stores:**
 
 | Method | Description |
 |---|---|
-| `getContext(contextId)` | Get all entries for a context bucket |
-| `addContext(contextId, entry)` | Add an entry to a context bucket |
-| `clearContext(contextId)` | Clear all entries in a context bucket |
-
-**LogStore:**
-
-| Method | Description |
-|---|---|
-| `log(entry)` | Write an invocation log |
-| `getLogs(filter?)` | Query logs with optional filters |
-| `getLog(id)` | Get a single log by ID |
+| `runs.*` methods | Persist run records, status transitions, snapshots, and cancellation state |
+| `traces.*` methods | Persist traces and spans |
+| `evals.*` methods | Persist datasets, eval definitions, eval runs, case results, summaries, and latest scores |
+| `secrets.*` methods | Store encrypted secret values |
+| `providers/connections` methods | Store provider and connection configuration |
+| `context/log` methods | Preserve legacy scratchpad context and invocation logs |
+| `createApiKey` / `resolveApiKey` | Hosted API-key issuance and lookup |
+| `listNamespaceRoots` / `addNamespaceRoot` / `removeNamespaceRoot` | Tenant namespace root administration |
 
 **Lifecycle:**
 
@@ -177,11 +174,17 @@ The store creates the following tables automatically (prefixed with `ar_` by def
 
 | Table | Description |
 |---|---|
-| `ar_agents` | Agent definitions stored as JSONB |
+| `ar_agents` / version / alias tables | Agent definitions, immutable versions, and aliases |
 | `ar_sessions` | Session metadata with timestamps |
 | `ar_messages` | Conversation messages with JSONB tool calls |
-| `ar_context_entries` | Shared context entries between agents |
-| `ar_invocation_logs` | Full invocation logs with token usage |
+| `ar_runs` | First-class run records and snapshots |
+| `ar_traces` / `ar_spans` | Trace timeline data |
+| `ar_eval_*` tables | Datasets, eval definitions, eval runs, case results, summaries, latest scores |
+| `ar_secrets` | Encrypted secret values |
+| `ar_providers` / `ar_connections` | Provider and connection configuration |
+| `ar_api_keys` | Hashed hosted API keys |
+| `ar_namespace_roots` | Tenant grant-bounding roots |
+| `ar_context_entries` / `ar_invocation_logs` | Legacy context buckets and invocation logs |
 | `ar_schema_version` | Migration version tracking |
 
 **Indexes** are created on session_id, agent_id, and timestamp columns for efficient querying.

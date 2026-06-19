@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.5.0
+
 - Add Python hosted-platform boundaries: `agntz.platform` for API-key and
   namespace-root protocols/policy helpers, plus `PlatformMemoryStore` for
   hosted in-memory state.

@@ -20,7 +20,7 @@ import { EditableSelect, EditableText, Popover } from "./editable-fields";
 import { DashedAdd, ToolBlock } from "./inspector-bits";
 import { type ScannedMcpEntry, scanMcpEntries } from "./scan-mcp-entries";
 
-/* ── Wire types — match `@agntz/manifest` ManifestToolEntry ────────────── */
+/* ── Wire types — match manifest tool entries ─────────────────────────── */
 
 /** Per-MCP-tool wrapping (matches `WrappedToolRef`). When `tool` is the only
  *  populated field we serialize back to a plain string in YAML. */

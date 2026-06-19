@@ -1,10 +1,11 @@
 # @agntz/client
 
-Official TypeScript HTTP client for the agntz API. Universal — runs in Node 20+ and modern browsers. Zero runtime dependencies.
+Official TypeScript HTTP client for hosted Agntz and self-hosted workers. It
+runs in Node 20+ and modern browsers, with zero runtime dependencies.
 
 ## Install
 
-```bash
+```sh
 pnpm add @agntz/client
 ```
 
@@ -15,42 +16,131 @@ import { AgntzClient } from "@agntz/client";
 
 const client = new AgntzClient({
   apiKey: process.env.AGNTZ_API_KEY!,
-  baseUrl: process.env.AGNTZ_WORKER_URL!,
+  baseUrl: process.env.AGNTZ_WORKER_URL ?? "https://api.agntz.co",
 });
 
-// Non-streaming
-const { output, state } = await client.agents.run({
-  agentId: "my-agent",
-  input: { hello: "world" },
+const result = await client.agents.run({
+  agentId: "support",
+  input: { message: "Can I change my shipping address?" },
+  sessionId: "user-42",
+  context: ["app/user/u_123"],
 });
 
-// Streaming
+console.log(result.output);
+```
+
+## Streaming
+
+```ts
 const controller = new AbortController();
+
 for await (const event of client.agents.stream({
-  agentId: "my-agent",
-  input: { hello: "world" },
+  agentId: "support",
+  input: { message: "Hello" },
   signal: controller.signal,
 })) {
   if (event.type === "start") console.log("started", event.kind);
+  if (event.type === "text-delta") process.stdout.write(event.text);
   if (event.type === "complete") console.log("output", event.output);
   if (event.type === "error") console.error(event.error);
 }
+```
 
-// Health check
+## Resource surface
+
+```ts
 await client.health();
+
+await client.agents.import({
+  agents: [{ id: "support", manifest: supportYaml }],
+});
+const agents = await client.agents.list();
+const agent = await client.agents.get("support");
+
+const run = await client.runs.start({ agentId: "support", input: "hi" });
+await client.runs.get(run.id);
+await client.runs.cancel(run.id);
+await client.runs.list({ agentId: "support", status: "completed" });
+
+const traces = await client.traces.list({ agentId: "support" });
+const traceId = traces.rows[0]?.traceId;
+if (traceId) {
+  await client.traces.get(traceId);
+  await client.traces.delete(traceId);
+}
+
+await client.sessions.import({ sessions });
+await client.sessions.list({ agentId: "support" });
+await client.sessions.get("user-42");
+await client.sessions.delete("user-42");
+```
+
+## Memory
+
+Memory calls are grant-bounded. Pass the same namespace grants you use in run
+`context`.
+
+```ts
+const grants = ["app/user/u_123"];
+
+await client.memory.import({ entries });
+await client.memory.scan(grants);
+await client.memory.list(grants, { limit: 20 });
+await client.memory.read(grants, "prefs");
+await client.memory.correct(grants, entryId, "Prefers email receipts");
+await client.memory.deleteEntry(grants, entryId);
+await client.memory.curate(grants);
+await client.memory.deleteScope(grants, "app/user/u_123", { recursive: true });
+```
+
+## Datasets and evals
+
+```ts
+await client.datasets.create(dataset);
+await client.datasets.list({ agentId: "support" });
+await client.datasets.get("refund-cases");
+await client.datasets.update("refund-cases", { description: "Updated" });
+await client.datasets.delete("refund-cases");
+
+await client.evals.create(definition);
+await client.evals.list({ agentId: "support" });
+await client.evals.get("support-quality");
+
+const evalRun = await client.evals.run({
+  evalId: "support-quality",
+  datasetId: "refund-cases",
+  agentVersion: "2026-06-18T15:30:00.000Z",
+});
+
+await client.evals.getRun(evalRun.id);
+await client.evals.cancelRun(evalRun.id);
+await client.evals.listRuns({ evalId: "support-quality" });
+await client.evals.getLatestScore({
+  evalId: "support-quality",
+  datasetId: "refund-cases",
+  resolvedAgentVersion: "2026-06-18T15:30:00.000Z",
+});
+await client.evals.listLatestScores({ evalId: "support-quality" });
 ```
 
 ## Auth
 
-The client authenticates with a Bearer API key (`ar_live_...`). Generate one from the agntz app UI.
+The client sends:
 
-## Errors
+```txt
+Authorization: Bearer ar_live_...
+```
 
-- `AgntzError` — base class; all client errors inherit from it.
-- `AuthenticationError` — 401 responses (invalid or revoked key).
-- `NotFoundError` — 404 responses (e.g., unknown agent id).
-- `StreamError` — SSE protocol failures or streams that close before a terminal frame.
+Generate API keys from the hosted app or your self-hosted UI. Do not embed live
+API keys in browser code; proxy through your own backend.
 
-## Cancellation
+## Errors and cancellation
 
-Pass an `AbortSignal` via `signal` on any call, or `defaultSignal` on the client. `break` from a `for await` loop also cleans up the underlying stream.
+- `AgntzError` is the base class for client errors.
+- `AuthenticationError` represents 401 responses.
+- `NotFoundError` represents 404 responses.
+- `RateLimitError` represents 429 responses.
+- `StreamError` represents SSE protocol failures.
+
+Pass an `AbortSignal` via `signal` on any call, or `defaultSignal` on the
+client. Breaking from a `for await` stream loop closes the underlying response.

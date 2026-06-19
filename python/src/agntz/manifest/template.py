@@ -1,4 +1,4 @@
-"""Template helpers matching the TypeScript manifest package."""
+"""Template helpers matching the TypeScript core manifest runtime."""
 
 from __future__ import annotations
 

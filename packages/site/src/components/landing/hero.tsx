@@ -105,7 +105,7 @@ export function Hero({ accent = "blue" }: { accent?: AccentName }) {
 				<Stack gap={28}>
 					<Row gap={8} style={{ alignItems: "center", flexWrap: "wrap" }}>
 						<Pill accent="green" dot>
-							v1.0.0 — released
+							TS + Python runtimes
 						</Pill>
 						<Pill mono>declarative runtime</Pill>
 						<Pill mono>open source</Pill>

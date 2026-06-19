@@ -101,6 +101,24 @@ Run an agent to completion. Returns \`{ output, state, sessionId, replies }\` in
 
 Streams SSE events. Always yields a terminal \`complete\` or \`error\` event.
 
+### \`client.agents.import(...)\`
+
+Import local manifests into hosted storage. Imported agents become available to the same run and stream APIs.
+
+\`\`\`ts {group=client-agent-import}
+await client.agents.import({
+  agents: [{ id: "support", manifest: supportYaml }],
+});
+\`\`\`
+
+\`\`\`python {group=client-agent-import}
+client.agents.import_(
+    agents=[{"id": "support", "manifest": support_yaml}],
+)
+\`\`\`
+
+Stored agents can be resolved by bare id, \`agent@latest\`, exact version timestamp, or alias when the deployment exposes version and alias administration.
+
 ### Runtime context grants
 
 Pass \`context\` when a hosted run needs access to a resource such as memory. These are namespace grants minted by trusted server-side code; the model never receives a namespace parameter.
@@ -180,6 +198,95 @@ client.agents.run(agent_id="support", input="follow-up", session_id="user-42")
 \`\`\`
 
 Sessions are managed automatically and scoped to your user. See [Sessions](/docs/concepts/sessions).
+
+You can also import or delete sessions when migrating local state:
+
+\`\`\`ts {group=client-session-import}
+await client.sessions.import({
+  sessions: [{ id: "user-42", messages }],
+});
+
+await client.sessions.delete("user-42");
+\`\`\`
+
+\`\`\`python {group=client-session-import}
+client.sessions.import_(
+    sessions=[{"id": "user-42", "messages": messages}],
+)
+
+client.sessions.delete("user-42")
+\`\`\`
+
+## Memory
+
+Hosted memory APIs mirror the embedded memrez admin surface. All requests are bounded by namespace roots and runtime \`context\` grants.
+
+\`\`\`ts {group=client-memory}
+await client.memory.import({ entries });
+
+const topics = await client.memory.scan(["app/user/u_123"]);
+
+const entries = await client.memory.list(["app/user/u_123"], {
+  limit: 20,
+});
+
+await client.memory.correct(
+  ["app/user/u_123"],
+  entryId,
+  "Prefers email receipts",
+);
+
+await client.memory.deleteEntry(["app/user/u_123"], entryId);
+\`\`\`
+
+\`\`\`python {group=client-memory}
+client.memory.import_(entries=entries)
+
+topics = client.memory.scan(grants=["app/user/u_123"])
+entries = client.memory.list(grants=["app/user/u_123"], limit=20)
+
+client.memory.correct(
+    ["app/user/u_123"],
+    entry_id,
+    "Prefers email receipts",
+)
+client.memory.delete_entry(["app/user/u_123"], entry_id)
+\`\`\`
+
+## Datasets and evals
+
+The hosted client manages eval definitions, datasets, async eval runs, cancellation, and latest score queries.
+
+\`\`\`ts {group=client-evals}
+await client.datasets.create(dataset);
+await client.evals.create(definition);
+
+const run = await client.evals.run({
+  evalId: "support-quality",
+  datasetId: "refund-cases",
+  agentVersion: "2026-06-18T15:30:00.000Z",
+});
+
+await client.evals.cancelRun(run.id);
+
+const scores = await client.evals.listLatestScores({
+  evalId: "support-quality",
+});
+\`\`\`
+
+\`\`\`python {group=client-evals}
+client.datasets.create(dataset)
+client.evals.create(definition)
+
+run = client.evals.run(
+    eval_id="support-quality",
+    dataset_id="refund-cases",
+    agent_version="2026-06-18T15:30:00.000Z",
+)
+
+client.evals.cancel_run(run.id)
+scores = client.evals.list_latest_scores(eval_id="support-quality")
+\`\`\`
 
 ## Errors
 

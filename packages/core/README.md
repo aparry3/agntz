@@ -254,15 +254,16 @@ runner.registerAgent(defineAgent({
 Expose your agents as an MCP server:
 
 ```typescript
-import { createMCPServer } from "@agntz/core/mcp-server";
+import { createMCPServer } from "@agntz/core";
 const server = createMCPServer(runner);
 ```
 
 ### Evals
 
-The previous manifest-level eval API has been removed. Evals are being rebuilt
-as first-class records outside `AgentDefinition`, with separate datasets, async
-runs, snapshots, and history.
+Evals are first-class records outside `AgentDefinition`: datasets, eval
+definitions, async eval runs, latest scores, snapshots, and history. The
+embedded SDK and hosted clients expose those records through their client
+resources; the core runner stays focused on execution.
 
 ## Storage
 
@@ -296,7 +297,7 @@ const runner = createRunner({
 
 ### Custom Stores
 
-Implement the store interfaces:
+Implement the store interfaces from `@agntz/contracts`:
 
 ```typescript
 interface AgentStore {
@@ -313,8 +314,9 @@ interface SessionStore {
   listSessions(agentId?: string): Promise<SessionSummary[]>;
 }
 
-// Also: ContextStore, LogStore
-// Or implement UnifiedStore for all-in-one
+// Also: RunStore, TraceStore, EvalStore, SecretStore, ProviderStore,
+// ConnectionStore, ContextStore, LogStore, and resource provider ports.
+// Or implement UnifiedStore for all-in-one runtime persistence.
 ```
 
 ## API Reference
@@ -395,16 +397,16 @@ const tool = defineTool({
 | `AgentDefinition` | Full agent configuration object |
 | `ToolDefinition` | Tool with name, description, schema, and execute function |
 | `ToolReference` | Reference to a tool: `inline`, `mcp`, or `agent` |
-| `InvokeOptions` | Options for `invoke()`: sessionId, contextIds, toolContext, etc. |
+| `InvokeOptions` | Options for `invoke()`: sessionId, context namespace grants, toolContext, etc. |
 | `InvokeResult` | Result: output, toolCalls, usage, duration, model |
 | `InvokeStream` | Async iterable of `StreamEvent` with `.result` promise |
 | `RunnerConfig` | Full configuration for `createRunner()` |
-| `UnifiedStore` | Combined `AgentStore & SessionStore & ContextStore & LogStore` |
+| `UnifiedStore` | Combined runtime store contract re-exported from `@agntz/contracts` |
 | `ModelProvider` | Interface for custom model providers |
 
 ### Error Types
 
-All errors extend `AgentRunnerError` with a `code` field:
+Most runtime errors extend `AgntzError` with a stable `code` field:
 
 | Error | Code | Description |
 |---|---|---|
@@ -502,7 +504,11 @@ Zero overhead when telemetry is not configured.
 
 | Package | Description |
 |---|---|
-| [`@agntz/manifest`](../manifest) | YAML agent manifest parser + executor |
+| [`@agntz/sdk`](../sdk) | Embedded SDK, local client, and CLI |
+| [`@agntz/client`](../client) | Hosted/self-hosted HTTP client |
+| [`@agntz/contracts`](../contracts) | Shared types, store/resource ports, and leaf utilities |
+| [`@agntz/db`](../db) | Shared SQLite/Postgres connection and migration plumbing |
+| [`@agntz/platform`](../platform) | Hosted platform store contracts |
 | [`@agntz/store-sqlite`](../store-sqlite) | SQLite storage adapter |
 | [`@agntz/store-postgres`](../store-postgres) | PostgreSQL storage adapter (multi-tenant) |
 | [`@agntz/worker`](../worker) | Hono HTTP worker for executing agents |

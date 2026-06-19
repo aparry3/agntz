@@ -49,7 +49,7 @@ Every UI-side change is versioned, every run is traced — same observability mo
 
 ## Versioning
 
-Every save creates a new version of the agent. Production resolves \`support-agent\` to the **pinned** version; in-flight edits never reach users until you pin them. The version that produced any given trace is recorded with the trace, so you can jump from a run straight to the exact manifest that ran it.
+Every save creates a new version of the agent. Runs can resolve a bare id, \`@latest\`, an exact version timestamp, or an alias when aliases are configured. The version that produced any given run or trace is recorded, so you can jump from an observation back to the exact manifest that ran.
 
 ## Bring your own model keys
 

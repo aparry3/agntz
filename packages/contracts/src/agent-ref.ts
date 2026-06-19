@@ -9,7 +9,7 @@
 //   "reviewer@stable"                       → human alias, resolved via store
 //
 // The parser is intentionally pure (no deps) so it can be reused from
-// `@agntz/manifest`, `@agntz/client`, and the worker without circular imports.
+// `@agntz/core/manifest`, `@agntz/client`, and the worker without circular imports.
 // ═══════════════════════════════════════════════════════════════════════
 
 import { InvalidAgentRefError } from "./errors.js";

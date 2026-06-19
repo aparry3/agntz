@@ -160,7 +160,7 @@ export function FooterX() {
 					>
 						<span>© 2026 agntz, inc.</span>
 						<span>MIT</span>
-						<span>v1.0.0</span>
+						<span>open source</span>
 						<Row gap={6} style={{ alignItems: "center" }}>
 							<span
 								style={{
