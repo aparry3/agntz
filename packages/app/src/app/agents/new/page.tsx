@@ -126,6 +126,7 @@ export default function NewAgentPage() {
 	const simIntervalRef = useRef<ReturnType<typeof setInterval> | undefined>(
 		undefined,
 	);
+	const loadedSiteDraftRef = useRef(false);
 
 	const parsed = useMemo(() => {
 		if (!manifest.trim()) return null;
@@ -149,6 +150,47 @@ export default function NewAgentPage() {
 	}, []);
 
 	useEffect(() => stopGenerationTimers, [stopGenerationTimers]);
+
+	useEffect(() => {
+		if (loadedSiteDraftRef.current) return;
+		const params = new URLSearchParams(window.location.search);
+		const draftId = params.get("siteDraft");
+		if (!draftId) return;
+		loadedSiteDraftRef.current = true;
+
+		let cancelled = false;
+		(async () => {
+			try {
+				const res = await fetch(
+					`/api/site-drafts/${encodeURIComponent(draftId)}`,
+				);
+				const data = await res.json().catch(() => ({}));
+				if (cancelled) return;
+				if (!res.ok || typeof data.yaml !== "string") {
+					setError(
+						typeof data.error === "string"
+							? data.error
+							: "Could not load site draft",
+					);
+					setPhase("landing");
+					return;
+				}
+				setPrompt("");
+				setManifest(data.yaml);
+				setPhase("editor");
+				router.replace("/agents/new?from=site-draft");
+			} catch (err) {
+				if (!cancelled) {
+					setError(err instanceof Error ? err.message : String(err));
+					setPhase("landing");
+				}
+			}
+		})();
+
+		return () => {
+			cancelled = true;
+		};
+	}, [router]);
 
 	const startSimulation = useCallback(() => {
 		startedAtRef.current = Date.now();

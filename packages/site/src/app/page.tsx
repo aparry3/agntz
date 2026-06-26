@@ -1,3 +1,4 @@
+import { AgentBuilderHero } from "@/components/landing/agent-builder-hero";
 import { FinalCTA } from "@/components/landing/final-cta";
 import { FooterX } from "@/components/landing/footer";
 import { Hero } from "@/components/landing/hero";
@@ -18,8 +19,9 @@ export default function Home() {
 			<Nav />
 			<LanguageProvider>
 				<main>
+					<AgentBuilderHero accent={ACCENT} />
 					<Hero accent={ACCENT} />
-					<TheShift accent={ACCENT} />
+					<TheShift accent="green" />
 					<TheLoop accent={ACCENT} />
 					<RuntimeCapabilities accent={ACCENT} />
 					<RunItYourWay accent={ACCENT} />
