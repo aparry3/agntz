@@ -1,8 +1,8 @@
+import { MemoryStore } from "@agntz/stores/memory";
 import { describe, expect, it } from "vitest";
 import { defineAgent } from "../src/agent.js";
 import { InMemoryRunRegistry } from "../src/run-registry.js";
 import { createRunner } from "../src/runner.js";
-import { MemoryStore } from "../src/stores/memory.js";
 import type {
 	GenerateTextOptions,
 	GenerateTextResult,
@@ -56,7 +56,10 @@ function finalText(text: string): GenerateTextResult {
 describe("reply tool", () => {
 	it("does NOT register a reply tool when agent.reply is unset", async () => {
 		const provider = new MockModelProvider([finalText("done")]);
-		const runner = createRunner({ modelProvider: provider });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+		});
 		runner.registerAgent(
 			defineAgent({
 				id: "no-reply",
@@ -76,7 +79,10 @@ describe("reply tool", () => {
 
 	it("registers a reply tool when agent.reply: true", async () => {
 		const provider = new MockModelProvider([finalText("done")]);
-		const runner = createRunner({ modelProvider: provider });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+		});
 		runner.registerAgent(
 			defineAgent({
 				id: "with-reply",

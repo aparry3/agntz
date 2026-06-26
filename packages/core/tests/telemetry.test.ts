@@ -1,3 +1,4 @@
+import { MemoryStore } from "@agntz/stores/memory";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { createRunner, defineAgent, defineTool } from "../src/index.js";
@@ -317,6 +318,7 @@ describe("Runner with telemetry", () => {
 		const provider = createMockProvider();
 
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: provider,
 			telemetry: { tracer },
 		});
@@ -373,6 +375,7 @@ describe("Runner with telemetry", () => {
 		});
 
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: provider,
 			tools: [getTime],
 			telemetry: { tracer },
@@ -423,6 +426,7 @@ describe("Runner with telemetry", () => {
 		};
 
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: provider,
 			telemetry: { tracer },
 			retry: { maxRetries: 0 }, // No retries for test
@@ -455,6 +459,7 @@ describe("Runner with telemetry", () => {
 		const provider = createMockProvider();
 
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: provider,
 			// No telemetry config
 		});
@@ -477,6 +482,7 @@ describe("Runner with telemetry", () => {
 		const provider = createMockProvider();
 
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: provider,
 			telemetry: { tracer },
 		});

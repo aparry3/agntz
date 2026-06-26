@@ -1,0 +1,82 @@
+{
+  "name": "@agntz/stores",
+  "version": "8.0.0",
+  "description": "Storage contracts and memory/Postgres/SQLite store implementations for agntz",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./contracts": {
+      "types": "./dist/contracts.d.ts",
+      "import": "./dist/contracts.js"
+    },
+    "./memory": {
+      "types": "./dist/memory.d.ts",
+      "import": "./dist/memory.js"
+    },
+    "./postgres": {
+      "types": "./dist/postgres.d.ts",
+      "import": "./dist/postgres.js"
+    },
+    "./sqlite": {
+      "types": "./dist/sqlite.d.ts",
+      "import": "./dist/sqlite.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "biome check src tests --no-errors-on-unmatched",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "tsup"
+  },
+  "dependencies": {
+    "@agntz/contracts": "workspace:*",
+    "@agntz/db": "workspace:*"
+  },
+  "peerDependencies": {
+    "better-sqlite3": "^11.8.1",
+    "pg": "^8.20.0"
+  },
+  "peerDependenciesMeta": {
+    "better-sqlite3": {
+      "optional": true
+    },
+    "pg": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.0",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.0",
+    "better-sqlite3": "^11.8.1",
+    "pg": "^8.20.0",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  },
+  "keywords": ["agntz", "stores", "postgres", "sqlite", "storage"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aparry3/agntz.git",
+    "directory": "packages/stores"
+  },
+  "homepage": "https://github.com/aparry3/agntz#readme",
+  "author": "Aaron Bidworthy",
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

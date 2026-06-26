@@ -92,4 +92,4 @@ Planned: Vercel (app) + Railway (worker) + Neon (Postgres) on `agntz.co`. See th
 |---|---|
 | [`@agntz/core`](../core) | The underlying SDK |
 | [`@agntz/worker`](../worker) | Hono HTTP worker consumed by this app |
-| [`@agntz/store-postgres`](../store-postgres) | Production store used in deployment |
+| [`@agntz/stores`](../stores) | Production store used in deployment |

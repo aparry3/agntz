@@ -30,7 +30,6 @@ import {
 	normalizeNamespaceGrants,
 } from "./namespace.js";
 import { makeResourceToolName } from "./resource.js";
-import { MemoryStore } from "./stores/memory.js";
 import { Telemetry } from "./telemetry.js";
 import type { InvokeSpan } from "./telemetry.js";
 import { ToolRegistry } from "./tool.js";
@@ -375,18 +374,37 @@ export class Runner {
 	constructor(config: RunnerConfig = {}) {
 		this.config = config;
 
-		// Set up stores — unified or split
+		// Set up stores — unified or fully split. Store implementations live in
+		// @agntz/stores; core only consumes the storage contracts.
 		if (config.store) {
 			this.agentStore = config.store;
 			this.sessionStore = config.store;
 			this.contextStore = config.store;
 			this.logStore = config.store;
+		} else if (
+			config.agentStore ||
+			config.sessionStore ||
+			config.contextStore ||
+			config.logStore
+		) {
+			if (
+				!config.agentStore ||
+				!config.sessionStore ||
+				!config.contextStore ||
+				!config.logStore
+			) {
+				throw new Error(
+					"createRunner requires either config.store or all split stores: agentStore, sessionStore, contextStore, and logStore.",
+				);
+			}
+			this.agentStore = config.agentStore;
+			this.sessionStore = config.sessionStore;
+			this.contextStore = config.contextStore;
+			this.logStore = config.logStore;
 		} else {
-			const defaultStore = new MemoryStore();
-			this.agentStore = config.agentStore ?? defaultStore;
-			this.sessionStore = config.sessionStore ?? defaultStore;
-			this.contextStore = config.contextStore ?? defaultStore;
-			this.logStore = config.logStore ?? defaultStore;
+			throw new Error(
+				"createRunner requires a store. Pass { store } from @agntz/stores/memory, @agntz/stores/postgres, or @agntz/stores/sqlite.",
+			);
 		}
 
 		// Model provider — pass the provider store so it can look up API keys

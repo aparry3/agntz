@@ -6,7 +6,7 @@ import {
 	defineAgent,
 	defineTool,
 } from "@agntz/core";
-import { PlatformMemoryStore as MemoryStore } from "@agntz/platform/memory";
+import { MemoryStore } from "@agntz/stores/memory";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { wrapWithSkillRedaction } from "../src/session-redact.js";

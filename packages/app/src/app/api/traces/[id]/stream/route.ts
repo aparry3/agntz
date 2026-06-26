@@ -1,4 +1,8 @@
-import { AuthRequiredError, requireUserContext, workerIdentity } from "@/lib/user";
+import {
+	AuthRequiredError,
+	requireUserContext,
+	workerIdentity,
+} from "@/lib/user";
 import { workerTraceStream } from "@/lib/worker-traces";
 import { type NextRequest, NextResponse } from "next/server";
 

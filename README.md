@@ -100,11 +100,9 @@ const result = await client.agents.run({
 | `@agntz/core` | Low-level runner, definitions, MCP helpers, telemetry, and `@agntz/core/manifest` |
 | `@agntz/contracts` | Shared type/kernel package for stores, resources, tools, evals, runs, and leaf utilities |
 | `@agntz/db` | Shared SQLite/Postgres connection and migration plumbing |
-| `@agntz/platform` | Hosted platform contracts for API keys, namespace roots, webhook delivery, and platform stores |
+| `@agntz/stores` | Store contracts plus in-memory, SQLite, and Postgres implementations |
 | `@agntz/memrez` | Memory resource provider and memory stores |
-| `@agntz/store-sqlite` | SQLite implementation of Agntz store contracts |
-| `@agntz/store-postgres` | Postgres implementation of Agntz store contracts |
-| `agntz` | Python hosted client, embedded SDK/runtime, stores, memrez resources, and optional server |
+| `agntz` | Python hosted client, embedded SDK/runtime, stores, and memrez resources |
 
 The old standalone `@agntz/manifest` package has been merged into
 `@agntz/core/manifest`.

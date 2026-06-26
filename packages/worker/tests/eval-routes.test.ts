@@ -5,7 +5,7 @@ import {
 	createRunner,
 } from "@agntz/core";
 import type { AgentManifest } from "@agntz/core/manifest";
-import { PlatformMemoryStore as MemoryStore } from "@agntz/platform/memory";
+import { MemoryStore } from "@agntz/stores/memory";
 import { describe, expect, it } from "vitest";
 import { createWorkerAPI } from "../src/routes.js";
 

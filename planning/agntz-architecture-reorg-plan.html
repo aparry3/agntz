@@ -1,0 +1,801 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agntz Architecture Reorg Plan</title>
+  <style>
+    :root {
+      --bg: #f7f8f5;
+      --panel: #ffffff;
+      --ink: #202631;
+      --muted: #667085;
+      --line: #d7dde6;
+      --soft: #eef2f7;
+      --core: #b94700;
+      --contracts: #195f73;
+      --stores: #116a59;
+      --host: #7f3f98;
+      --client: #315ea8;
+      --python: #5d6b24;
+      --external: #64748b;
+      --danger: #9f2f2f;
+      --shadow: rgba(22, 32, 44, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      min-height: 100%;
+      color: var(--ink);
+      background: var(--bg);
+      font: 14px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      padding: 28px;
+    }
+
+    header,
+    main {
+      max-width: 1260px;
+      margin: 0 auto;
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 22px;
+      align-items: end;
+      margin-bottom: 20px;
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      max-width: 880px;
+      font-size: clamp(30px, 4vw, 48px);
+    }
+
+    h2 {
+      font-size: 22px;
+      margin-bottom: 12px;
+    }
+
+    h3 {
+      font-size: 16px;
+      margin-bottom: 8px;
+    }
+
+    p {
+      margin: 0;
+    }
+
+    .lede {
+      max-width: 840px;
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 16px;
+    }
+
+    .meta {
+      min-width: 250px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.82);
+      padding: 14px 16px;
+      box-shadow: 0 12px 32px rgba(15, 23, 42, 0.06);
+    }
+
+    .meta strong {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .meta span {
+      display: block;
+      margin-top: 5px;
+      font-weight: 800;
+    }
+
+    .section {
+      margin: 16px 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.88);
+      box-shadow: 0 16px 42px rgba(15, 23, 42, 0.07);
+      overflow: hidden;
+    }
+
+    .section-body {
+      padding: 20px;
+    }
+
+    .band {
+      border-bottom: 1px solid var(--line);
+      background: #fbfcfd;
+      padding: 16px 20px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 16px;
+    }
+
+    .callout {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 14px;
+    }
+
+    .callout strong {
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    ul,
+    ol {
+      margin: 8px 0 0 20px;
+      padding: 0;
+    }
+
+    li {
+      margin: 5px 0;
+    }
+
+    code {
+      border: 1px solid #d8dee8;
+      border-radius: 5px;
+      background: #f4f6f8;
+      padding: 1px 5px;
+      font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    pre {
+      overflow: auto;
+      border: 1px solid #d8dee8;
+      border-radius: 8px;
+      background: #101722;
+      color: #e9eef5;
+      padding: 14px;
+      font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    th,
+    td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f4f6f8;
+      color: #374151;
+      font-size: 12px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .tag {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 8px;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .tag.contracts { background: var(--contracts); }
+    .tag.stores { background: var(--stores); }
+    .tag.host { background: var(--host); }
+    .tag.core { background: var(--core); }
+    .tag.client { background: var(--client); }
+    .tag.python { background: var(--python); }
+    .tag.remove { background: var(--danger); }
+    .tag.external { background: var(--external); }
+
+    .diagram {
+      width: 100%;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background:
+        linear-gradient(#eef2f6 1px, transparent 1px),
+        linear-gradient(90deg, #eef2f6 1px, transparent 1px),
+        #fbfcfd;
+      background-size: 28px 28px;
+    }
+
+    svg {
+      display: block;
+      min-width: 1080px;
+      width: 100%;
+      height: auto;
+    }
+
+    .node rect {
+      fill: #fff;
+      stroke: #cbd5e1;
+      stroke-width: 1.5;
+      rx: 8;
+      filter: drop-shadow(0 6px 12px rgba(15, 23, 42, 0.10));
+    }
+
+    .node text {
+      fill: var(--ink);
+      font-weight: 800;
+      font-size: 14px;
+    }
+
+    .node .sub {
+      fill: var(--muted);
+      font-weight: 650;
+      font-size: 11px;
+    }
+
+    .node.contracts rect { stroke: var(--contracts); }
+    .node.stores rect { stroke: var(--stores); }
+    .node.host rect { stroke: var(--host); }
+    .node.core rect { stroke: var(--core); }
+    .node.client rect { stroke: var(--client); }
+    .node.python rect { stroke: var(--python); }
+    .node.external rect { stroke: var(--external); }
+
+    .edge {
+      fill: none;
+      stroke: #475569;
+      stroke-width: 2.2;
+      marker-end: url(#arrow);
+    }
+
+    .edge.pkg { stroke: #285f86; }
+    .edge.runtime { stroke: #8a4b15; stroke-width: 2.5; }
+    .edge.optional { stroke: #7a5195; stroke-dasharray: 7 6; }
+    .edge.http { stroke: #116a59; stroke-dasharray: 9 6; }
+
+    .edge-label {
+      fill: #334155;
+      font-size: 11px;
+      font-weight: 800;
+      paint-order: stroke;
+      stroke: #fbfcfd;
+      stroke-width: 5px;
+      stroke-linejoin: round;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .phase-list {
+      counter-reset: phase;
+      display: grid;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .phase {
+      position: relative;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 12px 14px 12px 48px;
+    }
+
+    .phase::before {
+      counter-increment: phase;
+      content: counter(phase);
+      position: absolute;
+      left: 14px;
+      top: 14px;
+      display: grid;
+      place-items: center;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #263241;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .warn {
+      border-left: 4px solid var(--danger);
+    }
+
+    .ok {
+      border-left: 4px solid var(--stores);
+    }
+
+    @media (max-width: 920px) {
+      body {
+        padding: 18px;
+      }
+
+      header,
+      .two-col,
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .meta {
+        min-width: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Agntz Architecture Reorg Plan</h1>
+      <p class="lede">
+        Consolidate the TypeScript storage surface, remove the ambiguous platform library, and keep Python as a library/client SDK without a second hosted worker.
+      </p>
+    </div>
+    <div class="meta">
+      <strong>Status</strong>
+      <span>Clean-break implementation plan</span>
+      <strong style="margin-top: 12px;">Date</strong>
+      <span>2026-06-25</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="section">
+      <div class="band">
+        <h2>Decision</h2>
+      </div>
+      <div class="section-body grid">
+        <div class="callout ok">
+          <strong>One storage package</strong>
+          Replace <code>@agntz/platform</code>, <code>@agntz/store-postgres</code>, and <code>@agntz/store-sqlite</code> with <code>@agntz/stores</code> subpaths.
+        </div>
+        <div class="callout ok">
+          <strong>One hosted worker</strong>
+          TypeScript <code>@agntz/worker</code> remains the only hosted execution service. Python keeps client and embedded SDK parity.
+        </div>
+        <div class="callout warn">
+          <strong>No compatibility wrappers</strong>
+          This is a clean break. Docs, Dockerfiles, imports, and publish notes move directly to the new package names.
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="band">
+        <h2>Target Dependency Graph</h2>
+      </div>
+      <div class="section-body">
+        <div class="diagram" aria-label="Target dependency graph">
+          <svg viewBox="0 0 1180 660" role="img">
+            <defs>
+              <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                <path d="M0,0 L0,6 L9,3 z" fill="#475569"></path>
+              </marker>
+            </defs>
+
+            <g class="node host" transform="translate(44 92)">
+              <rect width="170" height="74"></rect>
+              <text x="16" y="28">@agntz/app</text>
+              <text class="sub" x="16" y="49">hosted UI/API</text>
+            </g>
+            <g class="node host" transform="translate(44 244)">
+              <rect width="170" height="74"></rect>
+              <text x="16" y="28">@agntz/worker</text>
+              <text class="sub" x="16" y="49">TS hosted runtime</text>
+            </g>
+            <g class="node client" transform="translate(44 404)">
+              <rect width="170" height="74"></rect>
+              <text x="16" y="28">@agntz/sdk</text>
+              <text class="sub" x="16" y="49">embedded TS + CLI</text>
+            </g>
+            <g class="node python" transform="translate(44 524)">
+              <rect width="170" height="74"></rect>
+              <text x="16" y="28">agntz Python</text>
+              <text class="sub" x="16" y="49">client + embedded SDK</text>
+            </g>
+
+            <g class="node client" transform="translate(318 524)">
+              <rect width="180" height="74"></rect>
+              <text x="16" y="28">@agntz/client</text>
+              <text class="sub" x="16" y="49">HTTP/SSE only</text>
+            </g>
+            <g class="node core" transform="translate(318 284)">
+              <rect width="180" height="74"></rect>
+              <text x="16" y="28">@agntz/core</text>
+              <text class="sub" x="16" y="49">runner + manifest</text>
+            </g>
+            <g class="node stores" transform="translate(318 120)">
+              <rect width="180" height="84"></rect>
+              <text x="16" y="28">@agntz/stores</text>
+              <text class="sub" x="16" y="49">contracts + adapters</text>
+              <text class="sub" x="16" y="64">memory/postgres/sqlite</text>
+            </g>
+            <g class="node stores" transform="translate(318 420)">
+              <rect width="180" height="74"></rect>
+              <text x="16" y="28">@agntz/memrez</text>
+              <text class="sub" x="16" y="49">memory resource</text>
+            </g>
+
+            <g class="node contracts" transform="translate(646 188)">
+              <rect width="190" height="74"></rect>
+              <text x="16" y="28">@agntz/contracts</text>
+              <text class="sub" x="16" y="49">shared vocabulary</text>
+            </g>
+            <g class="node contracts" transform="translate(646 382)">
+              <rect width="190" height="74"></rect>
+              <text x="16" y="28">@agntz/db</text>
+              <text class="sub" x="16" y="49">DB plumbing</text>
+            </g>
+
+            <g class="node external" transform="translate(930 92)">
+              <rect width="190" height="74"></rect>
+              <text x="16" y="28">Postgres/SQLite</text>
+              <text class="sub" x="16" y="49">persistent storage</text>
+            </g>
+            <g class="node external" transform="translate(930 284)">
+              <rect width="190" height="74"></rect>
+              <text x="16" y="28">Model APIs / MCP</text>
+              <text class="sub" x="16" y="49">external execution</text>
+            </g>
+            <g class="node external" transform="translate(930 476)">
+              <rect width="190" height="74"></rect>
+              <text x="16" y="28">Hosted Worker API</text>
+              <text class="sub" x="16" y="49">HTTP boundary</text>
+            </g>
+
+            <path class="edge pkg" d="M214 129 C250 129 270 150 318 154"></path>
+            <text class="edge-label" x="236" y="126">imports</text>
+            <path class="edge pkg" d="M214 281 C250 281 270 200 318 180"></path>
+            <text class="edge-label" x="234" y="247">imports</text>
+            <path class="edge pkg" d="M214 281 C260 284 278 305 318 315"></path>
+            <text class="edge-label" x="238" y="306">imports</text>
+            <path class="edge pkg" d="M214 281 C258 300 274 424 318 450"></path>
+            <text class="edge-label" x="230" y="372">imports</text>
+            <path class="edge pkg" d="M214 441 C256 438 280 332 318 322"></path>
+            <text class="edge-label" x="236" y="384">imports</text>
+            <path class="edge pkg" d="M214 441 C252 460 278 542 318 560"></path>
+            <text class="edge-label" x="232" y="516">imports</text>
+            <path class="edge optional" d="M214 441 C256 442 280 464 318 460"></path>
+            <text class="edge-label" x="225" y="454">optional</text>
+            <path class="edge optional" d="M214 441 C248 424 274 178 318 166"></path>
+            <text class="edge-label" x="224" y="252">optional</text>
+
+            <path class="edge pkg" d="M498 158 C560 158 582 210 646 222"></path>
+            <text class="edge-label" x="540" y="178">imports</text>
+            <path class="edge pkg" d="M498 314 C560 314 590 242 646 226"></path>
+            <text class="edge-label" x="548" y="288">imports</text>
+            <path class="edge pkg" d="M498 450 C560 450 590 250 646 232"></path>
+            <text class="edge-label" x="540" y="366">imports</text>
+            <path class="edge pkg" d="M498 162 C560 162 588 388 646 414"></path>
+            <text class="edge-label" x="542" y="304">imports</text>
+            <path class="edge pkg" d="M498 452 C560 452 588 424 646 420"></path>
+            <text class="edge-label" x="548" y="444">imports</text>
+
+            <path class="edge runtime" d="M498 158 C674 144 756 128 930 126"></path>
+            <text class="edge-label" x="710" y="132">uses driver</text>
+            <path class="edge runtime" d="M498 320 C676 304 750 316 930 318"></path>
+            <text class="edge-label" x="710" y="306">calls</text>
+            <path class="edge http" d="M498 560 C650 558 760 520 930 514"></path>
+            <text class="edge-label" x="696" y="535">HTTP only</text>
+            <path class="edge http" d="M214 560 C520 622 736 562 930 520"></path>
+            <text class="edge-label" x="538" y="606">HTTP only</text>
+          </svg>
+        </div>
+        <div class="legend">
+          <span><span class="tag core">core</span> runtime imports only contracts</span>
+          <span><span class="tag stores">stores</span> owns storage contracts and adapters</span>
+          <span><span class="tag client">client</span> has no local package imports</span>
+          <span><span class="tag python">python</span> no hosted worker</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="band">
+        <h2>Runtime Flow</h2>
+      </div>
+      <div class="section-body">
+        <div class="diagram" aria-label="Runtime flow diagram">
+          <svg viewBox="0 0 1180 560" role="img">
+            <defs>
+              <marker id="arrow2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                <path d="M0,0 L0,6 L9,3 z" fill="#475569"></path>
+              </marker>
+            </defs>
+
+            <g class="node host" transform="translate(50 58)">
+              <rect width="190" height="72"></rect>
+              <text x="16" y="28">Hosted UI</text>
+              <text class="sub" x="16" y="49">Clerk + Next app</text>
+            </g>
+            <g class="node client" transform="translate(50 188)">
+              <rect width="190" height="72"></rect>
+              <text x="16" y="28">TS/Python clients</text>
+              <text class="sub" x="16" y="49">HTTP/SSE callers</text>
+            </g>
+            <g class="node client" transform="translate(50 378)">
+              <rect width="190" height="72"></rect>
+              <text x="16" y="28">Embedded SDKs</text>
+              <text class="sub" x="16" y="49">TS and Python local</text>
+            </g>
+
+            <g class="node host" transform="translate(356 124)">
+              <rect width="204" height="82"></rect>
+              <text x="16" y="28">TS Worker</text>
+              <text class="sub" x="16" y="49">auth, routing, tenancy</text>
+              <text class="sub" x="16" y="64">single hosted worker</text>
+            </g>
+            <g class="node core" transform="translate(674 124)">
+              <rect width="204" height="82"></rect>
+              <text x="16" y="28">Core Runner</text>
+              <text class="sub" x="16" y="49">manifest execution</text>
+              <text class="sub" x="16" y="64">tools, MCP, telemetry</text>
+            </g>
+
+            <g class="node stores" transform="translate(674 284)">
+              <rect width="204" height="82"></rect>
+              <text x="16" y="28">Stores</text>
+              <text class="sub" x="16" y="49">agents, sessions, runs</text>
+              <text class="sub" x="16" y="64">traces, secrets, API keys</text>
+            </g>
+            <g class="node stores" transform="translate(356 318)">
+              <rect width="204" height="82"></rect>
+              <text x="16" y="28">Memrez</text>
+              <text class="sub" x="16" y="49">memory resource</text>
+              <text class="sub" x="16" y="64">separate memory stores</text>
+            </g>
+
+            <g class="node external" transform="translate(954 78)">
+              <rect width="180" height="72"></rect>
+              <text x="16" y="28">Model APIs</text>
+              <text class="sub" x="16" y="49">OpenAI, Anthropic, etc.</text>
+            </g>
+            <g class="node external" transform="translate(954 202)">
+              <rect width="180" height="72"></rect>
+              <text x="16" y="28">MCP / HTTP tools</text>
+              <text class="sub" x="16" y="49">remote tool targets</text>
+            </g>
+            <g class="node external" transform="translate(954 326)">
+              <rect width="180" height="72"></rect>
+              <text x="16" y="28">Databases</text>
+              <text class="sub" x="16" y="49">Postgres / SQLite</text>
+            </g>
+
+            <path class="edge http" style="marker-end:url(#arrow2)" d="M240 94 C286 96 310 130 356 154"></path>
+            <text class="edge-label" x="268" y="112">internal HTTP</text>
+            <path class="edge http" style="marker-end:url(#arrow2)" d="M240 224 C286 222 310 184 356 172"></path>
+            <text class="edge-label" x="270" y="214">public HTTP</text>
+            <path class="edge runtime" style="marker-end:url(#arrow2)" d="M560 165 C610 165 632 165 674 165"></path>
+            <text class="edge-label" x="595" y="154">execute</text>
+            <path class="edge runtime" style="marker-end:url(#arrow2)" d="M776 206 C776 236 776 252 776 284"></path>
+            <text class="edge-label" x="788" y="248">persist</text>
+            <path class="edge runtime" style="marker-end:url(#arrow2)" d="M458 318 C458 270 522 224 674 184"></path>
+            <text class="edge-label" x="520" y="254">resource provider</text>
+            <path class="edge runtime" style="marker-end:url(#arrow2)" d="M240 414 C298 414 312 370 356 360"></path>
+            <text class="edge-label" x="268" y="396">local resource</text>
+            <path class="edge runtime" style="marker-end:url(#arrow2)" d="M240 414 C380 490 568 234 674 182"></path>
+            <text class="edge-label" x="430" y="432">local core execution</text>
+            <path class="edge runtime" style="marker-end:url(#arrow2)" d="M878 155 C906 144 926 126 954 116"></path>
+            <text class="edge-label" x="892" y="130">model call</text>
+            <path class="edge runtime" style="marker-end:url(#arrow2)" d="M878 178 C908 188 928 212 954 236"></path>
+            <text class="edge-label" x="896" y="212">tool call</text>
+            <path class="edge runtime" style="marker-end:url(#arrow2)" d="M878 326 C910 334 926 352 954 362"></path>
+            <text class="edge-label" x="900" y="346">driver</text>
+            <path class="edge runtime" style="marker-end:url(#arrow2)" d="M560 358 C596 356 634 346 674 334"></path>
+            <text class="edge-label" x="590" y="344">memory data</text>
+          </svg>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="band">
+        <h2>Package Map</h2>
+      </div>
+      <div class="section-body">
+        <table>
+          <thead>
+            <tr>
+              <th>Current</th>
+              <th>Target</th>
+              <th>Decision</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>@agntz/platform</code></td>
+              <td><code>@agntz/stores/contracts</code> and worker webhooks</td>
+              <td><span class="tag remove">remove</span> Split contracts/policy into stores; move webhook sender into worker.</td>
+            </tr>
+            <tr>
+              <td><code>@agntz/store-postgres</code></td>
+              <td><code>@agntz/stores/postgres</code></td>
+              <td><span class="tag stores">merge</span> Preserve <code>PostgresStore</code> API under the new subpath.</td>
+            </tr>
+            <tr>
+              <td><code>@agntz/store-sqlite</code></td>
+              <td><code>@agntz/stores/sqlite</code></td>
+              <td><span class="tag stores">merge</span> Preserve <code>SqliteStore</code> API under the new subpath.</td>
+            </tr>
+            <tr>
+              <td><code>@agntz/core</code></td>
+              <td><code>@agntz/core</code></td>
+              <td><span class="tag core">keep</span> Must not import SDK, client, memrez, app, worker, or stores.</td>
+            </tr>
+            <tr>
+              <td><code>@agntz/contracts</code></td>
+              <td><code>@agntz/contracts</code></td>
+              <td><span class="tag contracts">keep</span> Shared DTOs and pure utilities only; storage contracts move to stores.</td>
+            </tr>
+            <tr>
+              <td><code>@agntz/memrez</code></td>
+              <td><code>@agntz/memrez</code></td>
+              <td><span class="tag stores">keep</span> Memory resource domain and memory-specific stores stay separate.</td>
+            </tr>
+            <tr>
+              <td><code>agntz.server</code></td>
+              <td>none</td>
+              <td><span class="tag remove">remove</span> Python no longer maintains a hosted worker implementation.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="band">
+        <h2>Public Import Targets</h2>
+      </div>
+      <div class="section-body two-col">
+        <div>
+          <h3>New TypeScript imports</h3>
+          <pre><code>import type { AgntzStore } from "@agntz/stores/contracts";
+import { MemoryStore } from "@agntz/stores/memory";
+import { PostgresStore } from "@agntz/stores/postgres";
+import { SqliteStore } from "@agntz/stores/sqlite";</code></pre>
+        </div>
+        <div>
+          <h3>Package invariants</h3>
+          <ul>
+            <li><code>@agntz/client</code> has no local Agntz package dependencies.</li>
+            <li><code>@agntz/core</code> imports <code>@agntz/contracts</code> only among local packages.</li>
+            <li><code>@agntz/stores</code> does not import <code>@agntz/core</code>.</li>
+            <li><code>@agntz/memrez</code> does not import <code>@agntz/core</code>.</li>
+            <li>Hosts own identity, transport, tenant policy application, and webhooks.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="band">
+        <h2>Implementation Phases</h2>
+      </div>
+      <div class="section-body">
+        <div class="phase-list">
+          <div class="phase">
+            <h3>Create <code>@agntz/stores</code></h3>
+            Move storage contracts and existing memory/Postgres/SQLite implementations behind subpath exports. Keep driver-specific imports isolated to their subpaths.
+          </div>
+          <div class="phase">
+            <h3>Move platform contracts and policy</h3>
+            Move API-key, namespace-root, webhook-delivery contracts and namespace policy helpers into <code>@agntz/stores/contracts</code>.
+          </div>
+          <div class="phase">
+            <h3>Move worker webhook runtime</h3>
+            Move <code>createWebhookDispatcher</code>, signing, retry, and outbound delivery code into worker-owned source. Keep only persisted delivery types in stores.
+          </div>
+          <div class="phase">
+            <h3>Update app, worker, SDK, Docker, and docs</h3>
+            Replace imports, package dependencies, build steps, publish notes, and public docs with the new <code>@agntz/stores</code> subpaths.
+          </div>
+          <div class="phase">
+            <h3>Remove retired packages</h3>
+            Remove <code>packages/platform</code>, <code>packages/store-postgres</code>, and <code>packages/store-sqlite</code> after all active imports are gone.
+          </div>
+          <div class="phase">
+            <h3>Drop Python hosted worker</h3>
+            Delete <code>agntz.server</code>, the Python server extra, FastAPI/Uvicorn dependencies, server tests, and server README sections.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="band">
+        <h2>Python Scope</h2>
+      </div>
+      <div class="section-body two-col">
+        <div class="callout ok">
+          <strong>Keep</strong>
+          <ul>
+            <li>Hosted HTTP client parity with the TS worker API.</li>
+            <li>Embedded Python SDK/runtime, manifests, tools, resources, local stores, and memrez.</li>
+            <li>Python storage classes used by embedded/local SDK flows.</li>
+          </ul>
+        </div>
+        <div class="callout warn">
+          <strong>Remove</strong>
+          <ul>
+            <li><code>python/src/agntz/server.py</code>.</li>
+            <li><code>agntz[server]</code> optional dependency group.</li>
+            <li>FastAPI/Uvicorn dev dependencies unless another test still needs them.</li>
+            <li>Python tests and docs that describe self-hosting with <code>agntz.server.create_app</code>.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="band">
+        <h2>Test and Acceptance Plan</h2>
+      </div>
+      <div class="section-body two-col">
+        <div>
+          <h3>TypeScript</h3>
+          <ul>
+            <li><code>pnpm build</code></li>
+            <li><code>pnpm test</code></li>
+            <li><code>pnpm --filter @agntz/stores test</code></li>
+            <li><code>pnpm --filter @agntz/worker test</code></li>
+            <li><code>pnpm --filter @agntz/app build</code></li>
+            <li><code>rg "@agntz/platform|@agntz/store-postgres|@agntz/store-sqlite"</code> returns only historical notes, if any.</li>
+          </ul>
+        </div>
+        <div>
+          <h3>Python and artifact</h3>
+          <ul>
+            <li><code>cd python &amp;&amp; pytest</code></li>
+            <li><code>cd python &amp;&amp; basedpyright</code></li>
+            <li><code>rg "agntz.server|PlatformMemoryStore|fastapi|uvicorn" python</code> has no active runtime references.</li>
+            <li>Open this HTML file locally and confirm both SVG diagrams render without network access.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

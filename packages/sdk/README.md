@@ -101,7 +101,7 @@ tools:
 
 Missing env vars throw at invoke time with a clear error so misconfigurations surface fast.
 
-`{{secrets.NAME}}` works the same way when a `SecretStore` is wired (typically through `@agntz/store-sqlite`).
+`{{secrets.NAME}}` works the same way when a `SecretStore` is wired (typically through `@agntz/stores`).
 
 ### POST / PUT / PATCH with a request body
 
@@ -199,10 +199,10 @@ const client = await agntz({
 
 ## Sessions
 
-By default, sessions are in-memory and reset on process restart. For persistence, install `@agntz/store-sqlite` and use the `sqlite` subpath:
+By default, sessions are in-memory and reset on process restart. For persistence, install `@agntz/stores` and use the `sqlite` subpath:
 
 ```bash
-pnpm add @agntz/store-sqlite
+pnpm add @agntz/stores
 ```
 
 ```ts

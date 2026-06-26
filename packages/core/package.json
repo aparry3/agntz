@@ -19,9 +19,7 @@
       "import": "./dist/manifest/index.js"
     }
   },
-  "files": [
-    "dist"
-  ],
+  "files": ["dist"],
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
@@ -32,14 +30,7 @@
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "tsup"
   },
-  "keywords": [
-    "ai",
-    "agents",
-    "mcp",
-    "llm",
-    "typescript",
-    "sdk"
-  ],
+  "keywords": ["ai", "agents", "mcp", "llm", "typescript", "sdk"],
   "publishConfig": {
     "access": "public"
   },
@@ -82,6 +73,7 @@
     }
   },
   "devDependencies": {
+    "@agntz/stores": "workspace:*",
     "@biomejs/biome": "^1.9.0",
     "@types/node": "^22.0.0",
     "tsup": "^8.5.0",

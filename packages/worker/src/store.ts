@@ -1,12 +1,12 @@
-import type { PlatformUnifiedStore } from "@agntz/platform";
-import { PlatformMemoryStore } from "@agntz/platform/memory";
+import type { AgntzStore } from "@agntz/stores/contracts";
+import { MemoryStore } from "@agntz/stores/memory";
 
-let _store: PlatformUnifiedStore | null = null;
+let _store: AgntzStore | null = null;
 
 /**
  * Get the store instance. Lazily initialized from STORE env var.
  */
-export async function getStore(): Promise<PlatformUnifiedStore> {
+export async function getStore(): Promise<AgntzStore> {
 	if (_store) return _store;
 
 	const storeType = process.env.STORE ?? "memory";
@@ -17,12 +17,12 @@ export async function getStore(): Promise<PlatformUnifiedStore> {
 			if (!connectionString) {
 				throw new Error("DATABASE_URL is required when STORE=postgres");
 			}
-			const { PostgresStore } = await import("@agntz/store-postgres");
+			const { PostgresStore } = await import("@agntz/stores/postgres");
 			_store = new PostgresStore(connectionString);
 			break;
 		}
 		default: {
-			_store = new PlatformMemoryStore();
+			_store = new MemoryStore();
 			break;
 		}
 	}

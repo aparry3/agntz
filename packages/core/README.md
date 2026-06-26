@@ -12,11 +12,11 @@ TypeScript SDK for defining and running AI agents. Agents are portable, JSON-ser
 ## Install
 
 ```bash
-npm install @agntz/core
+npm install @agntz/core @agntz/stores
 # or
-pnpm add @agntz/core
+pnpm add @agntz/core @agntz/stores
 # or
-yarn add @agntz/core
+yarn add @agntz/core @agntz/stores
 ```
 
 Then install at least one model provider (all optional peer dependencies):
@@ -38,8 +38,9 @@ export OPENAI_API_KEY=sk-...
 
 ```typescript
 import { createRunner, defineAgent } from "@agntz/core";
+import { MemoryStore } from "@agntz/stores/memory";
 
-const runner = createRunner();
+const runner = createRunner({ store: new MemoryStore() });
 
 runner.registerAgent(defineAgent({
   id: "greeter",
@@ -271,7 +272,7 @@ The default store is in-memory. For persistence, install a database adapter:
 
 ```typescript
 import { createRunner } from "@agntz/core";
-import { SqliteStore } from "@agntz/store-sqlite";
+import { SqliteStore } from "@agntz/stores/sqlite";
 
 const runner = createRunner({
   store: new SqliteStore("./data.db"),
@@ -282,8 +283,7 @@ const runner = createRunner({
 
 | Package | Use Case |
 |---|---|
-| [`@agntz/store-sqlite`](../store-sqlite) | Single-server production |
-| [`@agntz/store-postgres`](../store-postgres) | Multi-server production |
+| [`@agntz/stores`](../stores) | Persistent storage for embedded, single-server, and multi-server production |
 
 You can also split stores by concern:
 
@@ -508,9 +508,7 @@ Zero overhead when telemetry is not configured.
 | [`@agntz/client`](../client) | Hosted/self-hosted HTTP client |
 | [`@agntz/contracts`](../contracts) | Shared types, store/resource ports, and leaf utilities |
 | [`@agntz/db`](../db) | Shared SQLite/Postgres connection and migration plumbing |
-| [`@agntz/platform`](../platform) | Hosted platform store contracts |
-| [`@agntz/store-sqlite`](../store-sqlite) | SQLite storage adapter |
-| [`@agntz/store-postgres`](../store-postgres) | PostgreSQL storage adapter (multi-tenant) |
+| [`@agntz/stores`](../stores) | Store contracts plus in-memory, SQLite, and Postgres adapters |
 | [`@agntz/worker`](../worker) | Hono HTTP worker for executing agents |
 | [`@agntz/app`](../app) | Next.js web UI — multi-tenant, Clerk auth |
 

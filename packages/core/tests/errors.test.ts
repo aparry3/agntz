@@ -1,3 +1,4 @@
+import { MemoryStore } from "@agntz/stores/memory";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { defineAgent } from "../src/agent.js";
@@ -61,6 +62,7 @@ function toolCallResponse(
 describe("Typed Errors", () => {
 	it("throws AgentNotFoundError for unknown agent", async () => {
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: new MockModelProvider(mockResponse("")),
 		});
 
@@ -80,7 +82,10 @@ describe("Typed Errors", () => {
 		controller.abort();
 
 		const provider = new MockModelProvider(mockResponse("won't get here"));
-		const runner = createRunner({ modelProvider: provider });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+		});
 
 		runner.registerAgent(
 			defineAgent({
@@ -229,7 +234,11 @@ describe("Resource limits", () => {
 
 	it("throws TokenBudgetExceededError when cumulative usage hits InvokeOptions.tokenBudget", async () => {
 		const provider = new LoopingProvider(40);
-		const runner = createRunner({ modelProvider: provider, tools: [noopTool] });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+			tools: [noopTool],
+		});
 		registerLoopAgent(runner);
 
 		try {
@@ -246,7 +255,11 @@ describe("Resource limits", () => {
 
 	it("throws TokenBudgetExceededError when budget is set on the AgentDefinition", async () => {
 		const provider = new LoopingProvider(30);
-		const runner = createRunner({ modelProvider: provider, tools: [noopTool] });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+			tools: [noopTool],
+		});
 		registerLoopAgent(runner, { tokenBudget: 40, maxSteps: 99 });
 
 		await expect(runner.invoke("looper", "go")).rejects.toBeInstanceOf(
@@ -256,7 +269,11 @@ describe("Resource limits", () => {
 
 	it("caller-tightens-only: InvokeOptions.tokenBudget below agent.tokenBudget wins", async () => {
 		const provider = new LoopingProvider(20);
-		const runner = createRunner({ modelProvider: provider, tools: [noopTool] });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+			tools: [noopTool],
+		});
 		registerLoopAgent(runner, { tokenBudget: 1000, maxSteps: 99 });
 
 		try {
@@ -271,7 +288,11 @@ describe("Resource limits", () => {
 
 	it("caller-tightens-only: InvokeOptions.tokenBudget above agent.tokenBudget is clamped", async () => {
 		const provider = new LoopingProvider(20);
-		const runner = createRunner({ modelProvider: provider, tools: [noopTool] });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+			tools: [noopTool],
+		});
 		registerLoopAgent(runner, { tokenBudget: 30, maxSteps: 99 });
 
 		try {
@@ -287,7 +308,11 @@ describe("Resource limits", () => {
 	it("does not throw when totalUsage never reaches the budget", async () => {
 		// Provider returns no tool calls on the first turn → loop terminates after 1 step.
 		const provider = new LoopingProvider(10, null);
-		const runner = createRunner({ modelProvider: provider, tools: [noopTool] });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+			tools: [noopTool],
+		});
 		registerLoopAgent(runner, { tokenBudget: 1000 });
 
 		const result = await runner.invoke("looper", "hi");
@@ -296,7 +321,11 @@ describe("Resource limits", () => {
 
 	it("agent.maxSteps caps caller's InvokeOptions.maxSteps (caller-tightens-only)", async () => {
 		const provider = new LoopingProvider(5);
-		const runner = createRunner({ modelProvider: provider, tools: [noopTool] });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+			tools: [noopTool],
+		});
 		registerLoopAgent(runner, { maxSteps: 2 });
 
 		// Caller asks for 999 steps, but agent caps at 2. With a looping provider
@@ -309,7 +338,11 @@ describe("Resource limits", () => {
 
 	it("passes maxTokens from ModelConfig through to the model provider", async () => {
 		const provider = new LoopingProvider(5, null);
-		const runner = createRunner({ modelProvider: provider, tools: [noopTool] });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+			tools: [noopTool],
+		});
 		runner.registerAgent(
 			defineAgent({
 				id: "capped",
@@ -376,6 +409,7 @@ describe("Resource limits", () => {
 
 	it("throws InvocationTimeoutError when wall-clock budget elapses", async () => {
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: new SleepLoopProvider(),
 			tools: [sleepTool],
 		});
@@ -395,6 +429,7 @@ describe("Resource limits", () => {
 
 	it("AgentDefinition.timeoutMs alone triggers InvocationTimeoutError", async () => {
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: new SleepLoopProvider(),
 			tools: [sleepTool],
 		});
@@ -407,6 +442,7 @@ describe("Resource limits", () => {
 
 	it("caller-tightens-only: InvokeOptions.timeoutMs below agent.timeoutMs wins", async () => {
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: new SleepLoopProvider(),
 			tools: [sleepTool],
 		});
@@ -424,6 +460,7 @@ describe("Resource limits", () => {
 
 	it("caller-tightens-only: InvokeOptions.timeoutMs above agent.timeoutMs is clamped", async () => {
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: new SleepLoopProvider(),
 			tools: [sleepTool],
 		});
@@ -443,6 +480,7 @@ describe("Resource limits", () => {
 		controller.abort();
 
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: new SleepLoopProvider(),
 			tools: [sleepTool],
 		});
@@ -462,7 +500,11 @@ describe("Resource limits", () => {
 	it("does not throw when the run finishes before the timeout fires", async () => {
 		// Provider returns no tool calls → loop exits in 1 step, before the 1s timer.
 		const provider = new LoopingProvider(5, null);
-		const runner = createRunner({ modelProvider: provider, tools: [noopTool] });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+			tools: [noopTool],
+		});
 		registerLoopAgent(runner, { timeoutMs: 1000 });
 
 		const result = await runner.invoke("looper", "go");

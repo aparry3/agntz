@@ -1,5 +1,5 @@
 import type { UnifiedStore } from "@agntz/core";
-import { SqliteStore } from "@agntz/store-sqlite";
+import { SqliteStore } from "@agntz/stores/sqlite";
 
 export interface SqliteStoreOptions {
 	/** Filesystem path to the SQLite database. The file is created if missing. */
@@ -20,7 +20,7 @@ export interface SqliteStoreOptions {
  * Construct a SQLite-backed `UnifiedStore` for use with `agntz()`. Persists
  * sessions and invocation logs across process restarts.
  *
- * Requires `@agntz/store-sqlite` (and its `better-sqlite3` peer dep) to be
+ * Requires `@agntz/stores` (and its `better-sqlite3` peer dep) to be
  * installed alongside `@agntz/sdk`. Kept as a separate subpath export
  * so users who don't need persistence don't pull in native bindings.
  *

@@ -206,9 +206,12 @@ export interface InvokeStream extends AsyncIterable<StreamEvent> {
 // ═══════════════════════════════════════════════════════════════════════
 
 export interface RunnerConfig {
-	/** Single store for all concerns */
+	/**
+	 * Single store for all concerns. Core does not ship a default store; use
+	 * @agntz/stores/memory, @agntz/stores/postgres, or @agntz/stores/sqlite.
+	 */
 	store?: UnifiedStore;
-	/** Or split by concern */
+	/** Or split by concern. If one split store is supplied, all four are required. */
 	agentStore?: AgentStore;
 	sessionStore?: SessionStore;
 	contextStore?: ContextStore;

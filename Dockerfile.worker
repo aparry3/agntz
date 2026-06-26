@@ -15,9 +15,8 @@ COPY packages/contracts/package.json packages/contracts/
 COPY packages/core/package.json packages/core/
 COPY packages/db/package.json packages/db/
 COPY packages/memrez/package.json packages/memrez/
-COPY packages/platform/package.json packages/platform/
+COPY packages/stores/package.json packages/stores/
 COPY packages/worker/package.json packages/worker/
-COPY packages/store-postgres/package.json packages/store-postgres/
 RUN pnpm install --frozen-lockfile
 
 # ═══════════════════════════════════════════════════════════════
@@ -28,9 +27,8 @@ COPY packages/ packages/
 RUN pnpm --filter @agntz/contracts build
 RUN pnpm --filter @agntz/core build
 RUN pnpm --filter @agntz/db build
-RUN pnpm --filter @agntz/platform build
+RUN pnpm --filter @agntz/stores build
 RUN pnpm --filter @agntz/memrez build
-RUN pnpm --filter @agntz/store-postgres build
 RUN pnpm --filter @agntz/worker build
 
 # ═══════════════════════════════════════════════════════════════
@@ -42,9 +40,8 @@ COPY --from=deps /app/packages/contracts/node_modules ./packages/contracts/node_
 COPY --from=deps /app/packages/core/node_modules ./packages/core/node_modules
 COPY --from=deps /app/packages/db/node_modules ./packages/db/node_modules
 COPY --from=deps /app/packages/memrez/node_modules ./packages/memrez/node_modules
-COPY --from=deps /app/packages/platform/node_modules ./packages/platform/node_modules
+COPY --from=deps /app/packages/stores/node_modules ./packages/stores/node_modules
 COPY --from=deps /app/packages/worker/node_modules ./packages/worker/node_modules
-COPY --from=deps /app/packages/store-postgres/node_modules ./packages/store-postgres/node_modules
 COPY --from=build /app/packages/contracts/dist ./packages/contracts/dist
 COPY --from=build /app/packages/contracts/package.json ./packages/contracts/
 COPY --from=build /app/packages/core/dist ./packages/core/dist
@@ -53,10 +50,8 @@ COPY --from=build /app/packages/db/dist ./packages/db/dist
 COPY --from=build /app/packages/db/package.json ./packages/db/
 COPY --from=build /app/packages/memrez/dist ./packages/memrez/dist
 COPY --from=build /app/packages/memrez/package.json ./packages/memrez/
-COPY --from=build /app/packages/platform/dist ./packages/platform/dist
-COPY --from=build /app/packages/platform/package.json ./packages/platform/
-COPY --from=build /app/packages/store-postgres/dist ./packages/store-postgres/dist
-COPY --from=build /app/packages/store-postgres/package.json ./packages/store-postgres/
+COPY --from=build /app/packages/stores/dist ./packages/stores/dist
+COPY --from=build /app/packages/stores/package.json ./packages/stores/
 COPY --from=build /app/packages/worker/dist ./packages/worker/dist
 COPY --from=build /app/packages/worker/package.json ./packages/worker/
 COPY pnpm-workspace.yaml package.json ./

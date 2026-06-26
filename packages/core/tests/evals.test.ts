@@ -1,6 +1,6 @@
+import { MemoryStore } from "@agntz/stores/memory";
 import { describe, expect, it } from "vitest";
 import {
-	MemoryStore,
 	createRunner,
 	latestScoreFromEvalRun,
 	runEval,

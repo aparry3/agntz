@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { MemoryStore } from "@agntz/stores/memory";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { defineAgent } from "../src/agent.js";
 import { createRunner } from "../src/runner.js";
@@ -8,6 +9,7 @@ import type {
 	GenerateTextResult,
 	ModelProvider,
 } from "../src/types.js";
+import { _resetCryptoKeyCache } from "../src/utils/crypto.js";
 
 /**
  * Mock model provider that returns deterministic responses.
@@ -46,7 +48,7 @@ const testOutboundUrlPolicy = { skipDnsResolution: true };
 
 describe("Runner", () => {
 	it("creates a runner with defaults", () => {
-		const runner = createRunner();
+		const runner = createRunner({ store: new MemoryStore() });
 		expect(runner).toBeDefined();
 		expect(runner.tools.list()).toEqual([]);
 	});
@@ -57,6 +59,7 @@ describe("Runner", () => {
 		);
 
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: provider,
 			outboundUrlPolicy: testOutboundUrlPolicy,
 		});
@@ -89,6 +92,7 @@ describe("Runner", () => {
 
 	it("throws for unknown agent", async () => {
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: new MockModelProvider(mockResponse("")),
 		});
 
@@ -104,6 +108,7 @@ describe("Runner", () => {
 		]);
 
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: provider,
 			outboundUrlPolicy: testOutboundUrlPolicy,
 		});
@@ -158,6 +163,7 @@ describe("Runner", () => {
 		});
 
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: provider,
 			tools: [getTime],
 		});
@@ -232,7 +238,11 @@ describe("Runner", () => {
 			},
 		});
 
-		const runner = createRunner({ modelProvider: provider, tools: [getTime] });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+			tools: [getTime],
+		});
 		runner.registerAgent(
 			defineAgent({
 				id: "usage-agent",
@@ -289,7 +299,11 @@ describe("Runner", () => {
 			},
 		});
 
-		const runner = createRunner({ modelProvider: provider, tools: [getTime] });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+			tools: [getTime],
+		});
 		runner.registerAgent(
 			defineAgent({
 				id: "time-agent",
@@ -371,7 +385,11 @@ describe("Runner", () => {
 			},
 		});
 
-		const runner = createRunner({ modelProvider: provider, tools: [getTime] });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+			tools: [getTime],
+		});
 		runner.registerAgent(
 			defineAgent({
 				id: "openai-time-agent",
@@ -477,7 +495,11 @@ describe("Runner", () => {
 			},
 		});
 
-		const runner = createRunner({ modelProvider: provider, tools: [getTime] });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+			tools: [getTime],
+		});
 		runner.registerAgent(
 			defineAgent({
 				id: "gemini-agent",
@@ -567,6 +589,7 @@ describe("Runner", () => {
 		});
 
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: provider,
 			tools: [ctxTool],
 		});
@@ -602,6 +625,7 @@ describe("Runner", () => {
 		});
 
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: new MockModelProvider(mockResponse("")),
 			tools: [tool],
 		});
@@ -617,6 +641,7 @@ describe("Runner", () => {
 		);
 
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: provider,
 			outboundUrlPolicy: testOutboundUrlPolicy,
 		});
@@ -672,7 +697,10 @@ describe("Runner", () => {
 			),
 		]);
 
-		const runner = createRunner({ modelProvider: provider });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+		});
 
 		runner.registerAgent(
 			defineAgent({
@@ -713,7 +741,10 @@ describe("Runner", () => {
 
 	it("agent-as-tool appears in resolved tools list", async () => {
 		const provider = new MockModelProvider(mockResponse("test"));
-		const runner = createRunner({ modelProvider: provider });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+		});
 
 		runner.registerAgent(
 			defineAgent({
@@ -750,7 +781,10 @@ describe("Runner", () => {
 			mockResponse('{"sentiment": "positive", "score": 0.95}'),
 		);
 
-		const runner = createRunner({ modelProvider: provider });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+		});
 
 		runner.registerAgent(
 			defineAgent({
@@ -795,7 +829,10 @@ describe("Runner", () => {
 	it("does not pass outputSchema when not defined on agent", async () => {
 		const provider = new MockModelProvider(mockResponse("Hello!"));
 
-		const runner = createRunner({ modelProvider: provider });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+		});
 
 		runner.registerAgent(
 			defineAgent({
@@ -815,7 +852,10 @@ describe("Runner", () => {
 			mockResponse("Here are my findings."),
 		);
 
-		const runner = createRunner({ modelProvider: provider });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+		});
 
 		runner.registerAgent(
 			defineAgent({
@@ -857,6 +897,7 @@ describe("Runner", () => {
 				mockResponse("That's a great pose!"),
 			);
 			const runner = createRunner({
+				store: new MemoryStore(),
 				modelProvider: provider,
 				outboundUrlPolicy: testOutboundUrlPolicy,
 			});
@@ -929,11 +970,6 @@ describe("Runner", () => {
 // implements `SecretStore`, so we route the runner through it scoped to a
 // test user.
 // ═══════════════════════════════════════════════════════════════════════
-
-import { afterEach, beforeEach } from "vitest";
-import { MemoryStore } from "../src/stores/memory.js";
-import { _resetCryptoKeyCache } from "../src/utils/crypto.js";
-
 const HTTP_TEST_KEY =
 	"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
@@ -1119,6 +1155,7 @@ describe("Runner — HTTP tools", () => {
 		]);
 
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: provider,
 			envProvider: (name) =>
 				name === "MY_API_TOKEN" ? "Bearer env-tok" : undefined,
@@ -1156,6 +1193,7 @@ describe("Runner — HTTP tools", () => {
 	it("throws when {{env.NAME}} is referenced but no envProvider is wired", async () => {
 		const provider = new MockModelProvider([mockResponse("never reached")]);
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: provider,
 			outboundUrlPolicy: testOutboundUrlPolicy,
 		});
@@ -1188,6 +1226,7 @@ describe("Runner — HTTP tools", () => {
 	it("throws when {{env.NAME}} is referenced but the env var is not set", async () => {
 		const provider = new MockModelProvider([mockResponse("never reached")]);
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: provider,
 			envProvider: () => undefined,
 		});
@@ -1255,6 +1294,7 @@ describe("Runner — HTTP tools", () => {
 		]);
 
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: provider,
 			outboundUrlPolicy: testOutboundUrlPolicy,
 		});

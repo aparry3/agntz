@@ -1,6 +1,6 @@
+import { MemoryStore } from "@agntz/stores/memory";
 import { describe, expect, it } from "vitest";
 import { resolveMCPServer } from "../../src/mcp/resolve-server.js";
-import { MemoryStore } from "../../src/stores/memory.js";
 
 describe("resolveMCPServer", () => {
 	it("returns the registered config when the ref matches a kind=mcp connection id", async () => {

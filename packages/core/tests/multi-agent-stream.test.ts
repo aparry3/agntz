@@ -1,3 +1,4 @@
+import { MemoryStore } from "@agntz/stores/memory";
 import { describe, expect, it } from "vitest";
 import { defineAgent } from "../src/agent.js";
 import { InMemoryRunRegistry } from "../src/run-registry.js";
@@ -154,7 +155,10 @@ describe("multi-agent spawning via stream()", () => {
 			},
 		]);
 
-		const runner = createRunner({ modelProvider: provider });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+		});
 		const registry = new InMemoryRunRegistry();
 
 		runner.registerAgent(makeAgent("researcher", "RESEARCHER"));
@@ -211,7 +215,10 @@ describe("multi-agent spawning via stream()", () => {
 			},
 		]);
 
-		const runner = createRunner({ modelProvider: provider });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+		});
 		const registry = new InMemoryRunRegistry();
 
 		runner.registerAgent(makeAgent("slow", "SLOW_CHILD"));
@@ -246,7 +253,10 @@ describe("multi-agent spawning via stream()", () => {
 			},
 		]);
 
-		const runner = createRunner({ modelProvider: provider });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+		});
 		const registry = new InMemoryRunRegistry();
 
 		runner.registerAgent(makeAgent("researcher", "RESEARCHER"));
@@ -280,7 +290,10 @@ describe("multi-agent spawning via stream()", () => {
 			},
 		]);
 
-		const runner = createRunner({ modelProvider: provider });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+		});
 
 		runner.registerAgent(makeAgent("researcher", "RESEARCHER"));
 		runner.registerAgent(
@@ -306,7 +319,10 @@ describe("multi-agent spawning via stream()", () => {
 			},
 		]);
 
-		const runner = createRunner({ modelProvider: provider });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+		});
 		const registry = new InMemoryRunRegistry();
 		runner.registerAgent(makeAgent("solo", "SOLO"));
 
@@ -353,7 +369,10 @@ describe("multi-agent spawning via stream()", () => {
 			},
 		};
 
-		const runner = createRunner({ modelProvider: provider });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+		});
 		const registry = new InMemoryRunRegistry();
 		runner.registerAgent(makeAgent("fail", "FAIL"));
 

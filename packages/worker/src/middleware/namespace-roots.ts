@@ -7,7 +7,7 @@ import {
 	narrowToRoots,
 	readScopes,
 	resolveAllowedRoots as resolveAllowedRootsForContext,
-} from "@agntz/platform";
+} from "@agntz/stores/contracts";
 import type { Context } from "hono";
 import { getAuthMethod, getPermissions, getTenantId } from "./auth.js";
 

@@ -1,8 +1,8 @@
 // ═══════════════════════════════════════════════════════════════════════
 // AES-256-GCM secret encryption.
 //
-// Used by the SecretStore implementations in @agntz/store-sqlite and
-// @agntz/store-postgres. The master key is read lazily on first use from
+// Used by the SecretStore implementations in @agntz/stores. The master key is
+// read lazily on first use from
 // the AGNTZ_SECRET_KEY environment variable so tests can set it in
 // beforeEach without import-order shenanigans.
 //

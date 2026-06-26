@@ -1,7 +1,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { MemoryStore } from "@agntz/core";
 import { createMemrez } from "@agntz/memrez";
+import { MemoryStore } from "@agntz/stores/memory";
 import { describe, expect, it } from "vitest";
 import { agntz, tool, z } from "../src/index.js";
 

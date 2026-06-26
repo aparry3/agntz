@@ -1,3 +1,4 @@
+import { MemoryStore } from "@agntz/stores/memory";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { defineAgent } from "../src/agent.js";
@@ -76,7 +77,10 @@ function mockResponse(text: string): GenerateTextResult {
 describe("Streaming", () => {
 	it("streams text deltas from an agent", async () => {
 		const provider = new MockStreamProvider(mockResponse("Hello, world!"));
-		const runner = createRunner({ modelProvider: provider });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+		});
 
 		runner.registerAgent(
 			defineAgent({
@@ -114,7 +118,10 @@ describe("Streaming", () => {
 
 	it("stream.result resolves to the final InvokeResult", async () => {
 		const provider = new MockStreamProvider(mockResponse("Test output"));
-		const runner = createRunner({ modelProvider: provider });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+		});
 
 		runner.registerAgent(
 			defineAgent({
@@ -159,7 +166,11 @@ describe("Streaming", () => {
 			},
 		});
 
-		const runner = createRunner({ modelProvider: provider, tools: [getTime] });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+			tools: [getTime],
+		});
 
 		runner.registerAgent(
 			defineAgent({
@@ -242,7 +253,11 @@ describe("Streaming", () => {
 			},
 		});
 
-		const runner = createRunner({ modelProvider: provider, tools: [getTime] });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+			tools: [getTime],
+		});
 		runner.registerAgent(
 			defineAgent({
 				id: "openai-stream-time",
@@ -304,7 +319,10 @@ describe("Streaming", () => {
 			},
 		};
 
-		const runner = createRunner({ modelProvider: provider });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+		});
 
 		runner.registerAgent(
 			defineAgent({

@@ -1,4 +1,8 @@
-import { AuthRequiredError, requireUserContext, workerIdentity } from "@/lib/user";
+import {
+	AuthRequiredError,
+	requireUserContext,
+	workerIdentity,
+} from "@/lib/user";
 import { workerValidateManifest } from "@/lib/worker-client";
 import { type NextRequest, NextResponse } from "next/server";
 

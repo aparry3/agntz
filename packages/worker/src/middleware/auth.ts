@@ -1,4 +1,4 @@
-import type { ApiKeyStore } from "@agntz/platform";
+import type { ApiKeyStore } from "@agntz/stores/contracts";
 import type { Context, MiddlewareHandler } from "hono";
 import { verifyInternalAuthToken } from "./internal-auth.js";
 

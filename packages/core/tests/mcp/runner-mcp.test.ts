@@ -21,6 +21,7 @@ vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
 	},
 }));
 
+import { MemoryStore } from "@agntz/stores/memory";
 import { defineAgent } from "../../src/agent.js";
 import { createRunner } from "../../src/runner.js";
 
@@ -92,6 +93,7 @@ describe("Runner MCP Integration", () => {
 
 	it("resolves MCP tools for an agent", async () => {
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: createMockModelProvider([
 				{ text: "Found 3 open issues." },
 			]),
@@ -132,6 +134,7 @@ describe("Runner MCP Integration", () => {
 		});
 
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: createMockModelProvider([
 				// First call: model wants to use a tool
 				{
@@ -182,6 +185,7 @@ describe("Runner MCP Integration", () => {
 
 	it("filters MCP tools by name in tool reference", async () => {
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: createMockModelProvider([{ text: "Done." }]),
 			mcp: {
 				servers: {
@@ -209,6 +213,7 @@ describe("Runner MCP Integration", () => {
 
 	it("exposes MCP status after connecting", async () => {
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: createMockModelProvider([]),
 			mcp: {
 				servers: {
@@ -247,6 +252,7 @@ describe("Runner MCP Integration", () => {
 		});
 
 		const runner = createRunner({
+			store: new MemoryStore(),
 			tools: [myTool],
 			modelProvider: createMockModelProvider([{ text: "Combined result." }]),
 			mcp: {

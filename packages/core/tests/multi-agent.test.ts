@@ -1,3 +1,4 @@
+import { MemoryStore } from "@agntz/stores/memory";
 import { describe, expect, it } from "vitest";
 import { defineAgent } from "../src/agent.js";
 import { InMemoryRunRegistry } from "../src/run-registry.js";
@@ -131,7 +132,10 @@ describe("multi-agent spawning", () => {
 			},
 		]);
 
-		const runner = createRunner({ modelProvider: provider });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+		});
 		const registry = new InMemoryRunRegistry();
 
 		runner.registerAgent(makeAgent("researcher", "RESEARCHER"));
@@ -186,7 +190,10 @@ describe("multi-agent spawning", () => {
 			},
 		]);
 
-		const runner = createRunner({ modelProvider: provider });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+		});
 		const registry = new InMemoryRunRegistry();
 
 		runner.registerAgent(makeAgent("slow", "SLOW_CHILD"));
@@ -221,7 +228,10 @@ describe("multi-agent spawning", () => {
 			},
 		]);
 
-		const runner = createRunner({ modelProvider: provider });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+		});
 
 		runner.registerAgent(makeAgent("researcher", "RESEARCHER"));
 		runner.registerAgent(
@@ -250,7 +260,10 @@ describe("multi-agent spawning", () => {
 			},
 		]);
 
-		const runner = createRunner({ modelProvider: provider });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+		});
 		const registry = new InMemoryRunRegistry();
 
 		runner.registerAgent(makeAgent("researcher", "RESEARCHER"));
@@ -270,6 +283,7 @@ describe("multi-agent spawning", () => {
 	it("limits concurrent children — extra spawns return an error tool result", async () => {
 		// Test the spawn_agent tool's limits gate by calling it directly.
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: new ScriptedModelProvider([
 				// child blocks forever (until parent aborts) so the slot stays full
 				{
@@ -342,6 +356,7 @@ describe("multi-agent spawning", () => {
 
 	it("cancellation cascades from parent to children", async () => {
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: new ScriptedModelProvider([
 				{
 					match: (o) => hasMarker(o, "INFINITE_CHILD"),
@@ -396,6 +411,7 @@ describe("multi-agent spawning", () => {
 
 	it("check_agents returns only this parent's direct children", async () => {
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: new ScriptedModelProvider([
 				{
 					match: (o) => hasMarker(o, "FAST"),

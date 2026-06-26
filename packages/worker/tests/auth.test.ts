@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { PlatformMemoryStore as MemoryStore } from "@agntz/platform/memory";
+import { MemoryStore } from "@agntz/stores/memory";
 import { describe, expect, it } from "vitest";
 import { createWorkerAPI } from "../src/routes.js";
 

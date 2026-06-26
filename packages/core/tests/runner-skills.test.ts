@@ -1,8 +1,8 @@
+import { MemoryStore } from "@agntz/stores/memory";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { defineAgent } from "../src/agent.js";
 import { createRunner } from "../src/runner.js";
-import { MemoryStore } from "../src/stores/memory.js";
 import { defineTool } from "../src/tool.js";
 import type {
 	GenerateTextOptions,

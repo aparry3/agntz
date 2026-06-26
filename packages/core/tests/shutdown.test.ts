@@ -1,10 +1,11 @@
+import { MemoryStore } from "@agntz/stores/memory";
 import { describe, expect, it, vi } from "vitest";
 import { defineAgent } from "../src/agent.js";
 import { createRunner } from "../src/runner.js";
 
 describe("Runner.shutdown()", () => {
 	it("succeeds when no stores or MCP are configured", async () => {
-		const runner = createRunner();
+		const runner = createRunner({ store: new MemoryStore() });
 		await runner.shutdown(); // Should not throw
 	});
 
@@ -66,7 +67,7 @@ describe("Runner.shutdown()", () => {
 	});
 
 	it("is safe to call multiple times", async () => {
-		const runner = createRunner();
+		const runner = createRunner({ store: new MemoryStore() });
 		await runner.shutdown();
 		await runner.shutdown(); // Should not throw
 	});

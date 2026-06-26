@@ -39,7 +39,7 @@ pnpm add @agntz/sdk
 pnpm add @agntz/client
 
 # Optional persistence for embedded mode
-pnpm add @agntz/store-sqlite
+pnpm add @agntz/stores
 
 # CLI (run via npx or install globally)
 npm i -g @agntz/sdk

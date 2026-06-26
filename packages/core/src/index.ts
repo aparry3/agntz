@@ -65,10 +65,6 @@ export type {
 	TokenResolverDeps,
 } from "./auth/index.js";
 
-// Stores
-export { MemoryStore, createMemoryBackend } from "./stores/memory.js";
-export type { MemoryBackend } from "./stores/memory.js";
-
 // ID utilities — exposed so workers/SDKs can pre-allocate session/run ids
 // before invoking the runner (e.g. to include them in immediate responses).
 export {

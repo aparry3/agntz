@@ -1,7 +1,7 @@
+import { MemoryStore } from "@agntz/stores/memory";
 import { describe, expect, it, vi } from "vitest";
 import { defineAgent } from "../src/agent.js";
 import { createRunner } from "../src/runner.js";
-import { MemoryStore } from "../src/stores/memory.js";
 import type { Message, ModelProvider } from "../src/types.js";
 
 function createMockProvider(

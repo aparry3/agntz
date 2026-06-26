@@ -78,7 +78,7 @@ The hosted clients work against any worker — \`api.agntz.co\` or your own. Swi
 ## Resources
 
 - **GitHub:** [github.com/aparry3/agntz](https://github.com/aparry3/agntz) — source, issues, discussions.
-- **npm:** \`@agntz/sdk\`, \`@agntz/client\`, \`@agntz/core\`, \`@agntz/contracts\`, \`@agntz/db\`, \`@agntz/platform\`, \`@agntz/memrez\`, \`@agntz/store-sqlite\`, \`@agntz/store-postgres\`.
+- **npm:** \`@agntz/sdk\`, \`@agntz/client\`, \`@agntz/core\`, \`@agntz/contracts\`, \`@agntz/db\`, \`@agntz/stores\`, \`@agntz/memrez\`.
 - **Python:** \`agntz\` package with optional \`agntz[litellm]\` local model support.
 - **License:** MIT.
 - **AI-friendly:** Every page exposes its raw markdown via the Copy button; the full corpus is at [/llms.txt](/llms.txt).

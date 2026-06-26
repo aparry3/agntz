@@ -1,5 +1,5 @@
 import { InMemoryRunRegistry, _resetCryptoKeyCache } from "@agntz/core";
-import { PlatformMemoryStore as MemoryStore } from "@agntz/platform/memory";
+import { MemoryStore } from "@agntz/stores/memory";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createWorkerAPI } from "../src/routes.js";
 

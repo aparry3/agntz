@@ -1,3 +1,4 @@
+import { MemoryStore } from "@agntz/stores/memory";
 import { beforeEach, describe, expect, it } from "vitest";
 import { defineAgent } from "../src/agent.js";
 import {
@@ -6,7 +7,6 @@ import {
 	InvalidAgentRefError,
 } from "../src/errors.js";
 import { createRunner } from "../src/runner.js";
-import { MemoryStore } from "../src/stores/memory.js";
 import type {
 	AgentDefinition,
 	GenerateTextOptions,
@@ -52,7 +52,7 @@ describe("Runner reference syntax", () => {
 		store = new MemoryStore();
 		runner = createRunner({
 			modelProvider: new StubProvider(),
-			agentStore: store,
+			store,
 		});
 	});
 
@@ -152,7 +152,7 @@ describe("Runner reference syntax", () => {
 		};
 		const tracedRunner = createRunner({
 			modelProvider: new StubProvider(),
-			agentStore: store,
+			store,
 			telemetry: { traceSink: sink },
 		});
 

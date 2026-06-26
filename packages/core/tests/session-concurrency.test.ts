@@ -1,8 +1,8 @@
+import { MemoryStore } from "@agntz/stores/memory";
 import { describe, expect, it } from "vitest";
 import { defineAgent } from "../src/agent.js";
 import { InMemoryRunRegistry } from "../src/run-registry.js";
 import { createRunner } from "../src/runner.js";
-import { MemoryStore } from "../src/stores/memory.js";
 import type {
 	GenerateTextOptions,
 	GenerateTextResult,

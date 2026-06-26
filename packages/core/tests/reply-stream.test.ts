@@ -1,7 +1,7 @@
+import { MemoryStore } from "@agntz/stores/memory";
 import { describe, expect, it } from "vitest";
 import { defineAgent } from "../src/agent.js";
 import { createRunner } from "../src/runner.js";
-import { MemoryStore } from "../src/stores/memory.js";
 import type {
 	GenerateTextOptions,
 	GenerateTextResult,
@@ -137,7 +137,10 @@ describe("Runner.stream reply events", () => {
 		// synthetic reply tool, so the model never gets a chance to call it.
 		// Stream should look like a plain text-only run.
 		const provider = new MockStreamProvider([finalText("hi there")]);
-		const runner = createRunner({ modelProvider: provider });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+		});
 		runner.registerAgent(
 			defineAgent({
 				id: "agent-no-reply",

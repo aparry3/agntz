@@ -53,12 +53,9 @@ importers:
       '@agntz/core':
         specifier: workspace:*
         version: link:../core
-      '@agntz/platform':
+      '@agntz/stores':
         specifier: workspace:*
-        version: link:../platform
-      '@agntz/store-postgres':
-        specifier: workspace:*
-        version: link:../store-postgres
+        version: link:../stores
       '@clerk/nextjs':
         specifier: ^7.4.1
         version: 7.4.1(next@15.5.18(@opentelemetry/api@1.9.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -68,6 +65,9 @@ importers:
       next:
         specifier: ^15.5.18
         version: 15.5.18(@opentelemetry/api@1.9.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      pg:
+        specifier: ^8.20.0
+        version: 8.20.0
       react:
         specifier: ^19.2.0
         version: 19.2.4
@@ -197,6 +197,9 @@ importers:
         specifier: ^3.25.0
         version: 3.25.76
     devDependencies:
+      '@agntz/stores':
+        specifier: workspace:*
+        version: link:../stores
       '@biomejs/biome':
         specifier: ^1.9.0
         version: 1.9.4
@@ -280,31 +283,6 @@ importers:
         specifier: ^3.2.0
         version: 3.2.4(@types/debug@4.1.13)(@types/node@22.19.15)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.22.3)(yaml@2.8.3)
 
-  packages/platform:
-    dependencies:
-      '@agntz/contracts':
-        specifier: workspace:*
-        version: link:../contracts
-    devDependencies:
-      '@agntz/core':
-        specifier: workspace:*
-        version: link:../core
-      '@biomejs/biome':
-        specifier: ^1.9.0
-        version: 1.9.4
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      tsup:
-        specifier: ^8.5.0
-        version: 8.5.1(jiti@2.6.1)(postcss@8.5.8)(tsx@4.22.3)(typescript@5.9.3)(yaml@2.8.3)
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.0
-        version: 3.2.4(@types/debug@4.1.13)(@types/node@22.19.15)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.22.3)(yaml@2.8.3)
-
   packages/sdk:
     dependencies:
       '@agntz/client':
@@ -313,6 +291,9 @@ importers:
       '@agntz/core':
         specifier: workspace:*
         version: link:../core
+      '@agntz/stores':
+        specifier: workspace:*
+        version: link:../stores
       yaml:
         specifier: ^2.8.0
         version: 2.8.3
@@ -323,9 +304,6 @@ importers:
       '@agntz/memrez':
         specifier: workspace:*
         version: link:../memrez
-      '@agntz/store-sqlite':
-        specifier: workspace:*
-        version: link:../store-sqlite
       '@biomejs/biome':
         specifier: ^1.9.0
         version: 1.9.4
@@ -376,7 +354,7 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
-  packages/store-postgres:
+  packages/stores:
     dependencies:
       '@agntz/contracts':
         specifier: workspace:*
@@ -384,44 +362,25 @@ importers:
       '@agntz/db':
         specifier: workspace:*
         version: link:../db
-      '@agntz/platform':
-        specifier: workspace:*
-        version: link:../platform
-      pg:
-        specifier: ^8.20.0
-        version: 8.20.0
     devDependencies:
-      '@types/pg':
-        specifier: ^8.11.0
-        version: 8.18.0
-      tsup:
-        specifier: ^8.5.0
-        version: 8.5.1(jiti@2.6.1)(postcss@8.5.8)(tsx@4.22.3)(typescript@5.9.3)(yaml@2.8.3)
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.0
-        version: 3.2.4(@types/debug@4.1.13)(@types/node@22.19.15)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.22.3)(yaml@2.8.3)
-
-  packages/store-sqlite:
-    dependencies:
-      '@agntz/contracts':
-        specifier: workspace:*
-        version: link:../contracts
-      '@agntz/db':
-        specifier: workspace:*
-        version: link:../db
-      '@agntz/platform':
-        specifier: workspace:*
-        version: link:../platform
-      better-sqlite3:
-        specifier: ^11.8.1
-        version: 11.10.0
-    devDependencies:
+      '@biomejs/biome':
+        specifier: ^1.9.0
+        version: 1.9.4
       '@types/better-sqlite3':
         specifier: ^7.6.12
         version: 7.6.13
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      '@types/pg':
+        specifier: ^8.11.0
+        version: 8.18.0
+      better-sqlite3:
+        specifier: ^11.8.1
+        version: 11.10.0
+      pg:
+        specifier: ^8.20.0
+        version: 8.20.0
       tsup:
         specifier: ^8.5.0
         version: 8.5.1(jiti@2.6.1)(postcss@8.5.8)(tsx@4.22.3)(typescript@5.9.3)(yaml@2.8.3)
@@ -434,18 +393,18 @@ importers:
 
   packages/worker:
     dependencies:
+      '@agntz/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@agntz/core':
         specifier: workspace:*
         version: link:../core
       '@agntz/memrez':
         specifier: workspace:*
         version: link:../memrez
-      '@agntz/platform':
+      '@agntz/stores':
         specifier: workspace:*
-        version: link:../platform
-      '@agntz/store-postgres':
-        specifier: workspace:*
-        version: link:../store-postgres
+        version: link:../stores
       '@hono/node-server':
         specifier: ^1.19.0
         version: 1.19.11(hono@4.12.23)
@@ -455,6 +414,9 @@ importers:
       hono:
         specifier: 4.12.23
         version: 4.12.23
+      pg:
+        specifier: ^8.20.0
+        version: 8.20.0
       yaml:
         specifier: ^2.8.0
         version: 2.8.3

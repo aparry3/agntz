@@ -1123,10 +1123,10 @@ async function readLocalSessionSnapshots(
 		};
 	};
 	try {
-		imported = (await import("@agntz/store-sqlite")) as typeof imported;
+		imported = (await import("@agntz/stores/sqlite")) as typeof imported;
 	} catch {
 		fail(
-			"Session publishing requires @agntz/store-sqlite to be installed alongside @agntz/sdk.",
+			"Session publishing requires @agntz/stores to be installed alongside @agntz/sdk.",
 		);
 	}
 	const admin = new imported.SqliteStore({ path: dbPath });

@@ -37,7 +37,6 @@ import type {
 } from "@agntz/client";
 import {
 	InMemoryRunRegistry,
-	MemoryStore,
 	SpanEmitter,
 	createRunner,
 	latestScoreFromEvalRun,
@@ -77,6 +76,7 @@ import type {
 	ScanOptions,
 	TopicSummary,
 } from "@agntz/memrez";
+import { MemoryStore } from "@agntz/stores/memory";
 import { createExecutionContext } from "./bridge.js";
 import { RunsBuffer, TracesBuffer, buildRunRecord } from "./buffers.js";
 import { loadManifestsFromDir } from "./loader.js";

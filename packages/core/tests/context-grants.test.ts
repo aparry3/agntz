@@ -1,3 +1,4 @@
+import { MemoryStore } from "@agntz/stores/memory";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { defineAgent } from "../src/agent.js";
@@ -49,7 +50,11 @@ describe("runtime namespace context grants", () => {
 			},
 		});
 
-		const runner = createRunner({ modelProvider: provider, tools: [inspect] });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+			tools: [inspect],
+		});
 		runner.registerAgent(
 			defineAgent({
 				id: "agent",
@@ -73,7 +78,10 @@ describe("runtime namespace context grants", () => {
 		const provider = new MockModelProvider([
 			{ text: "never", usage, finishReason: "stop" },
 		]);
-		const runner = createRunner({ modelProvider: provider });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+		});
 		runner.registerAgent(
 			defineAgent({
 				id: "agent",
@@ -94,6 +102,7 @@ describe("runtime namespace context grants", () => {
 			{ text: "never", usage, finishReason: "stop" },
 		]);
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: provider,
 			namespacePolicy: {
 				protectedNamespaces: [{ namespace: "gymtext/private/users" }],
@@ -158,6 +167,7 @@ describe("runtime namespace context grants", () => {
 		});
 
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: provider,
 			tools: [inspect, callChild],
 		});
@@ -243,6 +253,7 @@ describe("runtime namespace context grants", () => {
 		});
 
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: provider,
 			tools: [inspect, callChildNarrow, callChildWide],
 		});

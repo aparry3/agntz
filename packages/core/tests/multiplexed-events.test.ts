@@ -1,3 +1,4 @@
+import { MemoryStore } from "@agntz/stores/memory";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { defineAgent } from "../src/agent.js";
@@ -120,6 +121,7 @@ describe("multiplexed event emission", () => {
 			});
 
 			const runner = createRunner({
+				store: new MemoryStore(),
 				modelProvider: provider,
 				tools: [pingTool],
 			});
@@ -197,7 +199,10 @@ describe("multiplexed event emission", () => {
 				},
 			]);
 
-			const runner = createRunner({ modelProvider: provider });
+			const runner = createRunner({
+				store: new MemoryStore(),
+				modelProvider: provider,
+			});
 			runner.registerAgent(makeAgent("slowkid", "SLOWKID"));
 			runner.registerAgent(
 				makeAgent("parent", "PARENT", [{ kind: "ref", agentId: "slowkid" }]),
@@ -240,7 +245,10 @@ describe("multiplexed event emission", () => {
 				},
 			]);
 
-			const runner = createRunner({ modelProvider: provider });
+			const runner = createRunner({
+				store: new MemoryStore(),
+				modelProvider: provider,
+			});
 			runner.registerAgent(makeAgent("talker", "TALKER"));
 
 			const registry = new InMemoryRunRegistry();
@@ -306,6 +314,7 @@ describe("multiplexed event emission", () => {
 			});
 
 			const runner = createRunner({
+				store: new MemoryStore(),
 				modelProvider: provider,
 				tools: [pingTool],
 			});
@@ -352,7 +361,10 @@ describe("multiplexed event emission", () => {
 				respond: () => ({ text: "hi", usage, finishReason: "stop" }),
 			},
 		]);
-		const runner = createRunner({ modelProvider: provider });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+		});
 		runner.registerAgent(makeAgent("plain", "PLAIN"));
 
 		const r = await runner.invoke("plain", "hi");

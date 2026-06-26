@@ -10,5 +10,5 @@ export default defineConfig({
   sourcemap: true,
   target: "es2022",
   outDir: "dist",
-  external: ["@agntz/store-sqlite"],
+  external: ["@agntz/stores/sqlite"],
 });

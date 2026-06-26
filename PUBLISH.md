@@ -12,10 +12,8 @@ in [`DEPLOY.md`](./DEPLOY.md).
 | `packages/client` | `@agntz/client` | 1.3.0 | publishable |
 | `packages/contracts` | `@agntz/contracts` | 0.0.0 | publishable, first npm release pending |
 | `packages/db` | `@agntz/db` | 0.0.0 | publishable, first npm release pending |
-| `packages/platform` | `@agntz/platform` | 0.0.0 | publishable, first npm release pending |
 | `packages/memrez` | `@agntz/memrez` | 4.0.0 | publishable |
-| `packages/store-postgres` | `@agntz/store-postgres` | 7.0.0 | publishable |
-| `packages/store-sqlite` | `@agntz/store-sqlite` | 7.0.0 | publishable |
+| `packages/stores` | `@agntz/stores` | 8.0.0 | publishable |
 | `packages/app` | `@agntz/app` | 0.1.10 | private service |
 | `packages/worker` | `@agntz/worker` | 0.2.1 | private service |
 | `packages/site` | `@agntz/site` | 0.1.0 | private site |
@@ -63,10 +61,8 @@ cd packages/contracts && npm publish
 cd ../db && npm publish
 cd ../client && npm publish
 cd ../core && npm publish
-cd ../platform && npm publish
+cd ../stores && npm publish
 cd ../memrez && npm publish
-cd ../store-postgres && npm publish
-cd ../store-sqlite && npm publish
 cd ../sdk && npm publish
 ```
 
@@ -81,10 +77,8 @@ npm view @agntz/sdk version
 npm view @agntz/client version
 npm view @agntz/contracts version
 npm view @agntz/db version
-npm view @agntz/platform version
+npm view @agntz/stores version
 npm view @agntz/memrez version
-npm view @agntz/store-postgres version
-npm view @agntz/store-sqlite version
 ```
 
 Smoke test published packages in a clean project:
@@ -93,6 +87,6 @@ Smoke test published packages in a clean project:
 tmpdir="$(mktemp -d)"
 cd "$tmpdir"
 npm init -y
-npm i @agntz/core @agntz/sdk @agntz/store-sqlite @agntz/memrez
+npm i @agntz/core @agntz/sdk @agntz/stores @agntz/memrez
 node -e 'import("@agntz/core").then(() => import("@agntz/sdk")).then(() => console.log("ok"))'
 ```

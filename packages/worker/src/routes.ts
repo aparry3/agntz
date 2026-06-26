@@ -9,7 +9,6 @@ import {
 	type EvalRunListFilters,
 	InMemoryRunRegistry,
 	type InvokeResult,
-	MemoryStore,
 	type MultiplexedEvent,
 	NamespaceGrantError,
 	type NamespaceGrantPolicy,
@@ -52,11 +51,8 @@ import {
 	MemrezScopeError,
 } from "@agntz/memrez";
 import type { CurateReport, MemoryEntry, Memrez } from "@agntz/memrez";
-import {
-	type PlatformUnifiedStore,
-	type WebhookDispatcher,
-	createWebhookDispatcher,
-} from "@agntz/platform";
+import type { AgntzStore } from "@agntz/stores/contracts";
+import { MemoryStore } from "@agntz/stores/memory";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { cors } from "hono/cors";
@@ -87,6 +83,10 @@ import {
 import { LOCAL_TOOLS } from "./tools/registry.js";
 import { InMemoryTraceRegistry } from "./trace-registry.js";
 import { buildValidationContext } from "./validation.js";
+import {
+	type WebhookDispatcher,
+	createWebhookDispatcher,
+} from "./webhooks/dispatcher.js";
 
 /**
  * Hard cap for /build-agent input. The agent-builder pipeline feeds the
@@ -99,7 +99,7 @@ const EDIT_AGENT_MAX_DESCRIPTION_LENGTH = 4096;
 const EDIT_AGENT_MAX_MANIFEST_LENGTH = 64_000;
 
 export interface WorkerAPIOptions {
-	store: PlatformUnifiedStore;
+	store: AgntzStore;
 	internalSecret: string;
 	/**
 	 * Process-wide RunRegistry used by the /runs/* endpoints. If omitted, the

@@ -26,11 +26,12 @@ pnpm prepare
 
 ```
 packages/
-├── core/           # "agntz" — the main SDK
-├── manifest/       # "@agntz/manifest" — YAML agent executor
-├── store-sqlite/   # "@agntz/store-sqlite" — SQLite adapter
-├── store-postgres/ # "@agntz/store-postgres" — Postgres adapter (multi-tenant)
-├── worker/         # "@agntz/worker" — Hono HTTP worker
+├── contracts/      # "@agntz/contracts" — shared types and protocol helpers
+├── core/           # "@agntz/core" — runtime engine and pure store contracts
+├── client/         # "@agntz/client" — hosted HTTP client
+├── sdk/            # "agntz" — ergonomic SDK facade
+├── stores/         # "@agntz/stores" — store contracts and memory/Postgres/SQLite adapters
+├── worker/         # "@agntz/worker" — hosted TypeScript runtime
 └── app/            # "@agntz/app" — Next.js multi-tenant UI
 ```
 
@@ -64,11 +65,11 @@ pnpm format
 
 ## Store Adapters
 
-Want to add a new store (Redis, DynamoDB, etc.)? Follow the pattern in `packages/store-sqlite`:
+Want to add a new store backend (Redis, DynamoDB, etc.)? Follow the pattern in `packages/stores`:
 
-1. Implement the store interfaces from `agntz` (AgentStore, SessionStore, ContextStore, LogStore)
+1. Implement the store interfaces from `@agntz/core` and hosted contracts from `@agntz/stores/contracts` when the backend is used by hosted services
 2. Run the shared contract test suite against your implementation
-3. Publish as `@agntz/store-{name}`
+3. Export it from a dedicated `@agntz/stores/{backend}` subpath
 
 ## Pull Requests
 

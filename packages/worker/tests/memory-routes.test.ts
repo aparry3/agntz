@@ -6,7 +6,7 @@ import type {
 	TaggerInput,
 	TaggerResult,
 } from "@agntz/memrez";
-import { PlatformMemoryStore as MemoryStore } from "@agntz/platform/memory";
+import { MemoryStore } from "@agntz/stores/memory";
 import { describe, expect, it } from "vitest";
 import { signInternalAuthToken } from "../src/middleware/internal-auth.js";
 import { createWorkerAPI } from "../src/routes.js";

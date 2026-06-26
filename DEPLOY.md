@@ -22,10 +22,8 @@ See [`PUBLISH.md`](./PUBLISH.md) for the package graph and manual escape hatch.
    npm view @agntz/client version
    npm view @agntz/contracts version
    npm view @agntz/db version
-   npm view @agntz/platform version
+   npm view @agntz/stores version
    npm view @agntz/memrez version
-   npm view @agntz/store-postgres version
-   npm view @agntz/store-sqlite version
    ```
 
 Python is released separately through `.github/workflows/python-release.yml`.

@@ -1,3 +1,4 @@
+import { MemoryStore } from "@agntz/stores/memory";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { defineAgent } from "../src/agent.js";
@@ -71,7 +72,7 @@ function fakeProvider(seen: ResourceToolContext[] = []): ResourceProvider {
 
 describe("resource providers", () => {
 	it("fails fast when an agent declares a resource kind with no provider", () => {
-		const runner = createRunner();
+		const runner = createRunner({ store: new MemoryStore() });
 		expect(() =>
 			runner.registerAgent(
 				defineAgent({
@@ -99,6 +100,7 @@ describe("resource providers", () => {
 			{ text: "done", usage, finishReason: "stop" },
 		]);
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: provider,
 			resources: { fake: fakeProvider(seen) },
 		});
@@ -141,6 +143,7 @@ describe("resource providers", () => {
 			{ text: "done", usage, finishReason: "stop" },
 		]);
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: provider,
 			resources: { fake: fakeProvider() },
 		});
@@ -191,6 +194,7 @@ describe("resource providers", () => {
 		});
 
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: provider,
 			resources: { fake: fakeProvider() },
 			tools: [callChild],

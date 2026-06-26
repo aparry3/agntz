@@ -1,0 +1,1211 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agntz Architecture Map</title>
+  <style>
+    :root {
+      --bg: #f6f7f3;
+      --panel: #ffffff;
+      --ink: #1d2430;
+      --muted: #657084;
+      --line: #d7dbe2;
+      --shadow: rgba(31, 41, 55, 0.14);
+      --private: #b85522;
+      --public: #116a59;
+      --platform: #6f3fb5;
+      --external: #475569;
+      --runtime: #c2410c;
+      --package: #2563eb;
+      --peer: #7c3aed;
+      --split: #0f766e;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      min-height: 100%;
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0)),
+        var(--bg);
+      font: 14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      padding: 24px;
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 24px;
+      align-items: end;
+      max-width: 1520px;
+      margin: 0 auto 18px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(26px, 3vw, 42px);
+      line-height: 1.04;
+      letter-spacing: 0;
+    }
+
+    .lede {
+      max-width: 860px;
+      margin: 10px 0 0;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .meta {
+      min-width: 260px;
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.78);
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+    }
+
+    .meta strong {
+      display: block;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .meta span {
+      display: block;
+      margin-top: 4px;
+      font-weight: 700;
+    }
+
+    main {
+      display: grid;
+      grid-template-columns: minmax(720px, 1fr) 360px;
+      gap: 18px;
+      max-width: 1520px;
+      margin: 0 auto;
+      align-items: start;
+    }
+
+    .toolbar,
+    .side,
+    .canvas-shell {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.84);
+      box-shadow: 0 18px 48px rgba(15, 23, 42, 0.08);
+    }
+
+    .canvas-shell {
+      overflow: hidden;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      padding: 10px;
+      margin-bottom: 12px;
+    }
+
+    button {
+      appearance: none;
+      border: 1px solid #cbd5e1;
+      border-radius: 7px;
+      background: #fff;
+      color: var(--ink);
+      min-height: 34px;
+      padding: 0 12px;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button:hover {
+      border-color: #94a3b8;
+      background: #f8fafc;
+    }
+
+    button[aria-pressed="true"] {
+      border-color: #1f2937;
+      background: #1f2937;
+      color: #fff;
+    }
+
+    .hint {
+      margin-left: auto;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .graph-wrap {
+      position: relative;
+      overflow: auto;
+      background:
+        linear-gradient(#eef2f6 1px, transparent 1px),
+        linear-gradient(90deg, #eef2f6 1px, transparent 1px),
+        #fbfcfb;
+      background-size: 28px 28px;
+    }
+
+    svg {
+      display: block;
+      min-width: 1180px;
+      width: 100%;
+      height: auto;
+    }
+
+    .zone {
+      fill: rgba(255, 255, 255, 0.58);
+      stroke: #cbd5e1;
+      stroke-width: 1.2;
+      rx: 16;
+    }
+
+    .zone.private-zone {
+      fill: rgba(251, 146, 60, 0.07);
+      stroke: rgba(184, 85, 34, 0.26);
+    }
+
+    .zone.public-zone {
+      fill: rgba(20, 184, 166, 0.07);
+      stroke: rgba(15, 118, 110, 0.28);
+    }
+
+    .zone.external-zone {
+      fill: rgba(71, 85, 105, 0.05);
+      stroke: rgba(71, 85, 105, 0.22);
+    }
+
+    .zone-title {
+      fill: #475569;
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .edge {
+      fill: none;
+      stroke-width: 2.6;
+      stroke-linecap: round;
+      opacity: 0.88;
+    }
+
+    .edge.package {
+      stroke: var(--package);
+    }
+
+    .edge.runtime {
+      stroke: var(--runtime);
+    }
+
+    .edge.peer,
+    .edge.dev {
+      stroke: var(--peer);
+      stroke-dasharray: 7 6;
+    }
+
+    .edge.external {
+      stroke: var(--external);
+      stroke-dasharray: 4 5;
+    }
+
+    .edge.split {
+      stroke: var(--split);
+      stroke-width: 3.4;
+      stroke-dasharray: 10 7;
+    }
+
+    .edge.dimmed,
+    .edge-label.dimmed,
+    .node.dimmed {
+      opacity: 0.13;
+    }
+
+    .edge.highlight {
+      stroke-width: 4.4;
+      opacity: 1;
+    }
+
+    .edge-label {
+      paint-order: stroke;
+      stroke: #fbfcfb;
+      stroke-width: 5px;
+      stroke-linejoin: round;
+      fill: #334155;
+      font-size: 11px;
+      font-weight: 800;
+      opacity: 0.95;
+      pointer-events: none;
+    }
+
+    .node {
+      cursor: pointer;
+      filter: drop-shadow(0 8px 16px rgba(15, 23, 42, 0.10));
+    }
+
+    .node rect {
+      stroke-width: 1.6;
+      rx: 9;
+    }
+
+    .node.public rect {
+      fill: #e8f7f2;
+      stroke: rgba(17, 106, 89, 0.62);
+    }
+
+    .node.private rect {
+      fill: #fff2e7;
+      stroke: rgba(184, 85, 34, 0.62);
+    }
+
+    .node.platform rect {
+      fill: #f1eafb;
+      stroke: rgba(111, 63, 181, 0.66);
+    }
+
+    .node.external rect {
+      fill: #eef2f7;
+      stroke: rgba(71, 85, 105, 0.54);
+    }
+
+    .node.selected rect {
+      stroke: #111827;
+      stroke-width: 3;
+    }
+
+    .node-title {
+      fill: #111827;
+      font-size: 15px;
+      font-weight: 900;
+    }
+
+    .node-subtitle {
+      fill: #526072;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .badge {
+      fill: rgba(255, 255, 255, 0.72);
+      stroke: rgba(15, 23, 42, 0.13);
+      stroke-width: 1;
+      rx: 5;
+    }
+
+    .badge-text {
+      fill: #334155;
+      font-size: 10px;
+      font-weight: 900;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }
+
+    .side {
+      position: sticky;
+      top: 18px;
+      overflow: hidden;
+    }
+
+    .side-section {
+      padding: 16px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .side-section:last-child {
+      border-bottom: 0;
+    }
+
+    .side h2,
+    .side h3 {
+      margin: 0;
+      letter-spacing: 0;
+    }
+
+    .side h2 {
+      font-size: 20px;
+    }
+
+    .side h3 {
+      font-size: 13px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .detail-type {
+      display: inline-flex;
+      margin-top: 8px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: #eef2f7;
+      color: #334155;
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .detail-desc {
+      margin: 12px 0 0;
+      color: var(--muted);
+    }
+
+    .kv {
+      display: grid;
+      grid-template-columns: 86px minmax(0, 1fr);
+      gap: 7px 10px;
+      margin-top: 12px;
+      font-size: 13px;
+    }
+
+    .kv dt {
+      color: var(--muted);
+      font-weight: 800;
+    }
+
+    .kv dd {
+      margin: 0;
+      min-width: 0;
+    }
+
+    .list {
+      display: grid;
+      gap: 7px;
+      margin: 12px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .list li {
+      padding: 8px 10px;
+      border: 1px solid #e2e8f0;
+      border-radius: 7px;
+      background: #f8fafc;
+    }
+
+    .edge-name {
+      font-weight: 900;
+    }
+
+    .edge-kind {
+      display: block;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .legend {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .legend-row {
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr);
+      gap: 8px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .swatch {
+      width: 18px;
+      height: 10px;
+      border-radius: 999px;
+      background: #94a3b8;
+    }
+
+    .swatch.public {
+      background: #42b88f;
+    }
+
+    .swatch.private {
+      background: #e18a43;
+    }
+
+    .swatch.platform {
+      background: #a98ae4;
+    }
+
+    .swatch.package {
+      background: var(--package);
+    }
+
+    .swatch.runtime {
+      background: var(--runtime);
+    }
+
+    .swatch.peer {
+      background: repeating-linear-gradient(90deg, var(--peer) 0 7px, transparent 7px 12px);
+      border: 1px solid var(--peer);
+    }
+
+    .note {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .callout {
+      margin-top: 12px;
+      padding: 12px;
+      border: 1px solid rgba(15, 118, 110, 0.22);
+      border-radius: 8px;
+      background: rgba(20, 184, 166, 0.08);
+    }
+
+    .callout strong {
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    @media (max-width: 1160px) {
+      body {
+        padding: 14px;
+      }
+
+      header,
+      main {
+        grid-template-columns: 1fr;
+      }
+
+      .meta {
+        min-width: 0;
+      }
+
+      main {
+        gap: 12px;
+      }
+
+      .side {
+        position: static;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Agntz libraries and applications map</h1>
+      <p class="lede">
+        This diagram separates publishable libraries, private applications, runtime infrastructure,
+        and the candidate split between the open-source library repo and the hosted platform repo.
+      </p>
+    </div>
+    <div class="meta">
+      <strong>Source</strong>
+      <span>Repo package graph + app/worker runtime docs</span>
+    </div>
+  </header>
+
+  <main>
+    <section>
+      <div class="toolbar" aria-label="Graph filters">
+        <button type="button" data-filter="all" aria-pressed="true">All</button>
+        <button type="button" data-filter="package" aria-pressed="false">Package deps</button>
+        <button type="button" data-filter="runtime" aria-pressed="false">Runtime flows</button>
+        <button type="button" data-filter="split" aria-pressed="false">Repo split</button>
+        <span class="hint">Click a node to inspect its dependencies and interactions.</span>
+      </div>
+
+      <div class="canvas-shell">
+        <div class="graph-wrap">
+          <svg id="graph" viewBox="0 0 1500 980" role="img" aria-label="Agntz architecture dependency graph">
+            <defs>
+              <marker id="arrow-package" viewBox="0 0 10 10" refX="8.6" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#2563eb"></path>
+              </marker>
+              <marker id="arrow-runtime" viewBox="0 0 10 10" refX="8.6" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#c2410c"></path>
+              </marker>
+              <marker id="arrow-peer" viewBox="0 0 10 10" refX="8.6" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#7c3aed"></path>
+              </marker>
+              <marker id="arrow-external" viewBox="0 0 10 10" refX="8.6" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"></path>
+              </marker>
+              <marker id="arrow-split" viewBox="0 0 10 10" refX="8.6" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#0f766e"></path>
+              </marker>
+            </defs>
+            <g id="zones"></g>
+            <g id="edges"></g>
+            <g id="labels"></g>
+            <g id="nodes"></g>
+          </svg>
+        </div>
+      </div>
+    </section>
+
+    <aside class="side" aria-label="Graph details">
+      <div class="side-section">
+        <h2 id="detail-title">Select a node</h2>
+        <span id="detail-type" class="detail-type">Overview</span>
+        <p id="detail-desc" class="detail-desc">
+          The map shows direct package dependencies from package.json, plus runtime interactions from
+          the app and worker deployment docs.
+        </p>
+        <dl id="detail-kv" class="kv"></dl>
+      </div>
+
+      <div class="side-section">
+        <h3>Connected edges</h3>
+        <ul id="edge-list" class="list">
+          <li>Click a node to show inbound and outbound edges.</li>
+        </ul>
+      </div>
+
+      <div class="side-section">
+        <h3>Legend</h3>
+        <div class="legend">
+          <div class="legend-row"><span class="swatch public"></span><span>Publishable/open-source package</span></div>
+          <div class="legend-row"><span class="swatch platform"></span><span>Public platform contracts package</span></div>
+          <div class="legend-row"><span class="swatch private"></span><span>Private application/service package</span></div>
+          <div class="legend-row"><span class="swatch"></span><span>External service, user, or infrastructure</span></div>
+          <div class="legend-row"><span class="swatch package"></span><span>Direct package dependency</span></div>
+          <div class="legend-row"><span class="swatch peer"></span><span>Peer, dev-only, or optional dependency</span></div>
+          <div class="legend-row"><span class="swatch runtime"></span><span>Runtime HTTP/auth/data flow</span></div>
+        </div>
+        <div class="callout">
+          <strong>Split recommendation</strong>
+          <p class="note">
+            Keep libraries and platform contracts in the OSS repo. Move app, worker, and deployment
+            assets to a platform repo once all consumed libraries are published and tested as external packages.
+          </p>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <script>
+    const nodes = [
+      {
+        id: "browser",
+        title: "Browser users",
+        subtitle: "signed-in UI users",
+        kind: "external",
+        x: 60,
+        y: 118,
+        w: 170,
+        h: 86,
+        path: "external",
+        desc: "Human users interact with the hosted product UI through Clerk-authenticated browser sessions."
+      },
+      {
+        id: "external-api",
+        title: "External apps",
+        subtitle: "customer backends",
+        kind: "external",
+        x: 60,
+        y: 276,
+        w: 170,
+        h: 86,
+        path: "external",
+        desc: "Customer applications call hosted or self-hosted workers with API keys through the TypeScript or Python client."
+      },
+      {
+        id: "clerk",
+        title: "Clerk",
+        subtitle: "auth + orgs",
+        kind: "external",
+        x: 60,
+        y: 432,
+        w: 170,
+        h: 86,
+        path: "external",
+        desc: "Authentication and organization context used by the product app."
+      },
+      {
+        id: "model-apis",
+        title: "Model APIs",
+        subtitle: "OpenAI, Anthropic, etc.",
+        kind: "external",
+        x: 60,
+        y: 670,
+        w: 170,
+        h: 86,
+        path: "external",
+        desc: "LLM provider APIs reached by the runner through provider adapters."
+      },
+      {
+        id: "mcp",
+        title: "MCP servers",
+        subtitle: "tool endpoints",
+        kind: "external",
+        x: 60,
+        y: 802,
+        w: 170,
+        h: 86,
+        path: "external",
+        desc: "Remote MCP servers resolved by the core MCP helpers and worker validation paths."
+      },
+      {
+        id: "app",
+        title: "@agntz/app",
+        subtitle: "Next.js product UI/API",
+        kind: "private",
+        x: 328,
+        y: 116,
+        w: 210,
+        h: 96,
+        path: "packages/app",
+        desc: "Hosted web UI and product API. It handles Clerk sessions, CRUD routes, tenant scoping, and proxies execution to the worker.",
+        deps: ["@agntz/core", "@agntz/store-postgres", "@agntz/platform"]
+      },
+      {
+        id: "worker",
+        title: "@agntz/worker",
+        subtitle: "Hono execution API",
+        kind: "private",
+        x: 328,
+        y: 364,
+        w: 210,
+        h: 96,
+        path: "packages/worker",
+        desc: "Hosted execution service. It runs YAML agents, validates tools/resources, streams runs, handles API-key auth, and writes traces/memory/eval data.",
+        deps: ["@agntz/core", "@agntz/memrez", "@agntz/store-postgres", "@agntz/platform"]
+      },
+      {
+        id: "site",
+        title: "@agntz/site",
+        subtitle: "marketing + docs",
+        kind: "private",
+        x: 328,
+        y: 606,
+        w: 210,
+        h: 88,
+        path: "packages/site",
+        desc: "Marketing site and canonical public docs. It does not currently depend on local @agntz packages at runtime."
+      },
+      {
+        id: "harness",
+        title: "@agntz/provider-harness",
+        subtitle: "provider smoke tests",
+        kind: "private",
+        x: 328,
+        y: 794,
+        w: 210,
+        h: 88,
+        path: "apps/provider-harness",
+        desc: "Private smoke harness that tests model-provider capability combinations against @agntz/core.",
+        deps: ["@agntz/core"]
+      },
+      {
+        id: "client",
+        title: "@agntz/client",
+        subtitle: "HTTP/SSE client",
+        kind: "public",
+        x: 638,
+        y: 278,
+        w: 190,
+        h: 88,
+        path: "packages/client",
+        desc: "Publishable TypeScript client for hosted or self-hosted worker APIs. It has no local @agntz package dependencies."
+      },
+      {
+        id: "python",
+        title: "agntz",
+        subtitle: "Python package",
+        kind: "public",
+        x: 638,
+        y: 398,
+        w: 190,
+        h: 88,
+        path: "python",
+        desc: "Python hosted client, embedded runtime, stores, memrez resources, and optional server extras."
+      },
+      {
+        id: "sdk",
+        title: "@agntz/sdk",
+        subtitle: "embedded SDK + CLI",
+        kind: "public",
+        x: 638,
+        y: 520,
+        w: 190,
+        h: 90,
+        path: "packages/sdk",
+        desc: "Publishable TypeScript SDK and CLI. It can run YAML locally or call the hosted worker through @agntz/client.",
+        deps: ["@agntz/core", "@agntz/client"],
+        optional: ["@agntz/memrez", "@agntz/store-sqlite"]
+      },
+      {
+        id: "core",
+        title: "@agntz/core",
+        subtitle: "runner + manifest",
+        kind: "public",
+        x: 930,
+        y: 286,
+        w: 205,
+        h: 94,
+        path: "packages/core",
+        desc: "Low-level runner, manifest engine, MCP helpers, tool/resource primitives, telemetry, and shared runtime types.",
+        deps: ["@agntz/contracts"]
+      },
+      {
+        id: "platform",
+        title: "@agntz/platform",
+        subtitle: "hosted contracts",
+        kind: "platform",
+        x: 930,
+        y: 424,
+        w: 205,
+        h: 94,
+        path: "packages/platform",
+        desc: "Public package containing platform store contracts, API-key contracts, namespace-root policy, memory store helpers, and webhook delivery utilities.",
+        deps: ["@agntz/contracts"],
+        peer: ["@agntz/core"]
+      },
+      {
+        id: "memrez",
+        title: "@agntz/memrez",
+        subtitle: "durable memory",
+        kind: "public",
+        x: 930,
+        y: 560,
+        w: 205,
+        h: 92,
+        path: "packages/memrez",
+        desc: "Durable tagged memory resource provider and memory stores.",
+        deps: ["@agntz/contracts", "@agntz/db"],
+        dev: ["@agntz/core"]
+      },
+      {
+        id: "store-pg",
+        title: "@agntz/store-postgres",
+        subtitle: "Postgres store",
+        kind: "public",
+        x: 930,
+        y: 696,
+        w: 205,
+        h: 92,
+        path: "packages/store-postgres",
+        desc: "PostgreSQL implementation of Agntz store contracts plus hosted platform store methods.",
+        deps: ["@agntz/contracts", "@agntz/db", "@agntz/platform"]
+      },
+      {
+        id: "store-sqlite",
+        title: "@agntz/store-sqlite",
+        subtitle: "SQLite store",
+        kind: "public",
+        x: 930,
+        y: 824,
+        w: 205,
+        h: 92,
+        path: "packages/store-sqlite",
+        desc: "SQLite implementation of Agntz store contracts plus hosted platform store methods.",
+        deps: ["@agntz/contracts", "@agntz/db", "@agntz/platform"]
+      },
+      {
+        id: "contracts",
+        title: "@agntz/contracts",
+        subtitle: "types + leaf utilities",
+        kind: "public",
+        x: 1225,
+        y: 346,
+        w: 205,
+        h: 94,
+        path: "packages/contracts",
+        desc: "Shared type/kernel package for stores, tools, resources, evals, runs, namespace grants, and low-level utility contracts."
+      },
+      {
+        id: "db",
+        title: "@agntz/db",
+        subtitle: "DB plumbing",
+        kind: "public",
+        x: 1225,
+        y: 612,
+        w: 205,
+        h: 92,
+        path: "packages/db",
+        desc: "Shared SQLite/Postgres connection, migration, and hardening primitives used by store packages."
+      },
+      {
+        id: "postgres",
+        title: "Postgres",
+        subtitle: "shared production DB",
+        kind: "external",
+        x: 1225,
+        y: 752,
+        w: 205,
+        h: 88,
+        path: "external",
+        desc: "Production database shared by the app and worker through @agntz/store-postgres."
+      },
+      {
+        id: "sqlite",
+        title: "SQLite",
+        subtitle: "local/dev storage",
+        kind: "external",
+        x: 1225,
+        y: 864,
+        w: 205,
+        h: 78,
+        path: "external",
+        desc: "Local single-server storage used through @agntz/store-sqlite and SDK optional helpers."
+      },
+      {
+        id: "webhooks",
+        title: "Webhook targets",
+        subtitle: "customer callbacks",
+        kind: "external",
+        x: 1225,
+        y: 112,
+        w: 205,
+        h: 88,
+        path: "external",
+        desc: "External callback URLs that receive signed webhook events from platform delivery utilities."
+      }
+    ];
+
+    const edges = [
+      { from: "app", to: "core", kind: "package", label: "imports" },
+      { from: "app", to: "platform", kind: "package", label: "imports" },
+      { from: "app", to: "store-pg", kind: "package", label: "imports" },
+      { from: "worker", to: "core", kind: "package", label: "imports" },
+      { from: "worker", to: "platform", kind: "package", label: "imports" },
+      { from: "worker", to: "memrez", kind: "package", label: "imports" },
+      { from: "worker", to: "store-pg", kind: "package", label: "imports" },
+      { from: "harness", to: "core", kind: "package", label: "imports" },
+      { from: "sdk", to: "core", kind: "package", label: "imports" },
+      { from: "sdk", to: "client", kind: "package", label: "imports" },
+      { from: "sdk", to: "memrez", kind: "peer", label: "optional" },
+      { from: "sdk", to: "store-sqlite", kind: "peer", label: "optional" },
+      { from: "core", to: "contracts", kind: "package", label: "depends" },
+      { from: "platform", to: "contracts", kind: "package", label: "depends" },
+      { from: "platform", to: "core", kind: "peer", label: "peer" },
+      { from: "memrez", to: "contracts", kind: "package", label: "depends" },
+      { from: "memrez", to: "db", kind: "package", label: "depends" },
+      { from: "memrez", to: "core", kind: "dev", label: "dev/test" },
+      { from: "store-pg", to: "contracts", kind: "package", label: "depends" },
+      { from: "store-pg", to: "db", kind: "package", label: "depends" },
+      { from: "store-pg", to: "platform", kind: "package", label: "depends" },
+      { from: "store-sqlite", to: "contracts", kind: "package", label: "depends" },
+      { from: "store-sqlite", to: "db", kind: "package", label: "depends" },
+      { from: "store-sqlite", to: "platform", kind: "package", label: "depends" },
+
+      { from: "browser", to: "app", kind: "runtime", label: "UI + API" },
+      { from: "clerk", to: "app", kind: "external", label: "session/org" },
+      { from: "app", to: "worker", kind: "runtime", label: "signed tenant HTTP" },
+      { from: "external-api", to: "client", kind: "runtime", label: "uses" },
+      { from: "external-api", to: "python", kind: "runtime", label: "uses" },
+      { from: "client", to: "worker", kind: "runtime", label: "HTTP/SSE" },
+      { from: "python", to: "worker", kind: "runtime", label: "hosted client" },
+      { from: "worker", to: "postgres", kind: "runtime", label: "tenant data" },
+      { from: "app", to: "postgres", kind: "runtime", label: "CRUD store" },
+      { from: "store-pg", to: "postgres", kind: "external", label: "driver" },
+      { from: "store-sqlite", to: "sqlite", kind: "external", label: "driver" },
+      { from: "core", to: "model-apis", kind: "runtime", label: "LLM calls" },
+      { from: "core", to: "mcp", kind: "runtime", label: "MCP tools" },
+      { from: "platform", to: "webhooks", kind: "runtime", label: "signed POST" },
+      { from: "site", to: "app", kind: "runtime", label: "hosted CTA" },
+
+      { from: "app", to: "sdk", kind: "split", label: "consume as app" },
+      { from: "worker", to: "sdk", kind: "split", label: "consume libs" },
+      { from: "app", to: "client", kind: "split", label: "external package boundary" }
+    ];
+
+    const zones = [
+      { x: 36, y: 74, w: 220, h: 846, title: "External actors + services", cls: "external-zone" },
+      { x: 292, y: 74, w: 282, h: 846, title: "Private applications", cls: "private-zone" },
+      { x: 604, y: 74, w: 860, h: 846, title: "Open-source packages", cls: "public-zone" }
+    ];
+
+    const byId = new Map(nodes.map((node) => [node.id, node]));
+    let activeFilter = "all";
+    let selectedNodeId = null;
+
+    function center(node) {
+      return { x: node.x + node.w / 2, y: node.y + node.h / 2 };
+    }
+
+    function edgePoints(edge) {
+      const source = byId.get(edge.from);
+      const target = byId.get(edge.to);
+      const a = center(source);
+      const b = center(target);
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const sourcePadX = source.w / 2 + 8;
+      const sourcePadY = source.h / 2 + 8;
+      const targetPadX = target.w / 2 + 12;
+      const targetPadY = target.h / 2 + 12;
+      const scaleA = Math.max(Math.abs(dx) / sourcePadX, Math.abs(dy) / sourcePadY, 1);
+      const scaleB = Math.max(Math.abs(dx) / targetPadX, Math.abs(dy) / targetPadY, 1);
+      return {
+        x1: a.x + dx / scaleA,
+        y1: a.y + dy / scaleA,
+        x2: b.x - dx / scaleB,
+        y2: b.y - dy / scaleB
+      };
+    }
+
+    function curvePath(edge) {
+      const p = edgePoints(edge);
+      const dx = p.x2 - p.x1;
+      const bend = Math.min(110, Math.max(42, Math.abs(dx) * 0.38));
+      const c1x = p.x1 + (dx >= 0 ? bend : -bend);
+      const c2x = p.x2 - (dx >= 0 ? bend : -bend);
+      return `M ${p.x1} ${p.y1} C ${c1x} ${p.y1}, ${c2x} ${p.y2}, ${p.x2} ${p.y2}`;
+    }
+
+    function shouldShowEdge(edge) {
+      if (activeFilter === "all") return true;
+      if (activeFilter === "package") return ["package", "peer", "dev"].includes(edge.kind);
+      if (activeFilter === "runtime") return ["runtime", "external"].includes(edge.kind);
+      if (activeFilter === "split") return edge.kind === "split" || ["package", "peer", "dev"].includes(edge.kind);
+      return true;
+    }
+
+    function edgeVisibleForSelection(edge) {
+      if (!selectedNodeId) return true;
+      return edge.from === selectedNodeId || edge.to === selectedNodeId;
+    }
+
+    function markerFor(kind) {
+      if (kind === "runtime") return "url(#arrow-runtime)";
+      if (kind === "peer" || kind === "dev") return "url(#arrow-peer)";
+      if (kind === "external") return "url(#arrow-external)";
+      if (kind === "split") return "url(#arrow-split)";
+      return "url(#arrow-package)";
+    }
+
+    function createSvg(tag, attrs = {}) {
+      const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+      for (const [key, value] of Object.entries(attrs)) {
+        el.setAttribute(key, value);
+      }
+      return el;
+    }
+
+    function wrapText(text, maxChars) {
+      const words = text.split(" ");
+      const lines = [];
+      let current = "";
+      for (const word of words) {
+        const next = current ? `${current} ${word}` : word;
+        if (next.length > maxChars && current) {
+          lines.push(current);
+          current = word;
+        } else {
+          current = next;
+        }
+      }
+      if (current) lines.push(current);
+      return lines.slice(0, 2);
+    }
+
+    function renderZones() {
+      const group = document.getElementById("zones");
+      group.innerHTML = "";
+      for (const zone of zones) {
+        group.appendChild(createSvg("rect", {
+          class: `zone ${zone.cls}`,
+          x: zone.x,
+          y: zone.y,
+          width: zone.w,
+          height: zone.h,
+          rx: 18
+        }));
+        const label = createSvg("text", {
+          class: "zone-title",
+          x: zone.x + 18,
+          y: zone.y + 30
+        });
+        label.textContent = zone.title;
+        group.appendChild(label);
+      }
+    }
+
+    function renderEdges() {
+      const edgeGroup = document.getElementById("edges");
+      const labelGroup = document.getElementById("labels");
+      edgeGroup.innerHTML = "";
+      labelGroup.innerHTML = "";
+
+      edges.forEach((edge, index) => {
+        const visibleByFilter = shouldShowEdge(edge);
+        const visibleBySelection = edgeVisibleForSelection(edge);
+        const dimmed = !visibleByFilter || !visibleBySelection;
+        const path = createSvg("path", {
+          id: `edge-${index}`,
+          class: `edge ${edge.kind}${dimmed ? " dimmed" : ""}${visibleBySelection && selectedNodeId ? " highlight" : ""}`,
+          d: curvePath(edge),
+          markerEnd: markerFor(edge.kind)
+        });
+        edgeGroup.appendChild(path);
+
+        const source = center(byId.get(edge.from));
+        const target = center(byId.get(edge.to));
+        const label = createSvg("text", {
+          class: `edge-label${dimmed ? " dimmed" : ""}`,
+          x: (source.x + target.x) / 2,
+          y: (source.y + target.y) / 2 - 8,
+          textAnchor: "middle"
+        });
+        label.textContent = edge.label;
+        labelGroup.appendChild(label);
+      });
+    }
+
+    function renderNodes() {
+      const group = document.getElementById("nodes");
+      group.innerHTML = "";
+
+      for (const node of nodes) {
+        const connected = !selectedNodeId || selectedNodeId === node.id || edges.some((edge) =>
+          edgeVisibleForSelection(edge) && (edge.from === node.id || edge.to === node.id)
+        );
+        const dimmed = selectedNodeId && !connected;
+        const g = createSvg("g", {
+          class: `node ${node.kind}${node.id === selectedNodeId ? " selected" : ""}${dimmed ? " dimmed" : ""}`,
+          transform: `translate(${node.x} ${node.y})`,
+          role: "button",
+          tabindex: "0",
+          "data-node-id": node.id
+        });
+
+        g.appendChild(createSvg("rect", { width: node.w, height: node.h, rx: 9 }));
+
+        const title = createSvg("text", { class: "node-title", x: 14, y: 25 });
+        title.textContent = node.title;
+        g.appendChild(title);
+
+        const subtitle = createSvg("text", { class: "node-subtitle", x: 14, y: 44 });
+        subtitle.textContent = node.subtitle;
+        g.appendChild(subtitle);
+
+        const descLines = wrapText(node.desc, Math.floor((node.w - 28) / 6.2));
+        descLines.forEach((line, lineIndex) => {
+          const lineEl = createSvg("text", { class: "node-subtitle", x: 14, y: 64 + lineIndex * 14 });
+          lineEl.textContent = line;
+          g.appendChild(lineEl);
+        });
+
+        const badgeText = node.kind === "private"
+          ? "private"
+          : node.kind === "platform"
+            ? "public contracts"
+            : node.kind === "external"
+              ? "external"
+              : "public";
+        const badgeW = Math.max(62, badgeText.length * 7 + 16);
+        g.appendChild(createSvg("rect", {
+          class: "badge",
+          x: node.w - badgeW - 10,
+          y: node.h - 26,
+          width: badgeW,
+          height: 18,
+          rx: 5
+        }));
+        const badge = createSvg("text", {
+          class: "badge-text",
+          x: node.w - badgeW - 2,
+          y: node.h - 13
+        });
+        badge.textContent = badgeText;
+        g.appendChild(badge);
+
+        g.addEventListener("click", () => selectNode(node.id));
+        g.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            selectNode(node.id);
+          }
+        });
+        group.appendChild(g);
+      }
+    }
+
+    function render() {
+      renderEdges();
+      renderNodes();
+    }
+
+    function setFilter(filter) {
+      activeFilter = filter;
+      document.querySelectorAll("[data-filter]").forEach((button) => {
+        button.setAttribute("aria-pressed", String(button.dataset.filter === filter));
+      });
+      render();
+      updateDetail(selectedNodeId);
+    }
+
+    function selectNode(id) {
+      selectedNodeId = selectedNodeId === id ? null : id;
+      render();
+      updateDetail(selectedNodeId);
+    }
+
+    function updateDetail(id) {
+      const title = document.getElementById("detail-title");
+      const type = document.getElementById("detail-type");
+      const desc = document.getElementById("detail-desc");
+      const kv = document.getElementById("detail-kv");
+      const list = document.getElementById("edge-list");
+
+      if (!id) {
+        title.textContent = "Select a node";
+        type.textContent = activeFilter === "all" ? "Overview" : `Filter: ${activeFilter}`;
+        desc.textContent = "The map shows direct package dependencies from package.json, plus runtime interactions from the app and worker deployment docs.";
+        kv.innerHTML = "";
+        list.innerHTML = "<li>Click a node to show inbound and outbound edges.</li>";
+        return;
+      }
+
+      const node = byId.get(id);
+      title.textContent = node.title;
+      type.textContent = node.kind === "private"
+        ? "Private application"
+        : node.kind === "platform"
+          ? "Public platform contracts"
+          : node.kind === "external"
+            ? "External"
+            : "Public package";
+      desc.textContent = node.desc;
+
+      const fields = [
+        ["Path", node.path],
+        ["Package deps", (node.deps || []).join(", ") || "None"],
+        ["Optional", (node.optional || node.peer || node.dev || []).join(", ") || "None"]
+      ];
+      kv.innerHTML = fields.map(([key, value]) => `<dt>${key}</dt><dd>${value}</dd>`).join("");
+
+      const connected = edges.filter((edge) => edge.from === id || edge.to === id).filter(shouldShowEdge);
+      if (connected.length === 0) {
+        list.innerHTML = "<li>No edges in the current filter.</li>";
+        return;
+      }
+      list.innerHTML = connected.map((edge) => {
+        const direction = edge.from === id ? "to" : "from";
+        const other = edge.from === id ? byId.get(edge.to) : byId.get(edge.from);
+        return `
+          <li>
+            <span class="edge-name">${direction} ${other.title}</span>
+            <span class="edge-kind">${edge.kind}: ${edge.label}</span>
+          </li>
+        `;
+      }).join("");
+    }
+
+    document.querySelectorAll("[data-filter]").forEach((button) => {
+      button.addEventListener("click", () => setFilter(button.dataset.filter));
+    });
+
+    renderZones();
+    render();
+  </script>
+</body>
+</html>

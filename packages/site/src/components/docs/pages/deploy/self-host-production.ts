@@ -8,7 +8,7 @@ The deployable surface is three packages:
 |---|---|---|
 | \`@agntz/app\` | Next.js 15 web UI (Clerk auth, agent editor, playground) | Vercel |
 | \`@agntz/worker\` | Hono HTTP worker — executes agents | Railway |
-| \`@agntz/store-postgres\` | Postgres store adapter — user-scoped tables | (used by worker + app) |
+| \`@agntz/stores\` | Postgres store adapter — user-scoped tables | (used by worker + app) |
 
 ## 1. Provision Postgres on Railway
 

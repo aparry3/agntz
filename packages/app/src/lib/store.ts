@@ -1,7 +1,7 @@
-import type { PlatformUnifiedStore } from "@agntz/platform";
+import type { AgntzStore } from "@agntz/stores/contracts";
 import type { UserContext } from "./user";
 
-let _store: PlatformUnifiedStore | null = null;
+let _store: AgntzStore | null = null;
 
 function isVercelRuntime(): boolean {
 	return Boolean(process.env.VERCEL);
@@ -54,7 +54,7 @@ function getPostgresPoolConfig(connectionString: string) {
  * Supports: postgres, memory (default).
  * SQLite is only supported for local development — use `pnpm dev` instead of Docker.
  */
-export async function getStore(): Promise<PlatformUnifiedStore> {
+export async function getStore(): Promise<AgntzStore> {
 	if (_store) return _store;
 
 	const storeType = process.env.STORE ?? "memory";
@@ -62,7 +62,7 @@ export async function getStore(): Promise<PlatformUnifiedStore> {
 	switch (storeType) {
 		case "postgres": {
 			const connectionString = getPostgresConnectionString();
-			const { PostgresStore } = await import("@agntz/store-postgres");
+			const { PostgresStore } = await import("@agntz/stores/postgres");
 			_store = new PostgresStore({
 				connection: getPostgresPoolConfig(connectionString),
 			});
@@ -74,8 +74,8 @@ export async function getStore(): Promise<PlatformUnifiedStore> {
 			);
 		}
 		default: {
-			const { PlatformMemoryStore } = await import("@agntz/platform/memory");
-			_store = new PlatformMemoryStore();
+			const { MemoryStore } = await import("@agntz/stores/memory");
+			_store = new MemoryStore();
 			break;
 		}
 	}
@@ -85,7 +85,7 @@ export async function getStore(): Promise<PlatformUnifiedStore> {
 
 export async function getTenantStore(
 	ctx: Pick<UserContext, "tenantId">,
-): Promise<PlatformUnifiedStore> {
+): Promise<AgntzStore> {
 	const store = await getStore();
 	return store.forUser(ctx.tenantId);
 }

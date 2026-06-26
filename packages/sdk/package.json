@@ -18,10 +18,7 @@
   "bin": {
     "agntz": "./dist/cli.js"
   },
-  "files": [
-    "dist",
-    "README.md"
-  ],
+  "files": ["dist", "README.md"],
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
@@ -31,14 +28,7 @@
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "tsup"
   },
-  "keywords": [
-    "agntz",
-    "ai",
-    "agents",
-    "sdk",
-    "yaml",
-    "manifest"
-  ],
+  "keywords": ["agntz", "ai", "agents", "sdk", "yaml", "manifest"],
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -54,23 +44,19 @@
     "yaml": "^2.8.0",
     "zod": "^3.25.0",
     "@agntz/core": "workspace:*",
-    "@agntz/client": "workspace:*"
+    "@agntz/client": "workspace:*",
+    "@agntz/stores": "workspace:*"
   },
   "peerDependencies": {
-    "@agntz/memrez": "workspace:*",
-    "@agntz/store-sqlite": "workspace:*"
+    "@agntz/memrez": "workspace:*"
   },
   "peerDependenciesMeta": {
     "@agntz/memrez": {
-      "optional": true
-    },
-    "@agntz/store-sqlite": {
       "optional": true
     }
   },
   "devDependencies": {
     "@agntz/memrez": "workspace:*",
-    "@agntz/store-sqlite": "workspace:*",
     "@biomejs/biome": "^1.9.0",
     "@types/node": "^22.0.0",
     "tsup": "^8.5.0",

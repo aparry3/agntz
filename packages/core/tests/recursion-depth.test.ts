@@ -1,3 +1,4 @@
+import { MemoryStore } from "@agntz/stores/memory";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { MaxRecursionDepthError } from "../src/errors.js";
@@ -63,6 +64,7 @@ describe("Recursion Depth", () => {
 		};
 
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: provider,
 			maxRecursionDepth: 2,
 		});
@@ -97,6 +99,7 @@ describe("Recursion Depth", () => {
 		const provider = createMockModelProvider(1);
 
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: provider,
 			maxRecursionDepth: 5,
 		});
@@ -127,7 +130,10 @@ describe("Recursion Depth", () => {
 	it("should default to depth 3", async () => {
 		// Verify the default works without explicit config
 		const provider = createMockModelProvider(0);
-		const runner = createRunner({ modelProvider: provider });
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+		});
 
 		runner.registerAgent(
 			defineAgent({

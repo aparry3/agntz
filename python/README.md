@@ -19,10 +19,10 @@ For local LLM execution through LiteLLM:
 pip install "agntz[litellm]"
 ```
 
-For hosted Python deployments backed by Postgres:
+For local LLM execution with Postgres-backed stores:
 
 ```bash
-pip install "agntz[server,postgres,litellm]"
+pip install "agntz[postgres,litellm]"
 ```
 
 ## Create an agent
@@ -267,44 +267,12 @@ Hosted eval runs return immediately with `running` status. Poll
 run. Pending cases are marked `cancelled`; in-flight provider calls are
 best-effort and may finish before the background runner observes cancellation.
 
-## Hosted Python service
+## Hosted deployments
 
-The Python package can run as an ASGI backend with the same core hosted surfaces
-used by the TypeScript service: health, run, run stream, async runs, run cancel,
-traces, agents, versions, aliases, datasets, eval definitions, eval runs, eval
-cancel, and latest eval scores.
-
-Create `app.py`:
-
-```python
-import os
-
-from agntz import LiteLLMModelProvider
-from agntz.server import create_app
-from agntz.stores import PostgresStore
-
-store = PostgresStore(os.environ["DATABASE_URL"])
-
-app = create_app(
-    store=store,
-    internal_secret=os.environ["AGNTZ_INTERNAL_SECRET"],
-    model_provider=LiteLLMModelProvider(),
-)
-```
-
-Run it with uvicorn:
-
-```bash
-uvicorn app:app --host 0.0.0.0 --port 8000
-```
-
-Bearer API keys resolve to user ids through the configured store. Internal
-worker calls use `X-Internal-Secret` plus `X-User-Id` or a `userId` field in the
-JSON request body.
-
-Hosted-only policy helpers live under `agntz.platform`. `create_app()` uses
-`PlatformMemoryStore` by default for in-memory hosted state, and SQLite/Postgres
-stores remain platform-capable for self-hosted deployments.
+Python no longer ships a hosted worker implementation. Use `AgntzClient` or
+`AsyncAgntzClient` to call the TypeScript worker hosted by agntz.co or your own
+self-hosted TS deployment. The Python package continues to support embedded
+local execution, stores, resources, and memrez for in-process applications.
 
 ## Memrez
 
@@ -397,19 +365,16 @@ Implemented in this package:
 
 - Hosted sync and async clients for agents, versions, aliases, run, run stream,
   async runs, traces, datasets, evals, eval runs, cancellation, and eval scores.
-- FastAPI/ASGI hosted service factory for Python deployments.
 - Local YAML execution for `llm`, `tool`, `sequential`, and `parallel` agents.
 - Local Python tools, HTTP tools, MCP JSON-RPC tools, and agent-as-tool calls.
 - Versioned local and hosted agent resolution for bare ids, `@latest`, exact
   timestamps, and aliases.
 - First-class datasets, eval definitions, eval runs, and latest-score tracking.
 - Runtime namespace grants, resource providers, and the memrez memory provider.
-- Hosted platform policy helpers in `agntz.platform`, including namespace-root
-  bounding and a hosted-capable `PlatformMemoryStore`.
 - Memrez LLM reasoner default, preload/topic policy, in-memory, SQLite, and
   Postgres memory stores.
 - LiteLLM-backed model execution with tool-call loop support.
-- Memory, SQLite, and Postgres stores for hosted service data including runs,
+- Memory, SQLite, and Postgres stores for local data including runs,
   traces, sessions, agent versions, aliases, eval data, latest scores, and API
   keys and namespace roots.
 - Import surfaces for agents, sessions, and memory use Pythonic `import_`

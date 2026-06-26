@@ -1,3 +1,4 @@
+import { MemoryStore } from "@agntz/stores/memory";
 /**
  * Performance benchmarks for agntz core operations.
  * Run: npx vitest bench packages/core/benchmarks/
@@ -6,7 +7,6 @@ import { bench, describe } from "vitest";
 import { z } from "zod";
 import { defineAgent } from "../src/agent.js";
 import { createRunner } from "../src/runner.js";
-import { MemoryStore } from "../src/stores/memory.js";
 import { defineTool } from "../src/tool.js";
 import type { GenerateTextOptions, ModelProvider } from "../src/types.js";
 
@@ -73,7 +73,10 @@ const getTimeTool = defineTool({
 });
 
 describe("invoke() — no tools, MemoryStore", () => {
-	const runner = createRunner({ modelProvider: createFastMockProvider() });
+	const runner = createRunner({
+		store: new MemoryStore(),
+		modelProvider: createFastMockProvider(),
+	});
 	runner.registerAgent(testAgent);
 
 	bench("simple invoke", async () => {
@@ -82,7 +85,10 @@ describe("invoke() — no tools, MemoryStore", () => {
 });
 
 describe("invoke() — with session, MemoryStore", () => {
-	const runner = createRunner({ modelProvider: createFastMockProvider() });
+	const runner = createRunner({
+		store: new MemoryStore(),
+		modelProvider: createFastMockProvider(),
+	});
 	runner.registerAgent(testAgent);
 
 	bench("invoke with session", async () => {
@@ -96,6 +102,7 @@ describe("invoke() — with tool calls, MemoryStore", () => {
 	bench("invoke with 1 tool call round-trip", async () => {
 		// Create fresh provider each time since it tracks call count
 		const runner = createRunner({
+			store: new MemoryStore(),
 			modelProvider: createToolCallingMockProvider(),
 			tools: [getTimeTool],
 		});
@@ -105,7 +112,10 @@ describe("invoke() — with tool calls, MemoryStore", () => {
 });
 
 describe("invoke() — with context, MemoryStore", () => {
-	const runner = createRunner({ modelProvider: createFastMockProvider() });
+	const runner = createRunner({
+		store: new MemoryStore(),
+		modelProvider: createFastMockProvider(),
+	});
 	runner.registerAgent(testAgent);
 
 	// Pre-populate context
@@ -128,7 +138,10 @@ describe("invoke() — with context, MemoryStore", () => {
 });
 
 describe("ToolRegistry — lookup performance", () => {
-	const runner = createRunner({ modelProvider: createFastMockProvider() });
+	const runner = createRunner({
+		store: new MemoryStore(),
+		modelProvider: createFastMockProvider(),
+	});
 
 	// Register many tools
 	for (let i = 0; i < 100; i++) {
@@ -154,7 +167,10 @@ describe("ToolRegistry — lookup performance", () => {
 });
 
 describe("Agent registration + resolution", () => {
-	const runner = createRunner({ modelProvider: createFastMockProvider() });
+	const runner = createRunner({
+		store: new MemoryStore(),
+		modelProvider: createFastMockProvider(),
+	});
 
 	// Register many agents
 	for (let i = 0; i < 100; i++) {
