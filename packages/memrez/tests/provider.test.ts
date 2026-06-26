@@ -4,6 +4,7 @@ import type {
 	ModelProvider,
 } from "@agntz/contracts";
 import { createRunner, defineAgent } from "@agntz/core";
+import { MemoryStore } from "@agntz/stores/memory";
 import { describe, expect, it } from "vitest";
 import { createMemrez } from "../src/index.js";
 import type {
@@ -30,6 +31,15 @@ class MockModelProvider implements ModelProvider {
 
 const usage = { promptTokens: 1, completionTokens: 1, totalTokens: 2 };
 
+function createMemrezRunner(
+	config: Omit<Parameters<typeof createRunner>[0], "store">,
+) {
+	return createRunner({
+		store: new MemoryStore(),
+		...config,
+	});
+}
+
 describe("memrez resource provider", () => {
 	it("registers memory_read and memory_write and injects autoScan context", async () => {
 		const memrez = createMemrez({ reasoner: new DirectiveReasoner() });
@@ -46,7 +56,7 @@ describe("memrez resource provider", () => {
 			},
 			{ text: "done", usage, finishReason: "stop" },
 		]);
-		const runner = createRunner({
+		const runner = createMemrezRunner({
 			modelProvider: model,
 			resources: { memory: memrez.provider() },
 		});
@@ -92,7 +102,7 @@ describe("memrez resource provider", () => {
 		const model = new MockModelProvider([
 			{ text: "done", usage, finishReason: "stop" },
 		]);
-		const runner = createRunner({
+		const runner = createMemrezRunner({
 			modelProvider: model,
 			resources: { memory: memrez.provider() },
 		});
@@ -136,7 +146,7 @@ describe("memrez resource provider", () => {
 			},
 			{ text: "done", usage, finishReason: "stop" },
 		]);
-		const runner = createRunner({
+		const runner = createMemrezRunner({
 			modelProvider: model,
 			resources: { memory: memrez.provider() },
 		});
@@ -194,7 +204,7 @@ describe("memrez resource provider", () => {
 			},
 			{ text: "done", usage, finishReason: "stop" },
 		]);
-		const runner = createRunner({
+		const runner = createMemrezRunner({
 			modelProvider: model,
 			resources: { memory: memrez.provider() },
 		});
@@ -234,7 +244,7 @@ describe("memrez resource provider", () => {
 		const model = new MockModelProvider([
 			{ text: "done", usage, finishReason: "stop" },
 		]);
-		const runner = createRunner({
+		const runner = createMemrezRunner({
 			modelProvider: model,
 			resources: { memory: memrez.provider() },
 		});
@@ -276,7 +286,7 @@ describe("memrez resource provider", () => {
 
 	it("rejects agent-level topic taxonomy config", async () => {
 		const memrez = createMemrez({ reasoner: new DirectiveReasoner() });
-		const runner = createRunner({
+		const runner = createMemrezRunner({
 			modelProvider: new MockModelProvider([
 				{ text: "done", usage, finishReason: "stop" },
 			]),
@@ -316,7 +326,7 @@ describe("memrez resource provider", () => {
 		const model = new MockModelProvider([
 			{ text: "done", usage, finishReason: "stop" },
 		]);
-		const runner = createRunner({
+		const runner = createMemrezRunner({
 			modelProvider: model,
 			resources: { memory: memrez.provider() },
 		});
@@ -358,7 +368,7 @@ describe("memrez resource provider", () => {
 		const model = new MockModelProvider([
 			{ text: "done", usage, finishReason: "stop" },
 		]);
-		const runner = createRunner({
+		const runner = createMemrezRunner({
 			modelProvider: model,
 			resources: { memory: memrez.provider() },
 		});
@@ -399,7 +409,7 @@ describe("memrez resource provider", () => {
 		const model = new MockModelProvider([
 			{ text: "done", usage, finishReason: "stop" },
 		]);
-		const runner = createRunner({
+		const runner = createMemrezRunner({
 			modelProvider: model,
 			resources: { memory: memrez.provider() },
 		});
@@ -437,7 +447,7 @@ describe("memrez resource provider", () => {
 
 	it("rejects unsupported preload string values", async () => {
 		const memrez = createMemrez({ reasoner: new DirectiveReasoner() });
-		const runner = createRunner({
+		const runner = createMemrezRunner({
 			modelProvider: new MockModelProvider([
 				{ text: "done", usage, finishReason: "stop" },
 			]),

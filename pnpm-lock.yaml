@@ -261,6 +261,9 @@ importers:
       '@agntz/core':
         specifier: workspace:*
         version: link:../core
+      '@agntz/stores':
+        specifier: workspace:*
+        version: link:../stores
       '@biomejs/biome':
         specifier: ^1.9.0
         version: 1.9.4

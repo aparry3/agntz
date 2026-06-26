@@ -7,19 +7,23 @@ in [`DEPLOY.md`](./DEPLOY.md).
 
 | Directory | Package name | Version | Publish status |
 |---|---|---:|---|
-| `packages/core` | `@agntz/core` | 1.6.0 | publishable |
-| `packages/sdk` | `@agntz/sdk` | 7.0.0 | publishable |
-| `packages/client` | `@agntz/client` | 1.3.0 | publishable |
-| `packages/contracts` | `@agntz/contracts` | 0.0.0 | publishable, first npm release pending |
-| `packages/db` | `@agntz/db` | 0.0.0 | publishable, first npm release pending |
-| `packages/memrez` | `@agntz/memrez` | 4.0.0 | publishable |
-| `packages/stores` | `@agntz/stores` | 8.0.0 | publishable |
+| `packages/contracts` | `@agntz/contracts` | 0.0.0 | publishable |
+| `packages/db` | `@agntz/db` | 0.0.0 | publishable |
+| `packages/client` | `@agntz/client` | 0.0.0 | publishable |
+| `packages/core` | `@agntz/core` | 0.0.0 | publishable |
+| `packages/stores` | `@agntz/stores` | 0.0.0 | publishable |
+| `packages/memrez` | `@agntz/memrez` | 0.0.0 | publishable |
+| `packages/sdk` | `@agntz/sdk` | 0.0.0 | publishable |
 | `packages/app` | `@agntz/app` | 0.1.10 | private service |
 | `packages/worker` | `@agntz/worker` | 0.2.1 | private service |
 | `packages/site` | `@agntz/site` | 0.1.0 | private site |
 
 The standalone `@agntz/manifest` package has been merged into
 `@agntz/core/manifest`.
+
+The `0.0.0` package versions are the public baseline. Earlier npm releases were
+experimental pre-baseline iterations and should remain deprecated on the npm
+registry.
 
 ## Prerequisites
 
@@ -57,17 +61,22 @@ pnpm build
 Publish in dependency order:
 
 ```sh
-cd packages/contracts && npm publish
-cd ../db && npm publish
-cd ../client && npm publish
-cd ../core && npm publish
-cd ../stores && npm publish
-cd ../memrez && npm publish
-cd ../sdk && npm publish
+pnpm --filter @agntz/contracts publish --access public --tag latest --no-git-checks
+pnpm --filter @agntz/db publish --access public --tag latest --no-git-checks
+pnpm --filter @agntz/client publish --access public --tag latest --no-git-checks
+pnpm --filter @agntz/core publish --access public --tag latest --no-git-checks
+pnpm --filter @agntz/stores publish --access public --tag latest --no-git-checks
+pnpm --filter @agntz/memrez publish --access public --tag latest --no-git-checks
+pnpm --filter @agntz/sdk publish --access public --tag latest --no-git-checks
 ```
 
 Do not publish private service packages (`@agntz/app`, `@agntz/worker`,
 `@agntz/site`) unless their package metadata is intentionally changed first.
+
+Use pnpm for manual publishing so `workspace:*` dependencies are converted to
+concrete registry versions in the published tarballs.
+Use `--tag latest` for the `0.0.0` baseline because npm will not implicitly move
+`latest` from a higher historical version to a lower baseline version.
 
 ## Verify a release
 
