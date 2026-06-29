@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@agntz/core": "workspace:*",
+    "@agntz/stores": "workspace:*",
     "zod": "^3.25.0"
   },
   "devDependencies": {
