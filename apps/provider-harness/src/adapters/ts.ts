@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 import {
 	AISDKModelProvider,
-	MemoryStore,
 	createRunner,
 	defineAgent,
 	defineTool,
 } from "@agntz/core";
 import type { ContentBlock, ToolCallRecord } from "@agntz/core";
+import { MemoryStore } from "@agntz/stores";
 import { z } from "zod";
 import type {
 	HarnessGenerateTextOptions,
