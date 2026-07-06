@@ -1,5 +1,8 @@
 import type { ToolContext, ToolDefinition } from "@agntz/core";
-import type { infer as ZodInfer, ZodSchema } from "zod";
+// zod's `infer` is an alias of `TypeOf`; importing it under any local name
+// gets resolved back to `infer` by the dts bundler, which is a reserved
+// keyword in type positions and produces an invalid dist/index.d.ts.
+import type { TypeOf, ZodSchema } from "zod";
 
 /**
  * Define a local tool with a Zod input schema. The schema both validates
@@ -15,16 +18,16 @@ export function tool<TSchema extends ZodSchema>(definition: {
 	description: string;
 	input: TSchema;
 	execute: (
-		args: ZodInfer<TSchema>,
+		args: TypeOf<TSchema>,
 		ctx: ToolContext,
 	) => Promise<unknown> | unknown;
-}): ToolDefinition<ZodInfer<TSchema>> {
+}): ToolDefinition<TypeOf<TSchema>> {
 	return {
 		name: definition.name,
 		description: definition.description,
 		input: definition.input,
 		async execute(args, ctx) {
-			return definition.execute(args as ZodInfer<TSchema>, ctx);
+			return definition.execute(args as TypeOf<TSchema>, ctx);
 		},
 	};
 }
