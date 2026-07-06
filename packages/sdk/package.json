@@ -1,6 +1,6 @@
 {
   "name": "@agntz/sdk",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Official agntz SDK. Run YAML agent manifests in-process with a five-line code path, or call the hosted agntz API. The library you build agntz apps with.",
   "type": "module",
   "main": "./dist/index.js",
@@ -18,7 +18,10 @@
   "bin": {
     "agntz": "./dist/cli.js"
   },
-  "files": ["dist", "README.md"],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
@@ -28,7 +31,14 @@
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "tsup"
   },
-  "keywords": ["agntz", "ai", "agents", "sdk", "yaml", "manifest"],
+  "keywords": [
+    "agntz",
+    "ai",
+    "agents",
+    "sdk",
+    "yaml",
+    "manifest"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
