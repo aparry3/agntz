@@ -399,6 +399,11 @@ export class InMemoryRunRegistry implements RunRegistry {
 			for (const e of buffered) {
 				if (sinceSeq === undefined || e.seq > sinceSeq) yield e;
 			}
+			// A subscriber may attach after a very fast Run has already emitted its
+			// terminal event. Existing subscribers are closed by emit(), but a late
+			// subscriber must also finish after replay instead of waiting forever.
+			const root = this.runs.get(rootId);
+			if (!root || isTerminal(root.status)) return;
 
 			while (!closed || queue.length > 0) {
 				const next = queue.shift();

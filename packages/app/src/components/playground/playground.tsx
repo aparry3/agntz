@@ -4,6 +4,7 @@ import { EditableSelect } from "@/components/v3/editor/editable-fields";
 import { I } from "@/components/v3/icons";
 import { Btn, Mono, Spinner, ag } from "@/components/v3/primitives";
 import type { ManifestSelection } from "@agntz/core/manifest";
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { InputForm } from "./input-form";
 import { LiveTrace } from "./live-trace";
@@ -59,6 +60,7 @@ export function Playground({
 	const [running, setRunning] = useState(false);
 	const [runError, setRunError] = useState<string | null>(null);
 	const [runResult, setRunResult] = useState<RunResult | null>(null);
+	const [runId, setRunId] = useState<string | null>(null);
 	const [traceId, setTraceId] = useState<string | null>(null);
 	const [replyStream, setReplyStream] = useState<ReplyEvent[]>([]);
 
@@ -126,6 +128,7 @@ export function Playground({
 		if (running) return;
 		setRunError(null);
 		setRunResult(null);
+		setRunId(null);
 		setTraceId(null);
 		setReplyStream([]);
 		setRunning(true);
@@ -158,7 +161,10 @@ export function Playground({
 			for await (const event of parseSSE(res.body)) {
 				if (cancelledRef.current) break;
 				if (event.name === "run-start") {
-					const data = safeParse<{ traceId?: string }>(event.data);
+					const data = safeParse<{ runId?: string; traceId?: string }>(
+						event.data,
+					);
+					if (data?.runId) setRunId(data.runId);
 					if (data?.traceId) setTraceId(data.traceId);
 				} else if (event.name === "reply") {
 					const data = safeParse<ReplyEvent>(event.data);
@@ -284,7 +290,21 @@ export function Playground({
 				>
 					{running ? "Running…" : runLabel}
 				</Btn>
-				{traceId && (
+				{runId && (
+					<Link
+						href={`/runs/${encodeURIComponent(runId)}`}
+						style={{
+							marginLeft: 10,
+							fontSize: 10.5,
+							color: ag.blue,
+							fontFamily: "var(--font-mono)",
+							textDecoration: "none",
+						}}
+					>
+						view run {runId}
+					</Link>
+				)}
+				{!runId && traceId && (
 					<Mono size={10.5} color={ag.muted} style={{ marginLeft: 10 }}>
 						trace {traceId}
 					</Mono>

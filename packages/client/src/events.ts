@@ -23,7 +23,16 @@ export function normalizeEvent(frame: SseFrame): StreamEvent | null {
 			const agentId = asString(payload, "agentId");
 			const kind = asAgentKind(payload);
 			const sessionId = asString(payload, "sessionId");
-			return { type: "start", agentId, kind, sessionId };
+			const runId = optionalString(payload, "runId");
+			const traceId = optionalString(payload, "traceId");
+			return {
+				type: "start",
+				agentId,
+				kind,
+				sessionId,
+				...(runId ? { runId } : {}),
+				...(traceId ? { traceId } : {}),
+			};
 		}
 		case "run-complete": {
 			const output = (payload as { output?: unknown }).output;
@@ -71,6 +80,11 @@ function asString(payload: unknown, field: string): string {
 		});
 	}
 	return value;
+}
+
+function optionalString(payload: unknown, field: string): string | undefined {
+	const value = (payload as Record<string, unknown> | null)?.[field];
+	return typeof value === "string" ? value : undefined;
 }
 
 function asAgentKind(payload: unknown): AgentKind {

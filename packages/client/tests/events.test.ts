@@ -21,6 +21,28 @@ describe("normalizeEvent", () => {
 		});
 	});
 
+	it("maps durable run and trace ids from newer run-start payloads", () => {
+		expect(
+			normalizeEvent({
+				event: "run-start",
+				data: JSON.stringify({
+					agentId: "a1",
+					kind: "llm",
+					sessionId: "sess_1",
+					runId: "run_1",
+					traceId: "run_1",
+				}),
+			}),
+		).toEqual({
+			type: "start",
+			agentId: "a1",
+			kind: "llm",
+			sessionId: "sess_1",
+			runId: "run_1",
+			traceId: "run_1",
+		});
+	});
+
 	it("maps run-complete", () => {
 		expect(
 			normalizeEvent({

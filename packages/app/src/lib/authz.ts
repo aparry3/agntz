@@ -130,10 +130,12 @@ export function requiredPermissionForRequest(
 		return "connections:manage";
 	}
 
-	if (pathname.startsWith("/api/run")) return "agents:run";
-	if (pathname.startsWith("/api/runs")) {
-		return pathname.endsWith("/cancel") ? "runs:cancel" : "runs:read";
+	if (pathname === "/api/runs" || pathname.startsWith("/api/runs/")) {
+		if (pathname.endsWith("/cancel")) return "runs:cancel";
+		return mutates ? "agents:run" : "runs:read";
 	}
+	if (pathname === "/api/run" || pathname.startsWith("/api/run/"))
+		return "agents:run";
 	if (pathname.startsWith("/api/traces")) return "traces:read";
 	if (pathname.startsWith("/api/logs")) return "runs:read";
 	if (pathname.startsWith("/api/sessions"))

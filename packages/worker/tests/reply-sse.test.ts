@@ -286,6 +286,25 @@ describe("POST /run/stream — reply events on the wire", () => {
 		expect(completePayload.replies[0].text).toBe("still thinking...");
 		expect(completePayload.replies[1].text).toBe("almost there");
 		expect(completePayload.output).toBe("done!");
+
+		// Regression: /run/stream must use the same durable root Run lifecycle as
+		// /runs. This is the path used by the app playground.
+		const startPayload = JSON.parse(frames[0]?.data);
+		expect(startPayload.runId).toMatch(/^run_/);
+		expect(startPayload.traceId).toBe(startPayload.runId);
+		const persisted = await store.forUser("u1").getRun(startPayload.runId);
+		expect(persisted).toMatchObject({
+			id: startPayload.runId,
+			rootId: startPayload.runId,
+			agentId: "with-reply",
+			status: "completed",
+			input: "go",
+		});
+		expect(persisted?.result?.output).toBe("done!");
+		expect(persisted?.result?.usage.totalTokens).toBe(6);
+		expect((await store.getSummary(startPayload.traceId, "u1"))?.traceId).toBe(
+			startPayload.traceId,
+		);
 	});
 
 	it("emits zero `reply` SSE events when the agent doesn't use the reply tool", async () => {
@@ -340,6 +359,50 @@ describe("POST /run/stream — reply events on the wire", () => {
 		const last = frames[frames.length - 1];
 		expect(last?.event).toBe("run-complete");
 		expect(JSON.parse(last?.data).replies).toBeUndefined();
+	});
+});
+
+describe("POST /run — durable Run lifecycle", () => {
+	it("persists a completed root Run for blocking invocations", async () => {
+		const provider = new MockModelProvider([finalText("blocking done")]);
+		const manifest: LLMAgentManifest = {
+			kind: "llm",
+			id: "blocking-agent",
+			instruction: "test",
+			model: { provider: "openai", name: "gpt-5.4" },
+		};
+		const { app, store } = makeApp({
+			resolveRunnerAndManifest: async () => {
+				const runner = createRunner({
+					modelProvider: provider,
+					store: new MemoryStore(),
+				});
+				return { runner, manifest };
+			},
+		});
+		const { rawKey } = await store
+			.forUser("u1")
+			.createApiKey({ userId: "u1", name: "test" });
+
+		const res = await app.request("/run", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Authorization: `Bearer ${rawKey}`,
+			},
+			body: JSON.stringify({ agentId: "blocking-agent", input: "go" }),
+		});
+		expect(res.status).toBe(200);
+		expect((await res.json()).output).toBe("blocking done");
+
+		const { rows } = await store.forUser("u1").listRuns({});
+		expect(rows).toHaveLength(1);
+		expect(rows[0]).toMatchObject({
+			agentId: "blocking-agent",
+			status: "completed",
+			input: "go",
+		});
+		expect(rows[0]?.result?.output).toBe("blocking done");
 	});
 });
 

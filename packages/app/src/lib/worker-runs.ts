@@ -14,9 +14,8 @@ function internalSecret(): string {
 
 /**
  * Forward a request to the worker, attaching the internal-secret + X-User-Id
- * headers. Used by the runs detail + cancel routes to get registry-fresh
- * state and to invoke cancel via the in-memory RunRegistry. The list route
- * does not use this — it goes direct to the store.
+ * headers. Used by all app-side Runs routes so list, detail, and cancel share
+ * the worker's configured store and in-memory RunRegistry.
  */
 export async function workerRunsFetch(params: {
 	userId: string;

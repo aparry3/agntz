@@ -81,7 +81,16 @@ export interface Reply {
 export type AgentKind = "llm" | "tool" | "sequential" | "parallel";
 
 export type StreamEvent =
-	| { type: "start"; agentId: string; kind: AgentKind; sessionId: string }
+	| {
+			type: "start";
+			agentId: string;
+			kind: AgentKind;
+			sessionId: string;
+			/** Durable root Run created for this invocation (newer workers). */
+			runId?: string;
+			/** Trace associated with the root Run (newer workers). */
+			traceId?: string;
+	  }
 	| {
 			type: "complete";
 			output: unknown;

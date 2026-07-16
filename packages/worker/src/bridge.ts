@@ -50,6 +50,8 @@ export interface CreateExecutionContextOptions {
 	sessionId?: string;
 	/** Runtime namespace capability grants for resource providers. */
 	context?: string[];
+	/** Cancellation propagated from the owning root Run. */
+	signal?: AbortSignal;
 	/**
 	 * Per-request reply accumulator. Each `runner.invoke()` call inside
 	 * `invokeLLM` appends its `result.replies` here so the worker route can
@@ -110,6 +112,7 @@ export function createExecutionContext(
 		userId: options.userId,
 		sessionId: options.sessionId,
 		context: options.context,
+		signal: options.signal,
 		replyCollector: options.replyCollector,
 	});
 }

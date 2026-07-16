@@ -177,22 +177,320 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 
 	// Process-wide registry for /runs/*. Runs from all users share this
 	// instance; routes filter on ownership before exposing anything.
+	const pendingRunWrites = new Map<string, Promise<void>>();
+	const persistRunInOrder = (run: Run): Promise<void> => {
+		const previous = pendingRunWrites.get(run.id) ?? Promise.resolve();
+		const write = previous
+			.catch(() => {})
+			.then(() => store.forUser(run.userId as string).putRun(run))
+			.catch((err) => {
+				console.error(
+					`[run-store] persist failed run=${run.id} user=${run.userId}: ${(err as Error).message}`,
+				);
+			})
+			.finally(() => {
+				if (pendingRunWrites.get(run.id) === write) {
+					pendingRunWrites.delete(run.id);
+				}
+			});
+		pendingRunWrites.set(run.id, write);
+		return write;
+	};
 	const runRegistry: RunRegistry =
 		opts.runRegistry ??
 		new InMemoryRunRegistry({
 			gracePeriodMs: opts.runGracePeriodMs,
-			persistRun: async (run) => {
-				if (!run.userId) return;
-				try {
-					await store.forUser(run.userId).putRun(run);
-				} catch (err) {
-					console.error(
-						`[run-store] persist failed run=${run.id} user=${run.userId}: ${(err as Error).message}`,
+			persistRun: (run) =>
+				run.userId ? persistRunInOrder(run) : Promise.resolve(),
+		});
+	const flushRunPersistence = async (runId: string): Promise<void> => {
+		if (opts.runRegistry) return;
+		while (true) {
+			const pending = pendingRunWrites.get(runId);
+			if (!pending) return;
+			await pending;
+		}
+	};
+	const evalRunControllers = new Map<string, AbortController>();
+
+	type PreparedRunTarget = {
+		runner: Runner;
+		manifest: AgentManifest;
+		rootManifest: AgentManifest;
+		target?: "block";
+	};
+	type CompletedUserRun = {
+		responseBody: Record<string, unknown>;
+		invokeResult: InvokeResult;
+		manifest: AgentManifest;
+	};
+	type StartedUserRun = {
+		run: Run;
+		sessionId: string;
+		traceId: string;
+		replies: Reply[];
+		wait(): Promise<CompletedUserRun>;
+	};
+
+	const prepareRunTarget = async (args: {
+		userId: string;
+		agentId: string;
+		selection?: ManifestSelection;
+		target?: "block";
+	}): Promise<PreparedRunTarget> => {
+		const { runner, manifest: rootManifest } =
+			await resolveRunnerAndManifestImpl(store, args.userId, args.agentId);
+		const manifest =
+			args.target === "block"
+				? await resolveSelectedBlockManifest(
+						rootManifest,
+						args.selection,
+						runner,
+					)
+				: rootManifest;
+		return {
+			runner,
+			manifest,
+			rootManifest,
+			...(args.target ? { target: args.target } : {}),
+		};
+	};
+
+	const startUserRun = async (args: {
+		userId: string;
+		agentId: string;
+		input?: unknown;
+		sessionId?: string;
+		context?: string[];
+		selection?: ManifestSelection;
+		target?: "block";
+		prepared?: PreparedRunTarget;
+		requestSignal?: AbortSignal;
+	}): Promise<StartedUserRun> => {
+		const sessionId = args.sessionId ?? generateSessionId();
+		const input = stringifyRunValue(args.input);
+
+		const release = await runRegistry.acquireSessionLock(sessionId);
+		let root: Run;
+		try {
+			const activeRunId = runRegistry.findActiveBySession(sessionId);
+			if (activeRunId) {
+				runRegistry.cancel(activeRunId, "superseded");
+				await runRegistry.waitForTerminal(activeRunId);
+			}
+			root = runRegistry.create({
+				agentId: args.agentId,
+				input,
+				userId: args.userId,
+				sessionId,
+			});
+		} finally {
+			release();
+		}
+
+		const traceId = root.id;
+		traceRegistry.register(traceId, args.userId);
+		const replies: Reply[] = [];
+		let completed: CompletedUserRun | undefined;
+		let executionError: unknown;
+
+		const cancelFromRequest = () =>
+			runRegistry.cancel(root.id, "request aborted");
+		args.requestSignal?.addEventListener("abort", cancelFromRequest, {
+			once: true,
+		});
+
+		runRegistry.start(root, async (signal) => {
+			let spanCount = 0;
+			let totalTokens = 0;
+			let traceStatus: "ok" | "error" | "cancelled" = "ok";
+			const spanEmitter = new SpanEmitter({
+				traceId,
+				recordIO: false,
+				traceSink: (event) => {
+					if (event.type === "span-start") {
+						spanCount++;
+						traceRegistry.spanStart(event.span);
+					} else if (event.type === "span-end") {
+						traceRegistry.spanEnd(event.spanId, event.patch);
+					}
+				},
+			});
+			const runSpan = spanEmitter.startRun({
+				ownerId: args.userId,
+				runId: root.id,
+				sessionId,
+				agentId: args.agentId,
+			});
+			try {
+				const prepared =
+					args.prepared ??
+					(await prepareRunTarget({
+						userId: args.userId,
+						agentId: args.agentId,
+						selection: args.selection,
+						target: args.target,
+					}));
+				const ctx = createExecutionContext(prepared.runner, {
+					runRegistry,
+					parentRunId: root.id,
+					spanEmitter,
+					ownerId: args.userId,
+					userId: args.userId,
+					sessionId,
+					context: args.context,
+					replyCollector: replies,
+					signal,
+				});
+				const result = await execute(prepared.manifest, args.input ?? "", ctx);
+				if (signal.aborted) {
+					throw signal.reason instanceof Error
+						? signal.reason
+						: new Error(String(signal.reason ?? "aborted"));
+				}
+
+				const invokeResult = aggregateRootResult({
+					registry: runRegistry,
+					root,
+					output: result.output,
+					sessionId,
+					replies,
+					manifest: prepared.manifest,
+				});
+				totalTokens = invokeResult.usage.totalTokens;
+				const responseBody: Record<string, unknown> = {
+					output: result.output,
+					state: result.state,
+					sessionId,
+				};
+				if (prepared.target === "block") {
+					responseBody.target = "block";
+					responseBody.blockId = prepared.manifest.id;
+					responseBody.blockKind = prepared.manifest.kind;
+				}
+				if (replies.length > 0) responseBody.replies = [...replies];
+				completed = {
+					responseBody,
+					invokeResult,
+					manifest: prepared.manifest,
+				};
+				runSpan.end();
+				return invokeResult;
+			} catch (error) {
+				executionError = error;
+				traceStatus = signal.aborted ? "cancelled" : "error";
+				runSpan.error(error instanceof Error ? error : String(error));
+				throw error;
+			} finally {
+				const endedAt = Date.now();
+				traceRegistry.traceDone(traceId, args.userId, {
+					traceId,
+					ownerId: args.userId,
+					rootName: args.agentId,
+					agentId: args.agentId,
+					startedAt: new Date(root.startedAt).toISOString(),
+					endedAt: new Date(endedAt).toISOString(),
+					durationMs: endedAt - root.startedAt,
+					spanCount,
+					status: traceStatus,
+					totalTokens,
+					totalCostUsd: null,
+				});
+			}
+		});
+		// Start before applying an already-fired request abort so the executor owns
+		// the full terminal/trace lifecycle instead of cancelling a pending Run
+		// that never gets a chance to finalize its trace.
+		if (args.requestSignal?.aborted) cancelFromRequest();
+
+		const handle = runRegistry.get(root.id) ?? root;
+		await flushRunPersistence(root.id);
+
+		return {
+			run: handle,
+			sessionId,
+			traceId,
+			replies,
+			wait: async () => {
+				await runRegistry.waitForTerminal(root.id);
+				await flushRunPersistence(root.id);
+				if (opts.runRegistry) {
+					const final = runRegistry.get(root.id);
+					if (final) await store.forUser(args.userId).putRun(final);
+				}
+				args.requestSignal?.removeEventListener("abort", cancelFromRequest);
+				if (executionError !== undefined) throw executionError;
+				if (!completed) {
+					const stored = await store.forUser(args.userId).getRun(root.id);
+					throw new Error(
+						stored?.error ?? `Run "${root.id}" produced no result`,
 					);
 				}
+				return completed;
 			},
+		};
+	};
+
+	const streamStartedUserRun = (
+		c: Context,
+		started: StartedUserRun,
+		startPayload: Record<string, unknown>,
+	) =>
+		streamSSE(c, async (stream) => {
+			await stream.writeSSE({
+				event: "run-start",
+				data: JSON.stringify({
+					...startPayload,
+					runId: started.run.id,
+					traceId: started.traceId,
+					sessionId: started.sessionId,
+				}),
+			});
+
+			try {
+				for await (const event of runRegistry.subscribe(started.run.rootId)) {
+					if (event.type === "reply") {
+						await stream.writeSSE({
+							event: "reply",
+							data: JSON.stringify(event),
+							id: String(event.seq),
+						});
+						continue;
+					}
+					if (event.runId !== started.run.id) continue;
+					if (event.type === "run-complete") {
+						const completed = await started.wait();
+						await stream.writeSSE({
+							event: "run-complete",
+							data: JSON.stringify(completed.responseBody),
+						});
+						return;
+					}
+					if (event.type === "run-error" || event.type === "run-cancelled") {
+						let message =
+							event.type === "run-error" ? event.error : "Run cancelled";
+						try {
+							await started.wait();
+						} catch (error) {
+							message = errorMessage(error);
+						}
+						await stream.writeSSE({
+							event: "run-error",
+							data: JSON.stringify({ error: message }),
+						});
+						return;
+					}
+				}
+			} catch (error) {
+				runRegistry.cancel(started.run.id, "stream disconnected");
+				await stream
+					.writeSSE({
+						event: "run-error",
+						data: JSON.stringify({ error: errorMessage(error) }),
+					})
+					.catch(() => {});
+			}
 		});
-	const evalRunControllers = new Map<string, AbortController>();
 
 	app.use("*", cors());
 
@@ -986,67 +1284,22 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			if (!agentId) {
 				return c.json({ error: "Missing required field: agentId" }, 400);
 			}
-
-			// Always work with a concrete sessionId. If the caller didn't provide
-			// one we mint it here so the response carries the id even when the
-			// manifest doesn't surface it back. The runner will also do this
-			// independently for safety, but pre-allocating keeps the wire response
-			// authoritative.
-			const sessionId = body.sessionId ?? generateSessionId();
-
-			console.log(
-				`[run] start agent=${agentId} user=${userId} session=${sessionId} ` +
-					`inputKeys=${input && typeof input === "object" ? Object.keys(input).join(",") : typeof input}`,
-			);
-
-			const { runner, manifest } = await resolveRunnerAndManifestImpl(
-				store,
+			const prepared = await prepareRunTarget({ userId, agentId });
+			const started = await startUserRun({
 				userId,
 				agentId,
-			);
-			const runRegistry = new InMemoryRunRegistry();
-			const spanEmitter = new SpanEmitter({
-				traceSink: (event) => {
-					if (event.type === "span-start") traceRegistry.spanStart(event.span);
-					else if (event.type === "span-end")
-						traceRegistry.spanEnd(event.spanId, event.patch);
-					else if (event.type === "trace-done")
-						traceRegistry.traceDone(
-							event.summary.traceId,
-							event.summary.ownerId,
-							event.summary,
-						);
-				},
-				recordIO: false,
-			});
-			// Aggregate replies across all LLM invokes inside the manifest so the
-			// response can surface them. The runner persists each reply to the
-			// session at the moment of the call; this is purely for the HTTP body.
-			const replyCollector: Reply[] = [];
-			const ctx = createExecutionContext(runner, {
-				runRegistry,
-				spanEmitter,
-				ownerId: userId,
-				userId,
-				sessionId,
+				input,
+				sessionId: body.sessionId,
 				context: body.context,
-				replyCollector,
+				prepared,
+				requestSignal: c.req.raw.signal,
 			});
-			const result = await execute(manifest, input ?? "", ctx);
+			const completed = await started.wait();
 
 			console.log(
-				`[run] done agent=${agentId} ${Date.now() - start}ms kind=${manifest.kind} ` +
-					`outputKeys=${result.output && typeof result.output === "object" ? Object.keys(result.output).join(",") : typeof result.output} ` +
-					`replies=${replyCollector.length}`,
+				`[run] done run=${started.run.id} agent=${agentId} ${Date.now() - start}ms kind=${completed.manifest.kind} replies=${started.replies.length}`,
 			);
-
-			const responseBody: Record<string, unknown> = {
-				output: result.output,
-				state: result.state,
-				sessionId,
-			};
-			if (replyCollector.length > 0) responseBody.replies = replyCollector;
-			return c.json(responseBody);
+			return c.json(completed.responseBody);
 		} catch (error) {
 			const status = isNotFound(error) ? 404 : 500;
 			console.error(
@@ -1076,61 +1329,29 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			}
 
 			const selection = normalizeManifestSelection(body.selection);
-			const sessionId = body.sessionId ?? generateSessionId();
-
-			const { runner, manifest } = await resolveRunnerAndManifestImpl(
-				store,
+			const prepared = await prepareRunTarget({
 				userId,
 				agentId,
-			);
-			const selectedManifest = await resolveSelectedBlockManifest(
-				manifest,
 				selection,
-				runner,
-			);
-			const runRegistry = new InMemoryRunRegistry();
-			const spanEmitter = new SpanEmitter({
-				traceSink: (event) => {
-					if (event.type === "span-start") traceRegistry.spanStart(event.span);
-					else if (event.type === "span-end")
-						traceRegistry.spanEnd(event.spanId, event.patch);
-					else if (event.type === "trace-done")
-						traceRegistry.traceDone(
-							event.summary.traceId,
-							event.summary.ownerId,
-							event.summary,
-						);
-				},
-				recordIO: false,
+				target: "block",
 			});
-			const replyCollector: Reply[] = [];
-			const ctx = createExecutionContext(runner, {
-				runRegistry,
-				spanEmitter,
-				ownerId: userId,
+			const started = await startUserRun({
 				userId,
-				sessionId,
+				agentId,
+				input,
+				sessionId: body.sessionId,
 				context: body.context,
-				replyCollector,
+				selection,
+				target: "block",
+				prepared,
+				requestSignal: c.req.raw.signal,
 			});
-			const result = await execute(selectedManifest, input ?? "", ctx);
+			const completed = await started.wait();
 
 			console.log(
-				`[run:block] done agent=${agentId} block=${selectedManifest.id} ${Date.now() - start}ms kind=${selectedManifest.kind} ` +
-					`outputKeys=${result.output && typeof result.output === "object" ? Object.keys(result.output).join(",") : typeof result.output} ` +
-					`replies=${replyCollector.length}`,
+				`[run:block] done run=${started.run.id} agent=${agentId} block=${prepared.manifest.id} ${Date.now() - start}ms kind=${prepared.manifest.kind} replies=${started.replies.length}`,
 			);
-
-			const responseBody: Record<string, unknown> = {
-				output: result.output,
-				state: result.state,
-				sessionId,
-				target: "block",
-				blockId: selectedManifest.id,
-				blockKind: selectedManifest.kind,
-			};
-			if (replyCollector.length > 0) responseBody.replies = replyCollector;
-			return c.json(responseBody);
+			return c.json(completed.responseBody);
 		} catch (error) {
 			const status = isBadRequest(error) ? 400 : isNotFound(error) ? 404 : 500;
 			console.error(
@@ -1154,171 +1375,19 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			if (!agentId) {
 				return c.json({ error: "Missing required field: agentId" }, 400);
 			}
-
-			// Pre-allocate sessionId and traceId so the run-start SSE frame is
-			// authoritative — clients use the traceId to subscribe to the live
-			// trace stream before the first span has fired.
-			const sessionId = body.sessionId ?? generateSessionId();
-			const traceId = `tr_${randomBytes(8).toString("hex")}`;
-
-			const { runner, manifest } = await resolveRunnerAndManifestImpl(
-				store,
+			const prepared = await prepareRunTarget({ userId, agentId });
+			const started = await startUserRun({
 				userId,
 				agentId,
-			);
-			// Reserve the trace as in-progress so /traces/:id/stream subscribers
-			// attaching the moment after run-start don't race the first spanStart.
-			traceRegistry.register(traceId, userId);
-			const baseRegistry = new InMemoryRunRegistry();
-			const spanEmitter = new SpanEmitter({
-				traceSink: (event) => {
-					if (event.type === "span-start") traceRegistry.spanStart(event.span);
-					else if (event.type === "span-end")
-						traceRegistry.spanEnd(event.spanId, event.patch);
-					else if (event.type === "trace-done")
-						traceRegistry.traceDone(
-							event.summary.traceId,
-							event.summary.ownerId,
-							event.summary,
-						);
-				},
-				recordIO: false,
-				traceId,
-			});
-			// Replies are aggregated into a per-request collector AND, when
-			// `agent.reply` is set, broadcast as `reply` multiplexed events on the
-			// per-request registry. We tap the registry's `emit` so reply events
-			// flow onto the SSE wire as they happen; the same replies are still
-			// included on the final `run-complete` payload for batch readers.
-			const replyCollector: Reply[] = [];
-			type QueuedReply = {
-				runId: string;
-				sessionId: string;
-				text: string;
-				ts: string;
-				seq: number;
-			};
-			const pendingReplies: QueuedReply[] = [];
-			let replyResolver: (() => void) | null = null;
-			let runComplete = false;
-
-			// Wrap the per-request registry's `emit` so we can intercept reply
-			// events without polling for the rootId. The wrapper preserves all
-			// other registry behavior (replay buffers, subscribers, seq stamping,
-			// terminal eviction) — we only fork on `reply`. We read the canonical
-			// seq from the seq counter map BEFORE stamping happens; since emit()
-			// is the only writer and we wrap it, the order matches.
-			const seqForChannel = new Map<string, number>();
-			const runRegistry: RunRegistry = new Proxy(baseRegistry, {
-				get(target, prop, receiver) {
-					if (prop === "emit") {
-						return (
-							rootId: string,
-							event: Parameters<RunRegistry["emit"]>[1],
-						) => {
-							const next = (seqForChannel.get(rootId) ?? 0) + 1;
-							seqForChannel.set(rootId, next);
-							target.emit(rootId, event);
-							if (event.type === "reply") {
-								pendingReplies.push({
-									runId: event.runId,
-									sessionId: event.sessionId,
-									text: event.text,
-									ts: event.ts,
-									seq: next,
-								});
-								const r = replyResolver;
-								replyResolver = null;
-								r?.();
-							}
-						};
-					}
-					return Reflect.get(target, prop, receiver);
-				},
-			}) as unknown as RunRegistry;
-
-			const ctx = createExecutionContext(runner, {
-				runRegistry,
-				spanEmitter,
-				ownerId: userId,
-				userId,
-				sessionId,
+				input,
+				sessionId: body.sessionId,
 				context: body.context,
-				replyCollector,
+				prepared,
+				requestSignal: c.req.raw.signal,
 			});
-
-			return streamSSE(c, async (stream) => {
-				// Drain reply events as they arrive. Runs concurrently with the
-				// manifest execution; closes when the main path flips `runComplete`.
-				const forwarder = (async () => {
-					while (true) {
-						while (pendingReplies.length > 0) {
-							const ev = pendingReplies.shift();
-							if (!ev) continue;
-							await stream.writeSSE({
-								event: "reply",
-								data: JSON.stringify({
-									type: "reply",
-									runId: ev.runId,
-									sessionId: ev.sessionId,
-									text: ev.text,
-									ts: ev.ts,
-									seq: ev.seq,
-								}),
-								id: String(ev.seq),
-							});
-						}
-						if (runComplete) return;
-						await new Promise<void>((r) => {
-							replyResolver = r;
-						});
-					}
-				})();
-
-				try {
-					await stream.writeSSE({
-						event: "run-start",
-						data: JSON.stringify({
-							agentId,
-							kind: manifest.kind,
-							sessionId,
-							traceId,
-						}),
-					});
-
-					const result = await execute(manifest, input ?? "", ctx);
-
-					const completePayload: Record<string, unknown> = {
-						output: result.output,
-						state: result.state,
-						sessionId,
-					};
-					if (replyCollector.length > 0)
-						completePayload.replies = replyCollector;
-
-					// Drain any tail reply events emitted in the same tick as the
-					// final tool execution before we close with run-complete.
-					runComplete = true;
-					const r = replyResolver;
-					replyResolver = null;
-					r?.();
-					await forwarder;
-
-					await stream.writeSSE({
-						event: "run-complete",
-						data: JSON.stringify(completePayload),
-					});
-				} catch (error) {
-					runComplete = true;
-					const r = replyResolver;
-					replyResolver = null;
-					r?.();
-					await forwarder.catch(() => {});
-					await stream.writeSSE({
-						event: "run-error",
-						data: JSON.stringify({ error: errorMessage(error) }),
-					});
-				}
+			return streamStartedUserRun(c, started, {
+				agentId,
+				kind: prepared.manifest.kind,
 			});
 		} catch (error) {
 			return c.json({ error: errorMessage(error) }, 500);
@@ -1342,160 +1411,28 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			}
 
 			const selection = normalizeManifestSelection(body.selection);
-			const sessionId = body.sessionId ?? generateSessionId();
-			const traceId = `tr_${randomBytes(8).toString("hex")}`;
-
-			const { runner, manifest } = await resolveRunnerAndManifestImpl(
-				store,
+			const prepared = await prepareRunTarget({
 				userId,
 				agentId,
-			);
-			const selectedManifest = await resolveSelectedBlockManifest(
-				manifest,
 				selection,
-				runner,
-			);
-			traceRegistry.register(traceId, userId);
-			const baseRegistry = new InMemoryRunRegistry();
-			const spanEmitter = new SpanEmitter({
-				traceSink: (event) => {
-					if (event.type === "span-start") traceRegistry.spanStart(event.span);
-					else if (event.type === "span-end")
-						traceRegistry.spanEnd(event.spanId, event.patch);
-					else if (event.type === "trace-done")
-						traceRegistry.traceDone(
-							event.summary.traceId,
-							event.summary.ownerId,
-							event.summary,
-						);
-				},
-				recordIO: false,
-				traceId,
+				target: "block",
 			});
-			const replyCollector: Reply[] = [];
-			type QueuedReply = {
-				runId: string;
-				sessionId: string;
-				text: string;
-				ts: string;
-				seq: number;
-			};
-			const pendingReplies: QueuedReply[] = [];
-			let replyResolver: (() => void) | null = null;
-			let runComplete = false;
-
-			const seqForChannel = new Map<string, number>();
-			const runRegistry: RunRegistry = new Proxy(baseRegistry, {
-				get(target, prop, receiver) {
-					if (prop === "emit") {
-						return (
-							rootId: string,
-							event: Parameters<RunRegistry["emit"]>[1],
-						) => {
-							const next = (seqForChannel.get(rootId) ?? 0) + 1;
-							seqForChannel.set(rootId, next);
-							target.emit(rootId, event);
-							if (event.type === "reply") {
-								pendingReplies.push({
-									runId: event.runId,
-									sessionId: event.sessionId,
-									text: event.text,
-									ts: event.ts,
-									seq: next,
-								});
-								const r = replyResolver;
-								replyResolver = null;
-								r?.();
-							}
-						};
-					}
-					return Reflect.get(target, prop, receiver);
-				},
-			}) as unknown as RunRegistry;
-
-			const ctx = createExecutionContext(runner, {
-				runRegistry,
-				spanEmitter,
-				ownerId: userId,
+			const started = await startUserRun({
 				userId,
-				sessionId,
+				agentId,
+				input,
+				sessionId: body.sessionId,
 				context: body.context,
-				replyCollector,
+				selection,
+				target: "block",
+				prepared,
+				requestSignal: c.req.raw.signal,
 			});
-
-			return streamSSE(c, async (stream) => {
-				const forwarder = (async () => {
-					while (true) {
-						while (pendingReplies.length > 0) {
-							const ev = pendingReplies.shift();
-							if (!ev) continue;
-							await stream.writeSSE({
-								event: "reply",
-								data: JSON.stringify({
-									type: "reply",
-									runId: ev.runId,
-									sessionId: ev.sessionId,
-									text: ev.text,
-									ts: ev.ts,
-									seq: ev.seq,
-								}),
-								id: String(ev.seq),
-							});
-						}
-						if (runComplete) return;
-						await new Promise<void>((r) => {
-							replyResolver = r;
-						});
-					}
-				})();
-
-				try {
-					await stream.writeSSE({
-						event: "run-start",
-						data: JSON.stringify({
-							agentId,
-							kind: selectedManifest.kind,
-							sessionId,
-							traceId,
-							target: "block",
-							blockId: selectedManifest.id,
-						}),
-					});
-
-					const result = await execute(selectedManifest, input ?? "", ctx);
-
-					const completePayload: Record<string, unknown> = {
-						output: result.output,
-						state: result.state,
-						sessionId,
-						target: "block",
-						blockId: selectedManifest.id,
-						blockKind: selectedManifest.kind,
-					};
-					if (replyCollector.length > 0)
-						completePayload.replies = replyCollector;
-
-					runComplete = true;
-					const r = replyResolver;
-					replyResolver = null;
-					r?.();
-					await forwarder;
-
-					await stream.writeSSE({
-						event: "run-complete",
-						data: JSON.stringify(completePayload),
-					});
-				} catch (error) {
-					runComplete = true;
-					const r = replyResolver;
-					replyResolver = null;
-					r?.();
-					await forwarder.catch(() => {});
-					await stream.writeSSE({
-						event: "run-error",
-						data: JSON.stringify({ error: errorMessage(error) }),
-					});
-				}
+			return streamStartedUserRun(c, started, {
+				agentId,
+				kind: prepared.manifest.kind,
+				target: "block",
+				blockId: prepared.manifest.id,
 			});
 		} catch (error) {
 			const status = isBadRequest(error) ? 400 : isNotFound(error) ? 404 : 500;
@@ -1598,94 +1535,37 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 				resolvedSecretName = webhookSecretName;
 			}
 
-			// Always work with a concrete sessionId. Top-level Runs are indexed in
-			// the registry by sessionId to power cancel-and-replace, so an absent
-			// id must not mean "no session" — it means "fresh session".
-			const sessionId = body.sessionId ?? generateSessionId();
-
-			const inputStr =
-				typeof input === "string"
-					? input
-					: input == null
-						? ""
-						: JSON.stringify(input);
-
-			const run = runRegistry.create({
-				agentId,
-				input: inputStr,
+			const started = await startUserRun({
 				userId,
-				sessionId,
+				agentId,
+				input,
+				sessionId: body.sessionId,
+				context: body.context,
 			});
 
 			console.log(
-				`[runs] start run=${run.id} agent=${agentId} user=${userId} inputLen=${inputStr.length}${callbackUrl ? ` webhook=${webhookSecretName}` : ""}`,
+				`[runs] start run=${started.run.id} agent=${agentId} user=${userId} inputLen=${stringifyRunValue(input).length}${callbackUrl ? ` webhook=${webhookSecretName}` : ""}`,
 			);
 
-			// Wire the dispatcher BEFORE starting the executor so the registry's
-			// first emitted reply (and the eventual run-complete) are seen by our
-			// subscriber. We subscribe via `runRegistry.subscribe(run.rootId)` —
-			// the multiplexed feed is the canonical place to observe reply +
-			// run-complete events for a Run.
-			const replyCollector: Reply[] = [];
-			let dispatcher: WebhookDispatcher | undefined;
 			let webhookForwarder: Promise<void> | undefined;
 			if (resolvedSecretName && callbackUrl) {
-				dispatcher = createWebhookDispatcher({
+				const dispatcher = createWebhookDispatcher({
 					deliveryStore: store.forUser(userId),
 					secretStore: store.forUser(userId),
 					secretName: resolvedSecretName,
 					callbackUrl,
-					runId: run.id,
+					runId: started.run.id,
 					ownerId: userId,
 					outboundUrlPolicy: opts.outboundUrlPolicy,
 				});
 				webhookForwarder = forwardEventsToDispatcher({
 					runRegistry,
-					rootId: run.rootId,
-					runId: run.id,
+					rootId: started.run.rootId,
+					runId: started.run.id,
 					dispatcher,
-					replyCollector,
+					replyCollector: started.replies,
 				});
 			}
-
-			runRegistry.start(run, async (signal) => {
-				const runStart = Date.now();
-				const { runner, manifest } = await resolveRunnerAndManifestImpl(
-					store,
-					userId,
-					agentId,
-				);
-				const ctx = createExecutionContext(runner, {
-					runRegistry,
-					parentRunId: run.id,
-					userId,
-					sessionId,
-					context: body.context,
-					replyCollector,
-				});
-				const result = await execute(manifest, input ?? "", ctx);
-				if (signal.aborted) {
-					throw signal.reason instanceof Error
-						? signal.reason
-						: new Error(String(signal.reason ?? "aborted"));
-				}
-				const outputStr =
-					typeof result.output === "string"
-						? result.output
-						: JSON.stringify(result.output);
-				const invokeResult: InvokeResult = {
-					output: outputStr,
-					invocationId: run.id,
-					sessionId,
-					toolCalls: [],
-					usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-					duration: Date.now() - runStart,
-					model: "manifest",
-				};
-				if (replyCollector.length > 0)
-					invokeResult.replies = [...replyCollector];
-				return invokeResult;
-			});
 
 			// Webhook forwarder runs detached from the request — it owns subscribe
 			// lifetime. We don't await it; the dispatcher inserts to outbox + has
@@ -1693,14 +1573,13 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			if (webhookForwarder) {
 				webhookForwarder.catch((err) => {
 					console.error(
-						`[webhook] forwarder failed run=${run.id}: ${errorMessage(err)}`,
+						`[webhook] forwarder failed run=${started.run.id}: ${errorMessage(err)}`,
 					);
 				});
 			}
 
-			const created = runRegistry.get(run.id) ?? run;
-			return c.json(runToJSON(created), 201, {
-				Location: `/runs/${run.id}`,
+			return c.json(runToJSON(started.run), 201, {
+				Location: `/runs/${started.run.id}`,
 			});
 		} catch (error) {
 			console.error(
@@ -3389,6 +3268,72 @@ async function loadOwnedRun(
  */
 function runToJSON(run: Run): Run {
 	return run;
+}
+
+function stringifyRunValue(value: unknown): string {
+	if (typeof value === "string") return value;
+	if (value == null) return "";
+	const json = JSON.stringify(value);
+	return json === undefined ? String(value) : json;
+}
+
+function aggregateRootResult(args: {
+	registry: RunRegistry;
+	root: Run;
+	output: unknown;
+	sessionId: string;
+	replies: Reply[];
+	manifest: AgentManifest;
+}): InvokeResult {
+	const descendants: Run[] = [];
+	const queue = [...args.registry.children(args.root.id)];
+	while (queue.length > 0) {
+		const run = queue.shift();
+		if (!run) continue;
+		descendants.push(run);
+		queue.push(...args.registry.children(run.id));
+	}
+	descendants.sort(
+		(a, b) => a.startedAt - b.startedAt || a.id.localeCompare(b.id),
+	);
+
+	let promptTokens = 0;
+	let completionTokens = 0;
+	let totalTokens = 0;
+	const toolCalls: InvokeResult["toolCalls"] = [];
+	const models = new Set<string>();
+	for (const run of descendants) {
+		if (!run.result) continue;
+		promptTokens += run.result.usage.promptTokens;
+		completionTokens += run.result.usage.completionTokens;
+		totalTokens += run.result.usage.totalTokens;
+		toolCalls.push(...run.result.toolCalls);
+		const model = run.result.usage.model ?? run.result.model;
+		if (model) models.add(model);
+	}
+
+	const model =
+		models.size === 1
+			? ([...models][0] as string)
+			: args.manifest.kind === "llm"
+				? `${args.manifest.model.provider}/${args.manifest.model.name}`
+				: "manifest";
+
+	return {
+		output: stringifyRunValue(args.output),
+		invocationId: args.root.id,
+		sessionId: args.sessionId,
+		toolCalls,
+		usage: {
+			promptTokens,
+			completionTokens,
+			totalTokens,
+			model,
+		},
+		duration: Date.now() - args.root.startedAt,
+		model,
+		...(args.replies.length > 0 ? { replies: [...args.replies] } : {}),
+	};
 }
 
 function normalizeManifestSelection(

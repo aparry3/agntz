@@ -1,43 +1,27 @@
-import { getTenantStore } from "@/lib/store";
-import { AuthRequiredError, requireUserContext } from "@/lib/user";
-import type { RunListFilters, RunStatus } from "@agntz/core";
+import {
+	AuthRequiredError,
+	requireUserContext,
+	workerIdentity,
+} from "@/lib/user";
+import { workerRunsFetch } from "@/lib/worker-runs";
 import { type NextRequest, NextResponse } from "next/server";
 
 export async function GET(req: NextRequest) {
 	try {
 		const ctx = await requireUserContext();
-		const store = await getTenantStore(ctx);
-		const params = req.nextUrl.searchParams;
-
-		let limit: number | undefined;
-		const limitRaw = params.get("limit");
-		if (limitRaw !== null) {
-			const n = Number(limitRaw);
-			if (!Number.isFinite(n) || n < 1) {
-				return NextResponse.json(
-					{ error: "Invalid `limit` query param" },
-					{ status: 400 },
-				);
-			}
-			limit = n;
-		}
-
-		const rootsOnlyRaw = params.get("rootsOnly");
-		const rootsOnly =
-			rootsOnlyRaw === null ? undefined : rootsOnlyRaw !== "false";
-
-		const filters: RunListFilters = {
-			rootsOnly,
-			agentId: params.get("agentId") ?? undefined,
-			status: (params.get("status") as RunStatus) ?? undefined,
-			startedAfter: params.get("startedAfter") ?? undefined,
-			startedBefore: params.get("startedBefore") ?? undefined,
-			cursor: params.get("cursor") ?? undefined,
-			limit,
-		};
-
-		const result = await store.listRuns(filters);
-		return NextResponse.json(result);
+		const upstream = await workerRunsFetch({
+			...workerIdentity(ctx),
+			path: `/runs${req.nextUrl.search}`,
+			signal: req.signal,
+		});
+		const body = await upstream.text();
+		return new NextResponse(body, {
+			status: upstream.status,
+			headers: {
+				"Content-Type":
+					upstream.headers.get("Content-Type") ?? "application/json",
+			},
+		});
 	} catch (err) {
 		if (err instanceof AuthRequiredError) {
 			return NextResponse.json({ error: err.message }, { status: err.status });

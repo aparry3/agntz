@@ -370,4 +370,34 @@ describe("multiplexed event emission", () => {
 		const r = await runner.invoke("plain", "hi");
 		expect(r.output).toBe("hi");
 	});
+
+	it("replays terminal events and closes for a late subscriber", async () => {
+		const registry = new InMemoryRunRegistry({ gracePeriodMs: 60_000 });
+		const root = registry.create({ agentId: "fast", input: "finish now" });
+		const result = {
+			output: "done",
+			invocationId: root.id,
+			sessionId: "session-fast",
+			toolCalls: [],
+			usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+			duration: 1,
+			model: "test-model",
+		};
+
+		registry.start(root, async () => result);
+		await registry.waitForTerminal(root.id);
+
+		const events: MultiplexedEvent[] = [];
+		for await (const event of registry.subscribe(root.id)) {
+			events.push(event);
+		}
+
+		expect(events).toContainEqual(
+			expect.objectContaining({
+				type: "run-complete",
+				runId: root.id,
+				result,
+			}),
+		);
+	});
 });

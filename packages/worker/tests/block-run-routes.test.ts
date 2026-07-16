@@ -78,6 +78,13 @@ steps:
 		expect(body.target).toBe("block");
 		expect(body.blockId).toBe("validator");
 		expect(body.output.valid).toBe(true);
+		const { rows } = await store.forUser("u1").listRuns({});
+		expect(rows).toHaveLength(1);
+		expect(rows[0]).toMatchObject({
+			agentId: "root",
+			status: "completed",
+		});
+		expect(rows[0]?.result?.output).toContain('"valid":true');
 	});
 
 	it("resolves a selected ref step through the stored manifest", async () => {
