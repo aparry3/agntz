@@ -418,8 +418,8 @@ importers:
         specifier: workspace:*
         version: link:../stores
       '@hono/node-server':
-        specifier: ^1.19.0
-        version: 1.19.11(hono@4.12.23)
+        specifier: ^2.0.10
+        version: 2.0.10(hono@4.12.23)
       dotenv:
         specifier: ^16.5.0
         version: 16.6.1
@@ -1001,6 +1001,12 @@ packages:
   '@hono/node-server@1.19.11':
     resolution: {integrity: sha512-dr8/3zEaB+p0D2n/IUrlPF1HZm586qgJNXK1a9fhg/PzdtkK7Ksd5l312tJX2yBuALqDYBlG20QEbayqPyxn+g==}
     engines: {node: '>=18.14.1'}
+    peerDependencies:
+      hono: 4.12.23
+
+  '@hono/node-server@2.0.10':
+    resolution: {integrity: sha512-ZcnNVhKTmyDJeg0UlnZjvM73JBsTAuhrH/J4fjwGOw59PwOW51r4J+p6CsKZWXdKSme4MFqU62CZMOsdDrU4CA==}
+    engines: {node: '>=20'}
     peerDependencies:
       hono: 4.12.23
 
@@ -3853,6 +3859,10 @@ snapshots:
     optional: true
 
   '@hono/node-server@1.19.11(hono@4.12.23)':
+    dependencies:
+      hono: 4.12.23
+
+  '@hono/node-server@2.0.10(hono@4.12.23)':
     dependencies:
       hono: 4.12.23
 
