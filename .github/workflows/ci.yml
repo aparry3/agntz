@@ -90,7 +90,8 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @agntz/stores build
+      - name: Build stores and workspace dependencies
+        run: pnpm --filter @agntz/stores... build
       - run: pnpm --filter @agntz/stores test
       - run: pnpm --filter @agntz/memrez test
       - name: Install Python Postgres dependencies
