@@ -1,6 +1,6 @@
 {
   "name": "@agntz/core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "TypeScript SDK for defining and running AI agents with first-class MCP support and pluggable storage",
   "type": "module",
   "main": "./dist/index.js",
@@ -20,7 +20,10 @@
     },
     "./schema": "./schema/agent-manifest.schema.json"
   },
-  "files": ["dist", "schema"],
+  "files": [
+    "dist",
+    "schema"
+  ],
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
@@ -31,7 +34,14 @@
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "tsup"
   },
-  "keywords": ["ai", "agents", "mcp", "llm", "typescript", "sdk"],
+  "keywords": [
+    "ai",
+    "agents",
+    "mcp",
+    "llm",
+    "typescript",
+    "sdk"
+  ],
   "publishConfig": {
     "access": "public"
   },

@@ -1,5 +1,23 @@
 # @agntz/core
 
+## 0.2.0
+
+### Minor Changes
+
+- fc75bce: Add the provider-replacement hosted AI surface: canonical recursive JSON
+  Schema, common and provider-scoped model settings, ordered multimodal content,
+  managed artifacts, transcription and image-generation manifests, typed signed
+  callback tools, normalized result metadata, and explicit none/result/session
+  retention. The TypeScript and Python clients now share a public-contract parity
+  gate.
+- fc75bce: Publish the agent-manifest JSON Schema, preserve and validate complete HTTP tool-agent request/auth configuration, make MCP a complete runtime dependency, deduplicate store shutdown, and align the core runtime on Node 22.
+
+### Patch Changes
+
+- Updated dependencies [fc75bce]
+- Updated dependencies [fc75bce]
+  - @agntz/contracts@0.2.0
+
 ## 0.0.0 - 2026-06-26
 
 - Establish the public baseline for the TypeScript core runtime.

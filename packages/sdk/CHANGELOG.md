@@ -1,5 +1,21 @@
 # @agntz/sdk
 
+## 0.2.0
+
+### Minor Changes
+
+- fc75bce: Add durable local runs and traces, persisted agent version references, lifecycle cleanup, end-to-end cancellation, recursive CLI validation, and strict packed-package coverage.
+
+### Patch Changes
+
+- Updated dependencies [fc75bce]
+- Updated dependencies [fc75bce]
+- Updated dependencies [fc75bce]
+- Updated dependencies [fc75bce]
+  - @agntz/client@0.2.0
+  - @agntz/stores@0.2.0
+  - @agntz/core@0.2.0
+
 ## 0.0.1
 
 ### Patch Changes

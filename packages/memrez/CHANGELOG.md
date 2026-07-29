@@ -1,5 +1,19 @@
 # @agntz/memrez
 
+## 0.2.0
+
+### Minor Changes
+
+- fc75bce: Propagate cancellation through curation and LLM reasoning, promote the memory surfaces to public beta, and ship complete Postgres declarations.
+
+### Patch Changes
+
+- Updated dependencies [fc75bce]
+- Updated dependencies [fc75bce]
+- Updated dependencies [fc75bce]
+  - @agntz/contracts@0.2.0
+  - @agntz/db@0.2.0
+
 ## 0.0.0 - 2026-06-26
 
 - Establish the public baseline for the Memrez memory layer.
