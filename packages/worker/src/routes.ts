@@ -69,6 +69,11 @@ import {
 } from "./artifacts.js";
 import { createExecutionContext } from "./bridge.js";
 import {
+	AttachedClientToolBroker,
+	CLIENT_TOOL_RESULT_MAX_CHARS,
+	collectRequiredClientTools,
+} from "./client-tools.js";
+import {
 	getCachedBody,
 	getUserId,
 	internalOnlyAuth,
@@ -253,6 +258,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			persistRun: (run) =>
 				run.userId ? persistRunInOrder(run) : Promise.resolve(),
 		});
+	const clientToolBroker = new AttachedClientToolBroker(runRegistry);
 	const flushRunPersistence = async (runId: string): Promise<void> => {
 		if (opts.runRegistry) return;
 		while (true) {
@@ -313,6 +319,49 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 		};
 	};
 
+	const assertClientToolHandlers = async (
+		prepared: PreparedRunTarget,
+		rawNames: unknown,
+		attached: boolean,
+	): Promise<Set<string> | undefined> => {
+		const required = await collectRequiredClientTools(
+			prepared.manifest,
+			prepared.runner,
+		);
+		if (required.size === 0) return undefined;
+		if (!attached) {
+			throw Object.assign(
+				new Error(
+					"Manifest-declared client tools require agents.run() or agents.stream() with attached handlers",
+				),
+				{ code: "CLIENT_TOOLS_REQUIRE_ATTACHED_RUN" },
+			);
+		}
+		if (
+			!Array.isArray(rawNames) ||
+			rawNames.some((name) => typeof name !== "string")
+		) {
+			throw Object.assign(
+				new Error(
+					"Missing client tool handlers: pass clientTools on this invocation",
+				),
+				{
+					code: "MISSING_CLIENT_TOOLS",
+					details: [...required.keys()],
+				},
+			);
+		}
+		const supplied = new Set(rawNames as string[]);
+		const missing = [...required.keys()].filter((name) => !supplied.has(name));
+		if (missing.length > 0) {
+			throw Object.assign(
+				new Error(`Missing client tool handlers: ${missing.join(", ")}`),
+				{ code: "MISSING_CLIENT_TOOLS", details: missing },
+			);
+		}
+		return supplied;
+	};
+
 	const startUserRun = async (args: {
 		userId: string;
 		agentId: string;
@@ -326,6 +375,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 		target?: "block";
 		prepared?: PreparedRunTarget;
 		requestSignal?: AbortSignal;
+		clientToolNames?: Set<string>;
 	}): Promise<StartedUserRun> => {
 		let prepared = args.prepared;
 		let preparationError: unknown;
@@ -491,6 +541,9 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 						return result.output;
 					},
 					signal,
+					clientToolDispatcher: args.clientToolNames
+						? clientToolBroker.dispatch(args.userId)
+						: undefined,
 				});
 				const result = await execute(
 					prepared.manifest,
@@ -631,6 +684,14 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 
 			try {
 				for await (const event of runRegistry.subscribe(started.run.rootId)) {
+					if (event.type === "client-tool-request") {
+						await stream.writeSSE({
+							event: "client-tool-request",
+							data: JSON.stringify(event),
+							id: String(event.seq),
+						});
+						continue;
+					}
 					if (event.type === "reply") {
 						await stream.writeSSE({
 							event: "reply",
@@ -1576,6 +1637,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 				return c.json({ error: "Missing required field: agentId" }, 400);
 			}
 			const prepared = await prepareRunTarget({ userId, agentId });
+			await assertClientToolHandlers(prepared, undefined, false);
 			const started = await startUserRun({
 				userId,
 				agentId,
@@ -1630,6 +1692,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 				selection,
 				target: "block",
 			});
+			await assertClientToolHandlers(prepared, undefined, false);
 			const started = await startUserRun({
 				userId,
 				agentId,
@@ -1668,6 +1731,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 				sessionId?: string;
 				context?: string[];
 				retention?: Partial<RetentionPolicy>;
+				clientTools?: string[];
 			};
 			const { agentId, input } = body;
 
@@ -1675,6 +1739,11 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 				return c.json({ error: "Missing required field: agentId" }, 400);
 			}
 			const prepared = await prepareRunTarget({ userId, agentId });
+			const clientToolNames = await assertClientToolHandlers(
+				prepared,
+				body.clientTools,
+				true,
+			);
 			const started = await startUserRun({
 				userId,
 				agentId,
@@ -1685,6 +1754,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 				retention: body.retention,
 				prepared,
 				requestSignal: c.req.raw.signal,
+				clientToolNames,
 			});
 			return streamStartedUserRun(c, started, {
 				agentId,
@@ -1709,6 +1779,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 				context?: string[];
 				retention?: Partial<RetentionPolicy>;
 				selection?: unknown;
+				clientTools?: string[];
 			};
 			const { agentId, input } = body;
 
@@ -1723,6 +1794,11 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 				selection,
 				target: "block",
 			});
+			const clientToolNames = await assertClientToolHandlers(
+				prepared,
+				body.clientTools,
+				true,
+			);
 			const started = await startUserRun({
 				userId,
 				agentId,
@@ -1735,6 +1811,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 				target: "block",
 				prepared,
 				requestSignal: c.req.raw.signal,
+				clientToolNames,
 			});
 			return streamStartedUserRun(c, started, {
 				agentId,
@@ -1808,6 +1885,17 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			if (!agentId) {
 				return c.json({ error: "Missing required field: agentId" }, 400);
 			}
+			let prepared: PreparedRunTarget | undefined;
+			try {
+				prepared = await prepareRunTarget({ userId, agentId });
+			} catch {
+				// Preserve the durable route's existing behavior for lookup failures:
+				// startUserRun records them as failed Runs. A valid manifest with
+				// client tools is still rejected synchronously below.
+			}
+			if (prepared) {
+				await assertClientToolHandlers(prepared, undefined, false);
+			}
 
 			// Webhook validation: callbackUrl + webhookSecretName pair must be coherent.
 			// We resolve the secret metadata here (sync with the request) so a
@@ -1854,6 +1942,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 				context: body.context,
 				retention: body.retention,
 				durable: true,
+				prepared,
 			});
 
 			console.log(
@@ -1901,6 +1990,62 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			const status = isBadRequest(error) ? 400 : isNotFound(error) ? 404 : 500;
 			return c.json(errorPayload(error), status);
 		}
+	});
+
+	app.post("/runs/:id/client-tool-requests/:requestId/result", async (c) => {
+		const userId = getUserId(c);
+		const rootRunId = c.req.param("id");
+		const requestId = c.req.param("requestId");
+		const root = runRegistry.get(rootRunId);
+		if (!root || root.rootId !== rootRunId || root.userId !== userId) {
+			return c.json({ error: "Run not found" }, 404);
+		}
+		const body = (await c.req.json().catch(() => null)) as Record<
+			string,
+			unknown
+		> | null;
+		if (!body) return c.json({ error: "Invalid JSON body" }, 400);
+		const hasOutput = Object.prototype.hasOwnProperty.call(body, "output");
+		const hasError = Object.prototype.hasOwnProperty.call(body, "error");
+		if (hasOutput === hasError) {
+			return c.json({ error: "Provide exactly one of output or error" }, 400);
+		}
+		if (hasError && typeof body.error !== "string") {
+			return c.json({ error: "error must be a string" }, 400);
+		}
+		if (hasOutput) {
+			let serialized: string;
+			try {
+				serialized = JSON.stringify(body.output);
+			} catch {
+				return c.json({ error: "output must be JSON-serializable" }, 400);
+			}
+			if (
+				serialized === undefined ||
+				serialized.length > CLIENT_TOOL_RESULT_MAX_CHARS
+			) {
+				return c.json(
+					{
+						error: `output exceeds ${CLIENT_TOOL_RESULT_MAX_CHARS} serialized characters`,
+					},
+					400,
+				);
+			}
+		}
+
+		const result = clientToolBroker.submit({
+			ownerId: userId,
+			rootRunId,
+			requestId,
+			...(hasOutput ? { output: body.output } : {}),
+			...(hasError ? { error: body.error as string } : {}),
+		});
+		if (result === "accepted") return c.json({ status: "accepted" }, 202);
+		if (result === "duplicate") return c.json({ status: "accepted" });
+		if (result === "expired") {
+			return c.json({ error: "Client tool request is no longer active" }, 410);
+		}
+		return c.json({ error: "Client tool request not found" }, 404);
 	});
 
 	app.get("/runs/:id", async (c) => {
@@ -4206,9 +4351,12 @@ function badRequest(message: string): Error {
 }
 
 function isBadRequest(error: unknown): boolean {
+	if (!(error instanceof Error)) return false;
+	const code = (error as Error & { code?: string }).code;
 	return (
-		error instanceof Error &&
-		(error as Error & { code?: string }).code === "BAD_REQUEST"
+		code === "BAD_REQUEST" ||
+		code === "MISSING_CLIENT_TOOLS" ||
+		code === "CLIENT_TOOLS_REQUIRE_ATTACHED_RUN"
 	);
 }
 

@@ -1,4 +1,5 @@
 import type { CallbackToolEntry } from "./callback-tool.js";
+import type { ClientToolEntry } from "./client-tool.js";
 import type { HTTPToolEntry } from "./http-tool.js";
 
 /**
@@ -17,7 +18,8 @@ export type ToolReference =
 	  }
 	| { type: "agent"; agentId: string }
 	| { type: "http"; entry: HTTPToolEntry }
-	| { type: "callback"; entry: CallbackToolEntry };
+	| { type: "callback"; entry: CallbackToolEntry }
+	| { type: "client"; entry: ClientToolEntry };
 
 /**
  * A reusable skill: instructions plus optional tools, loaded on demand by the

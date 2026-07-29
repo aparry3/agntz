@@ -71,6 +71,8 @@ export function manifestEntryToToolReferences(
 			return [];
 		case "callback":
 			return [];
+		case "client":
+			throw new Error("Client tools are not supported in skills");
 	}
 }
 
@@ -114,6 +116,8 @@ function parseManifestToolEntry(raw: unknown, idx: number): ManifestToolEntry {
 			return { kind: "local", tools: e.tools as string[] };
 		case "agent":
 			return { kind: "agent", agent: requireString(e, "agent") };
+		case "client":
+			throw new Error("Client tools are not supported in skills");
 		default:
 			throw new Error(
 				`tools[${idx}].kind must be 'mcp' | 'local' | 'agent' (got '${kind}')`,

@@ -37,6 +37,22 @@ describe("manifestToAgentDefinition — tool kind conversion", () => {
 		expect(def.tools).toEqual([{ type: "http", entry: httpEntry }]);
 	});
 
+	it("passes client tool contracts through without implementations", () => {
+		const clientEntry = {
+			kind: "client" as const,
+			name: "get_selection",
+			description: "Read the application's current selection",
+			inputSchema: {
+				type: "object",
+				properties: { includeText: { type: "boolean" } },
+				additionalProperties: false,
+			},
+			timeoutMs: 5_000,
+		};
+		const def = manifestToAgentDefinition(baseLlm({ tools: [clientEntry] }));
+		expect(def.tools).toEqual([{ type: "client", entry: clientEntry }]);
+	});
+
 	it("converts MCP entries with raw URL + headers to mcp ToolReferences", () => {
 		const manifest = baseLlm({
 			tools: [

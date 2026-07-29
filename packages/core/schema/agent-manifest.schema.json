@@ -322,13 +322,26 @@
       },
       "additionalProperties": false
     },
+    "clientTool": {
+      "type": "object",
+      "required": ["kind", "name", "description", "inputSchema"],
+      "properties": {
+        "kind": { "const": "client" },
+        "name": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+        "description": { "type": "string", "minLength": 1 },
+        "inputSchema": { "$ref": "#/$defs/canonicalJsonSchema" },
+        "timeoutMs": { "type": "integer", "minimum": 1000, "maximum": 120000 }
+      },
+      "additionalProperties": false
+    },
     "manifestTool": {
       "oneOf": [
         { "$ref": "#/$defs/mcpTool" },
         { "$ref": "#/$defs/localTool" },
         { "$ref": "#/$defs/agentTool" },
         { "$ref": "#/$defs/httpTool" },
-        { "$ref": "#/$defs/callbackTool" }
+        { "$ref": "#/$defs/callbackTool" },
+        { "$ref": "#/$defs/clientTool" }
       ]
     },
     "toolCall": {

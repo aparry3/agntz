@@ -38,6 +38,48 @@ The normalized result also includes `runId`, optional `traceId` / `sessionId`,
 requested and resolved agent versions, provider, actual model, finish reason,
 provider response id, warnings, and retention metadata.
 
+## Per-run client tools
+
+Use `kind: client` when the manifest should own a tool's name, description, and
+JSON Schema, but the invoking application must supply the implementation:
+
+```yaml
+tools:
+  - kind: client
+    name: get_current_selection
+    description: Read the user's current editor selection
+    inputSchema:
+      type: object
+      properties:
+        includeText: { type: boolean }
+      additionalProperties: false
+    timeoutMs: 30000
+```
+
+```ts
+const result = await client.agents.run({
+  agentId: "editor-assistant",
+  input: "Summarize what I selected",
+  clientTools: {
+    get_current_selection: async ({ includeText }, ctx) =>
+      editor.getSelection({ includeText, signal: ctx.signal }),
+  },
+});
+```
+
+The SDK keeps this as one `run()` promise (or one public `stream()` iterator).
+Internally it maintains the attached SSE request, calls the local handler, and
+submits the result back to the same logical Run. Handler source is never sent.
+Every reachable client tool must have a handler before the Run is created;
+`agents.start`/`runs.start` reject client-tool manifests because they are
+unattended. Handler errors and the 30-second default deadline are returned to
+the model as tool errors. Results must be JSON-serializable and no larger than
+40,000 serialized characters.
+
+Unlike a signed callback tool, a client tool is invocation-scoped and requires
+the SDK connection to remain attached. It does not survive reconnects or worker
+restarts.
+
 ## Rich content, artifacts, and retention
 
 Local image and audio files are uploaded automatically and replaced with

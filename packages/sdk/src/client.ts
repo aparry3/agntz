@@ -4,6 +4,8 @@ import type {
 	AgentImportResult,
 	AgentSummary,
 	AgentDefinition as ClientAgentDefinition,
+	ClientToolContext,
+	ClientToolHandlers,
 	EvalDataset,
 	EvalDatasetListFilter,
 	EvalDefinition,
@@ -39,7 +41,9 @@ import type {
 	TracesListResult,
 } from "@agntz/client";
 import {
+	DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
 	InMemoryRunRegistry,
+	InvocationCancelledError,
 	SpanEmitter,
 	createRunner,
 	isIsoTimestamp,
@@ -49,7 +53,11 @@ import {
 	runEval,
 	summarizeEvalRun,
 } from "@agntz/core";
-import type { TokenCache } from "@agntz/core";
+import type {
+	ClientToolDispatcher,
+	ClientToolEntry,
+	TokenCache,
+} from "@agntz/core";
 import type {
 	AgentDefinition as CoreAgentDefinition,
 	EvalRun as CoreEvalRun,
@@ -563,6 +571,7 @@ class LocalClientImpl implements LocalClient {
 			root,
 			sessionId,
 			signal,
+			clientToolDispatcher,
 		) =>
 			runManifestForRegistry({
 				runner: _runner,
@@ -576,6 +585,7 @@ class LocalClientImpl implements LocalClient {
 				root,
 				sessionId,
 				signal,
+				clientToolDispatcher,
 			});
 
 		this.agents = new AgentsResourceImpl(
@@ -1019,6 +1029,11 @@ class AgentsResourceImpl implements LocalAgentsResource {
 			await this.historyStore?.putRun(failedRun as unknown as CoreRun);
 			throw e;
 		}
+		const clientToolDispatcher = await prepareClientToolDispatcher(
+			resolved.manifest,
+			async (ref) => (await this.resolveManifest(ref)).manifest,
+			input.clientTools,
+		);
 
 		// Same execution path as `runs.start`: create a first-class root Run and
 		// run the shared executor (inner LLM steps attach as children, so
@@ -1059,6 +1074,7 @@ class AgentsResourceImpl implements LocalAgentsResource {
 						root,
 						sessionId,
 						signal,
+						clientToolDispatcher,
 					);
 					return captured.invokeResult;
 				} catch (e) {
@@ -1079,6 +1095,11 @@ class AgentsResourceImpl implements LocalAgentsResource {
 	async *stream(input: RunInput): AsyncGenerator<StreamEvent, void, void> {
 		const resolved = await this.resolveManifest(input.agentId);
 		const manifest = resolved.manifest;
+		const clientToolDispatcher = await prepareClientToolDispatcher(
+			manifest,
+			async (ref) => (await this.resolveManifest(ref)).manifest,
+			input.clientTools,
+		);
 		const inputAsString = inputToString(input.input);
 		const spanEmitter = new SpanEmitter({ traceSink: this.traceSink });
 
@@ -1161,6 +1182,7 @@ class AgentsResourceImpl implements LocalAgentsResource {
 				spanEmitter,
 				runRegistry: this.registry,
 				runId: root.id,
+				clientToolDispatcher,
 			});
 			for await (const event of iter) {
 				this.onEvent?.(event);
@@ -1186,6 +1208,7 @@ type RunExecutorFn = (
 	root: CoreRun,
 	sessionId: string,
 	signal: AbortSignal,
+	clientToolDispatcher?: ClientToolDispatcher,
 ) => Promise<{ invokeResult: InvokeResult; output: unknown; replies: Reply[] }>;
 
 class RunsResourceImpl implements LocalRunsResource {
@@ -1224,6 +1247,10 @@ class RunsResourceImpl implements LocalRunsResource {
 
 	async start(input: RunsStartInput): Promise<Run> {
 		const resolved = await this.resolveManifest(input.agentId);
+		await assertNoClientToolsForUnattendedRun(
+			resolved.manifest,
+			async (ref) => (await this.resolveManifest(ref)).manifest,
+		);
 		const sessionId = input.sessionId ?? generateSessionId();
 		const root = this.registry.create({
 			agentId: resolved.agentId,
@@ -1346,6 +1373,192 @@ function inputToString(input: RunInput["input"]): string {
 	return JSON.stringify(input);
 }
 
+const CLIENT_TOOL_RESULT_MAX_CHARS = 40_000;
+
+async function prepareClientToolDispatcher(
+	manifest: AgentManifest,
+	resolveManifest: (ref: string) => Promise<AgentManifest>,
+	handlers: ClientToolHandlers | undefined,
+): Promise<ClientToolDispatcher | undefined> {
+	const required = await collectRequiredClientTools(manifest, resolveManifest);
+	if (required.size === 0) return undefined;
+	const missing = [...required.keys()].filter((name) => !handlers?.[name]);
+	if (missing.length > 0) {
+		throw Object.assign(
+			new Error(`Missing client tool handlers: ${missing.join(", ")}`),
+			{ code: "MISSING_CLIENT_TOOLS", details: missing },
+		);
+	}
+
+	return async (entry, input, toolContext) => {
+		const handler = handlers?.[entry.name];
+		if (!handler) {
+			throw new Error(
+				`No handler was supplied for client tool '${entry.name}'`,
+			);
+		}
+		const timeoutMs = entry.timeoutMs ?? DEFAULT_CLIENT_TOOL_TIMEOUT_MS;
+		const deadlineAt = new Date(Date.now() + timeoutMs).toISOString();
+		const controller = new AbortController();
+		let timedOut = false;
+		const onAbort = () => controller.abort(toolContext.signal?.reason);
+		if (toolContext.signal) {
+			if (toolContext.signal.aborted) onAbort();
+			else
+				toolContext.signal.addEventListener("abort", onAbort, { once: true });
+		}
+		const timer = setTimeout(() => {
+			timedOut = true;
+			controller.abort(
+				new Error(`Client tool '${entry.name}' timed out after ${timeoutMs}ms`),
+			);
+		}, timeoutMs);
+		const handlerContext: ClientToolContext = {
+			requestId: `ctr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`,
+			toolCallId: toolContext.toolCallId ?? "unknown",
+			runId: toolContext.runId ?? toolContext.invocationId,
+			deadlineAt,
+			signal: controller.signal,
+		};
+		try {
+			const output = await Promise.race([
+				Promise.resolve(handler(input, handlerContext)),
+				new Promise<never>((_, reject) => {
+					const rejectOnAbort = () =>
+						reject(
+							controller.signal.reason instanceof Error
+								? controller.signal.reason
+								: new Error("Client tool was cancelled"),
+						);
+					if (controller.signal.aborted) rejectOnAbort();
+					else
+						controller.signal.addEventListener("abort", rejectOnAbort, {
+							once: true,
+						});
+				}),
+			]);
+			let serialized: string | undefined;
+			try {
+				serialized = JSON.stringify(output);
+			} catch {
+				throw new Error(
+					`Client tool '${entry.name}' returned a non-JSON-serializable value`,
+				);
+			}
+			if (serialized === undefined) {
+				throw new Error(
+					`Client tool '${entry.name}' returned a non-JSON-serializable value`,
+				);
+			}
+			if (serialized.length > CLIENT_TOOL_RESULT_MAX_CHARS) {
+				throw new Error(
+					`Client tool '${entry.name}' output exceeds ${CLIENT_TOOL_RESULT_MAX_CHARS} serialized characters`,
+				);
+			}
+			return output;
+		} catch (error) {
+			if (toolContext.signal?.aborted && !timedOut) {
+				throw new InvocationCancelledError();
+			}
+			throw error;
+		} finally {
+			clearTimeout(timer);
+			toolContext.signal?.removeEventListener("abort", onAbort);
+		}
+	};
+}
+
+async function assertNoClientToolsForUnattendedRun(
+	manifest: AgentManifest,
+	resolveManifest: (ref: string) => Promise<AgentManifest>,
+): Promise<void> {
+	const required = await collectRequiredClientTools(manifest, resolveManifest);
+	if (required.size === 0) return;
+	throw Object.assign(
+		new Error(
+			"Manifest-declared client tools require agents.run() or agents.stream() with attached handlers",
+		),
+		{ code: "CLIENT_TOOLS_REQUIRE_ATTACHED_RUN" },
+	);
+}
+
+async function collectRequiredClientTools(
+	manifest: AgentManifest,
+	resolveManifest: (ref: string) => Promise<AgentManifest>,
+): Promise<Map<string, ClientToolEntry>> {
+	const found = new Map<string, ClientToolEntry>();
+	const visitedRefs = new Set<string>();
+	const visitedInline = new Set<AgentManifest>();
+
+	const add = (entry: ClientToolEntry) => {
+		const prior = found.get(entry.name);
+		if (prior && stableJSON(prior) !== stableJSON(entry)) {
+			throw new Error(
+				`Client tool '${entry.name}' has conflicting contracts in the reachable manifest graph`,
+			);
+		}
+		found.set(entry.name, entry);
+	};
+	const visitRef = async (ref: string) => {
+		if (visitedRefs.has(ref)) return;
+		visitedRefs.add(ref);
+		let child: AgentManifest;
+		try {
+			child = await resolveManifest(ref);
+		} catch {
+			// Requirement discovery must not make an otherwise lazy/unreached
+			// missing agent reference fail earlier than it did before.
+			return;
+		}
+		await visit(child);
+	};
+	const visit = async (current: AgentManifest): Promise<void> => {
+		if (visitedInline.has(current)) return;
+		visitedInline.add(current);
+		if (current.kind === "llm") {
+			for (const tool of current.tools ?? []) {
+				if (tool.kind === "client") add(tool);
+				if (tool.kind === "agent") {
+					await visitRef(
+						tool.version ? `${tool.agent}@${tool.version}` : tool.agent,
+					);
+				}
+			}
+			for (const child of current.spawnable ?? []) {
+				if (child.kind === "inline") await visit(child.definition);
+				else {
+					await visitRef(
+						child.version ? `${child.agentId}@${child.version}` : child.agentId,
+					);
+				}
+			}
+			return;
+		}
+		if (current.kind === "sequential" || current.kind === "parallel") {
+			const steps =
+				current.kind === "sequential" ? current.steps : current.branches;
+			for (const step of steps) {
+				if (step.agent) await visit(step.agent);
+				if (step.ref) await visitRef(step.ref);
+			}
+		}
+	};
+	await visit(manifest);
+	return found;
+}
+
+function stableJSON(value: unknown): string {
+	if (Array.isArray(value)) return `[${value.map(stableJSON).join(",")}]`;
+	if (value && typeof value === "object") {
+		const record = value as Record<string, unknown>;
+		return `{${Object.keys(record)
+			.sort()
+			.map((key) => `${JSON.stringify(key)}:${stableJSON(record[key])}`)
+			.join(",")}}`;
+	}
+	return JSON.stringify(value);
+}
+
 /**
  * Executor body shared by `runs.start`. Mirrors the hosted worker's POST /runs:
  * build an ExecutionContext wired to the registry (so inner LLM steps attach to
@@ -1364,6 +1577,7 @@ async function runManifestForRegistry(args: {
 	root: CoreRun;
 	sessionId: string;
 	signal: AbortSignal;
+	clientToolDispatcher?: ClientToolDispatcher;
 }): Promise<{ invokeResult: InvokeResult; output: unknown; replies: Reply[] }> {
 	const manifest = args.resolved.manifest;
 	const resolvedManifests = new Map(args.manifests);
@@ -1383,6 +1597,7 @@ async function runManifestForRegistry(args: {
 			signal: args.signal,
 			localTools: args.localTools,
 			replyCollector: replies,
+			clientToolDispatcher: args.clientToolDispatcher,
 			runRegistry: args.runRegistry,
 			parentRunId: args.root.id,
 		},

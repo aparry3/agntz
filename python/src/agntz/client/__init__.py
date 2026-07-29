@@ -1,6 +1,7 @@
 """Hosted Agntz client package."""
 
 from .client import AgntzClient, AsyncAgntzClient
+from .client_tools import ClientToolContext, ClientToolHandler, ClientToolHandlers
 from .errors import AgntzError, AuthenticationError, NotFoundError, StreamError
 from .models import (
     AgentDefinition,
@@ -47,6 +48,9 @@ __all__ = [
     "AgentVersionSummary",
     "AsyncAgntzClient",
     "AuthenticationError",
+    "ClientToolContext",
+    "ClientToolHandler",
+    "ClientToolHandlers",
     "ApiKeyRecord",
     "ArtifactRef",
     "EvalCaseResult",

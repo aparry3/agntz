@@ -129,6 +129,9 @@ function convertTools(
 			case "callback":
 				out.push({ type: "callback", entry });
 				break;
+			case "client":
+				out.push({ type: "client", entry });
+				break;
 			case "mcp":
 				out.push({
 					type: "mcp",

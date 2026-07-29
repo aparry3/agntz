@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
+import inspect
+import json
 import mimetypes
-from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
+import threading
+import time
+from collections.abc import AsyncIterator, Awaitable, Iterator, Mapping, Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlencode
@@ -12,6 +18,7 @@ from urllib.parse import quote, urlencode
 import httpx
 
 from ._sse import parse_sse, parse_sse_async
+from .client_tools import ClientToolContext, ClientToolHandler, ClientToolHandlers
 from .errors import AgntzError, AuthenticationError, NotFoundError, StreamError
 from .events import normalize_agent_event, normalize_run_event, normalize_trace_event
 from .models import (
@@ -38,6 +45,8 @@ from .models import (
     TraceDetail,
     TracesListResult,
 )
+
+CLIENT_TOOL_RESULT_MAX_CHARS = 40_000
 
 
 class AgntzClient:
@@ -132,6 +141,7 @@ class AgntzClient:
         session_id: str | None,
         context: list[str] | None,
         retention: RetentionRequest | Mapping[str, Any] | None,
+        client_tools: ClientToolHandlers | None = None,
     ) -> dict[str, Any]:
         legacy_content = content is None and _is_content_blocks(input)
         body: dict[str, Any] = {"agentId": agent_id}
@@ -147,6 +157,8 @@ class AgntzClient:
         _add_if_defined(body, "context", context)
         if retention is not None:
             body["retention"] = _retention_body(retention)
+        if client_tools is not None:
+            body["clientTools"] = list(client_tools)
         return body
 
 
@@ -218,6 +230,7 @@ class AsyncAgntzClient:
         session_id: str | None,
         context: list[str] | None,
         retention: RetentionRequest | Mapping[str, Any] | None,
+        client_tools: ClientToolHandlers | None = None,
     ) -> dict[str, Any]:
         legacy_content = content is None and _is_content_blocks(input)
         body: dict[str, Any] = {"agentId": agent_id}
@@ -233,6 +246,8 @@ class AsyncAgntzClient:
         _add_if_defined(body, "context", context)
         if retention is not None:
             body["retention"] = _retention_body(retention)
+        if client_tools is not None:
+            body["clientTools"] = list(client_tools)
         return body
 
 
@@ -249,10 +264,13 @@ class AgentsResource:
         session_id: str | None = None,
         context: list[str] | None = None,
         retention: RetentionRequest | Mapping[str, Any] | None = None,
+        client_tools: ClientToolHandlers | None = None,
     ) -> RunResult:
         body = self._client._prepare_run_body(
-            agent_id, input, content, session_id, context, retention
+            agent_id, input, content, session_id, context, retention, client_tools
         )
+        if client_tools is not None:
+            return _run_attached_sync(self._client, body, client_tools)
         response = self._client._request(
             "POST",
             "/run",
@@ -269,9 +287,10 @@ class AgentsResource:
         session_id: str | None = None,
         context: list[str] | None = None,
         retention: RetentionRequest | Mapping[str, Any] | None = None,
+        client_tools: ClientToolHandlers | None = None,
     ) -> Iterator[Event]:
         body = self._client._prepare_run_body(
-            agent_id, input, content, session_id, context, retention
+            agent_id, input, content, session_id, context, retention, client_tools
         )
         response = self._client._stream(
             "POST",
@@ -282,6 +301,11 @@ class AgentsResource:
         saw_terminal = False
         try:
             for frame in parse_sse(response.iter_text()):
+                if frame.event == "client-tool-request":
+                    _handle_client_tool_sync(
+                        self._client, frame.data, client_tools or {}
+                    )
+                    continue
                 event = normalize_agent_event(frame)
                 if event is None:
                     continue
@@ -409,10 +433,13 @@ class AsyncAgentsResource:
         session_id: str | None = None,
         context: list[str] | None = None,
         retention: RetentionRequest | Mapping[str, Any] | None = None,
+        client_tools: ClientToolHandlers | None = None,
     ) -> RunResult:
         body = await self._client._prepare_run_body(
-            agent_id, input, content, session_id, context, retention
+            agent_id, input, content, session_id, context, retention, client_tools
         )
+        if client_tools is not None:
+            return await _run_attached_async(self._client, body, client_tools)
         response = await self._client._request(
             "POST",
             "/run",
@@ -429,9 +456,10 @@ class AsyncAgentsResource:
         session_id: str | None = None,
         context: list[str] | None = None,
         retention: RetentionRequest | Mapping[str, Any] | None = None,
+        client_tools: ClientToolHandlers | None = None,
     ) -> AsyncIterator[Event]:
         body = await self._client._prepare_run_body(
-            agent_id, input, content, session_id, context, retention
+            agent_id, input, content, session_id, context, retention, client_tools
         )
         async with self._client._client.stream(
             "POST",
@@ -442,6 +470,11 @@ class AsyncAgentsResource:
             _raise_for_status(response)
             saw_terminal = False
             async for frame in parse_sse_async(response.aiter_text()):
+                if frame.event == "client-tool-request":
+                    await _handle_client_tool_async(
+                        self._client, frame.data, client_tools or {}
+                    )
+                    continue
                 event = normalize_agent_event(frame)
                 if event is None:
                     continue
@@ -1561,6 +1594,227 @@ class AsyncMemoryResource:
             "POST", "/scopes/delete", json_body=_scope_delete_body(grants, prefix, recursive)
         )
         return ScopeDeleteResult.model_validate(response.json())
+
+
+def _run_attached_sync(
+    client: AgntzClient,
+    body: Mapping[str, Any],
+    handlers: ClientToolHandlers,
+) -> RunResult:
+    response = client._stream("POST", "/run/stream", json_body=body)
+    stream_context = response.extensions["_agntz_stream_context"]
+    try:
+        for frame in parse_sse(response.iter_text()):
+            if frame.event == "client-tool-request":
+                _handle_client_tool_sync(client, frame.data, handlers)
+                continue
+            if frame.event == "run-complete":
+                return RunResult.model_validate(_frame_json(frame.data, frame.event))
+            if frame.event == "run-error":
+                payload = _frame_json(frame.data, frame.event)
+                raise StreamError(str(payload.get("error") or "Run failed"))
+        raise StreamError("Stream closed before completion", code="STREAM_TRUNCATED")
+    finally:
+        stream_context.__exit__(None, None, None)
+
+
+async def _run_attached_async(
+    client: AsyncAgntzClient,
+    body: Mapping[str, Any],
+    handlers: ClientToolHandlers,
+) -> RunResult:
+    async with client._client.stream(
+        "POST",
+        _join_url(client._base_url, "/run/stream"),
+        headers=_headers(client._api_key, "text/event-stream"),
+        json=dict(body),
+    ) as response:
+        _raise_for_status(response)
+        async for frame in parse_sse_async(response.aiter_text()):
+            if frame.event == "client-tool-request":
+                await _handle_client_tool_async(client, frame.data, handlers)
+                continue
+            if frame.event == "run-complete":
+                return RunResult.model_validate(_frame_json(frame.data, frame.event))
+            if frame.event == "run-error":
+                payload = _frame_json(frame.data, frame.event)
+                raise StreamError(str(payload.get("error") or "Run failed"))
+    raise StreamError("Stream closed before completion", code="STREAM_TRUNCATED")
+
+
+def _handle_client_tool_sync(
+    client: AgntzClient,
+    data: str,
+    handlers: ClientToolHandlers,
+) -> None:
+    request = _frame_json(data, "client-tool-request")
+    name = str(request.get("name") or "")
+    handler = handlers.get(name)
+    output: Any = None
+    error: str | None = None
+    if handler is None:
+        error = f"No handler was supplied for client tool '{name}'"
+    else:
+        signal = threading.Event()
+        context = ClientToolContext(
+            request_id=str(request["requestId"]),
+            tool_call_id=str(request["toolCallId"]),
+            run_id=str(request["runId"]),
+            deadline_at=str(request["deadlineAt"]),
+            signal=signal,
+        )
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(_invoke_sync_client_tool, handler, request.get("input"), context)
+        try:
+            output = future.result(timeout=_remaining_seconds(context.deadline_at))
+            _validate_client_tool_output(name, output)
+        except concurrent.futures.TimeoutError:
+            signal.set()
+            error = f"Client tool '{name}' timed out"
+        except Exception as exc:
+            error = str(exc)
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+    _submit_client_tool_result_sync(client, request, output, error)
+
+
+async def _handle_client_tool_async(
+    client: AsyncAgntzClient,
+    data: str,
+    handlers: ClientToolHandlers,
+) -> None:
+    request = _frame_json(data, "client-tool-request")
+    name = str(request.get("name") or "")
+    handler = handlers.get(name)
+    output: Any = None
+    error: str | None = None
+    if handler is None:
+        error = f"No handler was supplied for client tool '{name}'"
+    else:
+        signal = asyncio.Event()
+        context = ClientToolContext(
+            request_id=str(request["requestId"]),
+            tool_call_id=str(request["toolCallId"]),
+            run_id=str(request["runId"]),
+            deadline_at=str(request["deadlineAt"]),
+            signal=signal,
+        )
+        try:
+            async with asyncio.timeout(_remaining_seconds(context.deadline_at)):
+                if inspect.iscoroutinefunction(handler):
+                    output = await handler(request.get("input"), context)
+                else:
+                    output = await asyncio.to_thread(
+                        handler, request.get("input"), context
+                    )
+                    if inspect.isawaitable(output):
+                        output = await output
+            _validate_client_tool_output(name, output)
+        except TimeoutError:
+            signal.set()
+            error = f"Client tool '{name}' timed out"
+        except Exception as exc:
+            error = str(exc)
+    await _submit_client_tool_result_async(client, request, output, error)
+
+
+def _invoke_sync_client_tool(
+    handler: ClientToolHandler,
+    input_value: Any,
+    context: ClientToolContext,
+) -> Any:
+    output = handler(input_value, context)
+    if inspect.isawaitable(output):
+        return asyncio.run(_await_client_tool_output(output))
+    return output
+
+
+async def _await_client_tool_output(output: Awaitable[Any]) -> Any:
+    return await output
+
+
+def _validate_client_tool_output(name: str, output: Any) -> None:
+    try:
+        serialized = json.dumps(
+            output, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+        )
+    except (TypeError, ValueError) as exc:
+        raise TypeError(
+            f"Client tool '{name}' returned a non-JSON-serializable value"
+        ) from exc
+    if len(serialized) > CLIENT_TOOL_RESULT_MAX_CHARS:
+        raise ValueError(
+            f"Client tool '{name}' output exceeds "
+            f"{CLIENT_TOOL_RESULT_MAX_CHARS} serialized characters"
+        )
+
+
+def _submit_client_tool_result_sync(
+    client: AgntzClient,
+    request: Mapping[str, Any],
+    output: Any,
+    error: str | None,
+) -> None:
+    path = _client_tool_result_path(request)
+    body = {"output": output} if error is None else {"error": error}
+    for attempt, delay in enumerate((0.1, 0.25, 0.0)):
+        try:
+            client._request("POST", path, json_body=body)
+            return
+        except AgntzError as exc:
+            if exc.status == 410:
+                return
+            transient = exc.status == 429 or (
+                exc.status is not None and exc.status >= 500
+            )
+            if not transient or attempt == 2:
+                raise
+            time.sleep(delay)
+
+
+async def _submit_client_tool_result_async(
+    client: AsyncAgntzClient,
+    request: Mapping[str, Any],
+    output: Any,
+    error: str | None,
+) -> None:
+    path = _client_tool_result_path(request)
+    body = {"output": output} if error is None else {"error": error}
+    for attempt, delay in enumerate((0.1, 0.25, 0.0)):
+        try:
+            await client._request("POST", path, json_body=body)
+            return
+        except AgntzError as exc:
+            if exc.status == 410:
+                return
+            transient = exc.status == 429 or (
+                exc.status is not None and exc.status >= 500
+            )
+            if not transient or attempt == 2:
+                raise
+            await asyncio.sleep(delay)
+
+
+def _client_tool_result_path(request: Mapping[str, Any]) -> str:
+    return (
+        f"/runs/{_q(str(request['rootRunId']))}/client-tool-requests/"
+        f"{_q(str(request['requestId']))}/result"
+    )
+
+
+def _remaining_seconds(deadline_at: str) -> float:
+    deadline = datetime.fromisoformat(deadline_at.replace("Z", "+00:00")).timestamp()
+    return max(0.0, deadline - time.time())
+
+
+def _frame_json(data: str, event: str | None) -> dict[str, Any]:
+    try:
+        value = json.loads(data)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise StreamError(f"Invalid {event or 'SSE'} event payload", cause=exc) from exc
+    if not isinstance(value, dict):
+        raise StreamError(f"Invalid {event or 'SSE'} event payload")
+    return value
 
 
 def _csv(values: Sequence[str]) -> str:

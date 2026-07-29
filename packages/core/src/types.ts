@@ -1,5 +1,6 @@
 import type {
 	AgentStore,
+	ClientToolEntry,
 	ContentBlock,
 	ContextStore,
 	InvokeResult,
@@ -71,6 +72,8 @@ export interface ToolContext {
 	contextIds?: string[];
 	/** Unique ID for the current invocation */
 	invocationId: string;
+	/** Provider-issued ID for the active tool call. */
+	toolCallId?: string;
 	/** Cancellation for networked tools. */
 	signal?: AbortSignal;
 	/** Invoke another agent */
@@ -108,6 +111,16 @@ export interface ToolContext {
 	[key: string]: unknown;
 }
 
+/**
+ * Per-invocation bridge used by manifest-declared client tools. Embedded
+ * hosts call a local handler; hosted workers rendezvous with an attached SDK.
+ */
+export type ClientToolDispatcher = (
+	entry: ClientToolEntry,
+	input: unknown,
+	ctx: ToolContext,
+) => Promise<unknown>;
+
 // ═══════════════════════════════════════════════════════════════════════
 // Invocation
 // ═══════════════════════════════════════════════════════════════════════
@@ -127,6 +140,8 @@ export interface InvokeOptions {
 	extraContext?: string;
 	/** Runtime data available to tool execute() via ctx */
 	toolContext?: Record<string, unknown>;
+	/** Attached client-tool execution bridge for this invocation. */
+	clientToolDispatcher?: ClientToolDispatcher;
 	/** Return async iterable instead of awaiting */
 	stream?: boolean;
 	/** Cancellation */
@@ -393,6 +408,18 @@ export type MultiplexedEvent =
 			ts: string;
 			seq: number;
 	  }
+	| {
+			/** Internal attached-run event consumed by SDKs, not public streams. */
+			type: "client-tool-request";
+			runId: string;
+			rootRunId: string;
+			requestId: string;
+			toolCallId: string;
+			name: string;
+			input: unknown;
+			deadlineAt: string;
+			seq: number;
+	  }
 	| { type: "run-complete"; runId: string; result: InvokeResult; seq: number }
 	| { type: "run-error"; runId: string; error: string; seq: number }
 	| { type: "run-cancelled"; runId: string; seq: number };
@@ -544,6 +571,7 @@ export type {
 	ResourceToolContext,
 	// Tools
 	CallbackToolEntry,
+	ClientToolEntry,
 	ToolReference,
 	ToolInfo,
 	// Invocation

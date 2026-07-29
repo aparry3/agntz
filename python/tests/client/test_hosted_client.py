@@ -229,6 +229,77 @@ def test_agents_stream_normalizes_sse_events() -> None:
     assert events[2].output == "done"
 
 
+def test_agents_run_executes_attached_client_tool() -> None:
+    body = (
+        _sse("run-start", {"agentId": "support", "kind": "llm", "runId": "run_abc"})
+        + _sse(
+            "client-tool-request",
+            {
+                "requestId": "ctr_abc",
+                "rootRunId": "run_abc",
+                "runId": "run_child",
+                "toolCallId": "call_abc",
+                "name": "get_selection",
+                "input": {"includeText": True},
+                "deadlineAt": "2099-01-01T00:00:00.000Z",
+            },
+        )
+        + _sse(
+            "run-complete",
+            {
+                **_run_payload(),
+                "runId": "run_abc",
+                "status": "completed",
+                "model": "openai/gpt-5.4",
+                "usage": {"inputTokens": 1, "outputTokens": 1, "totalTokens": 2},
+            },
+        )
+    )
+    posted: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/run/stream":
+            assert json.loads(request.content)["clientTools"] == ["get_selection"]
+            return httpx.Response(
+                200,
+                content=body.encode(),
+                headers={"content-type": "text/event-stream"},
+            )
+        assert (
+            request.url.path
+            == "/runs/run_abc/client-tool-requests/ctr_abc/result"
+        )
+        posted.append(json.loads(request.content))
+        return httpx.Response(202, json={"status": "accepted"})
+
+    client = AgntzClient(
+        api_key="test-key",
+        base_url="https://worker.test",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    result = client.agents.run(
+        agent_id="support",
+        client_tools={
+            "get_selection": lambda input_value, context: {
+                "selected": "chapter one",
+                "input": input_value,
+                "tool_call_id": context.tool_call_id,
+            }
+        },
+    )
+
+    assert result.run_id == "run_abc"
+    assert posted == [
+        {
+            "output": {
+                "selected": "chapter one",
+                "input": {"includeText": True},
+                "tool_call_id": "call_abc",
+            }
+        }
+    ]
+
+
 def test_agents_stream_accepts_hosted_kinds_and_sessionless_retention() -> None:
     body = _sse(
         "run-start",

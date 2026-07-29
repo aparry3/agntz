@@ -10,6 +10,9 @@ from .client import (
     ArtifactRef,
     AsyncAgntzClient,
     AuthenticationError,
+    ClientToolContext,
+    ClientToolHandler,
+    ClientToolHandlers,
     EvalCaseResult,
     EvalCriterion,
     EvalCriterionResult,
@@ -97,6 +100,9 @@ __all__ = [
     "AgentVersionSummary",
     "AsyncAgntzClient",
     "AuthenticationError",
+    "ClientToolContext",
+    "ClientToolHandler",
+    "ClientToolHandlers",
     "DEFAULT_CURATOR_MODEL",
     "DEFAULT_TAGGER_MODEL",
     "DeterministicReasoner",
@@ -172,4 +178,4 @@ __all__ = [
     "tool",
 ]
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"

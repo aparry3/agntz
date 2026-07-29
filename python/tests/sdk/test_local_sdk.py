@@ -390,6 +390,85 @@ tools:
     ]
 
 
+def test_local_sdk_executes_invocation_scoped_client_tool(tmp_path: Path) -> None:
+    agents_dir = _copy_agents(tmp_path)
+    (agents_dir / "client-tool-user.yaml").write_text(
+        """
+id: client-tool-user
+kind: llm
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: Use the application selection.
+tools:
+  - kind: client
+    name: get_selection
+    description: Read the current selection
+    inputSchema:
+      type: object
+      properties:
+        includeText: { type: boolean }
+      additionalProperties: false
+""",
+        encoding="utf-8",
+    )
+
+    class ClientToolProvider:
+        async def generate_text(
+            self,
+            *,
+            manifest: LLMAgentManifest,
+            instruction: str,
+            prompt: str | None,
+            state: AgentState,
+            messages: list[ModelMessage] | None = None,
+            tools: list[ModelTool] | None = None,
+            tool_results: list[ToolResult] | None = None,
+        ) -> GenerateTextResult:
+            if not tool_results:
+                assert tools is not None
+                assert tools[0].name == "get_selection"
+                return GenerateTextResult(
+                    output="",
+                    tool_calls=[
+                        ToolCall(
+                            id="call_client",
+                            name="get_selection",
+                            input={"includeText": True},
+                        )
+                    ],
+                )
+            return GenerateTextResult(output=tool_results[0].output)
+
+    client = agntz(
+        agents=str(agents_dir),
+        model_provider=ClientToolProvider(),
+    )
+    seen: list[str] = []
+
+    def get_selection(input_value: dict[str, Any], context: Any) -> dict[str, Any]:
+        seen.append(context.tool_call_id)
+        return {"text": "chapter one", "input": input_value}
+
+    with pytest.raises(RuntimeError, match="Missing client tool handlers"):
+        client.agents.run(agent_id="client-tool-user", input="explain")
+    assert client.runs.list(agent_id="client-tool-user") == []
+
+    result = client.agents.run(
+        agent_id="client-tool-user",
+        input="explain",
+        client_tools={"get_selection": get_selection},
+    )
+    assert seen == ["call_client"]
+    assert result.output == {
+        "text": "chapter one",
+        "input": {"includeText": True},
+    }
+
+    with pytest.raises(RuntimeError, match="require agents.run"):
+        client.runs.start(agent_id="client-tool-user", input="explain")
+
+
 def test_local_sdk_replays_provider_response_messages_for_tool_followup(
     tmp_path: Path,
 ) -> None:

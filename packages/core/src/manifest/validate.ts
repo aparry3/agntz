@@ -787,19 +787,22 @@ export function validateToolEntries(
 	resources?: Record<string, ResourceManifestEntry>,
 ): void {
 	const reservedResourcePrefixes = resourceToolPrefixes(resources);
+	const clientToolNames = new Set<string>();
 	for (let i = 0; i < tools.length; i++) {
 		const entry = tools[i];
 		const epath = `${path}[${i}]`;
 
 		if (
 			!entry.kind ||
-			!["mcp", "local", "agent", "http", "callback"].includes(entry.kind)
+			!["mcp", "local", "agent", "http", "callback", "client"].includes(
+				entry.kind,
+			)
 		) {
 			errors.push({
 				level: "structural",
 				path: epath,
 				message:
-					"Tool entry must have kind: mcp, local, agent, http, or callback",
+					"Tool entry must have kind: mcp, local, agent, http, callback, or client",
 			});
 			continue;
 		}
@@ -1112,6 +1115,64 @@ export function validateToolEntries(
 						message: `${field} must be an integer between ${minimum} and ${maximum}`,
 					});
 				}
+			}
+		}
+
+		if (entry.kind === "client") {
+			if (!entry.name || !HTTP_TOOL_NAME_RE.test(entry.name)) {
+				errors.push({
+					level: "structural",
+					path: p(epath, "name"),
+					message: `Client tool name must match ${HTTP_TOOL_NAME_RE.source}`,
+				});
+			} else if (clientToolNames.has(entry.name)) {
+				errors.push({
+					level: "structural",
+					path: p(epath, "name"),
+					message: `Client tool '${entry.name}' is declared more than once`,
+				});
+			} else {
+				clientToolNames.add(entry.name);
+			}
+			if (
+				typeof entry.description !== "string" ||
+				entry.description.trim().length === 0
+			) {
+				errors.push({
+					level: "structural",
+					path: p(epath, "description"),
+					message: "Client tool description must be a non-empty string",
+				});
+			}
+			validateManifestSchema(
+				entry.inputSchema,
+				p(epath, "inputSchema"),
+				errors,
+			);
+			if (
+				entry.inputSchema?.type !== "object" ||
+				!entry.inputSchema.properties ||
+				typeof entry.inputSchema.properties !== "object" ||
+				Array.isArray(entry.inputSchema.properties)
+			) {
+				errors.push({
+					level: "structural",
+					path: p(epath, "inputSchema"),
+					message:
+						"Client tool inputSchema must be a canonical object-root JSON Schema",
+				});
+			}
+			if (
+				entry.timeoutMs !== undefined &&
+				(!Number.isInteger(entry.timeoutMs) ||
+					entry.timeoutMs < 1000 ||
+					entry.timeoutMs > 120_000)
+			) {
+				errors.push({
+					level: "structural",
+					path: p(epath, "timeoutMs"),
+					message: "timeoutMs must be an integer between 1000 and 120000",
+				});
 			}
 		}
 	}

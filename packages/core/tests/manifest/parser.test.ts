@@ -488,4 +488,47 @@ steps:
 			expect(manifest.steps[1].ref).toBe("other@2026-05-17T15:30:00.000Z");
 		}
 	});
+
+	it("parses a manifest-owned client tool contract", () => {
+		const manifest = parseManifest(`
+id: app-agent
+kind: llm
+model: { provider: openai, name: gpt-5.4 }
+instruction: Use application context.
+tools:
+  - kind: client
+    name: get_selection
+    description: Read the current application selection
+    inputSchema:
+      type: object
+      properties:
+        includeText: { type: boolean }
+      additionalProperties: false
+    timeoutMs: 5000
+`);
+		expect(manifest.kind).toBe("llm");
+		if (manifest.kind === "llm") {
+			expect(manifest.tools?.[0]).toMatchObject({
+				kind: "client",
+				name: "get_selection",
+				timeoutMs: 5_000,
+			});
+		}
+	});
+
+	it("rejects invalid client tool contracts", () => {
+		expect(() =>
+			parseManifest(`
+id: app-agent
+kind: llm
+model: { provider: openai, name: gpt-5.4 }
+instruction: test
+tools:
+  - kind: client
+    name: get_selection
+    description: ""
+    inputSchema: { type: string }
+`),
+		).toThrow();
+	});
 });

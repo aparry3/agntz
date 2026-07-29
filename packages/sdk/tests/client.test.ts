@@ -122,6 +122,85 @@ describe("agntz() — embedded client", () => {
 		expect(result.output).toBe("The answer is 5.");
 	});
 
+	it("attaches manifest-declared client tools per invocation", async () => {
+		const provider = new MockModelProvider([
+			{
+				text: "",
+				toolCalls: [
+					{
+						id: "tc_client",
+						name: "get_selection",
+						args: { includeText: true },
+					},
+				],
+				usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+				finishReason: "tool-calls",
+			},
+			plainResponse("The selection is chapter one."),
+		]);
+		const client = await agntz({
+			agents: fixturesDir,
+			tools: noopTools,
+			modelProvider: provider,
+		});
+		await client.agents.import({
+			agents: [
+				{
+					manifest: `
+id: client-tool-agent
+kind: llm
+model: { provider: openai, name: gpt-5.4 }
+instruction: Use the selection.
+tools:
+  - kind: client
+    name: get_selection
+    description: Read the current selection
+    inputSchema:
+      type: object
+      properties:
+        includeText: { type: boolean }
+      additionalProperties: false
+`,
+				},
+			],
+		});
+
+		await expect(
+			client.agents.run({
+				agentId: "client-tool-agent",
+				input: "explain",
+			}),
+		).rejects.toMatchObject({ code: "MISSING_CLIENT_TOOLS" });
+		expect(provider.calls).toHaveLength(0);
+
+		const handler = vi.fn(
+			async (
+				input: unknown,
+				context: { toolCallId: string; runId: string },
+			) => {
+				expect(context.toolCallId).toBe("tc_client");
+				expect(context.runId).toMatch(/^run_/);
+				return { text: "chapter one", input };
+			},
+		);
+		const result = await client.agents.run({
+			agentId: "client-tool-agent",
+			input: "explain",
+			clientTools: { get_selection: handler },
+		});
+		expect(handler).toHaveBeenCalledOnce();
+		expect(result.output).toBe("The selection is chapter one.");
+
+		await expect(
+			client.runs.start({
+				agentId: "client-tool-agent",
+				input: "explain",
+			}),
+		).rejects.toMatchObject({
+			code: "CLIENT_TOOLS_REQUIRE_ATTACHED_RUN",
+		});
+	});
+
 	it("throws at init when a YAML references a local tool that isn't registered", async () => {
 		const provider = new MockModelProvider([plainResponse("ok")]);
 		await expect(

@@ -167,6 +167,42 @@ into versioned manifests:
 - [Transcription and image generation](https://agntz.co/docs/hosted/transcription-images)
 - [Results, streaming, and errors](https://agntz.co/docs/hosted/results-errors)
 
+## Per-run client tools
+
+Declare the model-facing contract in YAML:
+
+```yaml
+tools:
+  - kind: client
+    name: get_current_selection
+    description: Read the current editor selection
+    inputSchema:
+      type: object
+      properties: {}
+      additionalProperties: false
+```
+
+Then attach the Python implementation to that invocation:
+
+```python
+def get_current_selection(_input, context):
+    if context.signal.is_set():
+        raise RuntimeError("cancelled")
+    return {"text": editor.current_selection()}
+
+result = client.agents.run(
+    agent_id="editor-assistant",
+    input="Explain my selection",
+    client_tools={"get_current_selection": get_current_selection},
+)
+```
+
+Async handlers work with `AsyncAgntzClient` and embedded
+`client.agents.arun()`. All reachable client tools must be supplied before the
+Run is created; unattended `runs.start()` calls reject them. The default
+deadline is 30 seconds. Handler failures are model-visible tool errors, and
+outputs must be JSON-serializable with a 40,000-character serialized limit.
+
 ## Local tools
 
 ```python

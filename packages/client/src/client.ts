@@ -1,4 +1,4 @@
-import { StreamError } from "./errors.js";
+import { AgntzError, StreamError } from "./errors.js";
 import {
 	normalizeEvent,
 	normalizeRunEvent,
@@ -13,6 +13,7 @@ import type {
 	AgentSummary,
 	AgntzClientOptions,
 	ArtifactRef,
+	ClientToolContext,
 	ContentBlock,
 	EvalDataset,
 	EvalDatasetListFilter,
@@ -149,6 +150,9 @@ export class AgntzClient {
 		if (input.sessionId !== undefined) body.sessionId = input.sessionId;
 		if (input.context !== undefined) body.context = input.context;
 		if (input.retention !== undefined) body.retention = input.retention;
+		if ("clientTools" in input && input.clientTools !== undefined) {
+			body.clientTools = Object.keys(input.clientTools);
+		}
 		return body;
 	}
 
@@ -206,6 +210,9 @@ export class AgentsResource {
 	}
 
 	async run(input: RunInput): Promise<RunResult> {
+		if (input.clientTools !== undefined) {
+			return runAttachedAgent(this.client, input);
+		}
 		const res = await this.client._runRequest(input, false);
 		return (await res.json()) as RunResult;
 	}
@@ -1191,6 +1198,10 @@ async function* streamAgentEvents(
 	}
 	try {
 		for await (const frame of parseSSE(res.body, signal)) {
+			if (frame.event === "client-tool-request") {
+				await handleClientToolRequest(client, input, frame.data, signal);
+				continue;
+			}
 			const event = normalizeEvent(frame);
 			if (!event) continue;
 			if (event.type === "complete" || event.type === "error") {
@@ -1207,4 +1218,193 @@ async function* streamAgentEvents(
 	} finally {
 		if (signal) signal.removeEventListener("abort", onAbort);
 	}
+}
+
+interface ClientToolRequestWire {
+	requestId: string;
+	rootRunId: string;
+	runId: string;
+	toolCallId: string;
+	name: string;
+	input: unknown;
+	deadlineAt: string;
+}
+
+const CLIENT_TOOL_RESULT_MAX_CHARS = 40_000;
+
+async function runAttachedAgent(
+	client: AgntzClient,
+	input: RunInput,
+): Promise<RunResult> {
+	const res = await client._runRequest(input, true);
+	if (!res.body) {
+		throw new StreamError("Worker returned no stream body", {
+			status: res.status,
+		});
+	}
+	const signal = client._resolveStreamSignal(input);
+	for await (const frame of parseSSE(res.body, signal)) {
+		if (frame.event === "client-tool-request") {
+			await handleClientToolRequest(client, input, frame.data, signal);
+			continue;
+		}
+		if (frame.event === "run-complete") {
+			return parseFrameData<RunResult>(frame.data, "run-complete");
+		}
+		if (frame.event === "run-error") {
+			const payload = parseFrameData<{ error?: unknown }>(
+				frame.data,
+				"run-error",
+			);
+			throw new StreamError(
+				typeof payload.error === "string" ? payload.error : "Run failed",
+			);
+		}
+	}
+	if (signal?.aborted) {
+		throw signal.reason instanceof Error
+			? signal.reason
+			: new StreamError("Run was cancelled");
+	}
+	throw new StreamError("Stream closed before completion", {
+		code: "STREAM_TRUNCATED",
+	});
+}
+
+async function handleClientToolRequest(
+	client: AgntzClient,
+	input: RunInput,
+	rawData: string,
+	outerSignal?: AbortSignal,
+): Promise<void> {
+	const request = parseFrameData<ClientToolRequestWire>(
+		rawData,
+		"client-tool-request",
+	);
+	const handler = input.clientTools?.[request.name];
+	let output: unknown;
+	let error: string | undefined;
+
+	if (!handler) {
+		error = `No handler was supplied for client tool '${request.name}'`;
+	} else {
+		const controller = new AbortController();
+		const remainingMs = Math.max(
+			0,
+			new Date(request.deadlineAt).getTime() - Date.now(),
+		);
+		const onOuterAbort = () => controller.abort(outerSignal?.reason);
+		if (outerSignal) {
+			if (outerSignal.aborted) controller.abort(outerSignal.reason);
+			else outerSignal.addEventListener("abort", onOuterAbort, { once: true });
+		}
+		const timer = setTimeout(
+			() =>
+				controller.abort(new Error(`Client tool '${request.name}' timed out`)),
+			remainingMs,
+		);
+		const context: ClientToolContext = {
+			requestId: request.requestId,
+			toolCallId: request.toolCallId,
+			runId: request.runId,
+			deadlineAt: request.deadlineAt,
+			signal: controller.signal,
+		};
+		try {
+			output = await Promise.race([
+				Promise.resolve(handler(request.input, context)),
+				new Promise<never>((_, reject) => {
+					const onAbort = () =>
+						reject(
+							controller.signal.reason instanceof Error
+								? controller.signal.reason
+								: new Error("Client tool was cancelled"),
+						);
+					if (controller.signal.aborted) onAbort();
+					else
+						controller.signal.addEventListener("abort", onAbort, {
+							once: true,
+						});
+				}),
+			]);
+			const serialized = JSON.stringify(output);
+			if (serialized === undefined) {
+				error = `Client tool '${request.name}' returned a non-JSON-serializable value`;
+			} else if (serialized.length > CLIENT_TOOL_RESULT_MAX_CHARS) {
+				error = `Client tool '${request.name}' output exceeds ${CLIENT_TOOL_RESULT_MAX_CHARS} serialized characters`;
+			}
+		} catch (cause) {
+			if (outerSignal?.aborted) {
+				throw outerSignal.reason instanceof Error ? outerSignal.reason : cause;
+			}
+			error = errorMessage(cause);
+		} finally {
+			clearTimeout(timer);
+			outerSignal?.removeEventListener("abort", onOuterAbort);
+		}
+	}
+
+	await submitClientToolResult(client, request, output, error, outerSignal);
+}
+
+async function submitClientToolResult(
+	client: AgntzClient,
+	request: ClientToolRequestWire,
+	output: unknown,
+	error: string | undefined,
+	signal?: AbortSignal,
+): Promise<void> {
+	const path = `/runs/${encodeURIComponent(request.rootRunId)}/client-tool-requests/${encodeURIComponent(request.requestId)}/result`;
+	for (let attempt = 0; attempt < 3; attempt++) {
+		try {
+			await sendRequest({
+				baseUrl: client._baseUrl,
+				path,
+				method: "POST",
+				apiKey: client._apiKey,
+				body: error === undefined ? { output } : { error },
+				signal,
+				fetchImpl: client._fetchImpl,
+			});
+			return;
+		} catch (cause) {
+			if (cause instanceof AgntzError && cause.status === 410) return;
+			const transient =
+				!(cause instanceof AgntzError) ||
+				cause.status === 429 ||
+				(cause.status !== undefined && cause.status >= 500);
+			if (!transient || attempt === 2) throw cause;
+			await delay(attempt === 0 ? 100 : 250, signal);
+		}
+	}
+}
+
+function parseFrameData<T>(data: string, event: string): T {
+	try {
+		return JSON.parse(data) as T;
+	} catch (cause) {
+		throw new StreamError(`Invalid ${event} event payload`, { cause });
+	}
+}
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(resolve, ms);
+		const onAbort = () => {
+			clearTimeout(timer);
+			reject(
+				signal?.reason instanceof Error
+					? signal.reason
+					: new Error("Request cancelled"),
+			);
+		};
+		if (signal) {
+			if (signal.aborted) onAbort();
+			else signal.addEventListener("abort", onAbort, { once: true });
+		}
+	});
 }

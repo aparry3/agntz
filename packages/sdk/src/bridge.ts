@@ -4,6 +4,7 @@ import {
 	normalizeNamespaceGrants,
 } from "@agntz/core";
 import type {
+	ClientToolDispatcher,
 	Reply,
 	RunRegistry,
 	Runner,
@@ -18,6 +19,7 @@ export interface CreateExecutionContextOptions {
 	sessionId?: string;
 	context?: string[];
 	signal?: AbortSignal;
+	clientToolDispatcher?: ClientToolDispatcher;
 	/**
 	 * When wired, each `invokeLLM` step runs through this registry as a CHILD
 	 * Run of `parentRunId`, so its lifecycle events flow to the root's
@@ -76,6 +78,7 @@ export function createExecutionContext(
 		sessionId: opts.sessionId,
 		context,
 		signal: opts.signal,
+		clientToolDispatcher: opts.clientToolDispatcher,
 		runRegistry: opts.runRegistry,
 		parentRunId: opts.parentRunId,
 		userId: opts.userId,

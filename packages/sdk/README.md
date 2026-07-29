@@ -92,6 +92,39 @@ Each tool is self-describing: the `name`, `description`, and Zod `input` schema 
 
 Names referenced in YAML but missing from the `tools` array fail at load time, not on first model call.
 
+## Invocation-scoped client tools
+
+For application state that varies per call, declare the contract in the
+manifest and pass only the handler on `run()` or `stream()`:
+
+```yaml
+tools:
+  - kind: client
+    name: get_current_selection
+    description: Read the current editor selection
+    inputSchema:
+      type: object
+      properties: {}
+      additionalProperties: false
+```
+
+```ts
+await client.agents.run({
+  agentId: "editor-assistant",
+  input: "Explain my selection",
+  clientTools: {
+    get_current_selection: async (_input, ctx) =>
+      editor.getSelection({ signal: ctx.signal }),
+  },
+});
+```
+
+The manifest owns the model-facing contract; the handler exists only for that
+invocation. Missing handlers fail before Run creation. `runs.start()` is
+rejected because client tools are attached-only. Handler failures and timeouts
+become model-visible tool errors, and outputs must be JSON-serializable with a
+40,000-character serialized limit.
+
 ## HTTP tools with credentials
 
 ### Static credentials — templated headers
@@ -323,7 +356,8 @@ policy and treat `traceId` / `sessionId` as optional when using `none` or
 | Ordered text/image/audio run content | × | ✓ |
 | Managed input/output artifacts | × | ✓ |
 | Explicit `none` / `result` / `session` retention | × | ✓ |
-| Local tools (in-process JS/TS) | ✓ | (use MCP/HTTP instead) |
+| Local tools (registered at client creation) | ✓ | (use MCP/HTTP instead) |
+| Client tools (passed per invocation) | ✓ | ✓ |
 | HTTP tools | ✓ | ✓ |
 | MCP tools (raw URL + headers) | ✓ | ✓ |
 | Signed callback tools | ✓ (with `SecretStore`) | ✓ |

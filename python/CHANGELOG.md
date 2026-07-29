@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.4.0 - 2026-07-29
+
+- Add manifest-declared, invocation-scoped client tools to hosted synchronous
+  and asynchronous clients and the embedded SDK.
+- Fail before Run creation when a required local handler is missing, keep
+  handlers attached through one public run or stream call, and surface handler
+  failures and deadlines as model-visible tool errors.
+
 ## 0.3.0 - 2026-07-28
 
 - Add hosted rich-content and managed-artifact APIs with automatic local-file

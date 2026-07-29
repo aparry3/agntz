@@ -3,6 +3,7 @@ import type { ParsedAgentRef } from "./agent-ref.js";
 import { MapTokenCache, createTokenResolver } from "./auth/index.js";
 import type { TokenCache, TokenResolver } from "./auth/index.js";
 import { buildCallbackToolDefinition } from "./callback-tool.js";
+import { buildClientToolDefinition } from "./client-tool.js";
 import {
 	AgentNotFoundError,
 	AgentVersionNotFoundError,
@@ -1167,6 +1168,7 @@ export class Runner {
 				let availableTools = await self.resolveToolsForAgent(agent, {
 					runRegistry,
 					ephemeralTools,
+					clientToolDispatcher: options.clientToolDispatcher,
 					replyCollector,
 					effectiveSessionId,
 					runId: effectiveRunId,
@@ -1530,6 +1532,7 @@ export class Runner {
 						const base = await self.resolveToolsForAgent(agent, {
 							runRegistry,
 							ephemeralTools,
+							clientToolDispatcher: options.clientToolDispatcher,
 							replyCollector,
 							effectiveSessionId,
 							runId: effectiveRunId,
@@ -2056,6 +2059,7 @@ export class Runner {
 			let availableTools = await this.resolveToolsForAgent(agent, {
 				runRegistry,
 				ephemeralTools,
+				clientToolDispatcher: options.clientToolDispatcher,
 				replyCollector,
 				effectiveSessionId,
 				runId: effectiveRunId,
@@ -2379,6 +2383,7 @@ export class Runner {
 					const base = await this.resolveToolsForAgent(agent, {
 						runRegistry,
 						ephemeralTools,
+						clientToolDispatcher: options.clientToolDispatcher,
 						replyCollector,
 						effectiveSessionId,
 						runId: effectiveRunId,
@@ -2660,6 +2665,7 @@ export class Runner {
 		const toolStartTime = Date.now();
 		const toolCtx: ToolContext = {
 			agentId,
+			toolCallId: tc.id,
 			sessionId: sessionId ?? options.sessionId,
 			context: options.context,
 			contextIds: options.contextIds,
@@ -2699,6 +2705,7 @@ export class Runner {
 			) =>
 				this.invoke(innerAgentId, innerInput, {
 					...innerOpts,
+					clientToolDispatcher: options.clientToolDispatcher,
 					context: narrowNamespaceGrants(
 						options.context ?? [],
 						innerOpts?.context,
@@ -2799,6 +2806,8 @@ export class Runner {
 			grants?: string[];
 			/** Invocation id for ResourceToolContext.run. */
 			invocationId?: string;
+			/** Per-invocation dispatcher for application-local client tools. */
+			clientToolDispatcher?: InvokeOptions["clientToolDispatcher"];
 		},
 	): Promise<
 		Array<{
@@ -2917,6 +2926,28 @@ export class Runner {
 					parameters:
 						callbackTool.modelInputSchema ??
 						zodToJsonSchema(callbackTool.input),
+				});
+			} else if (ref.type === "client") {
+				if (!opts?.ephemeralTools || !opts.clientToolDispatcher) {
+					throw new Error(
+						`Client tool '${ref.entry.name}' requires an attached client handler`,
+					);
+				}
+				if (this.toolRegistry.has(ref.entry.name)) {
+					throw new Error(
+						`Client tool '${ref.entry.name}' conflicts with a registered tool`,
+					);
+				}
+				const clientTool = buildClientToolDefinition(
+					ref.entry,
+					opts.clientToolDispatcher,
+				);
+				opts.ephemeralTools.set(clientTool.name, clientTool);
+				resolved.push({
+					name: clientTool.name,
+					description: clientTool.description,
+					parameters:
+						clientTool.modelInputSchema ?? zodToJsonSchema(clientTool.input),
 				});
 			}
 		}

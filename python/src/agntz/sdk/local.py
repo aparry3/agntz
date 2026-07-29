@@ -18,6 +18,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
 from agntz.agent_ref import is_iso_timestamp, parse_agent_ref
+from agntz.client.client_tools import ClientToolContext, ClientToolHandlers
 from agntz.client.models import AgentDefinition as StoredAgentDefinition
 from agntz.client.models import (
     EvalDataset,
@@ -65,7 +66,7 @@ from agntz.evals import (
     run_eval,
 )
 from agntz.manifest import execute
-from agntz.manifest.parser import load_manifest_file, parse_manifest
+from agntz.manifest.parser import load_manifest_file, normalize_manifest, parse_manifest
 from agntz.manifest.types import (
     AgentManifest,
     AgentState,
@@ -103,6 +104,19 @@ class LocalRunResult(BaseModel):
     usage: TokenUsage = Field(default_factory=TokenUsage)
     session_id: str = Field(alias="sessionId")
     replies: list[Any] | None = None
+
+
+class _ClientToolInvocationError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str,
+        details: list[str] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.details = details
 
 
 @dataclass(frozen=True)
@@ -153,6 +167,7 @@ class LocalClient:
         input: Any = None,
         session_id: str | None = None,
         context: list[str] | None = None,
+        client_tools: ClientToolHandlers | None = None,
     ) -> LocalRunResult:
         return (
             await self._execute_with_metadata(
@@ -160,6 +175,7 @@ class LocalClient:
                 input=input,
                 session_id=session_id,
                 context=context,
+                client_tools=client_tools,
             )
         ).result
 
@@ -170,8 +186,19 @@ class LocalClient:
         input: Any = None,
         session_id: str | None = None,
         context: list[str] | None = None,
+        client_tools: ClientToolHandlers | None = None,
     ) -> _ExecutionOutcome:
         manifest, resolved_agent, resolved_version = self._resolve_manifest(agent_id)
+        required_client_tools = _collect_required_client_tools(self, manifest)
+        missing_client_tools = [
+            name for name in required_client_tools if not client_tools or name not in client_tools
+        ]
+        if missing_client_tools:
+            raise _ClientToolInvocationError(
+                f"Missing client tool handlers: {', '.join(missing_client_tools)}",
+                code="MISSING_CLIENT_TOOLS",
+                details=missing_client_tools,
+            )
         base_agent_id = resolved_agent.id
         resolved_session_id = session_id or new_session_id()
         normalized_context = normalize_namespace_grants(context, self.namespace_policy)
@@ -185,6 +212,7 @@ class LocalClient:
             run_id=local_run_id,
             trace_id=local_trace_id,
             context=normalized_context,
+            client_tools=client_tools or {},
         )
         self.store.append_messages(
             resolved_session_id,
@@ -391,6 +419,7 @@ class LocalAgentsResource:
         input: Any = None,
         session_id: str | None = None,
         context: list[str] | None = None,
+        client_tools: ClientToolHandlers | None = None,
     ) -> LocalRunResult:
         return _run_blocking(
             self._client._execute(
@@ -398,6 +427,7 @@ class LocalAgentsResource:
                 input=input,
                 session_id=session_id,
                 context=context,
+                client_tools=client_tools,
             )
         )
 
@@ -408,12 +438,14 @@ class LocalAgentsResource:
         input: Any = None,
         session_id: str | None = None,
         context: list[str] | None = None,
+        client_tools: ClientToolHandlers | None = None,
     ) -> LocalRunResult:
         return await self._client._execute(
             agent_id=agent_id,
             input=input,
             session_id=session_id,
             context=context,
+            client_tools=client_tools,
         )
 
     def stream(
@@ -423,6 +455,7 @@ class LocalAgentsResource:
         input: Any = None,
         session_id: str | None = None,
         context: list[str] | None = None,
+        client_tools: ClientToolHandlers | None = None,
     ) -> Iterator[Event]:
         resolved_session_id = session_id or new_session_id()
         manifest, resolved_agent, _version = self._client._resolve_manifest(agent_id)
@@ -437,6 +470,7 @@ class LocalAgentsResource:
             input=input,
             session_id=resolved_session_id,
             context=context,
+            client_tools=client_tools,
         )
         yield Event(
             type="complete",
@@ -761,6 +795,13 @@ class LocalRunsResource:
     ) -> Run:
         if callback_url is not None or webhook_secret_name is not None:
             raise NotImplementedError("Local Python runs do not support webhooks")
+        manifest, _agent, _version = self._client._resolve_manifest(agent_id)
+        if _collect_required_client_tools(self._client, manifest):
+            raise _ClientToolInvocationError(
+                "Manifest-declared client tools require agents.run(), "
+                "agents.arun(), or agents.stream() with attached handlers",
+                code="CLIENT_TOOLS_REQUIRE_ATTACHED_RUN",
+            )
         outcome = _run_blocking(
             self._client._execute_with_metadata(
                 agent_id=agent_id,
@@ -1061,6 +1102,7 @@ class _LocalExecutionContext:
         run_id: str,
         trace_id: str,
         context: list[str],
+        client_tools: ClientToolHandlers,
     ) -> None:
         self._client = client
         self.agent_id = agent_id
@@ -1068,6 +1110,7 @@ class _LocalExecutionContext:
         self.run_id = run_id
         self.trace_id = trace_id
         self.context = context
+        self.client_tools = client_tools
         self.invocation_id = f"inv_{nanoid()}"
         self.usage: dict[str, int] | None = None
         self._parent_resource_modes_stack: list[dict[str, ResourceMode]] = []
@@ -1279,6 +1322,18 @@ class _LocalExecutionContext:
                         input_schema=_json_schema_from_manifest_input(agent),
                     )
                 )
+            elif kind == "client":
+                tool_name = str(entry["name"])
+                if tool_name in seen_tool_names:
+                    raise RuntimeError(f"Tool '{tool_name}' is registered more than once")
+                seen_tool_names.add(tool_name)
+                tools.append(
+                    ModelTool(
+                        name=tool_name,
+                        description=str(entry["description"]),
+                        input_schema=cast(dict[str, Any], entry["inputSchema"]),
+                    )
+                )
         for _resource, provider_tool, tool_name in self._resource_provider_tools(
             manifest,
             resources,
@@ -1379,6 +1434,13 @@ class _LocalExecutionContext:
                 with self._resource_parent_modes(parent_modes):
                     result = await execute(child, call.input, self)
                 return result.output
+            if kind == "client" and call.name == entry.get("name"):
+                try:
+                    return await self._invoke_client_tool(entry, call)
+                except Exception as exc:
+                    # Handler failures and deadlines are ordinary tool results;
+                    # the model can recover or explain them.
+                    return {"error": str(exc)}
         resource_call = self._resolve_resource_tool_call(manifest, call.name)
         if resource_call is not None:
             resource, provider_tool = resource_call
@@ -1387,6 +1449,43 @@ class _LocalExecutionContext:
                 self._make_resource_tool_context(resource, manifest),
             )
         raise RuntimeError(f"Model requested unknown tool '{call.name}'")
+
+    async def _invoke_client_tool(
+        self,
+        entry: dict[str, Any],
+        call: ToolCall,
+    ) -> Any:
+        name = str(entry["name"])
+        handler = self.client_tools.get(name)
+        if handler is None:
+            raise RuntimeError(f"No handler was supplied for client tool '{name}'")
+        timeout_ms = int(entry.get("timeoutMs") or 30_000)
+        signal = asyncio.Event()
+        handler_context = ClientToolContext(
+            request_id=f"ctr_{nanoid()}",
+            tool_call_id=call.id,
+            run_id=self.run_id,
+            deadline_at=datetime.fromtimestamp(
+                time.time() + timeout_ms / 1_000,
+                UTC,
+            ).isoformat(),
+            signal=signal,
+        )
+        try:
+            async with asyncio.timeout(timeout_ms / 1_000):
+                if inspect.iscoroutinefunction(handler):
+                    output = await handler(call.input, handler_context)
+                else:
+                    output = await asyncio.to_thread(handler, call.input, handler_context)
+                    if inspect.isawaitable(output):
+                        output = await output
+        except TimeoutError as exc:
+            signal.set()
+            raise RuntimeError(
+                f"Client tool '{name}' timed out after {timeout_ms}ms"
+            ) from exc
+        _validate_local_client_tool_output(name, output)
+        return output
 
     async def invoke_tool(self, config: ToolCallConfig, state: AgentState) -> Any:
         started_at = time.time()
@@ -1963,6 +2062,107 @@ def _int_from_usage(usage: dict[str, Any], *keys: str) -> int | None:
         if isinstance(value, int) and not isinstance(value, bool):
             return value
     return None
+
+
+def _collect_required_client_tools(
+    client: LocalClient,
+    manifest: AgentManifest,
+) -> dict[str, dict[str, Any]]:
+    found: dict[str, dict[str, Any]] = {}
+    visited_refs: set[str] = set()
+    visited_objects: set[int] = set()
+
+    def add(entry: dict[str, Any]) -> None:
+        name = str(entry["name"])
+        prior = found.get(name)
+        if prior is not None and json.dumps(
+            prior, sort_keys=True, separators=(",", ":")
+        ) != json.dumps(entry, sort_keys=True, separators=(",", ":")):
+            raise RuntimeError(
+                f"Client tool '{name}' has conflicting contracts "
+                "in the reachable manifest graph"
+            )
+        found[name] = entry
+
+    def visit_ref(ref: str) -> None:
+        if ref in visited_refs:
+            return
+        visited_refs.add(ref)
+        try:
+            child, _agent, _version = client._resolve_manifest(ref)
+        except (KeyError, ValueError):
+            return
+        visit(child)
+
+    def visit(current: AgentManifest) -> None:
+        identity = id(current)
+        if identity in visited_objects:
+            return
+        visited_objects.add(identity)
+        if current.kind == "llm":
+            for entry in current.tools or []:
+                if entry.get("kind") == "client":
+                    add(entry)
+                if entry.get("kind") == "agent" and isinstance(entry.get("agent"), str):
+                    version = entry.get("version")
+                    ref = (
+                        f"{entry['agent']}@{version}"
+                        if isinstance(version, str)
+                        else str(entry["agent"])
+                    )
+                    visit_ref(ref)
+            for child in current.spawnable or []:
+                if not isinstance(child, dict):
+                    continue
+                if child.get("kind") == "inline":
+                    definition = child.get("definition")
+                    if isinstance(definition, dict):
+                        visit(normalize_manifest(definition))
+                    elif getattr(definition, "kind", None) is not None:
+                        visit(cast(AgentManifest, definition))
+                elif child.get("kind") == "ref" and isinstance(child.get("agentId"), str):
+                    version = child.get("version")
+                    ref = (
+                        f"{child['agentId']}@{version}"
+                        if isinstance(version, str)
+                        else str(child["agentId"])
+                    )
+                    visit_ref(ref)
+            return
+        if current.kind == "sequential":
+            for step in current.steps:
+                if step.agent is not None:
+                    visit(cast(AgentManifest, step.agent))
+                if step.ref:
+                    visit_ref(step.ref)
+            return
+        if current.kind == "parallel":
+            for step in current.branches:
+                if step.agent is not None:
+                    visit(cast(AgentManifest, step.agent))
+                if step.ref:
+                    visit_ref(step.ref)
+
+    visit(manifest)
+    return found
+
+
+def _validate_local_client_tool_output(name: str, output: Any) -> None:
+    try:
+        serialized = json.dumps(
+            output,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        )
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"Client tool '{name}' returned a non-JSON-serializable value"
+        ) from exc
+    if len(serialized) > 40_000:
+        raise RuntimeError(
+            f"Client tool '{name}' output exceeds 40000 serialized characters"
+        )
 
 
 def _run_blocking(awaitable: Any) -> Any:

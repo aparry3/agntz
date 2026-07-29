@@ -3,6 +3,7 @@ import {
 	manifestToAgentDefinition,
 } from "@agntz/core";
 import type {
+	ClientToolDispatcher,
 	ContentBlock,
 	ManifestBridgeHooks,
 	Reply,
@@ -57,6 +58,8 @@ export interface CreateExecutionContextOptions {
 	context?: string[];
 	/** Cancellation propagated from the owning root Run. */
 	signal?: AbortSignal;
+	/** Attached SDK dispatcher for manifest-declared client tools. */
+	clientToolDispatcher?: ClientToolDispatcher;
 	/**
 	 * Per-request reply accumulator. Each `runner.invoke()` call inside
 	 * `invokeLLM` appends its `result.replies` here so the worker route can
@@ -132,6 +135,7 @@ export function createExecutionContext(
 		sessionId: options.sessionId,
 		context: options.context,
 		signal: options.signal,
+		clientToolDispatcher: options.clientToolDispatcher,
 		replyCollector: options.replyCollector,
 		content: options.content,
 		persistenceContent: options.persistenceContent,
@@ -218,7 +222,7 @@ const consoleHooks: ManifestBridgeHooks = {
  * Convert a stored AgentDefinition into an AgentManifest.
  * The agent's metadata.manifest field holds the YAML source.
  */
-function resolveManifestFromAgent(
+export function resolveManifestFromAgent(
 	agentDef: Record<string, unknown>,
 ): AgentManifest {
 	// If metadata contains the raw YAML manifest

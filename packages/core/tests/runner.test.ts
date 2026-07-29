@@ -188,6 +188,106 @@ describe("Runner", () => {
 		expect(provider.calls).toHaveLength(2);
 	});
 
+	it("dispatches client tools through the per-invocation handler", async () => {
+		const provider = new MockModelProvider([
+			{
+				text: "",
+				toolCalls: [
+					{
+						id: "call_client_1",
+						name: "get_selection",
+						args: { includeText: true },
+					},
+				],
+				usage: { promptTokens: 2, completionTokens: 1, totalTokens: 3 },
+				finishReason: "tool-calls",
+			},
+			mockResponse("The selection is chapter one."),
+		]);
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+		});
+		runner.registerAgent(
+			defineAgent({
+				id: "client-tool-agent",
+				name: "Client Tool Agent",
+				systemPrompt: "Use the application selection.",
+				model: { provider: "openai", name: "gpt-5.4" },
+				tools: [
+					{
+						type: "client",
+						entry: {
+							kind: "client",
+							name: "get_selection",
+							description: "Read the current selection",
+							inputSchema: {
+								type: "object",
+								properties: { includeText: { type: "boolean" } },
+								additionalProperties: false,
+							},
+						},
+					},
+				],
+			}),
+		);
+		const dispatcher = vi.fn(async (_entry, args, ctx) => {
+			expect(ctx.toolCallId).toBe("call_client_1");
+			return { title: "chapter one", args };
+		});
+
+		const result = await runner.invoke(
+			"client-tool-agent",
+			"What is selected?",
+			{
+				clientToolDispatcher: dispatcher,
+			},
+		);
+
+		expect(dispatcher).toHaveBeenCalledOnce();
+		expect(result.toolCalls[0]?.output).toEqual({
+			title: "chapter one",
+			args: { includeText: true },
+		});
+		expect(result.output).toBe("The selection is chapter one.");
+	});
+
+	it("requires an attached dispatcher when resolving a client tool", async () => {
+		const provider = new MockModelProvider(mockResponse("unused"));
+		const runner = createRunner({
+			store: new MemoryStore(),
+			modelProvider: provider,
+		});
+		runner.registerAgent(
+			defineAgent({
+				id: "missing-client-tool",
+				name: "Missing Client Tool",
+				systemPrompt: "test",
+				model: { provider: "openai", name: "gpt-5.4" },
+				tools: [
+					{
+						type: "client",
+						entry: {
+							kind: "client",
+							name: "get_selection",
+							description: "Read the current selection",
+							inputSchema: {
+								type: "object",
+								properties: {},
+								additionalProperties: false,
+							},
+						},
+					},
+				],
+			}),
+		);
+
+		await expect(runner.invoke("missing-client-tool", "hello")).rejects.toThrow(
+			/requires an attached client handler/,
+		);
+		expect(provider.calls).toHaveLength(0);
+	});
+
 	it("aggregates detailed token usage across tool loop steps", async () => {
 		const provider = new MockModelProvider([
 			{

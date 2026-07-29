@@ -126,6 +126,8 @@ export interface ManifestExecutionContextOptions {
 	replyCollector?: Reply[];
 	/** Cancellation, threaded into `runner.invoke`. */
 	signal?: AbortSignal;
+	/** Per-invocation bridge for manifest-declared client tools. */
+	clientToolDispatcher?: import("./types.js").ClientToolDispatcher;
 	/** Exact ordered rich content for the selected/root LLM manifest. */
 	content?: ContentBlock[];
 	/** Original artifact-reference blocks used for persistence, never decoded bytes. */
@@ -246,6 +248,9 @@ export function createManifestExecutionContext(
 					...(opts.spanEmitter ? { spanEmitter: opts.spanEmitter } : {}),
 					...(opts.ownerId ? { ownerId: opts.ownerId } : {}),
 					...(opts.signal ? { signal: opts.signal } : {}),
+					...(opts.clientToolDispatcher
+						? { clientToolDispatcher: opts.clientToolDispatcher }
+						: {}),
 					...(opts.retention ? { retention: opts.retention } : {}),
 					...(persistenceInput ? { _persistenceInput: persistenceInput } : {}),
 				});

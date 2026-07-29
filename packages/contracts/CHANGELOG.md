@@ -1,5 +1,14 @@
 # @agntz/contracts
 
+## 0.3.0
+
+### Minor Changes
+
+- Add manifest-declared, invocation-scoped client tools for hosted and embedded
+  agents. Client tools fail before run creation when a required handler is
+  missing, remain attached through one public run or stream call, and surface
+  handler failures and deadlines as model-visible tool errors.
+
 ## 0.2.0
 
 ### Minor Changes

@@ -46,6 +46,12 @@ export type {
 	AgentState as RuntimeState,
 } from "./http-tool.js";
 export {
+	buildClientToolDefinition,
+	DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
+	MIN_CLIENT_TOOL_TIMEOUT_MS,
+	MAX_CLIENT_TOOL_TIMEOUT_MS,
+} from "./client-tool.js";
+export {
 	AuthError,
 	MapTokenCache,
 	createTokenResolver,
@@ -230,6 +236,8 @@ export type {
 	ResourceToolContext,
 	// Tools
 	CallbackToolEntry,
+	ClientToolEntry,
+	ClientToolDispatcher,
 	ToolDefinition,
 	ToolReference,
 	ToolContext,

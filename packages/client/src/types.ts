@@ -95,6 +95,22 @@ export interface RetentionRequest {
 	artifactTtlSeconds?: number;
 }
 
+export interface ClientToolContext {
+	requestId: string;
+	toolCallId: string;
+	runId: string;
+	/** ISO timestamp after which the worker rejects this tool result. */
+	deadlineAt: string;
+	signal: AbortSignal;
+}
+
+export type ClientToolHandler = (
+	input: unknown,
+	context: ClientToolContext,
+) => unknown | Promise<unknown>;
+
+export type ClientToolHandlers = Record<string, ClientToolHandler>;
+
 export interface RunInput {
 	agentId: string;
 	/**
@@ -111,6 +127,11 @@ export interface RunInput {
 	/** Runtime namespace capability grants passed through to resource providers. */
 	context?: string[];
 	retention?: RetentionRequest;
+	/**
+	 * Application-local handlers for manifest-declared `kind: client` tools.
+	 * They are attached only for this run and are never sent as source code.
+	 */
+	clientTools?: ClientToolHandlers;
 	signal?: AbortSignal;
 }
 

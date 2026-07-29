@@ -1,9 +1,11 @@
 import { parseAgentRef } from "@agntz/contracts";
 import { parse as parseYAML } from "yaml";
+import { compileManifestSchema } from "./schema.js";
 import type {
 	AgentManifest,
 	AgentRef,
 	CallbackToolEntry,
+	ClientToolEntry,
 	HTTPToolEntry,
 	ImageAgentManifest,
 	LLMAgentManifest,
@@ -449,6 +451,52 @@ function normalizeTools(raw: unknown[]): ManifestToolEntry[] {
 					timeoutMs: e.timeoutMs as number | undefined,
 					maxRetries: e.maxRetries as number | undefined,
 				} satisfies CallbackToolEntry;
+			case "client": {
+				const name = requireString(e, "name");
+				const description = requireString(e, "description");
+				const inputSchema = e.inputSchema as
+					| Record<string, unknown>
+					| undefined;
+				if (!/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(name)) {
+					throw new Error(
+						"tools[*].name for kind 'client' must start with a letter and contain only letters, digits, underscores, or hyphens",
+					);
+				}
+				if (!description.trim()) {
+					throw new Error(
+						"tools[*].description for kind 'client' must be non-empty",
+					);
+				}
+				if (
+					!inputSchema ||
+					inputSchema.type !== "object" ||
+					!inputSchema.properties ||
+					typeof inputSchema.properties !== "object" ||
+					Array.isArray(inputSchema.properties)
+				) {
+					throw new Error(
+						"tools[*].inputSchema for kind 'client' must be a canonical object-root JSON Schema",
+					);
+				}
+				compileManifestSchema(inputSchema);
+				if (
+					e.timeoutMs !== undefined &&
+					(!Number.isInteger(e.timeoutMs) ||
+						(e.timeoutMs as number) < 1_000 ||
+						(e.timeoutMs as number) > 120_000)
+				) {
+					throw new Error(
+						"tools[*].timeoutMs for kind 'client' must be an integer from 1000 to 120000",
+					);
+				}
+				return {
+					kind: "client" as const,
+					name,
+					description,
+					inputSchema,
+					timeoutMs: e.timeoutMs as number | undefined,
+				} satisfies ClientToolEntry;
+			}
 			default:
 				throw new Error(`Unknown tool kind: ${kind}`);
 		}

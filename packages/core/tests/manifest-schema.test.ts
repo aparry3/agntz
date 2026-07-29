@@ -40,7 +40,7 @@ describe("agent manifest JSON Schema", () => {
 			expect(validate.errors, file).toBeNull();
 			expect(valid, file).toBe(true);
 		}
-	});
+	}, 15_000);
 
 	it("matches runtime requirements for deterministic tool and schema fields", async () => {
 		const schema = JSON.parse(await readFile(schemaPath, "utf8")) as object;

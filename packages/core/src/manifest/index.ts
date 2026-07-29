@@ -25,6 +25,7 @@ export type {
 	AgentToolEntry,
 	HTTPToolEntry,
 	CallbackToolEntry,
+	ClientToolEntry,
 	ToolCallConfig,
 	AgentRef,
 	AgentState,

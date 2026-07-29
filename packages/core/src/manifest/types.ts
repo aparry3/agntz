@@ -5,6 +5,7 @@
 import type {
 	AgentState,
 	CallbackToolEntry,
+	ClientToolEntry,
 	ExecutionSpanEmitter,
 	HTTPAuth,
 	HTTPToolEntry,
@@ -280,7 +281,8 @@ export type ManifestToolEntry =
 	| LocalToolEntry
 	| AgentToolEntry
 	| HTTPToolEntry
-	| CallbackToolEntry;
+	| CallbackToolEntry
+	| ClientToolEntry;
 
 export interface MCPToolEntry {
 	kind: "mcp";
@@ -326,7 +328,7 @@ export interface AgentToolEntry {
 
 // `HTTPToolEntry` and the declarative HTTP auth config (`HTTPAuth`,
 // `TokenExchangeAuth`, …) are shared vocabulary defined in `@agntz/contracts`.
-export type { CallbackToolEntry, HTTPToolEntry };
+export type { CallbackToolEntry, ClientToolEntry, HTTPToolEntry };
 
 // ═══════════════════════════════════════════════════════════════════════
 // State

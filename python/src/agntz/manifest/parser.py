@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,7 @@ from .types import (
 
 _TOOL_KINDS = {"mcp", "local", "http"}
 _IGNORED_MANIFEST_DIRS = {"node_modules", "dist", "coverage"}
+_CLIENT_TOOL_NAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]*$")
 
 
 class ManifestParseError(ValueError):
@@ -95,7 +97,7 @@ def _normalize_llm(raw: dict[str, Any]) -> LLMAgentManifest:
         instruction=_required_string(raw, "instruction"),
         prompt=raw.get("prompt") if isinstance(raw.get("prompt"), str) else None,
         examples=raw.get("examples"),
-        tools=raw.get("tools"),
+        tools=_normalize_llm_tools(raw.get("tools")),
         outputSchema=raw.get("outputSchema"),
         spawnable=raw.get("spawnable"),
         skills=raw.get("skills"),
@@ -226,3 +228,51 @@ def _normalize_resources(value: Any) -> dict[str, ResourceManifestEntry]:
         entry["kind"] = entry.get("kind") or str(name)
         resources[str(name)] = ResourceManifestEntry(**entry)
     return resources
+
+
+def _normalize_llm_tools(value: Any) -> list[dict[str, Any]] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise ManifestParseError("'tools' must be an array")
+    tools: list[dict[str, Any]] = []
+    client_names: set[str] = set()
+    for index, raw_entry in enumerate(value):
+        if not isinstance(raw_entry, dict):
+            raise ManifestParseError(f"tools[{index}] must be an object")
+        entry = dict(raw_entry)
+        if entry.get("kind") == "client":
+            name = entry.get("name")
+            description = entry.get("description")
+            schema = entry.get("inputSchema")
+            timeout_ms = entry.get("timeoutMs")
+            if not isinstance(name, str) or not _CLIENT_TOOL_NAME_RE.fullmatch(name):
+                raise ManifestParseError(
+                    f"tools[{index}].name must match {_CLIENT_TOOL_NAME_RE.pattern}"
+                )
+            if name in client_names:
+                raise ManifestParseError(f"Duplicate client tool name '{name}'")
+            client_names.add(name)
+            if not isinstance(description, str) or not description.strip():
+                raise ManifestParseError(
+                    f"tools[{index}].description must be a non-empty string"
+                )
+            if (
+                not isinstance(schema, dict)
+                or schema.get("type") != "object"
+                or not isinstance(schema.get("properties"), dict)
+            ):
+                raise ManifestParseError(
+                    f"tools[{index}].inputSchema must be an object-root JSON Schema"
+                )
+            if timeout_ms is not None and (
+                not isinstance(timeout_ms, int)
+                or isinstance(timeout_ms, bool)
+                or timeout_ms < 1_000
+                or timeout_ms > 120_000
+            ):
+                raise ManifestParseError(
+                    f"tools[{index}].timeoutMs must be an integer from 1000 to 120000"
+                )
+        tools.append(entry)
+    return tools
