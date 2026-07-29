@@ -1,6 +1,6 @@
 {
   "name": "@agntz/stores",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Storage contracts and memory/Postgres/SQLite store implementations for agntz",
   "type": "module",
   "main": "./dist/index.js",
@@ -27,7 +27,9 @@
       "import": "./dist/sqlite.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
@@ -64,7 +66,13 @@
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
   },
-  "keywords": ["agntz", "stores", "postgres", "sqlite", "storage"],
+  "keywords": [
+    "agntz",
+    "stores",
+    "postgres",
+    "sqlite",
+    "storage"
+  ],
   "publishConfig": {
     "access": "public"
   },

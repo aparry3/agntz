@@ -1,5 +1,11 @@
 # @agntz/db
 
+## 0.2.0
+
+### Minor Changes
+
+- fc75bce: Promote the shared Postgres and SQLite plumbing to public beta and ship the declaration dependencies required by its adapter subpaths.
+
 ## 0.0.0 - 2026-06-26
 
 - Initial public release.
