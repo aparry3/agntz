@@ -7,7 +7,7 @@
     "build:app": "pnpm --filter @agntz/app build",
     "build:site": "pnpm --filter @agntz/site build",
     "test": "turbo test",
-    "test:packed": "node scripts/test-packed-consumer.mjs",
+    "test:packed": "turbo build --filter=@agntz/contracts --filter=@agntz/client --filter=@agntz/db --filter=@agntz/core --filter=@agntz/stores --filter=@agntz/memrez --filter=@agntz/sdk && node scripts/test-packed-consumer.mjs",
     "test:providers:smoke": "pnpm --filter @agntz/provider-harness test:smoke",
     "test:providers:compat": "pnpm --filter @agntz/provider-harness test:compat",
     "lint": "turbo lint",
