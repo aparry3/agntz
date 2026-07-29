@@ -12,6 +12,12 @@ interface PendingTrace {
 	spans: Map<string, Span>;
 }
 
+export interface TraceAggregator {
+	(event: TraceLiveEvent): void;
+	/** Wait for every completed trace to reach configured durable storage. */
+	flush(): Promise<void>;
+}
+
 /**
  * Build a TraceSink that collects span-start / span-end events from the
  * core's SpanEmitter and aggregates them into `TraceDetail` records pushed
@@ -24,10 +30,28 @@ interface PendingTrace {
  */
 export function createTraceAggregator(
 	buffer: TracesBuffer,
-): (event: TraceLiveEvent) => void {
+	onComplete?: (detail: TraceDetail) => void | Promise<void>,
+): TraceAggregator {
 	const pending = new Map<string, PendingTrace>();
+	const writes = new Set<Promise<void>>();
+	let writeError: unknown;
 
-	return (event: TraceLiveEvent) => {
+	const record = (detail: TraceDetail): void => {
+		buffer.record(detail);
+		if (!onComplete) return;
+
+		const write = Promise.resolve()
+			.then(() => onComplete(detail))
+			.catch((error: unknown) => {
+				writeError ??= error;
+			})
+			.finally(() => {
+				writes.delete(write);
+			});
+		writes.add(write);
+	};
+
+	const sink = ((event: TraceLiveEvent) => {
 		switch (event.type) {
 			case "span-start": {
 				const span = event.span;
@@ -66,7 +90,7 @@ export function createTraceAggregator(
 							summary,
 							spans: [...trace.spans.values()],
 						};
-						buffer.record(detail);
+						record(detail);
 						pending.delete(merged.traceId);
 					}
 					break;
@@ -77,7 +101,7 @@ export function createTraceAggregator(
 				// Hosted servers emit this; embedded mode infers from root-span end.
 				const entry = pending.get(event.summary.traceId);
 				if (!entry) return;
-				buffer.record({
+				record({
 					summary: { ...entry.summary, ...event.summary },
 					spans: [...entry.spans.values()],
 				});
@@ -85,7 +109,20 @@ export function createTraceAggregator(
 				break;
 			}
 		}
+	}) as TraceAggregator;
+
+	sink.flush = async () => {
+		while (writes.size > 0) {
+			await Promise.all([...writes]);
+		}
+		if (writeError !== undefined) {
+			const error = writeError;
+			writeError = undefined;
+			throw error;
+		}
 	};
+
+	return sink;
 }
 
 function createSummaryFromRootSpan(span: Span): TraceSummary {

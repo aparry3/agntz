@@ -37,6 +37,8 @@ export interface ReplyToolDeps {
 	 * the run is later cancelled.
 	 */
 	sessionStore: SessionStore;
+	/** Disable session writes for `none` and `result` retention. */
+	persist?: boolean;
 	/**
 	 * Optional registry. When provided, each accepted reply is broadcast as a
 	 * multiplexed `reply` event (Phase 4 will surface these to SSE).
@@ -127,9 +129,11 @@ export function createReplyTool(deps: ReplyToolDeps): ToolDefinition {
 			// if the invocation is cancelled before its final assistant message
 			// gets written. The runner's end-of-run persistence path knows to
 			// skip the empty assistant row in that case (see runner.ts).
-			await deps.sessionStore.append(deps.sessionId, [
-				{ role: "assistant", content: text, timestamp: ts },
-			]);
+			if (deps.persist !== false) {
+				await deps.sessionStore.append(deps.sessionId, [
+					{ role: "assistant", content: text, timestamp: ts },
+				]);
+			}
 
 			deps.collector.push(reply);
 

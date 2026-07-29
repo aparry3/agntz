@@ -23,11 +23,15 @@ steps:
       model:
         provider: anthropic
         name: claude-sonnet-4-6
+      inputSchema:
+        research: string
       instruction: |
         Summarize the following research into 3-5 bullet points:
 
-        {{chatbot}}
-      stateKey: summary
+        {{research}}
+    input:
+      research: "{{chatbot}}"
+    stateKey: summary
 
   # Step 3: Translate if needed (conditional)
   - agent:
@@ -36,10 +40,16 @@ steps:
       model:
         provider: openai
         name: gpt-5.4-mini
+      inputSchema:
+        language: string
+        summary: string
       instruction: |
         Translate the following text to {{language}}:
 
         {{summary}}
+    input:
+      language: "{{language}}"
+      summary: "{{summary}}"
     when: "{{language}} != en"
     stateKey: translation
 

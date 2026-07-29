@@ -69,6 +69,8 @@ export function manifestEntryToToolReferences(
 			// here keeps the exhaustiveness check honest and lets skills tolerate
 			// unsupported entries without crashing.
 			return [];
+		case "callback":
+			return [];
 	}
 }
 

@@ -20,10 +20,47 @@ class Reply(AgntzModel):
     run_id: str = Field(alias="runId")
 
 
+class RetentionRequest(AgntzModel):
+    mode: str | None = None
+    ttl_seconds: int | None = Field(default=None, alias="ttlSeconds")
+    artifact_ttl_seconds: int | None = Field(default=None, alias="artifactTtlSeconds")
+
+
+class TokenUsage(AgntzModel):
+    input_tokens: int = Field(default=0, alias="inputTokens")
+    output_tokens: int = Field(default=0, alias="outputTokens")
+    total_tokens: int = Field(default=0, alias="totalTokens")
+
+
+class ArtifactRef(AgntzModel):
+    id: str
+    owner_id: str = Field(alias="ownerId")
+    purpose: str
+    media_type: str = Field(alias="mediaType")
+    size_bytes: int = Field(alias="sizeBytes")
+    sha256: str
+    created_at: str = Field(alias="createdAt")
+    expires_at: str = Field(alias="expiresAt")
+    status: str
+    download_url: str | None = Field(default=None, alias="downloadUrl")
+
+
 class RunResult(AgntzModel):
     output: Any = None
     state: dict[str, Any] = Field(default_factory=dict)
-    session_id: str = Field(alias="sessionId")
+    run_id: str = Field(default="", alias="runId")
+    trace_id: str | None = Field(default=None, alias="traceId")
+    status: str = "completed"
+    requested_agent_version: str | None = Field(default=None, alias="requestedAgentVersion")
+    resolved_agent_version: str | None = Field(default=None, alias="resolvedAgentVersion")
+    provider: str | None = None
+    model: str = ""
+    usage: TokenUsage = Field(default_factory=TokenUsage)
+    finish_reason: str | None = Field(default=None, alias="finishReason")
+    response_id: str | None = Field(default=None, alias="responseId")
+    warnings: list[str] | None = None
+    session_id: str | None = Field(default=None, alias="sessionId")
+    retention: RetentionRequest | None = None
     replies: list[Reply] | None = None
 
 
@@ -56,6 +93,7 @@ class Run(AgntzModel):
     id: str
     root_id: str = Field(alias="rootId")
     agent_id: str = Field(alias="agentId")
+    agent_version: str | None = Field(default=None, alias="agentVersion")
     status: str
     input: Any = None
     started_at: int = Field(alias="startedAt")
@@ -67,6 +105,9 @@ class Run(AgntzModel):
     error: str | None = None
     ended_at: int | None = Field(default=None, alias="endedAt")
     depth: int = 0
+    requested_agent_version: str | None = Field(default=None, alias="requestedAgentVersion")
+    retention_mode: str | None = Field(default=None, alias="retentionMode")
+    expires_at: str | None = Field(default=None, alias="expiresAt")
 
 
 class RunListResult(AgntzModel):

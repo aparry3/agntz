@@ -5,32 +5,35 @@ in [`DEPLOY.md`](./DEPLOY.md).
 
 ## Current package graph
 
-| Directory | Package name | Version | Publish status |
-|---|---|---:|---|
-| `packages/contracts` | `@agntz/contracts` | 0.0.0 | publishable |
-| `packages/db` | `@agntz/db` | 0.0.0 | publishable |
-| `packages/client` | `@agntz/client` | 0.0.0 | publishable |
-| `packages/core` | `@agntz/core` | 0.0.0 | publishable |
-| `packages/stores` | `@agntz/stores` | 0.0.0 | publishable |
-| `packages/memrez` | `@agntz/memrez` | 0.0.0 | publishable |
-| `packages/sdk` | `@agntz/sdk` | 0.0.0 | publishable |
-| `packages/app` | `@agntz/app` | 0.1.10 | private service |
-| `packages/worker` | `@agntz/worker` | 0.2.1 | private service |
-| `packages/site` | `@agntz/site` | 0.1.0 | private site |
+| Directory | Package name | Current | Release target | Publish status |
+|---|---|---:|---:|---|
+| `packages/contracts` | `@agntz/contracts` | 0.1.0 | 0.2.0 | publishable |
+| `packages/db` | `@agntz/db` | 0.1.0 | 0.2.0 | publishable |
+| `packages/client` | `@agntz/client` | 0.1.0 | 0.2.0 | publishable |
+| `packages/core` | `@agntz/core` | 0.1.0 | 0.2.0 | publishable |
+| `packages/stores` | `@agntz/stores` | 0.1.0 | 0.2.0 | publishable |
+| `packages/memrez` | `@agntz/memrez` | 0.1.0 | 0.2.0 | publishable |
+| `packages/sdk` | `@agntz/sdk` | 0.1.0 | 0.2.0 | publishable |
+| `packages/app` | `@agntz/app` | 0.1.10 | - | private service |
+| `packages/worker` | `@agntz/worker` | 0.2.1 | - | private service |
+| `packages/site` | `@agntz/site` | 0.1.0 | - | private site |
 
 The standalone `@agntz/manifest` package has been merged into
 `@agntz/core/manifest`.
 
-The `0.0.0` package versions are the public baseline. Earlier npm releases were
-experimental pre-baseline iterations and should remain deprecated on the npm
-registry.
+Version `0.2.0` is the coordinated public-beta line. Earlier npm releases were
+experimental iterations and remain deprecated on the npm registry.
+The checked-in changesets generate the target versions and changelog entries in
+the release PR; do not publish the staging `0.1.0` package manifests directly.
 
 ## Prerequisites
 
 - npm account with 2FA enabled.
 - Membership in the `@agntz` npm organization.
-- `NPM_TOKEN` automation token configured as a GitHub Actions secret on
-  `aparry3/agntz`.
+- npm Trusted Publisher entries for every public package, restricted to
+  `aparry3/agntz`, workflow `release.yml`, environment `npm`, and the
+  `npm publish` action.
+- A GitHub `npm` environment restricted to the `main` branch.
 
 ## Release flow
 
@@ -75,8 +78,8 @@ Do not publish private service packages (`@agntz/app`, `@agntz/worker`,
 
 Use pnpm for manual publishing so `workspace:*` dependencies are converted to
 concrete registry versions in the published tarballs.
-Use `--tag latest` for the `0.0.0` baseline because npm will not implicitly move
-`latest` from a higher historical version to a lower baseline version.
+Manual publishing requires an interactive npm session with 2FA. CI uses OIDC
+trusted publishing and emits provenance attestations without an npm token.
 
 ## Verify a release
 

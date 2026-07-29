@@ -28,6 +28,8 @@ export interface CreateExecutionContextOptions {
 	parentRunId?: string;
 	/** Tenant id threaded onto child Runs (single-operator in embedded use). */
 	userId?: string;
+	/** Owner id attached to trace spans. */
+	ownerId?: string;
 	/**
 	 * Local-tool implementations registered with `agntz({ tools: ... })`.
 	 * Used by `invokeTool` to dispatch `kind: local` pipeline tool steps
@@ -77,6 +79,7 @@ export function createExecutionContext(
 		runRegistry: opts.runRegistry,
 		parentRunId: opts.parentRunId,
 		userId: opts.userId,
+		ownerId: opts.ownerId,
 		replyCollector: opts.replyCollector,
 	});
 }

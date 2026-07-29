@@ -1272,11 +1272,17 @@ def _row_to_api_key(row: Any) -> ApiKeyRecord:
 
 
 def _pg_iso(value: Any) -> str:
-    if hasattr(value, "astimezone"):
-        return value.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    if isinstance(value, datetime):
+        normalized = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+        return normalized.astimezone(UTC).isoformat(timespec="milliseconds").replace(
+            "+00:00", "Z"
+        )
     text = str(value)
-    if text.endswith("+00"):
-        text = text[:-3] + "Z"
-    if " " in text and "T" not in text:
-        text = text.replace(" ", "T", 1)
-    return text
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return text.replace(" ", "T", 1) if " " in text and "T" not in text else text
+    normalized = parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+    return normalized.astimezone(UTC).isoformat(timespec="milliseconds").replace(
+        "+00:00", "Z"
+    )

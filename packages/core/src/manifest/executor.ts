@@ -8,10 +8,12 @@ import type {
 	AgentState,
 	ExecutionContext,
 	ExecutionResult,
+	ImageAgentManifest,
 	LLMAgentManifest,
 	ParallelAgentManifest,
 	SequentialAgentManifest,
 	ToolAgentManifest,
+	TranscriptionAgentManifest,
 } from "./types.js";
 
 /**
@@ -71,6 +73,32 @@ export async function executeWithState(
 					parentInput,
 				);
 				break;
+			case "transcription": {
+				if (!ctx.invokeTranscription) {
+					throw new Error(
+						"This host does not provide a transcription operation adapter",
+					);
+				}
+				const output = await ctx.invokeTranscription(
+					manifest as TranscriptionAgentManifest,
+					state,
+				);
+				result = { output, state: { ...state } };
+				break;
+			}
+			case "image": {
+				if (!ctx.invokeImage) {
+					throw new Error(
+						"This host does not provide an image-generation operation adapter",
+					);
+				}
+				const output = await ctx.invokeImage(
+					manifest as ImageAgentManifest,
+					state,
+				);
+				result = { output, state: { ...state } };
+				break;
+			}
 			default:
 				throw new Error(
 					`Unknown agent kind: ${(manifest as AgentManifest).kind}`,

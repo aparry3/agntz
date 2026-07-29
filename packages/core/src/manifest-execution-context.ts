@@ -1,3 +1,4 @@
+import { StructuredOutputError } from "./errors.js";
 import { buildHttpToolDefinition } from "./http-tool.js";
 import {
 	type ManifestToAgentOptions,
@@ -7,17 +8,26 @@ import type {
 	AgentManifest,
 	AgentState,
 	ExecutionContext,
+	ImageAgentManifest,
 	LLMAgentManifest,
 	ToolCallConfig,
+	TranscriptionAgentManifest,
 } from "./manifest/index.js";
+import {
+	ManifestSchemaError,
+	assertManifestSchemaValue,
+} from "./manifest/schema.js";
 import type { Runner } from "./runner.js";
 import type { SpanEmitter } from "./telemetry.js";
 import type {
+	ContentBlock,
 	Reply,
+	RetentionPolicy,
 	RunRegistry,
 	ToolContext,
 	ToolDefinition,
 } from "./types.js";
+import { isContentBlockArray } from "./types.js";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Manifest → runner bridge (shared).
@@ -116,6 +126,23 @@ export interface ManifestExecutionContextOptions {
 	replyCollector?: Reply[];
 	/** Cancellation, threaded into `runner.invoke`. */
 	signal?: AbortSignal;
+	/** Exact ordered rich content for the selected/root LLM manifest. */
+	content?: ContentBlock[];
+	/** Original artifact-reference blocks used for persistence, never decoded bytes. */
+	persistenceContent?: ContentBlock[];
+	/** Restrict rich content to this manifest id so pipeline children do not reuse it. */
+	contentAgentId?: string;
+	retention?: RetentionPolicy;
+	invokeTranscription?: (
+		manifest: TranscriptionAgentManifest,
+		state: AgentState,
+		content: ContentBlock[] | undefined,
+	) => Promise<unknown>;
+	invokeImage?: (
+		manifest: ImageAgentManifest,
+		state: AgentState,
+		content: ContentBlock[] | undefined,
+	) => Promise<unknown>;
 }
 
 /**
@@ -146,6 +173,18 @@ export function createManifestExecutionContext(
 		spanEmitter: opts.spanEmitter,
 		ownerId: opts.ownerId,
 		resolveAgent: opts.resolveAgent,
+		invokeTranscription: opts.invokeTranscription
+			? (manifest, state) =>
+					opts.invokeTranscription?.(
+						manifest,
+						state,
+						opts.content,
+					) as Promise<unknown>
+			: undefined,
+		invokeImage: opts.invokeImage
+			? (manifest, state) =>
+					opts.invokeImage?.(manifest, state, opts.content) as Promise<unknown>
+			: undefined,
 
 		invokeLLM: async (
 			manifest: LLMAgentManifest,
@@ -170,11 +209,32 @@ export function createManifestExecutionContext(
 			opts.hooks?.onLLMStart?.({ manifest, renderedInstruction });
 			const startedAt = Date.now();
 			try {
-				const userInput =
-					renderedPrompt ??
-					(state.userQuery != null
-						? String(state.userQuery)
-						: JSON.stringify(state));
+				const richContent =
+					opts.content &&
+					(!opts.contentAgentId || opts.contentAgentId === manifest.id)
+						? opts.content
+						: isContentBlockArray(state.userQuery)
+							? state.userQuery
+							: undefined;
+				const userInput: string | ContentBlock[] = richContent
+					? renderedPrompt
+						? [{ type: "text", text: renderedPrompt }, ...richContent]
+						: richContent
+					: (renderedPrompt ??
+						(state.userQuery != null
+							? String(state.userQuery)
+							: JSON.stringify(state)));
+				const persistenceContent =
+					opts.persistenceContent &&
+					(!opts.contentAgentId || opts.contentAgentId === manifest.id)
+						? opts.persistenceContent
+						: undefined;
+				const persistenceInput: string | ContentBlock[] | undefined =
+					persistenceContent
+						? renderedPrompt
+							? [{ type: "text", text: renderedPrompt }, ...persistenceContent]
+							: persistenceContent
+						: undefined;
 
 				const result = await runner.invoke(tempId, userInput, {
 					...(opts.runRegistry
@@ -186,22 +246,38 @@ export function createManifestExecutionContext(
 					...(opts.spanEmitter ? { spanEmitter: opts.spanEmitter } : {}),
 					...(opts.ownerId ? { ownerId: opts.ownerId } : {}),
 					...(opts.signal ? { signal: opts.signal } : {}),
+					...(opts.retention ? { retention: opts.retention } : {}),
+					...(persistenceInput ? { _persistenceInput: persistenceInput } : {}),
 				});
 
 				if (opts.replyCollector && result.replies?.length) {
 					opts.replyCollector.push(...result.replies);
 				}
 
-				// With an outputSchema, parse so downstream pipeline steps see
-				// structured fields rather than a JSON string; raw text on failure.
+				// Structured-output runs must never degrade to unvalidated raw text.
 				let parsed = false;
 				let value: unknown = result.output;
 				if (manifest.outputSchema) {
 					try {
 						value = JSON.parse(result.output);
+						assertManifestSchemaValue(
+							manifest.outputSchema,
+							value,
+							"Structured model output",
+						);
 						parsed = true;
-					} catch {
-						value = result.output;
+					} catch (error) {
+						const details =
+							error instanceof ManifestSchemaError
+								? error.issues.map(
+										(issue) => `${issue.path || "/"}: ${issue.message}`,
+									)
+								: [];
+						throw new StructuredOutputError(
+							"Model returned output that does not match the manifest outputSchema.",
+							details,
+							error as Error,
+						);
 					}
 				}
 

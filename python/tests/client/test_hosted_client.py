@@ -30,6 +30,20 @@ def _run_payload() -> dict[str, Any]:
     }
 
 
+def _artifact_payload() -> dict[str, Any]:
+    return {
+        "id": "art_abc",
+        "ownerId": "user_abc",
+        "purpose": "input",
+        "mediaType": "audio/wav",
+        "sizeBytes": 10,
+        "sha256": "abc123",
+        "createdAt": "2026-07-28T00:00:00.000Z",
+        "expiresAt": "2026-07-28T01:00:00.000Z",
+        "status": "ready",
+    }
+
+
 def test_agents_run_sends_hosted_wire_request() -> None:
     seen: list[httpx.Request] = []
 
@@ -87,6 +101,67 @@ def test_agents_run_sends_runtime_context() -> None:
     )
 
     assert result.output == {"answer": "done"}
+
+
+def test_agents_run_uploads_local_content_and_accepts_sessionless_envelope(tmp_path: Any) -> None:
+    audio_path = tmp_path / "sample.wav"
+    audio_path.write_bytes(b"audio-data")
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if request.url.path == "/artifacts":
+            assert request.headers["content-type"].startswith("multipart/form-data")
+            assert b"audio-data" in request.content
+            assert b"artifactTtlSeconds" not in request.content
+            assert b"3600" in request.content
+            return httpx.Response(201, json=_artifact_payload())
+        assert request.url.path == "/run"
+        assert json.loads(request.content) == {
+            "agentId": "transcribe",
+            "content": [
+                {
+                    "type": "audio",
+                    "mediaType": "audio/wav",
+                    "artifactId": "art_abc",
+                }
+            ],
+            "retention": {
+                "mode": "none",
+                "artifactTtlSeconds": 3600,
+            },
+        }
+        return httpx.Response(
+            200,
+            json={
+                "output": {"text": "hello"},
+                "state": {},
+                "runId": "run_abc",
+                "status": "completed",
+                "provider": "openai",
+                "model": "gpt-4o-mini-transcribe",
+                "usage": {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0},
+                "retention": {"mode": "none", "artifactTtlSeconds": 3600},
+            },
+        )
+
+    client = AgntzClient(
+        api_key="test-key",
+        base_url="https://worker.test",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    result = client.agents.run(
+        agent_id="transcribe",
+        content=[{"type": "audio", "file": audio_path, "media_type": "audio/wav"}],
+        retention={"mode": "none", "artifact_ttl_seconds": 3600},
+    )
+
+    assert paths == ["/artifacts", "/run"]
+    assert result.session_id is None
+    assert result.run_id == "run_abc"
+    assert result.usage.total_tokens == 0
+    assert result.retention is not None
+    assert result.retention.mode == "none"
 
 
 @pytest.mark.asyncio
@@ -179,7 +254,14 @@ def test_http_errors_map_to_client_errors() -> None:
     statuses: Iterator[int] = iter([401, 404, 500])
 
     def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(next(statuses), json={"error": "nope"})
+        status = next(statuses)
+        return httpx.Response(
+            status,
+            json={
+                "error": "nope",
+                **({"code": "STRUCTURED_OUTPUT_INVALID"} if status == 500 else {}),
+            },
+        )
 
     client = AgntzClient(
         api_key="test-key",
@@ -191,8 +273,10 @@ def test_http_errors_map_to_client_errors() -> None:
         client.agents.run(agent_id="support")
     with pytest.raises(NotFoundError):
         client.agents.run(agent_id="support")
-    with pytest.raises(Exception, match="nope"):
+    with pytest.raises(Exception, match="nope") as caught:
         client.agents.run(agent_id="support")
+    assert isinstance(caught.value, Exception)
+    assert getattr(caught.value, "code", None) == "STRUCTURED_OUTPUT_INVALID"
 
 
 def test_runs_and_traces_resources_use_expected_paths() -> None:

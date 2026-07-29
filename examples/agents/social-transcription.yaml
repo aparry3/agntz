@@ -1,0 +1,15 @@
+id: social-transcription
+kind: transcription
+name: Social narration transcription
+description: Transcribes prepared cooking narration audio.
+model:
+  provider: openai
+  name: gpt-4o-mini-transcribe
+instruction: |
+  Cooking video narration. Preserve ingredient amounts, units, temperatures,
+  and times exactly.
+settings:
+  language: en
+retention:
+  mode: none
+  artifactTtlSeconds: 3600

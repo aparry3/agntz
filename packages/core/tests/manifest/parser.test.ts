@@ -155,6 +155,44 @@ tool:
 		}
 	});
 
+	it("preserves the complete HTTP config on a tool agent", () => {
+		const manifest = parseManifest(`
+id: create-user
+kind: tool
+tool:
+  kind: http
+  name: create_user
+  url: https://api.example.com/users
+  method: POST
+  headers:
+    X-Tenant: "{{tenantId}}"
+  body_type: json
+  body:
+    name: "{{name}}"
+  auth:
+    type: oauth2_client_credentials
+    token_url: https://login.example.com/oauth/token
+    client_id: "{{secrets.client_id}}"
+    client_secret: "{{secrets.client_secret}}"
+`);
+
+		expect(manifest.kind).toBe("tool");
+		if (manifest.kind === "tool") {
+			expect(manifest.tool).toMatchObject({
+				kind: "http",
+				name: "create_user",
+				method: "POST",
+				body_type: "json",
+				body: { name: "{{name}}" },
+				auth: {
+					type: "oauth2_client_credentials",
+					client_id: "{{secrets.client_id}}",
+					client_secret: "{{secrets.client_secret}}",
+				},
+			});
+		}
+	});
+
 	it("parses a sequential agent with ref steps", () => {
 		const yaml = `
 id: pipeline

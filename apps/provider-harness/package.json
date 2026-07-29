@@ -6,7 +6,11 @@
   "type": "module",
   "scripts": {
     "start": "tsx --env-file-if-exists=.env.local --env-file-if-exists=../../.env.local src/index.ts",
-    "lint": "biome check src --no-errors-on-unmatched",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:smoke": "tsx --env-file-if-exists=.env.local --env-file-if-exists=../../.env.local src/index.ts --suite smoke --sdk both --require-credentials --global-concurrency 2 --provider-concurrency 1",
+    "test:compat": "tsx --env-file-if-exists=.env.local --env-file-if-exists=../../.env.local src/index.ts --suite compat --sdk both --require-credentials --global-concurrency 2 --provider-concurrency 1",
+    "lint": "biome check src tests --no-errors-on-unmatched",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -17,7 +21,8 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "tsx": "^4.19.0",
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
   },
   "engines": {
     "node": ">=22.0.0"

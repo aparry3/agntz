@@ -1,6 +1,7 @@
 export {
 	AgntzClient,
 	AgentsResource,
+	ArtifactsResource,
 	DatasetsResource,
 	EvalsResource,
 	MemoryResource,
@@ -28,6 +29,7 @@ export type {
 	AgentKind,
 	AgentSummary,
 	AgntzClientOptions,
+	ArtifactRef,
 	ContentBlock,
 	EvalCaseResult,
 	EvalCaseStatus,
@@ -48,6 +50,8 @@ export type {
 	EvalRunStatus,
 	HealthResult,
 	ImageMediaType,
+	ImageDetail,
+	LocalArtifactInput,
 	MemoryCurateReport,
 	MemoryCurateResult,
 	MemoryDeleteEntryResult,
@@ -67,6 +71,7 @@ export type {
 	RunListFilter,
 	RunListResult,
 	RunResult,
+	RetentionRequest,
 	RunStatus,
 	RunsStartInput,
 	RunsStreamInput,
@@ -86,4 +91,5 @@ export type {
 	TraceLiveEvent,
 	TraceSummary,
 	TracesListResult,
+	WireContentBlock,
 } from "./types.js";

@@ -49,7 +49,7 @@ export class ToolRegistry {
 			throw new Error(`Tool "${tool.name}" is already registered`);
 		}
 
-		const jsonSchema = zodToJsonSchema(tool.input);
+		const jsonSchema = tool.modelInputSchema ?? zodToJsonSchema(tool.input);
 
 		this.tools.set(tool.name, {
 			definition: tool,

@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from agntz.agent_ref import InvalidAgentRefError, parse_agent_ref
+
 from .types import (
     AgentManifest,
     ParallelAgentManifest,
@@ -25,6 +27,8 @@ def validate_manifest(
     if manifest.kind == "llm" and manifest.resources:
         _validate_resources(manifest.resources, "resources", errors)
         _validate_resource_tool_collisions(manifest.resources, manifest.tools or [], errors)
+    if manifest.kind == "llm":
+        _validate_llm_agent_refs(manifest, available_agents, errors)
     if manifest.kind == "sequential":
         _validate_steps(manifest, manifest.steps, available_agents, errors)
     elif manifest.kind == "parallel":
@@ -49,10 +53,53 @@ def _validate_steps(
     errors: list[str],
 ) -> None:
     for index, step in enumerate(steps):
-        if step.ref and available_agents is not None and step.ref not in available_agents:
-            errors.append(f"{manifest.id}[{index}] references unknown agent '{step.ref}'")
+        if step.ref:
+            _validate_agent_ref(
+                step.ref,
+                f"{manifest.id}[{index}]",
+                available_agents,
+                errors,
+            )
         if step.agent is not None:
             errors.extend(validate_manifest(step.agent, available_agents=available_agents))
+
+
+def _validate_llm_agent_refs(
+    manifest: AgentManifest,
+    available_agents: set[str] | None,
+    errors: list[str],
+) -> None:
+    for index, entry in enumerate(getattr(manifest, "spawnable", None) or []):
+        if not isinstance(entry, dict) or entry.get("kind") != "ref":
+            continue
+        agent_id = entry.get("agentId")
+        if isinstance(agent_id, str):
+            version = entry.get("version")
+            value = f"{agent_id}@{version}" if isinstance(version, str) else agent_id
+            _validate_agent_ref(value, f"spawnable[{index}]", available_agents, errors)
+    for index, entry in enumerate(getattr(manifest, "tools", None) or []):
+        if not isinstance(entry, dict) or entry.get("kind") != "agent":
+            continue
+        agent_id = entry.get("agent")
+        if isinstance(agent_id, str):
+            version = entry.get("version")
+            value = f"{agent_id}@{version}" if isinstance(version, str) else agent_id
+            _validate_agent_ref(value, f"tools[{index}].agent", available_agents, errors)
+
+
+def _validate_agent_ref(
+    value: str,
+    path: str,
+    available_agents: set[str] | None,
+    errors: list[str],
+) -> None:
+    try:
+        agent_id = parse_agent_ref(value).agent_id
+    except InvalidAgentRefError as exc:
+        errors.append(f"{path} has invalid agent reference: {exc}")
+        return
+    if available_agents is not None and agent_id not in available_agents:
+        errors.append(f"{path} references unknown agent '{value}'")
 
 
 def _validate_resources(

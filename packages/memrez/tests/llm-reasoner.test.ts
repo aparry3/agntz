@@ -130,12 +130,14 @@ describe("llmReasoner", () => {
 			}),
 		);
 		const reasoner = llmReasoner({ modelProvider: provider });
+		const controller = new AbortController();
 
 		const ops = await reasoner.curate?.({
 			grants: ["app/user/u_1"],
 			scopePaths: ["app", "app/user", "app/user/u_1"],
 			entries: [],
 			topicConfig: { core: "profile", preferred: ["prefs"] },
+			signal: controller.signal,
 		});
 		expect(ops).toEqual([
 			{
@@ -152,6 +154,7 @@ describe("llmReasoner", () => {
 		expect(curatorUserMessage?.content).toContain('"profile"');
 		expect(curatorUserMessage?.content).toContain("Preferred topics:");
 		expect(curatorUserMessage?.content).toContain('["prefs"]');
+		expect(provider.calls[0].signal).toBe(controller.signal);
 
 		const failing = llmReasoner({
 			modelProvider: new MockModelProvider(() => {

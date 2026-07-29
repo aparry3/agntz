@@ -164,6 +164,7 @@ export {
 	MaxRecursionDepthError,
 	RetryExhaustedError,
 	ValidationError,
+	StructuredOutputError,
 	SkillNotFoundError,
 } from "./errors.js";
 
@@ -193,6 +194,15 @@ export type {
 export { isContentBlockArray } from "./types.js";
 export { normalizeImageBlocks, ImageFetchError } from "./image-fetcher.js";
 export type { NormalizeImageBlocksOptions } from "./image-fetcher.js";
+export {
+	buildCallbackToolDefinition,
+	signCallback,
+	CALLBACK_SIGNATURE_HEADER,
+	CALLBACK_TIMESTAMP_HEADER,
+	CALLBACK_DELIVERY_ID_HEADER,
+	CALLBACK_IDEMPOTENCY_HEADER,
+} from "./callback-tool.js";
+export type { CallbackToolDeps } from "./callback-tool.js";
 
 // Sentinel prefix used by SQL stores to encode a ContentBlock[]
 // `InvocationLog.input` inside the legacy `input TEXT` column without a
@@ -205,6 +215,9 @@ export type {
 	// Multimodal
 	ContentBlock,
 	ImageMediaType,
+	ImageDetail,
+	RetentionMode,
+	RetentionPolicy,
 	// Agent
 	AgentDefinition,
 	AgentRef,
@@ -216,6 +229,7 @@ export type {
 	ResourceRegistrationContext,
 	ResourceToolContext,
 	// Tools
+	CallbackToolEntry,
 	ToolDefinition,
 	ToolReference,
 	ToolContext,
@@ -267,6 +281,10 @@ export type {
 	Run,
 	RunListFilters,
 	RunListResult,
+	ArtifactMetadata,
+	ArtifactPurpose,
+	ArtifactStatus,
+	ArtifactStore,
 	RunStatus,
 	RunHandle,
 	RunStore,

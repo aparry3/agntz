@@ -38,6 +38,8 @@ describe.skipIf(!hasDb)("PostgresStore RunStore (integration)", () => {
 			rootId: overrides.rootId ?? id,
 			parentId: overrides.parentId,
 			agentId: overrides.agentId ?? "test-agent",
+			agentVersion: overrides.agentVersion,
+			requestedAgentVersion: overrides.requestedAgentVersion,
 			userId: overrides.userId,
 			sessionId: overrides.sessionId,
 			spawnToolUseId: overrides.spawnToolUseId,
@@ -53,13 +55,20 @@ describe.skipIf(!hasDb)("PostgresStore RunStore (integration)", () => {
 
 	it("round-trips a Run via putRun and getRun", async () => {
 		const store = admin.forUser(userId);
-		const run = makeRun({ id: "pg-run-1", agentId: "alpha" });
+		const run = makeRun({
+			id: "pg-run-1",
+			agentId: "alpha",
+			agentVersion: "2026-07-10T12:00:00.000Z",
+			requestedAgentVersion: "stable",
+		});
 		await store.putRun(run);
 		const got = await store.getRun("pg-run-1");
 		expect(got).not.toBeNull();
 		expect(got?.id).toBe("pg-run-1");
 		expect(got?.rootId).toBe("pg-run-1");
 		expect(got?.agentId).toBe("alpha");
+		expect(got?.agentVersion).toBe("2026-07-10T12:00:00.000Z");
+		expect(got?.requestedAgentVersion).toBe("stable");
 		expect(got?.status).toBe("running");
 		expect(got?.input).toBe("hello");
 		expect(got?.startedAt).toBe(1_700_000_000_000);

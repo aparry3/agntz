@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import mimetypes
 from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlencode
 
@@ -14,6 +17,7 @@ from .events import normalize_agent_event, normalize_run_event, normalize_trace_
 from .models import (
     AgentDefinition,
     AgentVersionSummary,
+    ArtifactRef,
     EvalDataset,
     EvalDefinition,
     EvalLatestScore,
@@ -26,6 +30,7 @@ from .models import (
     MemoryEntriesPage,
     MemoryEntry,
     MemoryScanResult,
+    RetentionRequest,
     Run,
     RunListResult,
     RunResult,
@@ -55,6 +60,7 @@ class AgntzClient:
         self._client = http_client or httpx.Client(timeout=timeout)
         self._owns_client = http_client is None
         self.agents = AgentsResource(self)
+        self.artifacts = ArtifactsResource(self)
         self.datasets = DatasetsResource(self)
         self.evals = EvalsResource(self)
         self.runs = RunsResource(self)
@@ -118,6 +124,31 @@ class AgntzClient:
             raise
         return response
 
+    def _prepare_run_body(
+        self,
+        agent_id: str,
+        input: Any,
+        content: Sequence[Mapping[str, Any]] | None,
+        session_id: str | None,
+        context: list[str] | None,
+        retention: RetentionRequest | Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
+        legacy_content = content is None and _is_content_blocks(input)
+        body: dict[str, Any] = {"agentId": agent_id}
+        if input is not None and not legacy_content:
+            body["input"] = input
+        selected_content = input if legacy_content else content
+        if selected_content is not None:
+            artifact_ttl = _retention_artifact_ttl(retention)
+            body["content"] = self.artifacts._prepare_content(
+                selected_content, expires_in_seconds=artifact_ttl
+            )
+        _add_if_defined(body, "sessionId", session_id)
+        _add_if_defined(body, "context", context)
+        if retention is not None:
+            body["retention"] = _retention_body(retention)
+        return body
+
 
 class AsyncAgntzClient:
     """Async client for the hosted Agntz worker API."""
@@ -139,6 +170,7 @@ class AsyncAgntzClient:
         self._client = http_client or httpx.AsyncClient(timeout=timeout)
         self._owns_client = http_client is None
         self.agents = AsyncAgentsResource(self)
+        self.artifacts = AsyncArtifactsResource(self)
         self.datasets = AsyncDatasetsResource(self)
         self.evals = AsyncEvalsResource(self)
         self.runs = AsyncRunsResource(self)
@@ -178,6 +210,31 @@ class AsyncAgntzClient:
         _raise_for_status(response)
         return response
 
+    async def _prepare_run_body(
+        self,
+        agent_id: str,
+        input: Any,
+        content: Sequence[Mapping[str, Any]] | None,
+        session_id: str | None,
+        context: list[str] | None,
+        retention: RetentionRequest | Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
+        legacy_content = content is None and _is_content_blocks(input)
+        body: dict[str, Any] = {"agentId": agent_id}
+        if input is not None and not legacy_content:
+            body["input"] = input
+        selected_content = input if legacy_content else content
+        if selected_content is not None:
+            artifact_ttl = _retention_artifact_ttl(retention)
+            body["content"] = await self.artifacts._prepare_content(
+                selected_content, expires_in_seconds=artifact_ttl
+            )
+        _add_if_defined(body, "sessionId", session_id)
+        _add_if_defined(body, "context", context)
+        if retention is not None:
+            body["retention"] = _retention_body(retention)
+        return body
+
 
 class AgentsResource:
     def __init__(self, client: AgntzClient) -> None:
@@ -188,13 +245,18 @@ class AgentsResource:
         *,
         agent_id: str,
         input: Any = None,
+        content: Sequence[Mapping[str, Any]] | None = None,
         session_id: str | None = None,
         context: list[str] | None = None,
+        retention: RetentionRequest | Mapping[str, Any] | None = None,
     ) -> RunResult:
+        body = self._client._prepare_run_body(
+            agent_id, input, content, session_id, context, retention
+        )
         response = self._client._request(
             "POST",
             "/run",
-            json_body=_run_body(agent_id, input, session_id, context),
+            json_body=body,
         )
         return RunResult.model_validate(response.json())
 
@@ -203,13 +265,18 @@ class AgentsResource:
         *,
         agent_id: str,
         input: Any = None,
+        content: Sequence[Mapping[str, Any]] | None = None,
         session_id: str | None = None,
         context: list[str] | None = None,
+        retention: RetentionRequest | Mapping[str, Any] | None = None,
     ) -> Iterator[Event]:
+        body = self._client._prepare_run_body(
+            agent_id, input, content, session_id, context, retention
+        )
         response = self._client._stream(
             "POST",
             "/run/stream",
-            json_body=_run_body(agent_id, input, session_id, context),
+            json_body=body,
         )
         stream_context = response.extensions["_agntz_stream_context"]
         saw_terminal = False
@@ -227,6 +294,29 @@ class AgentsResource:
                 raise StreamError("Stream closed before completion", code="STREAM_TRUNCATED")
         finally:
             stream_context.__exit__(None, None, None)
+
+    def start(
+        self,
+        *,
+        agent_id: str,
+        input: Any = None,
+        content: Sequence[Mapping[str, Any]] | None = None,
+        session_id: str | None = None,
+        context: list[str] | None = None,
+        retention: RetentionRequest | Mapping[str, Any] | None = None,
+        callback_url: str | None = None,
+        webhook_secret_name: str | None = None,
+    ) -> Run:
+        return self._client.runs.start(
+            agent_id=agent_id,
+            input=input,
+            content=content,
+            session_id=session_id,
+            context=context,
+            retention=retention,
+            callback_url=callback_url,
+            webhook_secret_name=webhook_secret_name,
+        )
 
     def list(self) -> list[dict[str, Any]]:
         response = self._client._request("GET", "/agents")
@@ -315,13 +405,18 @@ class AsyncAgentsResource:
         *,
         agent_id: str,
         input: Any = None,
+        content: Sequence[Mapping[str, Any]] | None = None,
         session_id: str | None = None,
         context: list[str] | None = None,
+        retention: RetentionRequest | Mapping[str, Any] | None = None,
     ) -> RunResult:
+        body = await self._client._prepare_run_body(
+            agent_id, input, content, session_id, context, retention
+        )
         response = await self._client._request(
             "POST",
             "/run",
-            json_body=_run_body(agent_id, input, session_id, context),
+            json_body=body,
         )
         return RunResult.model_validate(response.json())
 
@@ -330,14 +425,19 @@ class AsyncAgentsResource:
         *,
         agent_id: str,
         input: Any = None,
+        content: Sequence[Mapping[str, Any]] | None = None,
         session_id: str | None = None,
         context: list[str] | None = None,
+        retention: RetentionRequest | Mapping[str, Any] | None = None,
     ) -> AsyncIterator[Event]:
+        body = await self._client._prepare_run_body(
+            agent_id, input, content, session_id, context, retention
+        )
         async with self._client._client.stream(
             "POST",
             _join_url(self._client._base_url, "/run/stream"),
             headers=_headers(self._client._api_key, "text/event-stream"),
-            json=_run_body(agent_id, input, session_id, context),
+            json=body,
         ) as response:
             _raise_for_status(response)
             saw_terminal = False
@@ -352,6 +452,29 @@ class AsyncAgentsResource:
                     return
             if not saw_terminal:
                 raise StreamError("Stream closed before completion", code="STREAM_TRUNCATED")
+
+    async def start(
+        self,
+        *,
+        agent_id: str,
+        input: Any = None,
+        content: Sequence[Mapping[str, Any]] | None = None,
+        session_id: str | None = None,
+        context: list[str] | None = None,
+        retention: RetentionRequest | Mapping[str, Any] | None = None,
+        callback_url: str | None = None,
+        webhook_secret_name: str | None = None,
+    ) -> Run:
+        return await self._client.runs.start(
+            agent_id=agent_id,
+            input=input,
+            content=content,
+            session_id=session_id,
+            context=context,
+            retention=retention,
+            callback_url=callback_url,
+            webhook_secret_name=webhook_secret_name,
+        )
 
     async def list(self) -> list[dict[str, Any]]:
         response = await self._client._request("GET", "/agents")
@@ -435,6 +558,130 @@ class AsyncAgentsResource:
             f"/agents/{_q(agent_id)}/aliases/{_q(alias)}",
         )
         return dict(response.json())
+
+
+class ArtifactsResource:
+    def __init__(self, client: AgntzClient) -> None:
+        self._client = client
+
+    def upload(
+        self,
+        *,
+        file: Any,
+        purpose: str = "input",
+        expires_in_seconds: int | None = None,
+        media_type: str | None = None,
+        filename: str | None = None,
+    ) -> ArtifactRef:
+        payload, resolved_filename, resolved_media_type = _artifact_payload(
+            file, media_type=media_type, filename=filename
+        )
+        data = {"purpose": purpose}
+        if expires_in_seconds is not None:
+            data["expiresInSeconds"] = str(expires_in_seconds)
+        response = self._client._client.request(
+            "POST",
+            _join_url(self._client._base_url, "/artifacts"),
+            headers=_headers(self._client._api_key, None),
+            data=data,
+            files={"file": (resolved_filename, payload, resolved_media_type)},
+        )
+        _raise_for_status(response)
+        return ArtifactRef.model_validate(response.json())
+
+    def get(self, artifact_id: str) -> ArtifactRef:
+        response = self._client._request("GET", f"/artifacts/{_q(artifact_id)}")
+        return ArtifactRef.model_validate(response.json())
+
+    def download(self, artifact_id: str) -> bytes:
+        response = self._client._request("GET", f"/artifacts/{_q(artifact_id)}/content")
+        return response.content
+
+    def delete(self, artifact_id: str) -> None:
+        self._client._request("DELETE", f"/artifacts/{_q(artifact_id)}")
+
+    def _prepare_content(
+        self,
+        content: Sequence[Mapping[str, Any]],
+        *,
+        expires_in_seconds: int | None,
+    ) -> list[dict[str, Any]]:
+        prepared: list[dict[str, Any]] = []
+        for block in content:
+            wire = {_snake_to_camel(str(key)): value for key, value in block.items()}
+            if "file" in wire:
+                local_file = wire.pop("file")
+                artifact = self.upload(
+                    file=local_file,
+                    purpose="input",
+                    expires_in_seconds=expires_in_seconds,
+                    media_type=wire.get("mediaType"),
+                )
+                wire["artifactId"] = artifact.id
+            prepared.append(wire)
+        return prepared
+
+
+class AsyncArtifactsResource:
+    def __init__(self, client: AsyncAgntzClient) -> None:
+        self._client = client
+
+    async def upload(
+        self,
+        *,
+        file: Any,
+        purpose: str = "input",
+        expires_in_seconds: int | None = None,
+        media_type: str | None = None,
+        filename: str | None = None,
+    ) -> ArtifactRef:
+        payload, resolved_filename, resolved_media_type = await asyncio.to_thread(
+            _artifact_payload, file, media_type=media_type, filename=filename
+        )
+        data = {"purpose": purpose}
+        if expires_in_seconds is not None:
+            data["expiresInSeconds"] = str(expires_in_seconds)
+        response = await self._client._client.request(
+            "POST",
+            _join_url(self._client._base_url, "/artifacts"),
+            headers=_headers(self._client._api_key, None),
+            data=data,
+            files={"file": (resolved_filename, payload, resolved_media_type)},
+        )
+        _raise_for_status(response)
+        return ArtifactRef.model_validate(response.json())
+
+    async def get(self, artifact_id: str) -> ArtifactRef:
+        response = await self._client._request("GET", f"/artifacts/{_q(artifact_id)}")
+        return ArtifactRef.model_validate(response.json())
+
+    async def download(self, artifact_id: str) -> bytes:
+        response = await self._client._request("GET", f"/artifacts/{_q(artifact_id)}/content")
+        return response.content
+
+    async def delete(self, artifact_id: str) -> None:
+        await self._client._request("DELETE", f"/artifacts/{_q(artifact_id)}")
+
+    async def _prepare_content(
+        self,
+        content: Sequence[Mapping[str, Any]],
+        *,
+        expires_in_seconds: int | None,
+    ) -> list[dict[str, Any]]:
+        prepared: list[dict[str, Any]] = []
+        for block in content:
+            wire = {_snake_to_camel(str(key)): value for key, value in block.items()}
+            if "file" in wire:
+                local_file = wire.pop("file")
+                artifact = await self.upload(
+                    file=local_file,
+                    purpose="input",
+                    expires_in_seconds=expires_in_seconds,
+                    media_type=wire.get("mediaType"),
+                )
+                wire["artifactId"] = artifact.id
+            prepared.append(wire)
+        return prepared
 
 
 class SessionsResource:
@@ -855,12 +1102,16 @@ class RunsResource:
         *,
         agent_id: str,
         input: Any = None,
+        content: Sequence[Mapping[str, Any]] | None = None,
         session_id: str | None = None,
         context: list[str] | None = None,
+        retention: RetentionRequest | Mapping[str, Any] | None = None,
         callback_url: str | None = None,
         webhook_secret_name: str | None = None,
     ) -> Run:
-        body = _run_body(agent_id, input, session_id, context)
+        body = self._client._prepare_run_body(
+            agent_id, input, content, session_id, context, retention
+        )
         _add_if_defined(body, "callbackUrl", callback_url)
         _add_if_defined(body, "webhookSecretName", webhook_secret_name)
         response = self._client._request("POST", "/runs", json_body=body)
@@ -929,12 +1180,16 @@ class AsyncRunsResource:
         *,
         agent_id: str,
         input: Any = None,
+        content: Sequence[Mapping[str, Any]] | None = None,
         session_id: str | None = None,
         context: list[str] | None = None,
+        retention: RetentionRequest | Mapping[str, Any] | None = None,
         callback_url: str | None = None,
         webhook_secret_name: str | None = None,
     ) -> Run:
-        body = _run_body(agent_id, input, session_id, context)
+        body = await self._client._prepare_run_body(
+            agent_id, input, content, session_id, context, retention
+        )
         _add_if_defined(body, "callbackUrl", callback_url)
         _add_if_defined(body, "webhookSecretName", webhook_secret_name)
         response = await self._client._request("POST", "/runs", json_body=body)
@@ -1349,17 +1604,72 @@ def _scope_delete_body(
     return body
 
 
-def _run_body(
-    agent_id: str,
-    input: Any,
-    session_id: str | None,
-    context: list[str] | None,
+def _is_content_blocks(value: Any) -> bool:
+    return isinstance(value, list) and all(
+        isinstance(block, Mapping) and block.get("type") in {"text", "image", "audio"}
+        for block in value
+    )
+
+
+def _retention_artifact_ttl(
+    retention: RetentionRequest | Mapping[str, Any] | None,
+) -> int | None:
+    if retention is None:
+        return None
+    if isinstance(retention, RetentionRequest):
+        return retention.artifact_ttl_seconds
+    value = retention.get("artifactTtlSeconds", retention.get("artifact_ttl_seconds"))
+    return int(value) if value is not None else None
+
+
+def _retention_body(
+    retention: RetentionRequest | Mapping[str, Any],
 ) -> dict[str, Any]:
-    body: dict[str, Any] = {"agentId": agent_id}
-    _add_if_defined(body, "input", input)
-    _add_if_defined(body, "sessionId", session_id)
-    _add_if_defined(body, "context", context)
-    return body
+    if isinstance(retention, RetentionRequest):
+        return retention.model_dump(by_alias=True, exclude_none=True)
+    return {
+        _snake_to_camel(str(key)): value
+        for key, value in retention.items()
+        if value is not None
+    }
+
+
+def _artifact_payload(
+    file: Any,
+    *,
+    media_type: str | None,
+    filename: str | None,
+) -> tuple[bytes, str, str]:
+    source = file
+    if isinstance(file, Mapping):
+        source = file.get("path")
+        media_type = media_type or file.get("mediaType") or file.get("media_type")
+        filename = filename or file.get("filename")
+
+    if isinstance(source, (str, Path)):
+        path = Path(source)
+        payload = path.read_bytes()
+        filename = filename or path.name
+        media_type = media_type or mimetypes.guess_type(path.name)[0]
+    elif isinstance(source, bytes):
+        payload = source
+    elif isinstance(source, (bytearray, memoryview)):
+        payload = bytes(source)
+    elif callable(reader := getattr(source, "read", None)):
+        payload = reader()
+        if isinstance(payload, str):
+            payload = payload.encode()
+        if not isinstance(payload, bytes):
+            raise TypeError("Artifact file.read() must return bytes")
+        filename = filename or getattr(source, "name", None)
+        if filename:
+            filename = Path(str(filename)).name
+    else:
+        raise TypeError("Artifact file must be bytes, a path, or a binary file object")
+
+    resolved_filename = filename or "artifact"
+    resolved_media_type = media_type or mimetypes.guess_type(resolved_filename)[0]
+    return payload, resolved_filename, resolved_media_type or "application/octet-stream"
 
 
 def _add_if_defined(body: dict[str, Any], key: str, value: Any) -> None:
@@ -1422,19 +1732,20 @@ def _with_query(path: str, params: Mapping[str, Any]) -> str:
 def _raise_for_status(response: httpx.Response) -> None:
     if 200 <= response.status_code < 300:
         return
-    message = _read_error_message(response)
+    message, code = _read_error(response)
     if response.status_code == 401:
-        raise AuthenticationError(message, status=response.status_code)
+        raise AuthenticationError(message, status=response.status_code, code=code)
     if response.status_code == 404:
-        raise NotFoundError(message, status=response.status_code)
-    raise AgntzError(message, status=response.status_code)
+        raise NotFoundError(message, status=response.status_code, code=code)
+    raise AgntzError(message, status=response.status_code, code=code)
 
 
-def _read_error_message(response: httpx.Response) -> str:
+def _read_error(response: httpx.Response) -> tuple[str, str | None]:
     try:
         body = response.json()
     except ValueError:
-        return f"HTTP {response.status_code}"
+        return f"HTTP {response.status_code}", None
     if isinstance(body, dict) and isinstance(body.get("error"), str):
-        return body["error"]
-    return f"HTTP {response.status_code}"
+        code = body.get("code")
+        return body["error"], code if isinstance(code, str) else None
+    return f"HTTP {response.status_code}", None

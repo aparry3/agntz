@@ -66,8 +66,8 @@ steps:
               - Every agent, including inline nested agents, must have an `id`.
               - Use `ref` to reference existing agents and `agent` for inline definitions.
               - Preserve valid template syntax, condition syntax, and state encapsulation.
-              - Do not inline secrets. Reference credentials through `{{secrets.NAME}}`
-                when credentials are needed.
+              - Do not inline secrets. Reference credentials through the `secrets`
+                template namespace when credentials are needed.
               - Make the smallest coherent change that satisfies the request while keeping
                 the whole manifest valid.
 

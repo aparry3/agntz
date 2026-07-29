@@ -43,9 +43,12 @@ import type {
 	SessionSnapshot,
 	StreamEvent,
 } from "@agntz/client";
+import { parseAgentRef } from "@agntz/core";
 import {
+	type AgentManifest,
 	type ManifestSelection,
 	findSelectionsByAgentId,
+	validateManifest,
 } from "@agntz/core/manifest";
 import { agntz } from "./client.js";
 import { loadManifestFromFile, parseManifestString } from "./loader.js";
@@ -66,6 +69,7 @@ Usage:
 
 Getting started locally:
   agntz create "Summarize customer emails" -o ./agents/email.yaml
+  agntz validate ./agents
   agntz run ./agents/email.yaml --input "..."
   agntz publish --dry-run
   agntz run ./agents/email.yaml --input "..." --stream
@@ -73,6 +77,7 @@ Getting started locally:
 Commands:
   create   Generate a YAML manifest from a description (no auth required)
   edit     Revise a local YAML manifest from a change request (no auth required)
+  validate Validate manifest files and cross-file agent references
   run      Execute a local YAML/dir or hosted agent id
   publish  Publish local agents, sessions, and memory to hosted agntz
   login    Save hosted API credentials
@@ -104,6 +109,27 @@ Environment:
 Options:
   -h, --help        Show help
   -v, --version     Show version
+`;
+
+const VALIDATE_HELP = `agntz validate — validate local agent manifests
+
+Usage:
+  agntz validate [path] [options]
+
+Description:
+  Validates one YAML file or every .yaml/.yml file below a directory. In
+  directories, duplicate agent ids and unresolved agent refs are errors.
+  The default path is ./agents.
+
+Options:
+      --json              Print a machine-readable report
+  -h, --help              Show this help
+
+Examples:
+  agntz validate
+  agntz validate ./agents
+  agntz validate ./agents/support.yaml
+  agntz validate ./agents --json
 `;
 
 const CREATE_HELP = `agntz create — generate an agent YAML manifest
@@ -356,6 +382,9 @@ async function main(): Promise<void> {
 		case "edit":
 			await cmdEdit(rest);
 			return;
+		case "validate":
+			await cmdValidate(rest);
+			return;
 		case "run":
 			await cmdRun(rest);
 			return;
@@ -397,6 +426,199 @@ async function loadCliVersion(): Promise<string> {
 	} catch {
 		return "agntz vunknown";
 	}
+}
+
+interface ValidateFileReport {
+	path: string;
+	id?: string;
+	valid: boolean;
+	errors: Array<{ level: string; path: string; message: string }>;
+	warnings: Array<{ path: string; message: string }>;
+	manifest?: AgentManifest;
+}
+
+async function cmdValidate(args: string[]): Promise<void> {
+	if (wantsHelp(args)) {
+		process.stdout.write(VALIDATE_HELP);
+		return;
+	}
+	const { values, positionals } = parseArgs({
+		args,
+		options: { json: { type: "boolean" } },
+		allowPositionals: true,
+		strict: true,
+	});
+	if (positionals.length > 1) {
+		fail("Usage: agntz validate [path] [--json]");
+	}
+
+	const target = resolve(positionals[0] ?? "./agents");
+	let files: string[] = [];
+	try {
+		const targetStat = await stat(target);
+		if (targetStat.isDirectory()) files = await collectYamlFiles(target);
+		else if (targetStat.isFile() && /\.ya?ml$/i.test(target)) files = [target];
+		else fail(`Validation target must be a YAML file or directory: ${target}`);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+			fail(`Validation target not found: ${target}`);
+		}
+		throw error;
+	}
+
+	const reports: ValidateFileReport[] = [];
+	for (const file of files) {
+		const result = validateManifest(await readFile(file, "utf8"));
+		reports.push({
+			path: relative(process.cwd(), file) || file,
+			id: result.manifest?.id,
+			valid: result.valid,
+			errors: result.errors.map((error) => ({ ...error })),
+			warnings: result.warnings.map((warning) => ({ ...warning })),
+			manifest: result.manifest,
+		});
+	}
+
+	const byId = new Map<string, ValidateFileReport>();
+	for (const report of reports) {
+		if (!report.manifest) continue;
+		const previous = byId.get(report.manifest.id);
+		if (previous) {
+			const message = `Duplicate agent id '${report.manifest.id}' also defined in ${previous.path}`;
+			report.errors.push({ level: "reference", path: "id", message });
+			previous.errors.push({
+				level: "reference",
+				path: "id",
+				message: `Duplicate agent id '${report.manifest.id}' also defined in ${report.path}`,
+			});
+		} else {
+			byId.set(report.manifest.id, report);
+		}
+	}
+
+	for (const report of reports) {
+		if (!report.manifest) continue;
+		for (const ref of collectAgentRefs(report.manifest)) {
+			let agentId = ref.value;
+			try {
+				agentId = parseAgentRef(ref.value).agentId;
+			} catch {
+				continue;
+			}
+			if (!byId.has(agentId)) {
+				report.errors.push({
+					level: "reference",
+					path: ref.path,
+					message: `Referenced agent '${ref.value}' not found in validation set`,
+				});
+			}
+		}
+	}
+
+	for (const report of reports) {
+		report.valid = report.errors.length === 0;
+		report.manifest = undefined;
+	}
+	const globalErrors =
+		files.length === 0
+			? [
+					{
+						path: relative(process.cwd(), target) || target,
+						message: "No YAML agent manifests found",
+					},
+				]
+			: [];
+	const errorCount = reports.reduce(
+		(count, report) => count + report.errors.length,
+		globalErrors.length,
+	);
+	const warningCount = reports.reduce(
+		(count, report) => count + report.warnings.length,
+		0,
+	);
+	const output = {
+		valid: errorCount === 0,
+		errors: globalErrors,
+		files: reports,
+		counts: {
+			files: reports.length,
+			errors: errorCount,
+			warnings: warningCount,
+		},
+	};
+
+	if (values.json) {
+		process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
+	} else if (files.length === 0) {
+		process.stderr.write(`No YAML agent manifests found below ${target}\n`);
+	} else {
+		for (const report of reports) {
+			process.stdout.write(`${report.valid ? "OK" : "ERROR"} ${report.path}\n`);
+			for (const error of report.errors) {
+				process.stdout.write(
+					`  error ${error.path || "(root)"}: ${error.message}\n`,
+				);
+			}
+			for (const warning of report.warnings) {
+				process.stdout.write(
+					`  warning ${warning.path || "(root)"}: ${warning.message}\n`,
+				);
+			}
+		}
+		process.stdout.write(
+			`Validated ${reports.length} file(s): ${errorCount} error(s), ${warningCount} warning(s)\n`,
+		);
+	}
+	if (errorCount > 0) process.exitCode = 1;
+}
+
+function collectAgentRefs(
+	manifest: AgentManifest,
+	path = "",
+): Array<{ value: string; path: string }> {
+	const refs: Array<{ value: string; path: string }> = [];
+	if (manifest.kind === "llm") {
+		for (let i = 0; i < (manifest.spawnable?.length ?? 0); i++) {
+			const spawnable = manifest.spawnable?.[i];
+			if (spawnable?.kind === "ref") {
+				refs.push({
+					value: `${spawnable.agentId}${spawnable.version ? `@${spawnable.version}` : ""}`,
+					path: `${path}spawnable[${i}].agentId`,
+				});
+			} else if (spawnable?.kind === "inline") {
+				refs.push(
+					...collectAgentRefs(
+						spawnable.definition,
+						`${path}spawnable[${i}].definition.`,
+					),
+				);
+			}
+		}
+		for (let i = 0; i < (manifest.tools?.length ?? 0); i++) {
+			const tool = manifest.tools?.[i];
+			if (tool?.kind === "agent") {
+				refs.push({
+					value: `${tool.agent}${tool.version ? `@${tool.version}` : ""}`,
+					path: `${path}tools[${i}].agent`,
+				});
+			}
+		}
+	}
+	const steps =
+		manifest.kind === "sequential"
+			? manifest.steps
+			: manifest.kind === "parallel"
+				? manifest.branches
+				: [];
+	for (let i = 0; i < steps.length; i++) {
+		const step = steps[i];
+		const stepPath = `${path}${manifest.kind === "parallel" ? "branches" : "steps"}[${i}]`;
+		if (step.ref) refs.push({ value: step.ref, path: `${stepPath}.ref` });
+		if (step.agent) {
+			refs.push(...collectAgentRefs(step.agent, `${stepPath}.agent.`));
+		}
+	}
+	return refs;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1072,14 +1294,20 @@ async function readLocalAgentImports(dir: string): Promise<AgentImportItem[]> {
 
 async function collectYamlFiles(dir: string): Promise<string[]> {
 	const out: string[] = [];
-	const entries = await readdir(dir);
+	const entries = await readdir(dir, { withFileTypes: true });
 	for (const entry of entries) {
-		const full = join(dir, entry);
-		const st = await stat(full);
-		if (st.isDirectory()) {
+		if (
+			entry.isDirectory() &&
+			(entry.name.startsWith(".") ||
+				["node_modules", "dist", "coverage"].includes(entry.name))
+		) {
+			continue;
+		}
+		const full = join(dir, entry.name);
+		if (entry.isDirectory()) {
 			out.push(...(await collectYamlFiles(full)));
-		} else if (st.isFile()) {
-			const ext = extname(entry).toLowerCase();
+		} else if (entry.isFile()) {
+			const ext = extname(entry.name).toLowerCase();
 			if (ext === ".yaml" || ext === ".yml") out.push(full);
 		}
 	}

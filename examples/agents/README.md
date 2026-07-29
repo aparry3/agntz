@@ -1,6 +1,6 @@
 # Agent Manifest Examples
 
-YAML manifest examples demonstrating each agent kind and feature. See [docs/schema.md](../../docs/schema.md) for the full schema reference.
+YAML manifest examples demonstrating each agent kind and feature. See the [schema reference](https://agntz.co/docs/schema) or the [machine-readable JSON Schema](https://agntz.co/schemas/agent-manifest.schema.json) for the complete contract.
 
 The **Agent Builder** (`agent-builder`) is a built-in default agent that ships with the worker and is automatically seeded on startup. Its source lives in `packages/worker/src/defaults/agents/`.
 
@@ -17,3 +17,6 @@ The **Agent Builder** (`agent-builder`) is a built-in default agent that ships w
 | [write-review-loop.yaml](write-review-loop.yaml) | `sequential` (loop) | `until` condition, `maxIterations`, `{{#if}}` template conditionals |
 | [article-pipeline.yaml](article-pipeline.yaml) | `sequential` (composed) | Full composition: parallel research → looped write/review → tool notification |
 | [researcher-bot.yaml](researcher-bot.yaml) | `llm` | Declares `skills: [...]`; loads instructions and tools mid-run via `use_skill` (see [../skills/](../skills/)) |
+| [social-transcription.yaml](social-transcription.yaml) | `transcription` | Managed audio input, manifest-controlled transcription prompt, and no-retention execution |
+| [generated-recipe-cover.yaml](generated-recipe-cover.yaml) | `image` | Image generation with provider options and expiring output artifacts |
+| [hosted-nutritionist-callback.yaml](hosted-nutritionist-callback.yaml) | `llm` | Typed signed application callback with trusted runtime identity |

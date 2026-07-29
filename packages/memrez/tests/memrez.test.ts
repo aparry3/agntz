@@ -7,6 +7,7 @@ import {
 } from "../src/index.js";
 import type {
 	CurateOp,
+	CuratorInput,
 	MemrezReasoner,
 	TaggerInput,
 	TaggerResult,
@@ -15,6 +16,7 @@ import type {
 class FakeReasoner implements MemrezReasoner {
 	public tagCalls: TaggerInput[] = [];
 	public nextCurateOps: CurateOp[] = [];
+	public curateCalls: CuratorInput[] = [];
 
 	async tag(input: TaggerInput): Promise<TaggerResult> {
 		this.tagCalls.push(input);
@@ -28,7 +30,8 @@ class FakeReasoner implements MemrezReasoner {
 		};
 	}
 
-	async curate(): Promise<CurateOp[]> {
+	async curate(input: CuratorInput): Promise<CurateOp[]> {
+		this.curateCalls.push(input);
 		return this.nextCurateOps;
 	}
 }
@@ -196,7 +199,10 @@ describe("memrez core", () => {
 			},
 		];
 
-		const report = await memrez.curate(["app/user/u_123"]);
+		const controller = new AbortController();
+		const report = await memrez.curate(["app/user/u_123"], {
+			signal: controller.signal,
+		});
 		const entries = await memrez.read(["app/user/u_123"], "prefs");
 		const scan = await memrez.scan(["app/user/u_123"]);
 
@@ -206,6 +212,7 @@ describe("memrez core", () => {
 			created: 1,
 			blurbsUpdated: 1,
 		});
+		expect(reasoner.curateCalls[0].signal).toBe(controller.signal);
 		expect(entries.map((entry) => entry.content)).toEqual([
 			"Prefers email over SMS.",
 		]);

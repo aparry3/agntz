@@ -4,6 +4,8 @@ Thanks for your interest in contributing! Here's how to get started.
 
 ## Setup
 
+Use Node.js 22 or 24, pnpm 10, and Python 3.11 or newer.
+
 ```bash
 # Clone the repo
 git clone https://github.com/aparry3/agntz.git
@@ -18,6 +20,9 @@ pnpm build
 # Run tests
 pnpm test
 
+# Verify published-package boundaries
+pnpm test:packed
+
 # Install git hooks
 pnpm prepare
 ```
@@ -26,13 +31,17 @@ pnpm prepare
 
 ```
 packages/
-├── contracts/      # "@agntz/contracts" — shared types and protocol helpers
-├── core/           # "@agntz/core" — runtime engine and pure store contracts
-├── client/         # "@agntz/client" — hosted HTTP client
-├── sdk/            # "agntz" — ergonomic SDK facade
-├── stores/         # "@agntz/stores" — store contracts and memory/Postgres/SQLite adapters
-├── worker/         # "@agntz/worker" — hosted TypeScript runtime
-└── app/            # "@agntz/app" — Next.js multi-tenant UI
+├── contracts/      # @agntz/contracts — shared types and protocol helpers
+├── core/           # @agntz/core — runtime engine and store contracts
+├── client/         # @agntz/client — hosted HTTP client
+├── sdk/            # @agntz/sdk — embedded runner and CLI
+├── stores/         # @agntz/stores — Postgres and SQLite adapters
+├── memrez/         # @agntz/memrez — memory resource implementation
+├── worker/         # hosted TypeScript runtime
+├── app/            # authenticated Next.js application
+└── site/           # public website and documentation
+examples/           # runnable TypeScript/Python examples and shared manifests
+python/             # Python SDK and CLI
 ```
 
 ## Development
@@ -71,12 +80,23 @@ Want to add a new store backend (Redis, DynamoDB, etc.)? Follow the pattern in `
 2. Run the shared contract test suite against your implementation
 3. Export it from a dedicated `@agntz/stores/{backend}` subpath
 
+## Provider Smoke Tests
+
+The weekly `Provider smoke` workflow runs text, tool-call, and structured-output
+checks against both SDKs. Configure at least one of these repository Actions
+secrets before enabling it: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+`GOOGLE_GENERATIVE_AI_API_KEY`, `MISTRAL_API_KEY`, `GROQ_API_KEY`,
+`COHERE_API_KEY`, or `OPENROUTER_API_KEY`. Providers without a configured key
+are reported as skipped; the workflow fails when no provider key is present.
+
 ## Pull Requests
 
 1. Fork the repo and create a branch from `main`
 2. Add tests for your changes
 3. Ensure `pnpm test` passes
-4. Open a PR with a clear description
+4. Run `pnpm test:packed` when changing public package exports or dependencies
+5. Run the Python checks when changing `python/`: `pytest`, `ruff check .`, and `basedpyright`
+6. Open a PR with a clear description
 
 ## License
 

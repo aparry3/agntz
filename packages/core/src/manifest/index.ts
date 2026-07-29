@@ -7,6 +7,8 @@ export type {
 	ToolAgentManifest,
 	SequentialAgentManifest,
 	ParallelAgentManifest,
+	TranscriptionAgentManifest,
+	ImageAgentManifest,
 	StepRef,
 	InputSchema,
 	PropertyDef,
@@ -22,6 +24,7 @@ export type {
 	LocalToolEntry,
 	AgentToolEntry,
 	HTTPToolEntry,
+	CallbackToolEntry,
 	ToolCallConfig,
 	AgentRef,
 	AgentState,
@@ -64,6 +67,18 @@ export type {
 	ValidationContext,
 } from "./validate.js";
 export { validateManifest, validateManifestFull } from "./validate.js";
+
+// Canonical JSON Schema helpers
+export type { JsonSchema, ManifestSchema, SchemaIssue } from "./schema.js";
+export {
+	ManifestSchemaError,
+	isCanonicalManifestSchema,
+	manifestSchemaToJsonSchema,
+	manifestSchemaPropertyNames,
+	compileManifestSchema,
+	assertManifestSchemaValue,
+	validateManifestSchemaDefinition,
+} from "./schema.js";
 
 // Skill parsing & validation
 export {

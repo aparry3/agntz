@@ -1,0 +1,38 @@
+id: hosted-nutritionist-callback
+kind: llm
+name: Hosted nutritionist with application callbacks
+model:
+  provider: openai
+  name: gpt-5.4
+instruction: |
+  Help the user find recipes. Use find_recipes when their request needs
+  application data.
+tools:
+  - kind: callback
+    name: find_recipes
+    description: Search recipes visible to the current trusted user.
+    url: https://api.example.com/agntz/tools/find-recipes
+    secret: nutritext_callback
+    timeoutMs: 10000
+    maxRetries: 2
+    inputSchema:
+      type: object
+      properties:
+        query:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        maxTimeMinutes:
+          type: integer
+          minimum: 1
+        savedOnly:
+          type: boolean
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 20
+      additionalProperties: false
+retention:
+  mode: session

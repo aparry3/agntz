@@ -51,22 +51,50 @@ export async function sendRequest(args: RequestArgs): Promise<Response> {
 	return res;
 }
 
+export async function sendFormRequest(args: {
+	baseUrl: string;
+	path: string;
+	method: "POST";
+	apiKey?: string;
+	form: FormData;
+	signal?: AbortSignal;
+	fetchImpl: typeof fetch;
+}): Promise<Response> {
+	const headers: Record<string, string> = {};
+	if (args.apiKey) headers.Authorization = `Bearer ${args.apiKey}`;
+	const res = await args.fetchImpl(joinUrl(args.baseUrl, args.path), {
+		method: args.method,
+		headers,
+		body: args.form,
+		signal: args.signal,
+	});
+	if (!res.ok) throw await toError(res);
+	return res;
+}
+
 async function toError(res: Response): Promise<AgntzError> {
-	const message = await readErrorMessage(res);
-	const init = { status: res.status };
+	const { message, code } = await readError(res);
+	const init = { status: res.status, code };
 	if (res.status === 401) return new AuthenticationError(message, init);
 	if (res.status === 404) return new NotFoundError(message, init);
 	return new AgntzError(message, init);
 }
 
-async function readErrorMessage(res: Response): Promise<string> {
+async function readError(
+	res: Response,
+): Promise<{ message: string; code?: string }> {
 	try {
-		const body = (await res.json()) as { error?: unknown };
-		if (body && typeof body.error === "string") return body.error;
+		const body = (await res.json()) as { error?: unknown; code?: unknown };
+		if (body && typeof body.error === "string") {
+			return {
+				message: body.error,
+				...(typeof body.code === "string" ? { code: body.code } : {}),
+			};
+		}
 	} catch {
 		// fall through
 	}
-	return `HTTP ${res.status}`;
+	return { message: `HTTP ${res.status}` };
 }
 
 function joinUrl(base: string, path: string): string {

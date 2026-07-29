@@ -7,12 +7,18 @@ import {
 import { parse as parseYAML } from "yaml";
 import { parseUrlPlaceholders } from "./http-url.js";
 import { normalizeManifest } from "./parser.js";
+import {
+	manifestSchemaPropertyNames,
+	validateManifestSchemaDefinition,
+} from "./schema.js";
 import { normalizeId } from "./state.js";
 import type {
 	AgentManifest,
+	HTTPToolEntry,
 	InputSchema,
 	LLMAgentManifest,
 	ManifestToolEntry,
+	ModelConfig,
 	OutputMapping,
 	OutputSchema,
 	ParallelAgentManifest,
@@ -20,6 +26,7 @@ import type {
 	SequentialAgentManifest,
 	StepRef,
 	ToolAgentManifest,
+	ToolCallConfig,
 } from "./types.js";
 
 const HTTP_TOOL_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
@@ -209,11 +216,40 @@ function validateStructural(
 	}
 
 	if (manifest.inputSchema) {
-		validatePropertySchema(
+		validateManifestSchema(
 			manifest.inputSchema,
 			p(path, "inputSchema"),
 			errors,
 		);
+	}
+	for (const field of ["maxSteps", "tokenBudget", "timeoutMs"] as const) {
+		const value = manifest[field];
+		if (value !== undefined && (!Number.isInteger(value) || value <= 0)) {
+			errors.push({
+				level: "structural",
+				path: p(path, field),
+				message: `${field} must be a positive integer`,
+			});
+		}
+	}
+	if (manifest.retention) {
+		if (!["none", "result", "session"].includes(manifest.retention.mode)) {
+			errors.push({
+				level: "structural",
+				path: p(path, "retention.mode"),
+				message: "retention.mode must be one of: none, result, session",
+			});
+		}
+		for (const field of ["ttlSeconds", "artifactTtlSeconds"] as const) {
+			const value = manifest.retention[field];
+			if (value !== undefined && (!Number.isInteger(value) || value < 60)) {
+				errors.push({
+					level: "structural",
+					path: p(path, `retention.${field}`),
+					message: `retention.${field} must be an integer of at least 60 seconds`,
+				});
+			}
+		}
 	}
 
 	switch (manifest.kind) {
@@ -229,6 +265,72 @@ function validateStructural(
 		case "parallel":
 			validateParallelStructural(manifest, path, errors, warnings);
 			break;
+		case "transcription":
+			validateOperationStructural(manifest, path, errors, warnings);
+			break;
+		case "image":
+			validateOperationStructural(manifest, path, errors, warnings);
+			break;
+	}
+}
+
+function validateOperationStructural(
+	manifest: Extract<AgentManifest, { kind: "transcription" | "image" }>,
+	path: string,
+	errors: ValidationError[],
+	warnings: ValidationWarning[],
+): void {
+	if (!manifest.model?.provider) {
+		errors.push({
+			level: "structural",
+			path: p(path, "model.provider"),
+			message: "model.provider is required",
+		});
+	}
+	if (!manifest.model?.name) {
+		errors.push({
+			level: "structural",
+			path: p(path, "model.name"),
+			message: "model.name is required",
+		});
+	}
+	if (manifest.model) validateModelConfig(manifest, path, errors, warnings);
+	if (manifest.instruction) {
+		validateTemplatesSyntax(
+			manifest.instruction,
+			p(path, "instruction"),
+			errors,
+		);
+	}
+	if (manifest.kind === "transcription") {
+		const temperature = manifest.settings?.temperature;
+		if (
+			temperature !== undefined &&
+			(!Number.isFinite(temperature) || temperature < 0 || temperature > 1)
+		) {
+			errors.push({
+				level: "structural",
+				path: p(path, "settings.temperature"),
+				message: "transcription temperature must be between 0 and 1",
+			});
+		}
+		return;
+	}
+	if (manifest.prompt) {
+		validateTemplatesSyntax(manifest.prompt, p(path, "prompt"), errors);
+	}
+	for (const field of ["n", "maxImagesPerCall"] as const) {
+		const value = manifest.settings?.[field];
+		if (
+			value !== undefined &&
+			(!Number.isInteger(value) || value < 1 || value > 10)
+		) {
+			errors.push({
+				level: "structural",
+				path: p(path, `settings.${field}`),
+				message: `image ${field} must be an integer between 1 and 10`,
+			});
+		}
 	}
 }
 
@@ -268,6 +370,7 @@ function validateLLMStructural(
 				message: "temperature is typically between 0 and 2",
 			});
 		}
+		validateModelConfig(manifest, path, errors, warnings);
 	}
 
 	if (!manifest.instruction || typeof manifest.instruction !== "string") {
@@ -297,7 +400,7 @@ function validateLLMStructural(
 	}
 
 	if (manifest.outputSchema) {
-		validatePropertySchema(
+		validateManifestSchema(
 			manifest.outputSchema,
 			p(path, "outputSchema"),
 			errors,
@@ -398,44 +501,9 @@ function validateToolStructural(
 		});
 	}
 	if (manifest.tool.kind === "http") {
-		if (!manifest.tool.url || typeof manifest.tool.url !== "string") {
-			errors.push({
-				level: "structural",
-				path: p(path, "tool.url"),
-				message: "HTTP tool must have a url string",
-			});
-		} else {
-			const stub = manifest.tool.url.replace(/\{[^}]+\}/g, "_");
-			validateOutboundUrlStructural(
-				stub,
-				p(path, "tool.url"),
-				"HTTP tool url",
-				errors,
-			);
-		}
-		const method = manifest.tool.method ?? "GET";
-		if (method !== "GET") {
-			errors.push({
-				level: "structural",
-				path: p(path, "tool.method"),
-				message: `HTTP tool method must be 'GET' — only GET is supported in this release.`,
-			});
-		}
-		if (manifest.tool.headers) {
-			for (const [key, val] of Object.entries(manifest.tool.headers)) {
-				if (typeof val !== "string") {
-					errors.push({
-						level: "structural",
-						path: p(path, `tool.headers.${key}`),
-						message: "Header values must be strings (template expressions)",
-					});
-				} else {
-					validateTemplatesSyntax(val, p(path, `tool.headers.${key}`), errors);
-				}
-			}
-		}
+		validateHttpToolConfig(manifest.tool, p(path, "tool"), errors);
 	}
-	if (manifest.tool.params) {
+	if (manifest.tool.kind !== "http" && manifest.tool.params) {
 		for (const [key, val] of Object.entries(manifest.tool.params)) {
 			if (typeof val !== "string") {
 				errors.push({
@@ -725,12 +793,13 @@ export function validateToolEntries(
 
 		if (
 			!entry.kind ||
-			!["mcp", "local", "agent", "http"].includes(entry.kind)
+			!["mcp", "local", "agent", "http", "callback"].includes(entry.kind)
 		) {
 			errors.push({
 				level: "structural",
 				path: epath,
-				message: "Tool entry must have kind: mcp, local, agent, or http",
+				message:
+					"Tool entry must have kind: mcp, local, agent, http, or callback",
 			});
 			continue;
 		}
@@ -993,7 +1062,83 @@ export function validateToolEntries(
 				validateHttpAuth(entry.auth, p(epath, "auth"), errors);
 			}
 		}
+
+		if (entry.kind === "callback") {
+			if (!entry.name || !HTTP_TOOL_NAME_RE.test(entry.name)) {
+				errors.push({
+					level: "structural",
+					path: p(epath, "name"),
+					message: `Callback tool name must match ${HTTP_TOOL_NAME_RE.source}`,
+				});
+			}
+			if (!entry.url || typeof entry.url !== "string") {
+				errors.push({
+					level: "structural",
+					path: p(epath, "url"),
+					message: "Callback tool entry must have a url string",
+				});
+			} else {
+				validateOutboundUrlStructural(
+					entry.url,
+					p(epath, "url"),
+					"Callback tool url",
+					errors,
+				);
+			}
+			if (!entry.secret || typeof entry.secret !== "string") {
+				errors.push({
+					level: "structural",
+					path: p(epath, "secret"),
+					message: "Callback tool entry must name a signing secret",
+				});
+			}
+			validateManifestSchema(
+				entry.inputSchema,
+				p(epath, "inputSchema"),
+				errors,
+			);
+			for (const [field, minimum, maximum] of [
+				["timeoutMs", 1000, 120_000],
+				["maxRetries", 0, 5],
+			] as const) {
+				const value = entry[field];
+				if (
+					value !== undefined &&
+					(!Number.isInteger(value) || value < minimum || value > maximum)
+				) {
+					errors.push({
+						level: "structural",
+						path: p(epath, field),
+						message: `${field} must be an integer between ${minimum} and ${maximum}`,
+					});
+				}
+			}
+		}
 	}
+}
+
+function validateHttpToolConfig(
+	entry: HTTPToolEntry | ToolCallConfig,
+	path: string,
+	errors: ValidationError[],
+): void {
+	const proxyPath = "__http_tool";
+	const proxyErrors: ValidationError[] = [];
+	validateToolEntries([entry as HTTPToolEntry], proxyPath, proxyErrors);
+	const indexedPath = `${proxyPath}[0]`;
+	for (const error of proxyErrors) {
+		errors.push({
+			...error,
+			path: rebaseValidationPath(error.path, indexedPath, path),
+		});
+	}
+}
+
+function rebaseValidationPath(value: string, from: string, to: string): string {
+	if (value === from) return to;
+	return value.startsWith(`${from}.`)
+		? `${to}${value.slice(from.length)}`
+		: value;
 }
 
 function validateResources(
@@ -1470,43 +1615,172 @@ function collectHttpTemplateRefs(
 	return names;
 }
 
-function validatePropertySchema(
+function validateManifestSchema(
 	schema: Record<string, unknown>,
 	path: string,
 	errors: ValidationError[],
 ): void {
-	const validTypes = ["string", "number", "boolean", "object", "array"];
+	if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+		errors.push({
+			level: "structural",
+			path,
+			message: "Schema must be an object",
+		});
+		return;
+	}
+	for (const issue of validateManifestSchemaDefinition(schema)) {
+		errors.push({
+			level: "structural",
+			path: issue.path ? `${path}${issue.path.replaceAll("/", ".")}` : path,
+			message: issue.message,
+		});
+	}
+}
 
-	for (const [key, def] of Object.entries(schema)) {
-		if (typeof def === "string") {
-			if (!validTypes.includes(def)) {
-				errors.push({
-					level: "structural",
-					path: p(path, key),
-					message: `Invalid type '${def}'. Must be one of: ${validTypes.join(", ")}`,
-				});
-			}
-		} else if (typeof def === "object" && def !== null) {
-			const expanded = def as Record<string, unknown>;
-			if (
-				expanded.type &&
-				typeof expanded.type === "string" &&
-				!validTypes.includes(expanded.type)
-			) {
-				errors.push({
-					level: "structural",
-					path: p(path, `${key}.type`),
-					message: `Invalid type '${expanded.type}'. Must be one of: ${validTypes.join(", ")}`,
-				});
-			}
-		} else {
+function validateModelConfig(
+	manifest: { model: ModelConfig },
+	path: string,
+	errors: ValidationError[],
+	warnings: ValidationWarning[],
+): void {
+	const model = manifest.model;
+	for (const [field, value] of Object.entries({
+		maxTokens: model.maxTokens,
+		topK: model.topK,
+		maxRetries: model.maxRetries,
+	})) {
+		const minimum = field === "maxRetries" ? 0 : 1;
+		if (
+			value !== undefined &&
+			(!Number.isInteger(value) || (value as number) < minimum)
+		) {
+			errors.push({
+				level: "structural",
+				path: p(path, `model.${field}`),
+				message: `${field} must be ${minimum === 0 ? "a non-negative" : "a positive"} integer`,
+			});
+		}
+	}
+	for (const [field, value] of Object.entries({
+		topP: model.topP,
+		presencePenalty: model.presencePenalty,
+		frequencyPenalty: model.frequencyPenalty,
+		seed: model.seed,
+	})) {
+		if (value !== undefined && !Number.isFinite(value)) {
+			errors.push({
+				level: "structural",
+				path: p(path, `model.${field}`),
+				message: `${field} must be a finite number`,
+			});
+		}
+	}
+	if (
+		model.stopSequences !== undefined &&
+		(!Array.isArray(model.stopSequences) ||
+			model.stopSequences.some((value) => typeof value !== "string"))
+	) {
+		errors.push({
+			level: "structural",
+			path: p(path, "model.stopSequences"),
+			message: "stopSequences must be an array of strings",
+		});
+	}
+
+	if (model.options !== undefined) {
+		warnings.push({
+			path: p(path, "model.options"),
+			message: "model.options is deprecated; use providerOptions",
+		});
+	}
+	if (model.providerOptions === undefined) return;
+	if (
+		!model.providerOptions ||
+		typeof model.providerOptions !== "object" ||
+		Array.isArray(model.providerOptions)
+	) {
+		errors.push({
+			level: "structural",
+			path: p(path, "model.providerOptions"),
+			message: "providerOptions must be an object keyed by provider",
+		});
+		return;
+	}
+	for (const [provider, options] of Object.entries(model.providerOptions)) {
+		if (provider !== model.provider) {
+			errors.push({
+				level: "structural",
+				path: p(path, `model.providerOptions.${provider}`),
+				message: `providerOptions may only configure the selected provider '${model.provider}'`,
+			});
+		}
+		validateProviderOptionValue(
+			options,
+			p(path, `model.providerOptions.${provider}`),
+			errors,
+		);
+	}
+}
+
+const FORBIDDEN_PROVIDER_OPTION_KEYS = new Set([
+	"apikey",
+	"api_key",
+	"authorization",
+	"header",
+	"headers",
+	"baseurl",
+	"base_url",
+	"secret",
+	"clientsecret",
+	"client_secret",
+]);
+
+function validateProviderOptionValue(
+	value: unknown,
+	path: string,
+	errors: ValidationError[],
+): void {
+	if (
+		value === null ||
+		typeof value === "string" ||
+		typeof value === "boolean"
+	) {
+		return;
+	}
+	if (typeof value === "number") {
+		if (!Number.isFinite(value)) {
+			errors.push({
+				level: "structural",
+				path,
+				message: "provider option numbers must be finite",
+			});
+		}
+		return;
+	}
+	if (Array.isArray(value)) {
+		for (let i = 0; i < value.length; i++) {
+			validateProviderOptionValue(value[i], `${path}[${i}]`, errors);
+		}
+		return;
+	}
+	if (!value || typeof value !== "object") {
+		errors.push({
+			level: "structural",
+			path,
+			message: "provider options must contain JSON values",
+		});
+		return;
+	}
+	for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+		if (FORBIDDEN_PROVIDER_OPTION_KEYS.has(key.toLowerCase())) {
 			errors.push({
 				level: "structural",
 				path: p(path, key),
-				message:
-					"Property must be a type string or an object with { type, default?, enum?, ... }",
+				message: `provider option '${key}' is host-managed and cannot be set in a manifest`,
 			});
+			continue;
 		}
+		validateProviderOptionValue(child, p(path, key), errors);
 	}
 }
 
@@ -1518,8 +1792,14 @@ function validateOutputMapping(
 	for (const [key, val] of Object.entries(mapping)) {
 		if (typeof val === "string") {
 			validateTemplatesSyntax(val, p(path, key), errors);
-		} else if (typeof val === "object" && val !== null) {
+		} else if (typeof val === "object" && val !== null && !Array.isArray(val)) {
 			validateOutputMapping(val as OutputMapping, p(path, key), errors);
+		} else {
+			errors.push({
+				level: "structural",
+				path: p(path, key),
+				message: "Output mapping values must be template strings or objects",
+			});
 		}
 	}
 }
@@ -1622,6 +1902,37 @@ function validateReferences(
 			break;
 		case "parallel":
 			validateParallelRefs(manifest, path, errors, warnings);
+			break;
+		case "transcription":
+			if (manifest.instruction) {
+				validateTemplateRefs(
+					manifest.instruction,
+					availableVars,
+					p(path, "instruction"),
+					errors,
+					warnings,
+				);
+			}
+			break;
+		case "image":
+			if (manifest.instruction) {
+				validateTemplateRefs(
+					manifest.instruction,
+					availableVars,
+					p(path, "instruction"),
+					errors,
+					warnings,
+				);
+			}
+			if (manifest.prompt) {
+				validateTemplateRefs(
+					manifest.prompt,
+					availableVars,
+					p(path, "prompt"),
+					errors,
+					warnings,
+				);
+			}
 			break;
 	}
 }
@@ -1959,6 +2270,21 @@ async function validateExternal(
 				);
 			}
 			break;
+		case "transcription":
+		case "image":
+			if (ctx.isProviderConfigured && manifest.model?.provider) {
+				const configured = await ctx.isProviderConfigured(
+					manifest.model.provider,
+				);
+				if (!configured) {
+					errors.push({
+						level: "external",
+						path: p(path, "model.provider"),
+						message: `Provider '${manifest.model.provider}' is not configured. Add an API key in Settings > Providers.`,
+					});
+				}
+			}
+			break;
 	}
 }
 
@@ -2134,6 +2460,35 @@ export async function validateToolEntriesExternal(
 				}
 			}
 		}
+
+		if (entry.kind === "callback") {
+			try {
+				await fetchWithOutboundPolicy(
+					entry.url,
+					{
+						method: "OPTIONS",
+						signal: AbortSignal.timeout(5000),
+					},
+					{ policy: ctx.outboundUrlPolicy },
+				);
+			} catch (error) {
+				const message = `Could not reach callback endpoint '${entry.url}': ${(error as Error).message}`;
+				if (ctx.strict) {
+					errors.push({ level: "external", path: p(epath, "url"), message });
+				} else {
+					warnings.push({ path: p(epath, "url"), message });
+				}
+			}
+			if (ctx.resolveSecret) {
+				const exists = await ctx.resolveSecret(entry.secret);
+				if (!exists) {
+					warnings.push({
+						path: p(epath, "secret"),
+						message: `Callback signing secret '${entry.secret}' does not exist yet`,
+					});
+				}
+			}
+		}
 	}
 }
 
@@ -2179,6 +2534,32 @@ async function validateToolCallExternal(
 			});
 		}
 	}
+
+	if (manifest.tool.kind === "http") {
+		const proxyPath = "__http_tool";
+		const proxyErrors: ValidationError[] = [];
+		const proxyWarnings: ValidationWarning[] = [];
+		await validateToolEntriesExternal(
+			[manifest.tool as HTTPToolEntry],
+			proxyPath,
+			proxyErrors,
+			proxyWarnings,
+			ctx,
+		);
+		const indexedPath = `${proxyPath}[0]`;
+		for (const error of proxyErrors) {
+			errors.push({
+				...error,
+				path: rebaseValidationPath(error.path, indexedPath, p(path, "tool")),
+			});
+		}
+		for (const warning of proxyWarnings) {
+			warnings.push({
+				...warning,
+				path: rebaseValidationPath(warning.path, indexedPath, p(path, "tool")),
+			});
+		}
+	}
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -2191,7 +2572,7 @@ function p(base: string, field: string): string {
 
 function collectInputVars(manifest: AgentManifest): string[] {
 	if (!manifest.inputSchema) return ["userQuery"];
-	return Object.keys(manifest.inputSchema);
+	return manifestSchemaPropertyNames(manifest.inputSchema);
 }
 
 function getStepStateKey(step: StepRef): string {
@@ -2214,7 +2595,9 @@ function getStaticOutputKeysFromManifest(
 	if (!manifest) return null;
 	switch (manifest.kind) {
 		case "llm":
-			return manifest.outputSchema ? Object.keys(manifest.outputSchema) : null;
+			return manifest.outputSchema
+				? manifestSchemaPropertyNames(manifest.outputSchema)
+				: null;
 		case "tool":
 			return null;
 		case "sequential":
@@ -2223,6 +2606,10 @@ function getStaticOutputKeysFromManifest(
 		case "parallel":
 			if (manifest.output) return Object.keys(manifest.output);
 			return manifest.branches.map((b) => getStepStateKey(b));
+		case "transcription":
+			return ["text", "segments", "language", "durationInSeconds"];
+		case "image":
+			return ["artifacts"];
 	}
 }
 
@@ -2248,7 +2635,9 @@ function validateStepInputAgainstChild(
 	errors: ValidationError[],
 	warnings: ValidationWarning[],
 ): void {
-	const schemaKeys = child.inputSchema ? Object.keys(child.inputSchema) : null;
+	const schemaKeys = child.inputSchema
+		? manifestSchemaPropertyNames(child.inputSchema)
+		: null;
 
 	if (step.input) {
 		const inputKeys = Object.keys(step.input);

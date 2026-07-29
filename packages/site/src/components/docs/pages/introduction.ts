@@ -1,6 +1,6 @@
 export default `# Introduction
 
-**agntz** is an open-source agent framework where agents are declared as YAML — not code — and run unchanged in three places: embedded in your app (\`@agntz/sdk\` for TypeScript, \`agntz\` for Python), on the hosted cloud (\`agntz.co\`), or on infrastructure you control (self-host). Every run is traced. Every save is a version. Bring your own model keys.
+**agntz** is an open-source agent framework where agents are declared as YAML — not code — and run unchanged in three places: embedded in your app (\`@agntz/sdk\` for TypeScript, \`agntz\` for Python), on the hosted cloud (\`agntz.co\`), or on infrastructure you control (self-host). Every run is traced. Durable stores version every save. Bring your own model keys.
 
 These docs are optimized for both humans and LLMs. Every page is also available as raw markdown — see the **Copy** button at the top of each page, or fetch [/llms.txt](/llms.txt) for the full corpus.
 
@@ -53,7 +53,7 @@ pip install agntz
 pip install "agntz[litellm]"
 \`\`\`
 
-Node 20+ for TypeScript. Python 3.11+ for Python. \`@agntz/client\` is universal across browser, Node, and edge runtimes; embedded SDKs read YAML from disk and run in your process.
+Node 22+ for TypeScript. Python 3.11+ for Python. \`@agntz/client\` is universal across browser, Node, and edge runtimes; embedded SDKs read YAML from disk and run in your process.
 
 Set the provider API key your agents will use:
 

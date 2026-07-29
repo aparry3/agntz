@@ -18,6 +18,7 @@ For the first local workflow, start with [CLI getting started](/docs/cli-quickst
 | Command | Local? | Hosted? | Auth? | Purpose |
 |---|---:|---:|---:|---|
 | \`create\` | - | ✓ | No | Generate YAML from a description through the hosted builder. |
+| \`validate <path>\` | ✓ | - | No | Validate YAML, duplicate ids, and cross-file agent refs. |
 | \`run <path>\` | ✓ | - | No | Run a local YAML file or single-agent directory. |
 | \`run <id>\` | - | ✓ | Yes | Run a hosted agent by id. |
 | \`login\` / \`logout\` / \`whoami\` | - | ✓ | Mixed | Manage hosted API credentials. |
@@ -30,6 +31,7 @@ Every command supports terminal help:
 
 \`\`\`bash
 agntz create --help
+agntz validate --help
 agntz run --help
 agntz login --help
 agntz publish --help
@@ -83,6 +85,30 @@ agntz create "Classify inbound leads by urgency" --stdout > ./agents/lead-classi
 \`\`\`
 
 \`create\` validates that the builder returned YAML, parses the manifest to get its \`id\`, creates parent directories as needed, and prints the local \`run\` command to try next.
+
+## \`validate\`
+
+\`\`\`bash
+agntz validate [path] [--json]
+\`\`\`
+
+Validates one YAML file or recursively scans a directory. The default path is
+\`./agents\`; dependency, build-output, coverage, and hidden directories are
+ignored during recursion. Directory validation also rejects duplicate agent ids
+and unresolved pipeline, spawnable, or agent-as-tool references. The command
+exits with status 1 when any file fails or no agent manifests are found.
+
+\`--json\` prints a complete machine-readable report, including per-file errors,
+warnings, and aggregate counts:
+
+\`\`\`bash
+agntz validate ./agents
+agntz validate ./agents/support.yaml --json
+\`\`\`
+
+For editor completion, associate YAML files with
+\`https://agntz.co/schemas/agent-manifest.schema.json\` or use the packaged
+schema at \`@agntz/core/schema\`.
 
 ## \`run\`
 
@@ -245,7 +271,7 @@ agntz eval get support-quality
 
 ## Current CLI boundary
 
-The CLI covers manifest generation, local execution, hosted execution, state publishing, hosted run/trace inspection, and hosted eval execution. It does not provide project scaffolding, validation-only execution, an interactive playground, or a Studio launcher. Use the SDK docs for in-process validation/runtime wiring, and use the hosted app for managed agent editing.
+The CLI covers manifest generation, recursive validation, local execution, hosted execution, state publishing, hosted run/trace inspection, and hosted eval execution. It does not provide project scaffolding, an interactive playground, or a Studio launcher. Use the SDK for application runtime wiring and the hosted app for managed agent editing.
 
 ## Exit behavior
 
@@ -254,5 +280,5 @@ The CLI covers manifest generation, local execution, hosted execution, state pub
 | \`0\` | Success |
 | \`1\` | Argument, auth, network, builder, validation, or runtime error |
 
-The CLI writes human-readable errors to stderr. For structured programmatic integration, use \`@agntz/sdk\` for local execution or \`@agntz/client\` for hosted execution.
+Most commands write human-readable errors to stderr. \`agntz validate --json\` and \`agntz publish --json\` provide structured CLI output; use \`@agntz/sdk\` for deeper local integration or \`@agntz/client\` for hosted execution.
 `;

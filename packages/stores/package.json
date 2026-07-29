@@ -1,6 +1,6 @@
 {
   "name": "@agntz/stores",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Storage contracts and memory/Postgres/SQLite store implementations for agntz",
   "type": "module",
   "main": "./dist/index.js",
@@ -39,7 +39,9 @@
   },
   "dependencies": {
     "@agntz/contracts": "workspace:*",
-    "@agntz/db": "workspace:*"
+    "@agntz/db": "workspace:*",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/pg": "^8.11.0"
   },
   "peerDependencies": {
     "better-sqlite3": "^11.8.1",
@@ -55,9 +57,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",
-    "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.0.0",
-    "@types/pg": "^8.11.0",
     "better-sqlite3": "^11.8.1",
     "pg": "^8.20.0",
     "tsup": "^8.5.0",

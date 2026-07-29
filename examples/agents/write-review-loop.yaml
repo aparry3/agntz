@@ -21,6 +21,10 @@ steps:
         provider: anthropic
         name: claude-sonnet-4-6
         temperature: 0.8
+      inputSchema:
+        topic: string
+        tone: string
+        feedback: string
       instruction: |
         Write a short article about {{topic}} in a {{tone}} tone.
 
@@ -42,6 +46,8 @@ steps:
         provider: openai
         name: gpt-5.4
         temperature: 0
+      inputSchema:
+        draft: string
       instruction: |
         Review this article draft. Evaluate clarity, accuracy, and tone.
         Respond with a JSON object.

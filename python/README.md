@@ -84,6 +84,7 @@ client = AgntzClient(
 )
 
 result = client.agents.run(agent_id="support", input="Hello")
+print(result.model, result.usage.total_tokens, result.resolved_agent_version)
 ```
 
 The async hosted client has the same resource shape:
@@ -104,6 +105,36 @@ result = client.agents.run(
     context=["app/user/u_123"],
 )
 ```
+
+The hosted Python and TypeScript clients share the same rich-content,
+retention, and artifact contract:
+
+```python
+from pathlib import Path
+
+result = client.agents.run(
+    agent_id="social-narration-transcription",
+    content=[
+        {
+            "type": "audio",
+            "file": Path("./narration.mp3"),
+            "media_type": "audio/mpeg",
+        }
+    ],
+    retention={"mode": "none", "artifact_ttl_seconds": 3600},
+)
+
+artifact = client.artifacts.upload(
+    file=Path("./frame.png"),
+    media_type="image/png",
+    expires_in_seconds=3600,
+)
+image_bytes = client.artifacts.download(artifact.id)
+```
+
+Use `client.agents.start(...)` for a durable asynchronous run. `none` is
+synchronous-only; `result` retains a redacted result record, while `session`
+retains conversation history and traces.
 
 ## Local tools
 
@@ -347,14 +378,20 @@ test_memrez = create_memrez(reasoner=DeterministicReasoner())
 
 ## CLI
 
-The terminal CLI is distributed through the Node package `@agntz/sdk`, while
-Python service code uses the `agntz` Python package.
+The full `agntz` terminal CLI is distributed through the Node package
+`@agntz/sdk`. The Python package installs a separate `agntz-py` command for
+local Python execution and validation, avoiding an executable-name collision.
 
 ```bash
 npx @agntz/sdk create "Answer support questions in a concise tone" -o ./agents/support.yaml
 npx @agntz/sdk run ./agents/support.yaml --input '{"userQuery":"hello"}'
 npx @agntz/sdk --help
+agntz-py validate --json
+agntz-py run ./agents/support.yaml --input '{"userQuery":"hello"}'
 ```
+
+Python validation defaults to `./agents`, ignores dependency/build/hidden
+directories during recursion, and exits nonzero when no manifests are found.
 
 Use Python code when the agent needs Python local tools, a Python resource
 provider, or a Python store. The same YAML file can be loaded by both runtimes.
@@ -363,8 +400,10 @@ provider, or a Python store. The same YAML file can be loaded by both runtimes.
 
 Implemented in this package:
 
-- Hosted sync and async clients for agents, versions, aliases, run, run stream,
-  async runs, traces, datasets, evals, eval runs, cancellation, and eval scores.
+- Hosted sync and async clients for agents, artifacts, rich content,
+  caller-controlled retention, normalized result metadata, versions, aliases,
+  run, run stream, async runs, traces, datasets, evals, eval runs,
+  cancellation, and eval scores.
 - Local YAML execution for `llm`, `tool`, `sequential`, and `parallel` agents.
 - Local Python tools, HTTP tools, MCP JSON-RPC tools, and agent-as-tool calls.
 - Versioned local and hosted agent resolution for bare ids, `@latest`, exact

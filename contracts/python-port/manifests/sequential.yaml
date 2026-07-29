@@ -12,11 +12,13 @@ steps:
     agent:
       id: summarizer
       kind: llm
+      inputSchema:
+        userQuery: string
       model:
         provider: openai
         name: gpt-5.4
       instruction: Summarize the support answer.
-      prompt: "{{classify.answer}}"
+      prompt: "{{userQuery}}"
     input:
       userQuery: "{{classify.answer}}"
 output:

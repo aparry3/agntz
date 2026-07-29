@@ -98,6 +98,10 @@ export async function normalizeImageBlocks(
 			result.push(block);
 			continue;
 		}
+		if (block.type === "audio") {
+			result.push(block);
+			continue;
+		}
 
 		// image block
 		if ("base64" in block) {
@@ -112,11 +116,18 @@ export async function normalizeImageBlocks(
 				type: "image",
 				base64: block.base64,
 				mediaType: block.mediaType,
+				detail: block.detail,
 			});
 			continue;
 		}
 
 		// image-with-url — fetch (or reuse from cache)
+		if (!("url" in block)) {
+			throw new ImageFetchError(
+				"Artifact image blocks must be resolved by the host before invocation",
+				{ code: "unresolved_artifact" },
+			);
+		}
 		const url = block.url;
 
 		let pending = cache.get(url);
@@ -132,7 +143,12 @@ export async function normalizeImageBlocks(
 			cache.set(url, pending);
 		}
 		const { base64, mediaType } = await pending;
-		result.push({ type: "image", base64, mediaType });
+		result.push({
+			type: "image",
+			base64,
+			mediaType,
+			detail: block.detail,
+		});
 	}
 
 	return result;

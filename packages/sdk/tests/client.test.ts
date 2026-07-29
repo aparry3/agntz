@@ -4,8 +4,10 @@ import type {
 	GenerateTextOptions,
 	GenerateTextResult,
 	ModelProvider,
+	Run,
 	ToolContext,
 } from "@agntz/core";
+import { MemoryStore } from "@agntz/stores/memory";
 import { describe, expect, it, vi } from "vitest";
 import { agntz, tool, z } from "../src/index.js";
 
@@ -23,6 +25,12 @@ class MockModelProvider implements ModelProvider {
 			this.responses[this.calls.length - 1] ??
 			this.responses[this.responses.length - 1];
 		return next;
+	}
+}
+
+class FailingRunStore extends MemoryStore {
+	override putRun(_run: Run): Promise<void> {
+		return Promise.reject(new Error("run persistence failed"));
 	}
 }
 
@@ -139,5 +147,40 @@ describe("agntz() — embedded client", () => {
 			events.push({ type: event.type });
 		}
 		expect(events.some((e) => e.type === "complete")).toBe(true);
+	});
+
+	it("removes caller abort listeners after a completed run", async () => {
+		const client = await agntz({
+			agents: fixturesDir,
+			tools: noopTools,
+			modelProvider: new MockModelProvider([plainResponse("done")]),
+		});
+		const controller = new AbortController();
+		const add = vi.spyOn(controller.signal, "addEventListener");
+		const remove = vi.spyOn(controller.signal, "removeEventListener");
+
+		await client.agents.run({
+			agentId: "echo",
+			input: "hello",
+			signal: controller.signal,
+		});
+
+		expect(add).toHaveBeenCalledWith("abort", expect.any(Function), {
+			once: true,
+		});
+		expect(remove).toHaveBeenCalledWith("abort", expect.any(Function));
+		await client.close();
+	});
+
+	it("surfaces an earlier durable run-write failure during close", async () => {
+		const client = await agntz({
+			agents: fixturesDir,
+			tools: noopTools,
+			modelProvider: new MockModelProvider([plainResponse("done")]),
+			store: new FailingRunStore(),
+		});
+
+		await client.agents.run({ agentId: "echo", input: "hello" });
+		await expect(client.close()).rejects.toThrow("run persistence failed");
 	});
 });

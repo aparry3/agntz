@@ -11,6 +11,7 @@ import {
 import type {
 	AgentDefinition,
 	AgentVersionSummary,
+	ArtifactMetadata,
 	Connection,
 	ConnectionConfig,
 	ConnectionKind,
@@ -604,6 +605,41 @@ const MIGRATIONS: string[] = [
     ON ar_tenant_namespace_roots(user_id);
 
   UPDATE ar_schema_version SET version = 14;
+  `,
+	// v15: preserve resolved/requested agent version metadata on Runs.
+	`
+  ALTER TABLE ar_runs ADD COLUMN IF NOT EXISTS agent_version TEXT;
+  ALTER TABLE ar_runs ADD COLUMN IF NOT EXISTS requested_agent_version TEXT;
+
+  UPDATE ar_schema_version SET version = 15;
+  `,
+	// v16: owner-scoped artifact metadata (binary bodies live in ArtifactBlobStore).
+	`
+  CREATE TABLE IF NOT EXISTS ar_artifacts (
+    user_id     TEXT NOT NULL,
+    id          TEXT NOT NULL,
+    purpose     TEXT NOT NULL,
+    media_type  TEXT NOT NULL,
+    size_bytes  BIGINT NOT NULL,
+    sha256      TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL,
+    expires_at  TIMESTAMPTZ NOT NULL,
+    status      TEXT NOT NULL,
+    PRIMARY KEY (user_id, id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ar_artifacts_expiry
+    ON ar_artifacts(user_id, status, expires_at);
+
+  UPDATE ar_schema_version SET version = 16;
+  `,
+	// v17: per-run retention projection and durable-record expiry.
+	`
+  ALTER TABLE ar_runs ADD COLUMN IF NOT EXISTS retention_mode TEXT;
+  ALTER TABLE ar_runs ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+  CREATE INDEX IF NOT EXISTS idx_ar_runs_expiry
+    ON ar_runs(user_id, expires_at);
+
+  UPDATE ar_schema_version SET version = 17;
   `,
 ];
 
@@ -1462,6 +1498,81 @@ export class PostgresStore implements UnifiedStore {
 		);
 	}
 
+	// ═══ ArtifactStore ═══
+
+	async putArtifact(artifact: ArtifactMetadata): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		if (artifact.ownerId !== u) {
+			throw new Error("Artifact owner does not match scoped user");
+		}
+		await this.pool.query(
+			`INSERT INTO ${this.t("artifacts")} (
+			 user_id, id, purpose, media_type, size_bytes, sha256,
+			 created_at, expires_at, status
+		   ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		   ON CONFLICT (user_id, id) DO UPDATE SET
+			 purpose = EXCLUDED.purpose,
+			 media_type = EXCLUDED.media_type,
+			 size_bytes = EXCLUDED.size_bytes,
+			 sha256 = EXCLUDED.sha256,
+			 created_at = EXCLUDED.created_at,
+			 expires_at = EXCLUDED.expires_at,
+			 status = EXCLUDED.status`,
+			[
+				u,
+				artifact.id,
+				artifact.purpose,
+				artifact.mediaType,
+				artifact.sizeBytes,
+				artifact.sha256,
+				artifact.createdAt,
+				artifact.expiresAt,
+				artifact.status,
+			],
+		);
+	}
+
+	async getArtifact(artifactId: string): Promise<ArtifactMetadata | null> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT id, user_id, purpose, media_type, size_bytes, sha256,
+					created_at, expires_at, status
+			   FROM ${this.t("artifacts")}
+			  WHERE user_id = $1 AND id = $2`,
+			[u, artifactId],
+		);
+		return rows.length > 0 ? artifactRowToMetadata(rows[0]) : null;
+	}
+
+	async deleteArtifact(artifactId: string): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		await this.pool.query(
+			`DELETE FROM ${this.t("artifacts")} WHERE user_id = $1 AND id = $2`,
+			[u, artifactId],
+		);
+	}
+
+	async listExpiredArtifacts(
+		before: string,
+		limit = 100,
+	): Promise<ArtifactMetadata[]> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT id, user_id, purpose, media_type, size_bytes, sha256,
+					created_at, expires_at, status
+			   FROM ${this.t("artifacts")}
+			  WHERE user_id = $1 AND status = 'ready' AND expires_at <= $2
+			  ORDER BY expires_at
+			  LIMIT $3`,
+			[u, before, Math.max(0, limit)],
+		);
+		return rows.map(artifactRowToMetadata);
+	}
+
 	// ═══ RunStore ═══
 
 	async putRun(run: Run): Promise<void> {
@@ -1469,15 +1580,20 @@ export class PostgresStore implements UnifiedStore {
 		const u = this.requireUser();
 		await this.pool.query(
 			`INSERT INTO ${this.t("runs")} (
-          user_id, id, root_id, parent_id, agent_id, session_id,
-          spawn_tool_use_id, status, input, output, result_json, error,
-          started_at, ended_at, depth
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-       ON CONFLICT (user_id, id) DO UPDATE SET
+		  user_id, id, root_id, parent_id, agent_id, agent_version,
+		  requested_agent_version, session_id,
+		  retention_mode, expires_at, spawn_tool_use_id, status, input, output,
+		  result_json, error, started_at, ended_at, depth
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+	   ON CONFLICT (user_id, id) DO UPDATE SET
          root_id = EXCLUDED.root_id,
-         parent_id = EXCLUDED.parent_id,
-         agent_id = EXCLUDED.agent_id,
-         session_id = EXCLUDED.session_id,
+		 parent_id = EXCLUDED.parent_id,
+		 agent_id = EXCLUDED.agent_id,
+		 agent_version = EXCLUDED.agent_version,
+		 requested_agent_version = EXCLUDED.requested_agent_version,
+		 session_id = EXCLUDED.session_id,
+		 retention_mode = EXCLUDED.retention_mode,
+		 expires_at = EXCLUDED.expires_at,
          spawn_tool_use_id = EXCLUDED.spawn_tool_use_id,
          status = EXCLUDED.status,
          input = EXCLUDED.input,
@@ -1493,7 +1609,11 @@ export class PostgresStore implements UnifiedStore {
 				run.rootId,
 				run.parentId ?? null,
 				run.agentId,
+				run.agentVersion ?? null,
+				run.requestedAgentVersion ?? null,
 				run.sessionId ?? null,
+				run.retentionMode ?? null,
+				run.expiresAt ?? null,
 				run.spawnToolUseId ?? null,
 				run.status,
 				run.input,
@@ -1511,7 +1631,8 @@ export class PostgresStore implements UnifiedStore {
 		await this.ensureMigrated();
 		const u = this.requireUser();
 		const { rows } = await this.pool.query(
-			`SELECT id, user_id, root_id, parent_id, agent_id, session_id,
+			`SELECT id, user_id, root_id, parent_id, agent_id, agent_version,
+					requested_agent_version, session_id, retention_mode, expires_at,
               spawn_tool_use_id, status, input, output, result_json, error,
               started_at, ended_at, depth
        FROM ${this.t("runs")}
@@ -1526,7 +1647,8 @@ export class PostgresStore implements UnifiedStore {
 		await this.ensureMigrated();
 		const u = this.requireUser();
 		const { rows } = await this.pool.query(
-			`SELECT id, user_id, root_id, parent_id, agent_id, session_id,
+			`SELECT id, user_id, root_id, parent_id, agent_id, agent_version,
+					requested_agent_version, session_id, retention_mode, expires_at,
               spawn_tool_use_id, status, input, output, result_json, error,
               started_at, ended_at, depth
        FROM ${this.t("runs")}
@@ -1551,7 +1673,9 @@ export class PostgresStore implements UnifiedStore {
           INNER JOIN subtree s ON r.parent_id = s.id
           WHERE r.user_id = $1
        )
-       SELECT r.id, r.user_id, r.root_id, r.parent_id, r.agent_id, r.session_id,
+	   SELECT r.id, r.user_id, r.root_id, r.parent_id, r.agent_id,
+			  r.agent_version, r.requested_agent_version, r.session_id,
+			  r.retention_mode, r.expires_at,
               r.spawn_tool_use_id, r.status, r.input, r.output, r.result_json, r.error,
               r.started_at, r.ended_at, r.depth
        FROM ${this.t("runs")} r
@@ -3098,7 +3222,11 @@ function rowToRun(r: {
 	root_id: string;
 	parent_id: string | null;
 	agent_id: string;
+	agent_version: string | null;
+	requested_agent_version: string | null;
 	session_id: string | null;
+	retention_mode: Run["retentionMode"] | null;
+	expires_at: Date | string | null;
 	spawn_tool_use_id: string | null;
 	status: string;
 	input: string;
@@ -3121,8 +3249,13 @@ function rowToRun(r: {
 		depth: r.depth,
 	};
 	if (r.user_id) run.userId = r.user_id;
+	if (r.agent_version !== null) run.agentVersion = r.agent_version;
+	if (r.requested_agent_version !== null)
+		run.requestedAgentVersion = r.requested_agent_version;
 	if (r.parent_id !== null) run.parentId = r.parent_id;
 	if (r.session_id !== null) run.sessionId = r.session_id;
+	if (r.retention_mode !== null) run.retentionMode = r.retention_mode;
+	if (r.expires_at !== null) run.expiresAt = toIsoString(r.expires_at);
 	if (r.spawn_tool_use_id !== null) run.spawnToolUseId = r.spawn_tool_use_id;
 	if (r.error !== null) run.error = r.error;
 	if (r.ended_at !== null) {
@@ -3138,6 +3271,31 @@ function rowToRun(r: {
 		) as InvokeResult;
 	}
 	return run;
+}
+
+function artifactRowToMetadata(r: {
+	id: string;
+	user_id: string;
+	purpose: ArtifactMetadata["purpose"];
+	media_type: string;
+	size_bytes: string | number;
+	sha256: string;
+	created_at: Date | string;
+	expires_at: Date | string;
+	status: ArtifactMetadata["status"];
+}): ArtifactMetadata {
+	return {
+		id: r.id,
+		ownerId: r.user_id,
+		purpose: r.purpose,
+		mediaType: r.media_type,
+		sizeBytes:
+			typeof r.size_bytes === "string" ? Number(r.size_bytes) : r.size_bytes,
+		sha256: r.sha256,
+		createdAt: toIsoString(r.created_at),
+		expiresAt: toIsoString(r.expires_at),
+		status: r.status,
+	};
 }
 
 function toIsoString(value: Date | string): string {

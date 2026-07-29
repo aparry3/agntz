@@ -1,5 +1,6 @@
 import type {
 	AgentStore,
+	ContentBlock,
 	ContextStore,
 	InvokeResult,
 	LogStore,
@@ -8,6 +9,8 @@ import type {
 	OutboundUrlPolicyOptions,
 	ResourceMode,
 	ResourceProvider,
+	RetentionMode,
+	RetentionPolicy,
 	Run,
 	SessionStore,
 	SkillStore,
@@ -47,6 +50,8 @@ export interface ToolDefinition<
 	name: string;
 	description: string;
 	input: ZodSchema<TInput>;
+	/** Exact schema advertised to the model when Zod is only used as a validator. */
+	modelInputSchema?: Record<string, unknown>;
 	contextWrite?: { pattern: string };
 	execute(input: TInput, ctx: ToolContext & TCtx): Promise<unknown>;
 }
@@ -66,6 +71,8 @@ export interface ToolContext {
 	contextIds?: string[];
 	/** Unique ID for the current invocation */
 	invocationId: string;
+	/** Cancellation for networked tools. */
+	signal?: AbortSignal;
 	/** Invoke another agent */
 	invoke(
 		agentId: string,
@@ -124,6 +131,17 @@ export interface InvokeOptions {
 	stream?: boolean;
 	/** Cancellation */
 	signal?: AbortSignal;
+	/**
+	 * Persistence policy. `none` keeps the invocation in memory only,
+	 * `result` retains the normalized final result without inputs/history/tool
+	 * payloads, and `session` preserves the full conversational behavior.
+	 */
+	retention?: RetentionPolicy;
+	/**
+	 * @internal Safe representation to persist when the model input contains
+	 * expanded artifact bytes. The model receives `input`; stores receive this.
+	 */
+	_persistenceInput?: string | ContentBlock[];
 	/**
 	 * Maximum tool call loop iterations (default: 10). Clamped against
 	 * `AgentDefinition.maxSteps` if set — callers can tighten the agent's
@@ -390,6 +408,8 @@ export interface SpawnRunOptions {
 	spawnToolUseId?: string;
 	userId?: string;
 	sessionId?: string;
+	retentionMode?: RetentionMode;
+	expiresAt?: string;
 	/** Per-run span emitter for emitting a run-kind span on lifecycle events.
 	 *  When omitted, the registry doesn't emit run spans for this Run. */
 	spanEmitter?: SpanEmitter;
@@ -508,7 +528,10 @@ export {
 export type {
 	// Multimodal
 	ContentBlock,
+	ImageDetail,
 	ImageMediaType,
+	RetentionMode,
+	RetentionPolicy,
 	// Agent
 	AgentDefinition,
 	AgentRef,
@@ -520,6 +543,7 @@ export type {
 	ResourceRegistrationContext,
 	ResourceToolContext,
 	// Tools
+	CallbackToolEntry,
 	ToolReference,
 	ToolInfo,
 	// Invocation
@@ -565,6 +589,10 @@ export type {
 	RunListResult,
 	RunStatus,
 	RunStore,
+	ArtifactMetadata,
+	ArtifactPurpose,
+	ArtifactStatus,
+	ArtifactStore,
 	// Evals
 	EvalCriterion,
 	EvalCriterionGate,

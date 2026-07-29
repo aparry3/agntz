@@ -4,7 +4,7 @@ import {
 	normalizeRunEvent,
 	normalizeTraceLiveEvent,
 } from "./events.js";
-import { composeSignal, sendRequest } from "./fetch.js";
+import { composeSignal, sendFormRequest, sendRequest } from "./fetch.js";
 import { parseSSE } from "./sse.js";
 import type {
 	AgentDefinition,
@@ -12,6 +12,8 @@ import type {
 	AgentImportResponse,
 	AgentSummary,
 	AgntzClientOptions,
+	ArtifactRef,
+	ContentBlock,
 	EvalDataset,
 	EvalDatasetListFilter,
 	EvalDefinition,
@@ -55,6 +57,7 @@ import type {
 
 export class AgntzClient {
 	readonly agents: AgentsResource;
+	readonly artifacts: ArtifactsResource;
 	readonly datasets: DatasetsResource;
 	readonly evals: EvalsResource;
 	readonly memory: MemoryResource;
@@ -74,6 +77,7 @@ export class AgntzClient {
 		this.fetchImpl = opts.fetch ?? fetch;
 		this.defaultSignal = opts.defaultSignal;
 		this.agents = new AgentsResource(this);
+		this.artifacts = new ArtifactsResource(this);
 		this.datasets = new DatasetsResource(this);
 		this.evals = new EvalsResource(this);
 		this.memory = new MemoryResource(this);
@@ -111,12 +115,9 @@ export class AgntzClient {
 	}
 
 	/** @internal */
-	_runRequest(input: RunInput, stream: boolean): Promise<Response> {
+	async _runRequest(input: RunInput, stream: boolean): Promise<Response> {
 		const signal = composeSignal(this.defaultSignal, input.signal);
-		const body: Record<string, unknown> = { agentId: input.agentId };
-		if (input.input !== undefined) body.input = input.input;
-		if (input.sessionId !== undefined) body.sessionId = input.sessionId;
-		if (input.context !== undefined) body.context = input.context;
+		const body = await this._prepareRunBody(input);
 		return sendRequest({
 			baseUrl: this.baseUrl,
 			path: stream ? "/run/stream" : "/run",
@@ -127,6 +128,28 @@ export class AgntzClient {
 			accept: stream ? "text/event-stream" : undefined,
 			fetchImpl: this.fetchImpl,
 		});
+	}
+
+	/** @internal */
+	async _prepareRunBody(input: RunInput | RunsStartInput) {
+		const body: Record<string, unknown> = { agentId: input.agentId };
+		const legacyContent =
+			input.content === undefined && isContentBlocks(input.input)
+				? input.input
+				: undefined;
+		const content = input.content ?? legacyContent;
+		if (input.input !== undefined && !legacyContent) body.input = input.input;
+		if (content !== undefined) {
+			body.content = await this.artifacts._prepareContent(
+				content,
+				input.retention?.artifactTtlSeconds,
+				input.signal,
+			);
+		}
+		if (input.sessionId !== undefined) body.sessionId = input.sessionId;
+		if (input.context !== undefined) body.context = input.context;
+		if (input.retention !== undefined) body.retention = input.retention;
+		return body;
 	}
 
 	/** @internal */
@@ -189,6 +212,116 @@ export class AgentsResource {
 
 	stream(input: RunInput): AsyncGenerator<StreamEvent, void, void> {
 		return streamAgentEvents(this.client, input);
+	}
+
+	/** Start an asynchronous agent run using the same input contract as run(). */
+	start(input: RunsStartInput): Promise<Run> {
+		return this.client.runs.start(input);
+	}
+}
+
+export class ArtifactsResource {
+	constructor(private readonly client: AgntzClient) {}
+
+	async upload(input: {
+		file:
+			| Blob
+			| ArrayBuffer
+			| Uint8Array
+			| { path: string; mediaType?: string; filename?: string };
+		purpose?: "input" | "output";
+		expiresInSeconds?: number;
+		mediaType?: string;
+		filename?: string;
+		signal?: AbortSignal;
+	}): Promise<ArtifactRef> {
+		const { blob, filename } = await artifactInputToBlob(
+			input.file,
+			input.mediaType,
+			input.filename,
+		);
+		const form = new FormData();
+		form.append("file", blob, filename);
+		form.append("purpose", input.purpose ?? "input");
+		if (input.expiresInSeconds !== undefined) {
+			form.append("expiresInSeconds", String(input.expiresInSeconds));
+		}
+		const res = await sendFormRequest({
+			baseUrl: this.client._baseUrl,
+			path: "/artifacts",
+			method: "POST",
+			apiKey: this.client._apiKey,
+			form,
+			signal: this.client._composeSignal(input.signal),
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as ArtifactRef;
+	}
+
+	async get(
+		artifactId: string,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<ArtifactRef> {
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/artifacts/${encodeURIComponent(artifactId)}`,
+			method: "GET",
+			apiKey: this.client._apiKey,
+			signal: this.client._composeSignal(opts.signal),
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as ArtifactRef;
+	}
+
+	async download(
+		artifactId: string,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<Blob> {
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/artifacts/${encodeURIComponent(artifactId)}/content`,
+			method: "GET",
+			apiKey: this.client._apiKey,
+			signal: this.client._composeSignal(opts.signal),
+			fetchImpl: this.client._fetchImpl,
+		});
+		return res.blob();
+	}
+
+	async delete(
+		artifactId: string,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<void> {
+		await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/artifacts/${encodeURIComponent(artifactId)}`,
+			method: "DELETE",
+			apiKey: this.client._apiKey,
+			signal: this.client._composeSignal(opts.signal),
+			fetchImpl: this.client._fetchImpl,
+		});
+	}
+
+	/** @internal */
+	async _prepareContent(
+		content: ContentBlock[],
+		expiresInSeconds?: number,
+		signal?: AbortSignal,
+	): Promise<ContentBlock[]> {
+		return Promise.all(
+			content.map(async (block) => {
+				if (!("file" in block)) return block;
+				const artifact = await this.upload({
+					file: block.file,
+					purpose: "input",
+					expiresInSeconds,
+					mediaType: block.mediaType,
+					signal,
+				});
+				const { file: _file, ...wire } = block;
+				return { ...wire, artifactId: artifact.id } as ContentBlock;
+			}),
+		);
 	}
 }
 
@@ -714,10 +847,7 @@ export class RunsResource {
 	/** Start a run and return its handle immediately (status: "running"). */
 	async start(input: RunsStartInput): Promise<Run> {
 		const signal = this.client._composeSignal(input.signal);
-		const body: Record<string, unknown> = { agentId: input.agentId };
-		if (input.input !== undefined) body.input = input.input;
-		if (input.sessionId !== undefined) body.sessionId = input.sessionId;
-		if (input.context !== undefined) body.context = input.context;
+		const body = await this.client._prepareRunBody(input);
 		if (input.callbackUrl !== undefined) body.callbackUrl = input.callbackUrl;
 		if (input.webhookSecretName !== undefined)
 			body.webhookSecretName = input.webhookSecretName;
@@ -974,6 +1104,69 @@ async function* streamRunEvents(
 			}
 		}
 	}
+}
+
+function isContentBlocks(value: unknown): value is ContentBlock[] {
+	return (
+		Array.isArray(value) &&
+		value.length > 0 &&
+		value.every(
+			(block) =>
+				block !== null &&
+				typeof block === "object" &&
+				["text", "image", "audio"].includes(
+					String((block as { type?: unknown }).type),
+				),
+		)
+	);
+}
+
+async function artifactInputToBlob(
+	input:
+		| Blob
+		| ArrayBuffer
+		| Uint8Array
+		| { path: string; mediaType?: string; filename?: string },
+	mediaType?: string,
+	filename?: string,
+): Promise<{ blob: Blob; filename: string }> {
+	if (input instanceof Blob) {
+		const named = input as Blob & { name?: string };
+		return {
+			blob:
+				mediaType && input.type !== mediaType
+					? new Blob([input], { type: mediaType })
+					: input,
+			filename: filename ?? named.name ?? "artifact",
+		};
+	}
+	if (input instanceof ArrayBuffer) {
+		return {
+			blob: new Blob([input], {
+				type: mediaType ?? "application/octet-stream",
+			}),
+			filename: filename ?? "artifact",
+		};
+	}
+	if (input instanceof Uint8Array) {
+		const bytes = Uint8Array.from(input);
+		return {
+			blob: new Blob([bytes.buffer], {
+				type: mediaType ?? "application/octet-stream",
+			}),
+			filename: filename ?? "artifact",
+		};
+	}
+	const { readFile } = await import("node:fs/promises");
+	const { basename } = await import("node:path");
+	const bytes = await readFile(input.path);
+	const blobBytes = Uint8Array.from(bytes);
+	return {
+		blob: new Blob([blobBytes.buffer], {
+			type: mediaType ?? input.mediaType ?? "application/octet-stream",
+		}),
+		filename: filename ?? input.filename ?? basename(input.path),
+	};
 }
 
 async function* streamAgentEvents(

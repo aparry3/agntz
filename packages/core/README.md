@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/@agntz/core.svg)](https://www.npmjs.com/package/@agntz/core)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen.svg)](https://nodejs.org)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D22.0.0-brightgreen.svg)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7+-blue.svg)](https://www.typescriptlang.org/)
 
 TypeScript SDK for defining and running AI agents. Agents are portable, JSON-serializable configurations — not code. Plug in any storage backend, any model provider, any tools.
@@ -446,14 +446,17 @@ npx @agntz/sdk create "Answer support questions in a concise tone" -o ./agents/s
 # Run it locally
 npx @agntz/sdk run ./agents/support.yaml --input "Hello!"
 
+# Validate a file or directory, including cross-file refs
+npx @agntz/sdk validate ./agents
+
 # Show all current commands
 npx @agntz/sdk --help
 ```
 
 The current CLI is distributed through `@agntz/sdk`; the executable name is
-`agntz` when installed globally. It supports `create`, `run`, hosted auth,
-hosted runs, and hosted traces. Use the SDK directly for local tools, resource
-providers, and app-specific runtime wiring.
+`agntz` when installed globally. It supports `create`, `edit`, `validate`,
+`run`, `publish`, hosted auth, runs, traces, and eval commands. Use the SDK
+directly for local tools, resource providers, and app-specific runtime wiring.
 
 ## Model Providers
 

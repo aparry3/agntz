@@ -5,6 +5,10 @@ them locally with TypeScript or Python, then move the same manifests to hosted
 or self-hosted workers when you need multi-user isolation, durable runs, traces,
 memory, and eval records.
 
+The packages are currently public beta at `0.2.x`. TypeScript runtimes require
+Node 22 or newer; the Python package requires Python 3.11 or newer. See
+[`ROADMAP.md`](./ROADMAP.md) for the pre-1.0 stability policy.
+
 ## Install
 
 TypeScript embedded SDK:
@@ -75,6 +79,9 @@ result = client.agents.run(
 print(result.output)
 ```
 
+Runnable TypeScript and Python programs using the shared manifests live in
+[`examples`](./examples).
+
 Call a hosted or self-hosted worker:
 
 ```ts
@@ -125,6 +132,7 @@ The old standalone `@agntz/manifest` package has been merged into
 pnpm install
 pnpm build
 pnpm test
+pnpm test:packed
 pnpm --filter @agntz/site build
 ```
 

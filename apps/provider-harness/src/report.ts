@@ -2,6 +2,7 @@ import { mkdir, symlink, unlink, writeFile } from "node:fs/promises";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ALL_CAPABILITIES } from "./matrix.js";
+import { isRegression } from "./result-policy.js";
 import type { ProviderModelEntry, ResultBucket, TestResult } from "./types.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -12,34 +13,44 @@ export interface ReportInput {
 	finishedAt: Date;
 	matrix: readonly ProviderModelEntry[];
 	results: readonly TestResult[];
+	outputDir?: string;
 }
 
 export interface WrittenReport {
 	jsonPath: string;
+	junitPath: string;
 	markdownPath: string;
 	latestJsonPath: string;
+	latestJunitPath: string;
 	latestMarkdownPath: string;
 }
 
 export async function writeReport(input: ReportInput): Promise<WrittenReport> {
-	await mkdir(REPORTS_DIR, { recursive: true });
+	const outputDir = resolve(input.outputDir ?? REPORTS_DIR);
+	await mkdir(outputDir, { recursive: true });
 
 	const slug = isoSlug(input.finishedAt);
-	const jsonPath = resolve(REPORTS_DIR, `${slug}.json`);
-	const markdownPath = resolve(REPORTS_DIR, `${slug}.md`);
-	const latestJsonPath = resolve(REPORTS_DIR, "latest.json");
-	const latestMarkdownPath = resolve(REPORTS_DIR, "latest.md");
+	const jsonPath = resolve(outputDir, `${slug}.json`);
+	const junitPath = resolve(outputDir, `${slug}.junit.xml`);
+	const markdownPath = resolve(outputDir, `${slug}.md`);
+	const latestJsonPath = resolve(outputDir, "latest.json");
+	const latestJunitPath = resolve(outputDir, "latest.junit.xml");
+	const latestMarkdownPath = resolve(outputDir, "latest.md");
 
 	await writeFile(jsonPath, buildJson(input), "utf8");
+	await writeFile(junitPath, buildJunit(input), "utf8");
 	await writeFile(markdownPath, buildMarkdown(input), "utf8");
 
 	await refreshSymlink(latestJsonPath, `${slug}.json`);
+	await refreshSymlink(latestJunitPath, `${slug}.junit.xml`);
 	await refreshSymlink(latestMarkdownPath, `${slug}.md`);
 
 	return {
 		jsonPath: relative(process.cwd(), jsonPath),
+		junitPath: relative(process.cwd(), junitPath),
 		markdownPath: relative(process.cwd(), markdownPath),
 		latestJsonPath: relative(process.cwd(), latestJsonPath),
+		latestJunitPath: relative(process.cwd(), latestJunitPath),
 		latestMarkdownPath: relative(process.cwd(), latestMarkdownPath),
 	};
 }
@@ -105,9 +116,7 @@ function buildMarkdown(input: ReportInput): string {
 	lines.push("");
 	lines.push(buildResultsTable(input.results));
 
-	const failing = input.results.filter(
-		(r) => r.bucket === "SDK_ERROR" || r.bucket === "UNEXPECTED_UNSUPPORTED",
-	);
+	const failing = input.results.filter(isRegression);
 	if (failing.length > 0) {
 		lines.push("");
 		lines.push("## Failures (require attention)");
@@ -135,7 +144,48 @@ function buildMarkdown(input: ReportInput): string {
 		}
 	}
 
-	return lines.join("\n");
+	return `${lines.join("\n")}\n`;
+}
+
+function buildJunit(input: ReportInput): string {
+	const failures = input.results.filter(isRegression).length;
+	const skipped = input.results.filter(
+		(result) => result.bucket !== "PASS" && !isRegression(result),
+	).length;
+	const durationSeconds =
+		(input.finishedAt.getTime() - input.startedAt.getTime()) / 1000;
+	const lines = [
+		'<?xml version="1.0" encoding="UTF-8"?>',
+		`<testsuite name="agntz-provider-harness" tests="${input.results.length}" failures="${failures}" skipped="${skipped}" time="${durationSeconds.toFixed(3)}">`,
+	];
+
+	for (const result of input.results) {
+		const className = `${result.sdk}.${result.provider}.${result.model}`;
+		lines.push(
+			`  <testcase classname="${xmlEscape(className)}" name="${xmlEscape(result.test)}" time="${(result.durationMs / 1000).toFixed(3)}">`,
+		);
+		if (isRegression(result)) {
+			const message = result.error?.message ?? result.bucket;
+			const detail = [
+				result.error
+					? `${result.error.name}: ${result.error.message}`
+					: result.bucket,
+				result.snapshotDiff,
+			]
+				.filter(Boolean)
+				.join("\n\n");
+			lines.push(
+				`    <failure type="${result.bucket}" message="${xmlEscape(message)}">${xmlEscape(detail)}</failure>`,
+			);
+		} else if (result.bucket !== "PASS") {
+			lines.push(
+				`    <skipped message="${xmlEscape(result.skipReason ?? result.error?.message ?? result.bucket)}" />`,
+			);
+		}
+		lines.push("  </testcase>");
+	}
+	lines.push("</testsuite>");
+	return `${lines.join("\n")}\n`;
 }
 
 function buildMatrixTable(matrix: readonly ProviderModelEntry[]): string {
@@ -179,7 +229,19 @@ function buildResultsTable(results: readonly TestResult[]): string {
 function detailOf(r: TestResult): string {
 	if (r.bucket === "SKIPPED") return r.skipReason ?? "";
 	if (r.bucket === "PASS" || r.bucket === "EXPECTED_UNSUPPORTED") return "";
-	return (r.error?.message ?? "").replace(/\n/g, " ").slice(0, 200);
+	return (r.error?.message ?? "")
+		.replace(/\n/g, " ")
+		.replace(/\|/g, "\\|")
+		.slice(0, 200);
+}
+
+function xmlEscape(value: string): string {
+	return value
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/"/g, "&quot;")
+		.replace(/'/g, "&apos;");
 }
 
 function countByBucket(

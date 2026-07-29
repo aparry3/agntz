@@ -61,6 +61,7 @@ Required environment:
 PORT=4001
 DATABASE_URL=postgres://...
 WORKER_INTERNAL_SECRET=<shared random secret>
+CORS_ORIGINS=https://<app-domain>
 DEFAULT_MODEL_PROVIDER=openai
 DEFAULT_MODEL_NAME=gpt-4o
 OPENAI_API_KEY=<provider key>
@@ -71,7 +72,16 @@ Optional environment depends on the providers and resources enabled:
 ```sh
 ANTHROPIC_API_KEY=<provider key>
 GOOGLE_GENERATIVE_AI_API_KEY=<provider key>
+ARTIFACT_STORE=s3
+ARTIFACT_S3_BUCKET=<private bucket>
+ARTIFACT_S3_PREFIX=agntz-artifacts
+AWS_REGION=<bucket region>
 ```
+
+`ARTIFACT_STORE=filesystem` with `ARTIFACT_DIR` is suitable only for a
+single persistent worker. Use S3-compatible storage for multiple replicas and
+configure a matching bucket lifecycle policy as a backstop to the worker's
+artifact expiry sweep.
 
 Verify:
 

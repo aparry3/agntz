@@ -44,3 +44,25 @@ a:hover {
 	border-color: rgba(26, 25, 22, 0.3) !important;
 	box-shadow: 0 8px 24px rgba(26, 25, 22, 0.08) !important;
 }
+
+@media (max-width: 720px) {
+	.landing-library-hero {
+		gap: 24px !important;
+	}
+
+	.landing-library-hero h1 {
+		font-size: 48px !important;
+	}
+
+	.landing-hero-install,
+	.landing-hero-checks,
+	.landing-hero-note {
+		display: none !important;
+	}
+
+	.landing-library-hero pre {
+		min-height: 160px !important;
+		max-height: 160px !important;
+		font-size: 11px !important;
+	}
+}

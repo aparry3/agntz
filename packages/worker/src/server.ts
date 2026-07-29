@@ -2,6 +2,11 @@
 import "dotenv/config";
 import { serve } from "@hono/node-server";
 import {
+	FileArtifactBlobStore,
+	MemoryArtifactBlobStore,
+	S3ArtifactBlobStore,
+} from "./artifacts.js";
+import {
 	describeResourceProviders,
 	getMemrez,
 	getResourceProviders,
@@ -23,12 +28,40 @@ if (!internalSecret) {
 const store = await getStore();
 const resources = getResourceProviders();
 const memrez = getMemrez();
+const artifactStoreMode = process.env.ARTIFACT_STORE ?? "memory";
+if (!["memory", "filesystem", "s3"].includes(artifactStoreMode)) {
+	throw new Error(
+		`Invalid ARTIFACT_STORE '${artifactStoreMode}'; expected memory, filesystem, or s3`,
+	);
+}
+const artifactBlobs =
+	artifactStoreMode === "filesystem"
+		? new FileArtifactBlobStore(
+				process.env.ARTIFACT_DIR ?? "/var/lib/agntz/artifacts",
+			)
+		: artifactStoreMode === "s3"
+			? new S3ArtifactBlobStore({
+					bucket: requiredEnv("ARTIFACT_S3_BUCKET"),
+					prefix: process.env.ARTIFACT_S3_PREFIX,
+					clientConfig: {
+						region: process.env.AWS_REGION ?? "us-east-1",
+						...(process.env.ARTIFACT_S3_ENDPOINT
+							? { endpoint: process.env.ARTIFACT_S3_ENDPOINT }
+							: {}),
+						forcePathStyle: process.env.ARTIFACT_S3_FORCE_PATH_STYLE === "true",
+					},
+				})
+			: new MemoryArtifactBlobStore();
 
 const app = createWorkerAPI({
 	store,
 	internalSecret,
+	corsOrigins: process.env.CORS_ORIGINS?.split(",")
+		.map((origin) => origin.trim())
+		.filter(Boolean),
 	resources,
 	memrez: memrez ?? undefined,
+	artifactBlobs,
 });
 
 serve({
@@ -40,6 +73,7 @@ serve({
 console.log(`agntz worker listening on http://${hostname}:${port}`);
 console.log(`Store: ${process.env.STORE ?? "memory"}`);
 console.log(`Resources: ${describeResourceProviders(resources)}`);
+console.log(`Artifacts: ${artifactStoreMode}`);
 
 // Periodic memory curation. Off unless MEMREZ_CURATE_INTERVAL is set (e.g.
 // "30m", "1h", "900s", or raw milliseconds). Each tick sweeps every dirty
@@ -96,4 +130,10 @@ function parseInterval(raw: string | undefined): number | null {
 					: value;
 	// Floor at 1 minute so a typo can't hot-loop LLM curation.
 	return Math.max(ms, 60_000);
+}
+
+function requiredEnv(name: string): string {
+	const value = process.env[name]?.trim();
+	if (!value) throw new Error(`${name} is required`);
+	return value;
 }

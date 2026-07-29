@@ -1,3 +1,7 @@
+import {
+	assertManifestSchemaValue,
+	isCanonicalManifestSchema,
+} from "./schema.js";
 import { interpolate, resolvePath } from "./template.js";
 import type {
 	AgentManifest,
@@ -43,8 +47,20 @@ export function createInitialState(
 	inputSchema?: InputSchema,
 ): AgentState {
 	if (!inputSchema) {
-		// Default: plain string input
-		return { userQuery: typeof input === "string" ? input : String(input) };
+		// Preserve rich input values (notably ordered ContentBlock[]) so hosted
+		// manifests do not narrow multimodal input to "[object Object]".
+		return { userQuery: input };
+	}
+
+	if (isCanonicalManifestSchema(inputSchema)) {
+		const value =
+			typeof input === "object" && input !== null && !Array.isArray(input)
+				? structuredClone(input)
+				: input;
+		assertManifestSchemaValue(inputSchema, value, "Agent input", {
+			useDefaults: true,
+		});
+		return value as AgentState;
 	}
 
 	// Structured input: input should be an object
@@ -56,7 +72,10 @@ export function createInitialState(
 				state[key] = provided;
 			} else {
 				// Apply default if defined, otherwise null
-				const defaultValue = typeof def === "object" ? def.default : undefined;
+				const defaultValue =
+					def !== null && typeof def === "object"
+						? (def as Record<string, unknown>).default
+						: undefined;
 				state[key] = defaultValue ?? null;
 			}
 		}

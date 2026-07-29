@@ -1,6 +1,6 @@
 {
   "name": "@agntz/core",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "TypeScript SDK for defining and running AI agents with first-class MCP support and pluggable storage",
   "type": "module",
   "main": "./dist/index.js",
@@ -17,9 +17,10 @@
     "./manifest": {
       "types": "./dist/manifest/index.d.ts",
       "import": "./dist/manifest/index.js"
-    }
+    },
+    "./schema": "./schema/agent-manifest.schema.json"
   },
-  "files": ["dist"],
+  "files": ["dist", "schema"],
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
@@ -58,16 +59,14 @@
     "@ai-sdk/perplexity": "^3.0.0",
     "@ai-sdk/cohere": "^3.0.0",
     "@ai-sdk/azure": "^3.0.0",
-    "@openrouter/ai-sdk-provider": "^2.9.0"
+    "@openrouter/ai-sdk-provider": "^2.9.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "ajv": "^8.17.1"
   },
   "peerDependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0",
     "@opentelemetry/api": "^1.0.0"
   },
   "peerDependenciesMeta": {
-    "@modelcontextprotocol/sdk": {
-      "optional": true
-    },
     "@opentelemetry/api": {
       "optional": true
     }

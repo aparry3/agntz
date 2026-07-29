@@ -19,8 +19,8 @@ export default function Home() {
 			<Nav />
 			<LanguageProvider>
 				<main>
-					<AgentBuilderHero accent={ACCENT} />
 					<Hero accent={ACCENT} />
+					<AgentBuilderHero accent={ACCENT} />
 					<TheShift accent="green" />
 					<TheLoop accent={ACCENT} />
 					<RuntimeCapabilities accent={ACCENT} />

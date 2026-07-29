@@ -3,7 +3,9 @@ import { parse as parseYAML } from "yaml";
 import type {
 	AgentManifest,
 	AgentRef,
+	CallbackToolEntry,
 	HTTPToolEntry,
+	ImageAgentManifest,
 	LLMAgentManifest,
 	MCPToolRef,
 	ManifestToolEntry,
@@ -12,6 +14,7 @@ import type {
 	SequentialAgentManifest,
 	StepRef,
 	ToolAgentManifest,
+	TranscriptionAgentManifest,
 } from "./types.js";
 
 /**
@@ -35,6 +38,10 @@ export function normalizeManifest(raw: Record<string, unknown>): AgentManifest {
 		description: raw.description as string | undefined,
 		inputSchema: raw.inputSchema as Record<string, unknown> | undefined,
 		stateKey: raw.stateKey as string | undefined,
+		maxSteps: raw.maxSteps as number | undefined,
+		tokenBudget: raw.tokenBudget as number | undefined,
+		timeoutMs: raw.timeoutMs as number | undefined,
+		retention: normalizeRetention(raw.retention),
 	};
 
 	switch (kind) {
@@ -46,9 +53,61 @@ export function normalizeManifest(raw: Record<string, unknown>): AgentManifest {
 			return normalizeSequential(base, raw);
 		case "parallel":
 			return normalizeParallel(base, raw);
+		case "transcription":
+			return normalizeTranscription(base, raw);
+		case "image":
+			return normalizeImage(base, raw);
 		default:
 			throw new Error(`Unknown agent kind: ${kind}`);
 	}
+}
+
+function normalizeTranscription(
+	base: Record<string, unknown>,
+	raw: Record<string, unknown>,
+): TranscriptionAgentManifest {
+	return {
+		...base,
+		kind: "transcription",
+		model: normalizeModel(raw.model),
+		instruction:
+			typeof raw.instruction === "string" ? raw.instruction : undefined,
+		settings: raw.settings as TranscriptionAgentManifest["settings"],
+	} as TranscriptionAgentManifest;
+}
+
+function normalizeImage(
+	base: Record<string, unknown>,
+	raw: Record<string, unknown>,
+): ImageAgentManifest {
+	return {
+		...base,
+		kind: "image",
+		model: normalizeModel(raw.model),
+		instruction:
+			typeof raw.instruction === "string" ? raw.instruction : undefined,
+		prompt: typeof raw.prompt === "string" ? raw.prompt : undefined,
+		settings: raw.settings as ImageAgentManifest["settings"],
+	} as ImageAgentManifest;
+}
+
+function normalizeRetention(
+	raw: unknown,
+): AgentManifest["retention"] | undefined {
+	if (raw === undefined) return undefined;
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+		throw new Error("'retention' must be an object");
+	}
+	const value = raw as Record<string, unknown>;
+	return {
+		mode: value.mode as "none" | "result" | "session",
+		...(value.ttlSeconds !== undefined
+			? { ttlSeconds: value.ttlSeconds as number }
+			: {}),
+		...(value.artifactTtlSeconds !== undefined
+			? { artifactTtlSeconds: value.artifactTtlSeconds as number }
+			: {}),
+	};
 }
 
 function normalizeLLM(
@@ -116,9 +175,10 @@ function normalizeReply(
 			if (
 				typeof obj.maxPerRun !== "number" ||
 				!Number.isFinite(obj.maxPerRun) ||
+				!Number.isInteger(obj.maxPerRun) ||
 				obj.maxPerRun < 1
 			) {
-				throw new Error("'reply.maxPerRun' must be a positive number");
+				throw new Error("'reply.maxPerRun' must be a positive integer");
 			}
 			out.maxPerRun = obj.maxPerRun;
 		}
@@ -211,9 +271,12 @@ function normalizeTool(
 			params: tool.params as Record<string, string> | undefined,
 			server: tool.server as string | undefined,
 			url: tool.url as string | undefined,
-			method: tool.method as "GET" | undefined,
+			method: tool.method as HTTPToolEntry["method"],
 			description: tool.description as string | undefined,
 			headers: tool.headers as Record<string, string> | undefined,
+			body_type: tool.body_type as HTTPToolEntry["body_type"],
+			body: tool.body,
+			auth: tool.auth as HTTPToolEntry["auth"],
 		},
 	} as ToolAgentManifest;
 }
@@ -254,6 +317,11 @@ function normalizeParallel(
 
 function normalizeStep(raw: unknown): StepRef {
 	const step = raw as Record<string, unknown>;
+	const hasRef = step.ref !== undefined;
+	const hasAgent = step.agent != null;
+	if (hasRef && hasAgent) {
+		throw new Error("Step cannot have both 'ref' and 'agent'");
+	}
 
 	const result: StepRef = {
 		input: step.input as Record<string, string> | undefined,
@@ -261,9 +329,12 @@ function normalizeStep(raw: unknown): StepRef {
 		when: step.when as string | undefined,
 	};
 
-	if (typeof step.ref === "string") {
+	if (hasRef) {
+		if (typeof step.ref !== "string") {
+			throw new Error("Step 'ref' must be a string");
+		}
 		result.ref = step.ref;
-	} else if (step.agent != null) {
+	} else if (hasAgent) {
 		result.agent = normalizeManifest(step.agent as Record<string, unknown>);
 	} else {
 		throw new Error(
@@ -284,6 +355,16 @@ function normalizeModel(raw: unknown): LLMAgentManifest["model"] {
 		temperature: model.temperature as number | undefined,
 		maxTokens: model.maxTokens as number | undefined,
 		topP: model.topP as number | undefined,
+		topK: model.topK as number | undefined,
+		presencePenalty: model.presencePenalty as number | undefined,
+		frequencyPenalty: model.frequencyPenalty as number | undefined,
+		stopSequences: model.stopSequences as string[] | undefined,
+		seed: model.seed as number | undefined,
+		maxRetries: model.maxRetries as number | undefined,
+		providerOptions: model.providerOptions as
+			| Record<string, Record<string, unknown>>
+			| undefined,
+		options: model.options as Record<string, unknown> | undefined,
 	};
 }
 
@@ -357,6 +438,17 @@ function normalizeTools(raw: unknown[]): ManifestToolEntry[] {
 					body: e.body,
 					auth: e.auth as HTTPToolEntry["auth"],
 				};
+			case "callback":
+				return {
+					kind: "callback" as const,
+					name: requireString(e, "name"),
+					url: requireString(e, "url"),
+					description: e.description as string | undefined,
+					inputSchema: e.inputSchema as Record<string, unknown>,
+					secret: requireString(e, "secret"),
+					timeoutMs: e.timeoutMs as number | undefined,
+					maxRetries: e.maxRetries as number | undefined,
+				} satisfies CallbackToolEntry;
 			default:
 				throw new Error(`Unknown tool kind: ${kind}`);
 		}

@@ -7,6 +7,7 @@ import pytest
 
 from agntz.manifest import (
     LLMAgentManifest,
+    ManifestParseError,
     ToolCallConfig,
     apply_input_transform,
     apply_output_mapping,
@@ -16,6 +17,7 @@ from agntz.manifest import (
     get_manifest_state_key,
     interpolate,
     load_manifest_file,
+    parse_manifest,
     render_template,
     resolve_path,
     validate_manifest,
@@ -89,6 +91,40 @@ def test_resource_manifest_validation_reserves_generated_tool_names() -> None:
         "tools[0].tools[0]: Local tool 'memory_write' "
         "conflicts with reserved resource tool prefix 'memory_'"
     ]
+
+
+@pytest.mark.parametrize(
+    "source, message",
+    [
+        (
+            """
+id: invalid-flow
+kind: sequential
+steps:
+  - ref: stored
+    agent:
+      id: inline
+      kind: llm
+      model: {provider: openai, name: gpt-5.4}
+      instruction: test
+""",
+            "both 'ref' and 'agent'",
+        ),
+        (
+            """
+id: invalid-reply
+kind: llm
+model: {provider: openai, name: gpt-5.4}
+instruction: test
+reply: {maxPerRun: 1.5}
+""",
+            "positive integer",
+        ),
+    ],
+)
+def test_parser_rejects_noncanonical_step_and_reply_shapes(source: str, message: str) -> None:
+    with pytest.raises(ManifestParseError, match=message):
+        parse_manifest(source)
 
 
 def test_state_template_and_condition_helpers_match_contract_expectations() -> None:

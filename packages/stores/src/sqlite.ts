@@ -11,6 +11,7 @@ import {
 import type {
 	AgentDefinition,
 	AgentVersionSummary,
+	ArtifactMetadata,
 	Connection,
 	ConnectionConfig,
 	ConnectionKind,
@@ -586,6 +587,40 @@ const MIGRATIONS = [
     ON tenant_namespace_roots(user_id);
 
   UPDATE schema_version SET version = 13;
+  `,
+	// v14: preserve resolved/requested agent version metadata on Runs.
+	`
+  ALTER TABLE runs ADD COLUMN agent_version TEXT;
+  ALTER TABLE runs ADD COLUMN requested_agent_version TEXT;
+
+  UPDATE schema_version SET version = 14;
+  `,
+	// v15: owner-scoped artifact metadata (binary bodies live in ArtifactBlobStore).
+	`
+  CREATE TABLE IF NOT EXISTS artifacts (
+    user_id     TEXT NOT NULL,
+    id          TEXT NOT NULL,
+    purpose     TEXT NOT NULL,
+    media_type  TEXT NOT NULL,
+    size_bytes  INTEGER NOT NULL,
+    sha256      TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    expires_at  TEXT NOT NULL,
+    status      TEXT NOT NULL,
+    PRIMARY KEY (user_id, id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_artifacts_expiry
+    ON artifacts(user_id, status, expires_at);
+
+  UPDATE schema_version SET version = 15;
+  `,
+	// v16: per-run retention projection and durable-record expiry.
+	`
+  ALTER TABLE runs ADD COLUMN retention_mode TEXT;
+  ALTER TABLE runs ADD COLUMN expires_at TEXT;
+  CREATE INDEX IF NOT EXISTS idx_runs_expiry ON runs(user_id, expires_at);
+
+  UPDATE schema_version SET version = 16;
   `,
 ];
 
@@ -1412,6 +1447,78 @@ export class SqliteStore implements UnifiedStore {
 			.run(u, kind, id);
 	}
 
+	// ═══ ArtifactStore ═══
+
+	async putArtifact(artifact: ArtifactMetadata): Promise<void> {
+		const u = this.requireUser();
+		if (artifact.ownerId !== u) {
+			throw new Error("Artifact owner does not match scoped user");
+		}
+		this.db
+			.prepare(
+				`INSERT INTO artifacts (
+				 user_id, id, purpose, media_type, size_bytes, sha256,
+				 created_at, expires_at, status
+			   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			   ON CONFLICT(user_id, id) DO UPDATE SET
+				 purpose = excluded.purpose,
+				 media_type = excluded.media_type,
+				 size_bytes = excluded.size_bytes,
+				 sha256 = excluded.sha256,
+				 created_at = excluded.created_at,
+				 expires_at = excluded.expires_at,
+				 status = excluded.status`,
+			)
+			.run(
+				u,
+				artifact.id,
+				artifact.purpose,
+				artifact.mediaType,
+				artifact.sizeBytes,
+				artifact.sha256,
+				artifact.createdAt,
+				artifact.expiresAt,
+				artifact.status,
+			);
+	}
+
+	async getArtifact(artifactId: string): Promise<ArtifactMetadata | null> {
+		const u = this.requireUser();
+		const row = this.db
+			.prepare(
+				`SELECT id, user_id, purpose, media_type, size_bytes, sha256,
+						created_at, expires_at, status
+				   FROM artifacts WHERE user_id = ? AND id = ?`,
+			)
+			.get(u, artifactId) as ArtifactRow | undefined;
+		return row ? artifactRowToMetadata(row) : null;
+	}
+
+	async deleteArtifact(artifactId: string): Promise<void> {
+		const u = this.requireUser();
+		this.db
+			.prepare("DELETE FROM artifacts WHERE user_id = ? AND id = ?")
+			.run(u, artifactId);
+	}
+
+	async listExpiredArtifacts(
+		before: string,
+		limit = 100,
+	): Promise<ArtifactMetadata[]> {
+		const u = this.requireUser();
+		const rows = this.db
+			.prepare(
+				`SELECT id, user_id, purpose, media_type, size_bytes, sha256,
+						created_at, expires_at, status
+				   FROM artifacts
+				  WHERE user_id = ? AND status = 'ready' AND expires_at <= ?
+				  ORDER BY expires_at
+				  LIMIT ?`,
+			)
+			.all(u, before, Math.max(0, limit)) as ArtifactRow[];
+		return rows.map(artifactRowToMetadata);
+	}
+
 	// ═══ RunStore ═══
 
 	async putRun(run: Run): Promise<void> {
@@ -1419,15 +1526,20 @@ export class SqliteStore implements UnifiedStore {
 		this.db
 			.prepare(
 				`INSERT INTO runs (
-            user_id, id, root_id, parent_id, agent_id, session_id,
-            spawn_tool_use_id, status, input, output, result_json, error,
-            started_at, ended_at, depth
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(user_id, id) DO UPDATE SET
+			user_id, id, root_id, parent_id, agent_id, agent_version,
+			requested_agent_version, session_id,
+			retention_mode, expires_at, spawn_tool_use_id, status, input, output,
+			result_json, error, started_at, ended_at, depth
+		  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(user_id, id) DO UPDATE SET
            root_id = excluded.root_id,
-           parent_id = excluded.parent_id,
-           agent_id = excluded.agent_id,
-           session_id = excluded.session_id,
+		   parent_id = excluded.parent_id,
+		   agent_id = excluded.agent_id,
+		   agent_version = excluded.agent_version,
+		   requested_agent_version = excluded.requested_agent_version,
+		   session_id = excluded.session_id,
+		   retention_mode = excluded.retention_mode,
+		   expires_at = excluded.expires_at,
            spawn_tool_use_id = excluded.spawn_tool_use_id,
            status = excluded.status,
            input = excluded.input,
@@ -1444,7 +1556,11 @@ export class SqliteStore implements UnifiedStore {
 				run.rootId,
 				run.parentId ?? null,
 				run.agentId,
+				run.agentVersion ?? null,
+				run.requestedAgentVersion ?? null,
 				run.sessionId ?? null,
+				run.retentionMode ?? null,
+				run.expiresAt ?? null,
 				run.spawnToolUseId ?? null,
 				run.status,
 				run.input,
@@ -1461,8 +1577,9 @@ export class SqliteStore implements UnifiedStore {
 		const u = this.requireUser();
 		const row = this.db
 			.prepare(
-				`SELECT id, user_id, root_id, parent_id, agent_id, session_id,
-                spawn_tool_use_id, status, input, output, result_json, error,
+				`SELECT id, user_id, root_id, parent_id, agent_id, agent_version,
+						requested_agent_version, session_id, retention_mode, expires_at,
+						spawn_tool_use_id, status, input, output, result_json, error,
                 started_at, ended_at, depth
          FROM runs
          WHERE user_id = ? AND id = ?`,
@@ -1475,7 +1592,8 @@ export class SqliteStore implements UnifiedStore {
 		const u = this.requireUser();
 		const rows = this.db
 			.prepare(
-				`SELECT id, user_id, root_id, parent_id, agent_id, session_id,
+				`SELECT id, user_id, root_id, parent_id, agent_id, agent_version,
+						requested_agent_version, session_id, retention_mode, expires_at,
                 spawn_tool_use_id, status, input, output, result_json, error,
                 started_at, ended_at, depth
          FROM runs
@@ -1499,7 +1617,9 @@ export class SqliteStore implements UnifiedStore {
             INNER JOIN subtree s ON r.parent_id = s.id
             WHERE r.user_id = ?
          )
-         SELECT r.id, r.user_id, r.root_id, r.parent_id, r.agent_id, r.session_id,
+		 SELECT r.id, r.user_id, r.root_id, r.parent_id, r.agent_id,
+				r.agent_version, r.requested_agent_version, r.session_id,
+				r.retention_mode, r.expires_at,
                 r.spawn_tool_use_id, r.status, r.input, r.output, r.result_json, r.error,
                 r.started_at, r.ended_at, r.depth
          FROM runs r
@@ -2857,7 +2977,11 @@ interface RunRow {
 	root_id: string;
 	parent_id: string | null;
 	agent_id: string;
+	agent_version: string | null;
+	requested_agent_version: string | null;
 	session_id: string | null;
+	retention_mode: Run["retentionMode"] | null;
+	expires_at: string | null;
 	spawn_tool_use_id: string | null;
 	status: string;
 	input: string;
@@ -2867,6 +2991,18 @@ interface RunRow {
 	started_at: number;
 	ended_at: number | null;
 	depth: number;
+}
+
+interface ArtifactRow {
+	id: string;
+	user_id: string;
+	purpose: ArtifactMetadata["purpose"];
+	media_type: string;
+	size_bytes: number;
+	sha256: string;
+	created_at: string;
+	expires_at: string;
+	status: ArtifactMetadata["status"];
 }
 
 interface SkillRow {
@@ -2966,14 +3102,33 @@ function rowToRun(r: RunRow): Run {
 		depth: r.depth,
 	};
 	if (r.user_id) run.userId = r.user_id;
+	if (r.agent_version !== null) run.agentVersion = r.agent_version;
+	if (r.requested_agent_version !== null)
+		run.requestedAgentVersion = r.requested_agent_version;
 	if (r.parent_id !== null) run.parentId = r.parent_id;
 	if (r.session_id !== null) run.sessionId = r.session_id;
+	if (r.retention_mode !== null) run.retentionMode = r.retention_mode;
+	if (r.expires_at !== null) run.expiresAt = r.expires_at;
 	if (r.spawn_tool_use_id !== null) run.spawnToolUseId = r.spawn_tool_use_id;
 	if (r.error !== null) run.error = r.error;
 	if (r.ended_at !== null) run.endedAt = r.ended_at;
 	if (r.result_json !== null)
 		run.result = JSON.parse(r.result_json) as InvokeResult;
 	return run;
+}
+
+function artifactRowToMetadata(r: ArtifactRow): ArtifactMetadata {
+	return {
+		id: r.id,
+		ownerId: r.user_id,
+		purpose: r.purpose,
+		mediaType: r.media_type,
+		sizeBytes: r.size_bytes,
+		sha256: r.sha256,
+		createdAt: r.created_at,
+		expiresAt: r.expires_at,
+		status: r.status,
+	};
 }
 
 /**

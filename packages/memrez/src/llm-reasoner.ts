@@ -179,6 +179,7 @@ export function llmReasoner(options: LlmReasonerOptions = {}): MemrezReasoner {
 					name: "memrez_curate",
 					schema: { ...CURATOR_OUTPUT_SCHEMA },
 				},
+				signal: input.signal,
 			});
 			return parseCuratorOutput(result.text);
 		},

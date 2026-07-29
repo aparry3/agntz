@@ -7,13 +7,13 @@ import { ACCENTS, type AccentName, TOKENS } from "./tokens";
 
 const TS_STEPS: [string, string, string][] = [
 	["1.", "npm i @agntz/sdk", "install"],
-	["2.", "echo 'id: hello' > agents/hello.yaml", "define"],
+	["2.", 'npx @agntz/sdk create "Say hello" -o agents/hello.yaml', "define"],
 	["3.", "client.agents.run({ agentId: 'hello' })", "run"],
 ];
 
 const PYTHON_STEPS: [string, string, string][] = [
 	["1.", 'pip install "agntz[litellm]"', "install"],
-	["2.", "echo 'id: hello' > agents/hello.yaml", "define"],
+	["2.", 'npx @agntz/sdk create "Say hello" -o agents/hello.yaml', "define"],
 	["3.", "client.agents.run(agent_id='hello')", "run"],
 ];
 

@@ -30,6 +30,7 @@ Same Railway project → **Add Service** → **GitHub Repo** → select your for
   - \`DATABASE_URL=\${{Postgres.DATABASE_URL}}\`
   - \`PORT=4001\`
   - \`WORKER_INTERNAL_SECRET=$(openssl rand -base64 32)\`
+  - \`CORS_ORIGINS=https://<your-app-domain>\`
   - \`DEFAULT_MODEL_PROVIDER=openai\`
   - \`DEFAULT_MODEL_NAME=gpt-4o\`
   - \`OPENAI_API_KEY=sk-...\`

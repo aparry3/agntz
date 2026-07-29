@@ -1,5 +1,7 @@
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import {
+	type ArtifactMetadata,
+	type ContentBlock,
 	type EvalCaseResult,
 	type EvalCriterion,
 	type EvalCriterionResult,
@@ -16,6 +18,7 @@ import {
 	type OutboundUrlPolicyOptions,
 	type Reply,
 	type ResourceProvider,
+	type RetentionPolicy,
 	type Run,
 	type RunListFilters,
 	type RunRegistry,
@@ -32,6 +35,7 @@ import {
 	evalPassPolicyMinimum,
 	generateId,
 	generateSessionId,
+	isContentBlockArray,
 	latestScoreFromEvalRun,
 	normalizeCriterionWeight,
 	parseJudgeOutputText,
@@ -58,6 +62,11 @@ import type { Context } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { stringify as stringifyYAML } from "yaml";
+import {
+	type ArtifactBlobStore,
+	MemoryArtifactBlobStore,
+	sha256,
+} from "./artifacts.js";
 import { createExecutionContext } from "./bridge.js";
 import {
 	getCachedBody,
@@ -72,6 +81,11 @@ import {
 	readScopes,
 	resolveAllowedRoots,
 } from "./middleware/namespace-roots.js";
+import {
+	type HostedOperationMetadata,
+	type HostedOperationRegistry,
+	createDefaultHostedOperationRegistry,
+} from "./model-operations.js";
 import { rateLimit } from "./rate-limit.js";
 import { wrapWithSkillRedaction } from "./session-redact.js";
 import {
@@ -142,7 +156,20 @@ export interface WorkerAPIOptions {
 	namespacePolicy?: NamespaceGrantPolicy;
 	/** Override outbound URL policy for tests or trusted local deployments. */
 	outboundUrlPolicy?: OutboundUrlPolicyOptions;
+	/** Browser origins allowed to call the API. Defaults to agntz.co and local development. */
+	corsOrigins?: string[];
+	/** Binary object storage. Defaults to process-local memory for tests/dev. */
+	artifactBlobs?: ArtifactBlobStore;
+	/** Host/provider operation adapters. Defaults to OpenAI transcription and image generation. */
+	modelOperations?: HostedOperationRegistry;
 }
+
+const DEFAULT_CORS_ORIGINS = [
+	"https://agntz.co",
+	"https://www.agntz.co",
+	"http://localhost:3000",
+	"http://localhost:3001",
+];
 
 /**
  * Create the worker API. Auth middleware resolves a per-request userId,
@@ -154,6 +181,24 @@ export interface WorkerAPIOptions {
  */
 export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 	const { store, internalSecret } = opts;
+	const artifactBlobs = opts.artifactBlobs ?? new MemoryArtifactBlobStore();
+	const modelOperations =
+		opts.modelOperations ?? createDefaultHostedOperationRegistry();
+	const artifactSweepTimes = new Map<string, number>();
+	const sweepExpiredArtifacts = async (userId: string): Promise<void> => {
+		const now = Date.now();
+		if (now - (artifactSweepTimes.get(userId) ?? 0) < 60_000) return;
+		artifactSweepTimes.set(userId, now);
+		const scoped = store.forUser(userId);
+		const expired = await scoped.listExpiredArtifacts(
+			new Date(now).toISOString(),
+			100,
+		);
+		for (const artifact of expired) {
+			await artifactBlobs.delete(userId, artifact.id).catch(() => {});
+			await scoped.deleteArtifact(artifact.id).catch(() => {});
+		}
+	};
 	const resourceProviders = opts.resources ?? {};
 	const app = new Hono();
 
@@ -179,10 +224,15 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 	// instance; routes filter on ownership before exposing anything.
 	const pendingRunWrites = new Map<string, Promise<void>>();
 	const persistRunInOrder = (run: Run): Promise<void> => {
+		if (run.retentionMode === "none") return Promise.resolve();
+		if (run.retentionMode === "result" && run.depth > 0) {
+			return Promise.resolve();
+		}
 		const previous = pendingRunWrites.get(run.id) ?? Promise.resolve();
+		const durableRun = durableRunForRetention(run);
 		const write = previous
 			.catch(() => {})
-			.then(() => store.forUser(run.userId as string).putRun(run))
+			.then(() => store.forUser(run.userId as string).putRun(durableRun))
 			.catch((err) => {
 				console.error(
 					`[run-store] persist failed run=${run.id} user=${run.userId}: ${(err as Error).message}`,
@@ -217,6 +267,8 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 		runner: Runner;
 		manifest: AgentManifest;
 		rootManifest: AgentManifest;
+		agentVersion?: string;
+		requestedAgentVersion?: string;
 		target?: "block";
 	};
 	type CompletedUserRun = {
@@ -248,10 +300,15 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 						runner,
 					)
 				: rootManifest;
+		const resolvedAgent = isSystemAgentId(args.agentId)
+			? null
+			: await runner.resolveAgentRef(args.agentId);
 		return {
 			runner,
 			manifest,
 			rootManifest,
+			agentVersion: resolvedAgent?.createdAt,
+			requestedAgentVersion: requestedVersionFromAgentRef(args.agentId),
 			...(args.target ? { target: args.target } : {}),
 		};
 	};
@@ -260,37 +317,93 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 		userId: string;
 		agentId: string;
 		input?: unknown;
+		content?: ContentBlock[];
 		sessionId?: string;
 		context?: string[];
+		retention?: Partial<RetentionPolicy>;
+		durable?: boolean;
 		selection?: ManifestSelection;
 		target?: "block";
 		prepared?: PreparedRunTarget;
 		requestSignal?: AbortSignal;
 	}): Promise<StartedUserRun> => {
+		let prepared = args.prepared;
+		let preparationError: unknown;
+		if (!prepared) {
+			try {
+				prepared = await prepareRunTarget({
+					userId: args.userId,
+					agentId: args.agentId,
+					selection: args.selection,
+					target: args.target,
+				});
+			} catch (error) {
+				if (!args.durable) throw error;
+				preparationError = error;
+			}
+		}
+		const retention = normalizeRetentionPolicy(
+			args.retention,
+			prepared?.manifest.retention,
+		);
+		if (args.durable && retention.mode === "none") {
+			throw badRequest(
+				"retention.mode='none' is only supported by synchronous /run endpoints",
+			);
+		}
+		const legacyContent = isContentBlockArray(args.input)
+			? args.input
+			: undefined;
+		const manifestInput = legacyContent ? undefined : args.input;
+		const persistenceContent = args.content ?? legacyContent;
+		const resolvedContent = await resolveHostedContent(
+			store,
+			artifactBlobs,
+			args.userId,
+			args.content ?? legacyContent,
+		);
 		const sessionId = args.sessionId ?? generateSessionId();
-		const input = stringifyRunValue(args.input);
+		const input =
+			retention.mode === "session" ? stringifyRunValue(manifestInput) : "";
+		const expiresAt = retention.ttlSeconds
+			? new Date(Date.now() + retention.ttlSeconds * 1000).toISOString()
+			: undefined;
 
-		const release = await runRegistry.acquireSessionLock(sessionId);
+		const release = await runRegistry.acquireSessionLock(
+			retention.mode === "session"
+				? sessionId
+				: `ephemeral:${randomBytes(12).toString("hex")}`,
+		);
 		let root: Run;
 		try {
-			const activeRunId = runRegistry.findActiveBySession(sessionId);
+			const activeRunId =
+				retention.mode === "session"
+					? runRegistry.findActiveBySession(sessionId)
+					: undefined;
 			if (activeRunId) {
 				runRegistry.cancel(activeRunId, "superseded");
 				await runRegistry.waitForTerminal(activeRunId);
 			}
 			root = runRegistry.create({
 				agentId: args.agentId,
+				agentVersion: prepared?.agentVersion,
+				requestedAgentVersion: prepared?.requestedAgentVersion,
 				input,
 				userId: args.userId,
-				sessionId,
+				sessionId: retention.mode === "session" ? sessionId : undefined,
+				retentionMode: retention.mode,
+				expiresAt,
 			});
 		} finally {
 			release();
 		}
 
 		const traceId = root.id;
-		traceRegistry.register(traceId, args.userId);
+		if (retention.mode === "session") {
+			traceRegistry.register(traceId, args.userId);
+		}
 		const replies: Reply[] = [];
+		const operationResults: HostedOperationMetadata[] = [];
 		let completed: CompletedUserRun | undefined;
 		let executionError: unknown;
 
@@ -310,9 +423,13 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 				traceSink: (event) => {
 					if (event.type === "span-start") {
 						spanCount++;
-						traceRegistry.spanStart(event.span);
+						if (retention.mode === "session") {
+							traceRegistry.spanStart(event.span);
+						}
 					} else if (event.type === "span-end") {
-						traceRegistry.spanEnd(event.spanId, event.patch);
+						if (retention.mode === "session") {
+							traceRegistry.spanEnd(event.spanId, event.patch);
+						}
 					}
 				},
 			});
@@ -323,14 +440,11 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 				agentId: args.agentId,
 			});
 			try {
-				const prepared =
-					args.prepared ??
-					(await prepareRunTarget({
-						userId: args.userId,
-						agentId: args.agentId,
-						selection: args.selection,
-						target: args.target,
-					}));
+				if (!prepared) {
+					throw (
+						preparationError ?? new Error("Run target could not be prepared")
+					);
+				}
 				const ctx = createExecutionContext(prepared.runner, {
 					runRegistry,
 					parentRunId: root.id,
@@ -340,9 +454,49 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 					sessionId,
 					context: args.context,
 					replyCollector: replies,
+					content: resolvedContent,
+					persistenceContent,
+					contentAgentId: prepared.manifest.id,
+					retention,
+					invokeTranscription: async (manifest, state, content) => {
+						const result = await modelOperations.execute("transcription", {
+							runner: prepared.runner,
+							store,
+							artifactBlobs,
+							userId: args.userId,
+							manifest,
+							state,
+							content,
+							signal,
+							artifactTtlSeconds: retention.artifactTtlSeconds,
+							outboundUrlPolicy: opts.outboundUrlPolicy,
+						});
+						operationResults.push(result.metadata);
+						return result.output;
+					},
+					invokeImage: async (manifest, state, content) => {
+						const result = await modelOperations.execute("image", {
+							runner: prepared.runner,
+							store,
+							artifactBlobs,
+							userId: args.userId,
+							manifest,
+							state,
+							content,
+							signal,
+							artifactTtlSeconds: retention.artifactTtlSeconds,
+							outboundUrlPolicy: opts.outboundUrlPolicy,
+						});
+						operationResults.push(result.metadata);
+						return result.output;
+					},
 					signal,
 				});
-				const result = await execute(prepared.manifest, args.input ?? "", ctx);
+				const result = await execute(
+					prepared.manifest,
+					manifestInput ?? "",
+					ctx,
+				);
 				if (signal.aborted) {
 					throw signal.reason instanceof Error
 						? signal.reason
@@ -356,13 +510,30 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 					sessionId,
 					replies,
 					manifest: prepared.manifest,
+					operationResults,
 				});
 				totalTokens = invokeResult.usage.totalTokens;
 				const responseBody: Record<string, unknown> = {
 					output: result.output,
 					state: result.state,
-					sessionId,
+					retention,
+					runId: root.id,
+					traceId: retention.mode === "session" ? traceId : undefined,
+					status: "completed",
+					requestedAgentVersion: prepared.requestedAgentVersion,
+					resolvedAgentVersion: prepared.agentVersion,
+					provider: invokeResult.provider,
+					model: invokeResult.model,
+					usage: {
+						inputTokens: invokeResult.usage.promptTokens,
+						outputTokens: invokeResult.usage.completionTokens,
+						totalTokens: invokeResult.usage.totalTokens,
+					},
+					finishReason: invokeResult.finishReason,
+					responseId: invokeResult.responseId,
+					warnings: invokeResult.warnings,
 				};
+				if (retention.mode === "session") responseBody.sessionId = sessionId;
 				if (prepared.target === "block") {
 					responseBody.target = "block";
 					responseBody.blockId = prepared.manifest.id;
@@ -383,19 +554,21 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 				throw error;
 			} finally {
 				const endedAt = Date.now();
-				traceRegistry.traceDone(traceId, args.userId, {
-					traceId,
-					ownerId: args.userId,
-					rootName: args.agentId,
-					agentId: args.agentId,
-					startedAt: new Date(root.startedAt).toISOString(),
-					endedAt: new Date(endedAt).toISOString(),
-					durationMs: endedAt - root.startedAt,
-					spanCount,
-					status: traceStatus,
-					totalTokens,
-					totalCostUsd: null,
-				});
+				if (retention.mode === "session") {
+					traceRegistry.traceDone(traceId, args.userId, {
+						traceId,
+						ownerId: args.userId,
+						rootName: args.agentId,
+						agentId: args.agentId,
+						startedAt: new Date(root.startedAt).toISOString(),
+						endedAt: new Date(endedAt).toISOString(),
+						durationMs: endedAt - root.startedAt,
+						spanCount,
+						status: traceStatus,
+						totalTokens,
+						totalCostUsd: null,
+					});
+				}
 			}
 		});
 		// Start before applying an already-fired request abort so the executor owns
@@ -414,9 +587,13 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			wait: async () => {
 				await runRegistry.waitForTerminal(root.id);
 				await flushRunPersistence(root.id);
-				if (opts.runRegistry) {
+				if (opts.runRegistry && retention.mode !== "none") {
 					const final = runRegistry.get(root.id);
-					if (final) await store.forUser(args.userId).putRun(final);
+					if (final) {
+						await store
+							.forUser(args.userId)
+							.putRun(durableRunForRetention(final));
+					}
 				}
 				args.requestSignal?.removeEventListener("abort", cancelFromRequest);
 				if (executionError !== undefined) throw executionError;
@@ -442,8 +619,13 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 				data: JSON.stringify({
 					...startPayload,
 					runId: started.run.id,
-					traceId: started.traceId,
-					sessionId: started.sessionId,
+					retention: { mode: started.run.retentionMode ?? "session" },
+					...(started.run.retentionMode === "session"
+						? {
+								traceId: started.traceId,
+								sessionId: started.sessionId,
+							}
+						: {}),
 				}),
 			});
 
@@ -492,7 +674,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			}
 		});
 
-	app.use("*", cors());
+	app.use("*", cors({ origin: opts.corsOrigins ?? DEFAULT_CORS_ORIGINS }));
 
 	app.get("/health", (c) => {
 		return c.json({ status: "ok", service: "agntz-worker" });
@@ -723,6 +905,8 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 	app.use("/run/block/stream", workerAuth({ store, internalSecret }));
 	app.use("/runs", workerAuth({ store, internalSecret }));
 	app.use("/runs/*", workerAuth({ store, internalSecret }));
+	app.use("/artifacts", workerAuth({ store, internalSecret }));
+	app.use("/artifacts/*", workerAuth({ store, internalSecret }));
 	app.use("/evals", workerAuth({ store, internalSecret }));
 	app.use("/evals/*", workerAuth({ store, internalSecret }));
 	app.use("/datasets", workerAuth({ store, internalSecret }));
@@ -744,6 +928,111 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 	app.use("/webhook-secrets/*", workerAuth({ store, internalSecret }));
 	app.use("/system/agents", internalOnlyAuth({ internalSecret }));
 	app.use("/system/agents/*", internalOnlyAuth({ internalSecret }));
+
+	app.post("/artifacts", async (c) => {
+		const userId = getUserId(c);
+		await sweepExpiredArtifacts(userId);
+		const body = await c.req.parseBody();
+		const file = body.file;
+		if (!(file instanceof File)) {
+			return c.json({ error: "multipart field 'file' is required" }, 400);
+		}
+		if (file.size > 50 * 1024 * 1024) {
+			return c.json({ error: "artifact exceeds the 50 MiB upload limit" }, 413);
+		}
+		const purpose = body.purpose === "output" ? "output" : "input";
+		const requestedTtl = Number(body.expiresInSeconds);
+		const defaultTtl = purpose === "output" ? 86_400 : 3_600;
+		const ttlSeconds = Number.isFinite(requestedTtl)
+			? Math.min(Math.max(Math.floor(requestedTtl), 60), 7 * 86_400)
+			: defaultTtl;
+		const bytes = new Uint8Array(await file.arrayBuffer());
+		const id = `artifact_${randomBytes(18).toString("base64url")}`;
+		const createdAt = new Date();
+		const artifact: ArtifactMetadata = {
+			id,
+			ownerId: userId,
+			purpose,
+			mediaType: file.type || "application/octet-stream",
+			sizeBytes: bytes.byteLength,
+			sha256: sha256(bytes),
+			createdAt: createdAt.toISOString(),
+			expiresAt: new Date(
+				createdAt.getTime() + ttlSeconds * 1000,
+			).toISOString(),
+			status: "ready",
+		};
+		try {
+			await artifactBlobs.put(userId, id, bytes);
+			await store.forUser(userId).putArtifact(artifact);
+		} catch (error) {
+			await artifactBlobs.delete(userId, id).catch(() => {});
+			throw error;
+		}
+		return c.json(artifactToResponse(artifact, c.req.url, internalSecret), 201);
+	});
+
+	app.get("/artifacts/:id", async (c) => {
+		const userId = getUserId(c);
+		await sweepExpiredArtifacts(userId);
+		const artifact = await store.forUser(userId).getArtifact(c.req.param("id"));
+		if (!artifact || artifact.status !== "ready") {
+			return c.json({ error: "Artifact not found" }, 404);
+		}
+		if (artifact.expiresAt <= new Date().toISOString()) {
+			return c.json({ error: "Artifact expired" }, 410);
+		}
+		return c.json(artifactToResponse(artifact, c.req.url, internalSecret));
+	});
+
+	app.get("/artifacts/:id/content", async (c) => {
+		const userId = getUserId(c);
+		await sweepExpiredArtifacts(userId);
+		return serveArtifactContent(
+			c,
+			store,
+			artifactBlobs,
+			userId,
+			c.req.param("id"),
+		);
+	});
+
+	app.delete("/artifacts/:id", async (c) => {
+		const userId = getUserId(c);
+		const artifactId = c.req.param("id");
+		const artifact = await store.forUser(userId).getArtifact(artifactId);
+		if (!artifact) return c.json({ error: "Artifact not found" }, 404);
+		await artifactBlobs.delete(userId, artifactId);
+		await store.forUser(userId).deleteArtifact(artifactId);
+		return c.body(null, 204);
+	});
+
+	// Signed downloads deliberately live outside /artifacts/* auth middleware.
+	app.get("/artifact-download/:id", async (c) => {
+		const ownerId = c.req.query("owner");
+		const expires = c.req.query("expires");
+		const signature = c.req.query("signature");
+		const artifactId = c.req.param("id");
+		if (
+			!ownerId ||
+			!expires ||
+			!signature ||
+			!verifyArtifactDownload(
+				internalSecret,
+				ownerId,
+				artifactId,
+				expires,
+				signature,
+			)
+		) {
+			return c.json({ error: "Invalid artifact download signature" }, 403);
+		}
+		if (!Number.isFinite(Number(expires)) || Number(expires) <= Date.now()) {
+			return c.json({ error: "Artifact download link expired" }, 410);
+		}
+		await sweepExpiredArtifacts(ownerId);
+		return serveArtifactContent(c, store, artifactBlobs, ownerId, artifactId);
+	});
 
 	app.post("/validate", async (c) => {
 		try {
@@ -1275,8 +1564,10 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			const body = (getCachedBody(c) ?? (await c.req.json())) as {
 				agentId?: string;
 				input?: unknown;
+				content?: ContentBlock[];
 				sessionId?: string;
 				context?: string[];
+				retention?: Partial<RetentionPolicy>;
 			};
 			const { agentId, input } = body;
 			agentIdForLog = agentId;
@@ -1289,8 +1580,10 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 				userId,
 				agentId,
 				input,
+				content: body.content,
 				sessionId: body.sessionId,
 				context: body.context,
+				retention: body.retention,
 				prepared,
 				requestSignal: c.req.raw.signal,
 			});
@@ -1301,11 +1594,11 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			);
 			return c.json(completed.responseBody);
 		} catch (error) {
-			const status = isNotFound(error) ? 404 : 500;
+			const status = isBadRequest(error) ? 400 : isNotFound(error) ? 404 : 500;
 			console.error(
 				`[run] failed agent=${agentIdForLog} ${Date.now() - start}ms: ${errorMessage(error)}`,
 			);
-			return c.json({ error: errorMessage(error) }, status);
+			return c.json(errorPayload(error), status);
 		}
 	});
 
@@ -1317,8 +1610,10 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			const body = (getCachedBody(c) ?? (await c.req.json())) as {
 				agentId?: string;
 				input?: unknown;
+				content?: ContentBlock[];
 				sessionId?: string;
 				context?: string[];
+				retention?: Partial<RetentionPolicy>;
 				selection?: unknown;
 			};
 			const { agentId, input } = body;
@@ -1339,8 +1634,10 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 				userId,
 				agentId,
 				input,
+				content: body.content,
 				sessionId: body.sessionId,
 				context: body.context,
+				retention: body.retention,
 				selection,
 				target: "block",
 				prepared,
@@ -1357,7 +1654,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			console.error(
 				`[run:block] failed agent=${agentIdForLog} ${Date.now() - start}ms: ${errorMessage(error)}`,
 			);
-			return c.json({ error: errorMessage(error) }, status);
+			return c.json(errorPayload(error), status);
 		}
 	});
 
@@ -1367,8 +1664,10 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			const body = (getCachedBody(c) ?? (await c.req.json())) as {
 				agentId?: string;
 				input?: unknown;
+				content?: ContentBlock[];
 				sessionId?: string;
 				context?: string[];
+				retention?: Partial<RetentionPolicy>;
 			};
 			const { agentId, input } = body;
 
@@ -1380,8 +1679,10 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 				userId,
 				agentId,
 				input,
+				content: body.content,
 				sessionId: body.sessionId,
 				context: body.context,
+				retention: body.retention,
 				prepared,
 				requestSignal: c.req.raw.signal,
 			});
@@ -1390,7 +1691,10 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 				kind: prepared.manifest.kind,
 			});
 		} catch (error) {
-			return c.json({ error: errorMessage(error) }, 500);
+			return c.json(
+				errorPayload(error),
+				isBadRequest(error) ? 400 : isNotFound(error) ? 404 : 500,
+			);
 		}
 	});
 
@@ -1400,8 +1704,10 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			const body = (getCachedBody(c) ?? (await c.req.json())) as {
 				agentId?: string;
 				input?: unknown;
+				content?: ContentBlock[];
 				sessionId?: string;
 				context?: string[];
+				retention?: Partial<RetentionPolicy>;
 				selection?: unknown;
 			};
 			const { agentId, input } = body;
@@ -1421,8 +1727,10 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 				userId,
 				agentId,
 				input,
+				content: body.content,
 				sessionId: body.sessionId,
 				context: body.context,
+				retention: body.retention,
 				selection,
 				target: "block",
 				prepared,
@@ -1436,7 +1744,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			});
 		} catch (error) {
 			const status = isBadRequest(error) ? 400 : isNotFound(error) ? 404 : 500;
-			return c.json({ error: errorMessage(error) }, status);
+			return c.json(errorPayload(error), status);
 		}
 	});
 
@@ -1487,8 +1795,10 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			const body = (getCachedBody(c) ?? (await c.req.json())) as {
 				agentId?: string;
 				input?: unknown;
+				content?: ContentBlock[];
 				sessionId?: string;
 				context?: string[];
+				retention?: Partial<RetentionPolicy>;
 				callbackUrl?: string;
 				webhookSecretName?: string;
 			};
@@ -1539,8 +1849,11 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 				userId,
 				agentId,
 				input,
+				content: body.content,
 				sessionId: body.sessionId,
 				context: body.context,
+				retention: body.retention,
+				durable: true,
 			});
 
 			console.log(
@@ -1585,8 +1898,8 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 			console.error(
 				`[runs] start failed agent=${agentIdForLog} ${Date.now() - start}ms: ${errorMessage(error)}`,
 			);
-			const status = isNotFound(error) ? 404 : 500;
-			return c.json({ error: errorMessage(error) }, status);
+			const status = isBadRequest(error) ? 400 : isNotFound(error) ? 404 : 500;
+			return c.json(errorPayload(error), status);
 		}
 	});
 
@@ -3267,7 +3580,75 @@ async function loadOwnedRun(
  * route handler out of the business of shaping Run records.
  */
 function runToJSON(run: Run): Run {
-	return run;
+	return durableRunForRetention(run);
+}
+
+function normalizeRetentionPolicy(
+	requested?: Partial<RetentionPolicy>,
+	manifestDefault?: RetentionPolicy,
+): RetentionPolicy {
+	const mode = requested?.mode ?? manifestDefault?.mode ?? "session";
+	if (!["none", "result", "session"].includes(mode)) {
+		throw badRequest("retention.mode must be one of: none, result, session");
+	}
+	const rank = { none: 0, result: 1, session: 2 } as const;
+	if (
+		requested?.mode &&
+		manifestDefault?.mode &&
+		rank[requested.mode] > rank[manifestDefault.mode]
+	) {
+		throw badRequest(
+			`retention.mode '${requested.mode}' is less strict than the manifest default '${manifestDefault.mode}'`,
+		);
+	}
+	const ttlSeconds = requested?.ttlSeconds ?? manifestDefault?.ttlSeconds;
+	const artifactTtlSeconds =
+		requested?.artifactTtlSeconds ?? manifestDefault?.artifactTtlSeconds;
+	for (const [name, value] of [
+		["ttlSeconds", ttlSeconds],
+		["artifactTtlSeconds", artifactTtlSeconds],
+	] as const) {
+		if (
+			value !== undefined &&
+			(!Number.isInteger(value) || value < 60 || value > 31_536_000)
+		) {
+			throw badRequest(
+				`retention.${name} must be an integer between 60 and 31536000 seconds`,
+			);
+		}
+	}
+	return {
+		mode,
+		...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
+		...(artifactTtlSeconds !== undefined ? { artifactTtlSeconds } : {}),
+	};
+}
+
+function durableRunForRetention(run: Run): Run {
+	if (run.retentionMode !== "result") return run;
+	const result = run.result
+		? {
+				output: run.result.output,
+				invocationId: run.result.invocationId,
+				sessionId: "",
+				toolCalls: [],
+				usage: run.result.usage,
+				duration: run.result.duration,
+				model: run.result.model,
+				provider: run.result.provider,
+				requestedModel: run.result.requestedModel,
+				responseId: run.result.responseId,
+				finishReason: run.result.finishReason,
+				rawFinishReason: run.result.rawFinishReason,
+				warnings: run.result.warnings,
+			}
+		: undefined;
+	return {
+		...run,
+		input: "",
+		sessionId: undefined,
+		...(result ? { result } : {}),
+	};
 }
 
 function stringifyRunValue(value: unknown): string {
@@ -3277,6 +3658,11 @@ function stringifyRunValue(value: unknown): string {
 	return json === undefined ? String(value) : json;
 }
 
+function requestedVersionFromAgentRef(agentRef: string): string | undefined {
+	const at = agentRef.lastIndexOf("@");
+	return at > 0 ? agentRef.slice(at + 1) || undefined : undefined;
+}
+
 function aggregateRootResult(args: {
 	registry: RunRegistry;
 	root: Run;
@@ -3284,6 +3670,7 @@ function aggregateRootResult(args: {
 	sessionId: string;
 	replies: Reply[];
 	manifest: AgentManifest;
+	operationResults?: HostedOperationMetadata[];
 }): InvokeResult {
 	const descendants: Run[] = [];
 	const queue = [...args.registry.children(args.root.id)];
@@ -3308,8 +3695,14 @@ function aggregateRootResult(args: {
 		completionTokens += run.result.usage.completionTokens;
 		totalTokens += run.result.usage.totalTokens;
 		toolCalls.push(...run.result.toolCalls);
-		const model = run.result.usage.model ?? run.result.model;
+		const model = run.result.model ?? run.result.usage.model;
 		if (model) models.add(model);
+	}
+	for (const operation of args.operationResults ?? []) {
+		promptTokens += operation.usage.promptTokens;
+		completionTokens += operation.usage.completionTokens;
+		totalTokens += operation.usage.totalTokens;
+		if (operation.model) models.add(operation.model);
 	}
 
 	const model =
@@ -3318,6 +3711,11 @@ function aggregateRootResult(args: {
 			: args.manifest.kind === "llm"
 				? `${args.manifest.model.provider}/${args.manifest.model.name}`
 				: "manifest";
+	const finalModelRun = [...descendants]
+		.reverse()
+		.find((run) => run.result?.provider || run.result?.finishReason);
+	const finalOperation =
+		args.operationResults?.[args.operationResults.length - 1];
 
 	return {
 		output: stringifyRunValue(args.output),
@@ -3332,8 +3730,167 @@ function aggregateRootResult(args: {
 		},
 		duration: Date.now() - args.root.startedAt,
 		model,
+		...((finalOperation?.provider ?? finalModelRun?.result?.provider)
+			? {
+					provider: finalOperation?.provider ?? finalModelRun?.result?.provider,
+				}
+			: {}),
+		...((finalOperation?.requestedModel ??
+		finalModelRun?.result?.requestedModel)
+			? {
+					requestedModel:
+						finalOperation?.requestedModel ??
+						finalModelRun?.result?.requestedModel,
+				}
+			: {}),
+		...(finalModelRun?.result?.responseId
+			? { responseId: finalModelRun.result.responseId }
+			: {}),
+		...((finalOperation?.finishReason ?? finalModelRun?.result?.finishReason)
+			? {
+					finishReason:
+						finalOperation?.finishReason ?? finalModelRun?.result?.finishReason,
+				}
+			: {}),
+		...(finalModelRun?.result?.rawFinishReason
+			? { rawFinishReason: finalModelRun.result.rawFinishReason }
+			: {}),
+		...((finalOperation?.warnings?.length ??
+		finalModelRun?.result?.warnings?.length)
+			? {
+					warnings: finalOperation?.warnings ?? finalModelRun?.result?.warnings,
+				}
+			: {}),
 		...(args.replies.length > 0 ? { replies: [...args.replies] } : {}),
 	};
+}
+
+function artifactToResponse(
+	artifact: ArtifactMetadata,
+	requestUrl: string,
+	secret: string,
+): ArtifactMetadata & { downloadUrl: string } {
+	const expires = String(
+		Math.min(Date.parse(artifact.expiresAt), Date.now() + 15 * 60_000),
+	);
+	const signature = artifactDownloadSignature(
+		secret,
+		artifact.ownerId,
+		artifact.id,
+		expires,
+	);
+	const url = new URL(
+		`/artifact-download/${encodeURIComponent(artifact.id)}`,
+		requestUrl,
+	);
+	url.searchParams.set("owner", artifact.ownerId);
+	url.searchParams.set("expires", expires);
+	url.searchParams.set("signature", signature);
+	return { ...artifact, downloadUrl: url.toString() };
+}
+
+async function serveArtifactContent(
+	c: Context,
+	store: UnifiedStore,
+	blobs: ArtifactBlobStore,
+	ownerId: string,
+	artifactId: string,
+) {
+	const artifact = await store.forUser(ownerId).getArtifact(artifactId);
+	if (!artifact || artifact.status !== "ready") {
+		return c.json({ error: "Artifact not found" }, 404);
+	}
+	if (artifact.expiresAt <= new Date().toISOString()) {
+		return c.json({ error: "Artifact expired" }, 410);
+	}
+	const bytes = await blobs.get(ownerId, artifactId);
+	if (!bytes) return c.json({ error: "Artifact body not found" }, 404);
+	const responseBytes = Uint8Array.from(bytes);
+	return c.body(responseBytes, 200, {
+		"Content-Type": artifact.mediaType,
+		"Content-Length": String(bytes.byteLength),
+		"Content-Disposition": `inline; filename="${artifact.id}"`,
+		"Cache-Control": "private, max-age=60",
+	});
+}
+
+async function resolveHostedContent(
+	store: UnifiedStore,
+	blobs: ArtifactBlobStore,
+	ownerId: string,
+	content: ContentBlock[] | undefined,
+): Promise<ContentBlock[] | undefined> {
+	if (!content) return undefined;
+	const scoped = store.forUser(ownerId);
+	return Promise.all(
+		content.map(async (block) => {
+			if (block.type === "text" || !("artifactId" in block)) return block;
+			const artifact = await scoped.getArtifact(block.artifactId);
+			if (
+				!artifact ||
+				artifact.status !== "ready" ||
+				artifact.expiresAt <= new Date().toISOString()
+			) {
+				throw badRequest(
+					`Artifact '${block.artifactId}' is missing or expired`,
+				);
+			}
+			const bytes = await blobs.get(ownerId, block.artifactId);
+			if (!bytes) {
+				throw badRequest(`Artifact '${block.artifactId}' body is unavailable`);
+			}
+			if (block.type === "image" && !artifact.mediaType.startsWith("image/")) {
+				throw badRequest(
+					`Artifact '${block.artifactId}' is not an image (${artifact.mediaType})`,
+				);
+			}
+			if (block.type === "audio" && !artifact.mediaType.startsWith("audio/")) {
+				throw badRequest(
+					`Artifact '${block.artifactId}' is not audio (${artifact.mediaType})`,
+				);
+			}
+			return {
+				type: block.type,
+				base64: Buffer.from(bytes).toString("base64"),
+				mediaType: artifact.mediaType,
+				...(block.type === "image" && block.detail
+					? { detail: block.detail }
+					: {}),
+			} as ContentBlock;
+		}),
+	);
+}
+
+function artifactDownloadSignature(
+	secret: string,
+	ownerId: string,
+	artifactId: string,
+	expires: string,
+): string {
+	return createHmac("sha256", secret)
+		.update(`${ownerId}.${artifactId}.${expires}`)
+		.digest("base64url");
+}
+
+function verifyArtifactDownload(
+	secret: string,
+	ownerId: string,
+	artifactId: string,
+	expires: string,
+	signature: string,
+): boolean {
+	const expected = artifactDownloadSignature(
+		secret,
+		ownerId,
+		artifactId,
+		expires,
+	);
+	const actualBytes = Buffer.from(signature);
+	const expectedBytes = Buffer.from(expected);
+	return (
+		actualBytes.length === expectedBytes.length &&
+		timingSafeEqual(actualBytes, expectedBytes)
+	);
 }
 
 function normalizeManifestSelection(
@@ -3626,6 +4183,22 @@ function clampInt(
 function errorMessage(error: unknown): string {
 	if (error instanceof Error) return error.message;
 	return String(error);
+}
+
+function errorPayload(error: unknown): {
+	error: string;
+	code?: string;
+	details?: unknown[];
+} {
+	if (!error || typeof error !== "object") {
+		return { error: errorMessage(error) };
+	}
+	const candidate = error as { code?: unknown; details?: unknown };
+	return {
+		error: errorMessage(error),
+		...(typeof candidate.code === "string" ? { code: candidate.code } : {}),
+		...(Array.isArray(candidate.details) ? { details: candidate.details } : {}),
+	};
 }
 
 function badRequest(message: string): Error {

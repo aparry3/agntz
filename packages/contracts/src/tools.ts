@@ -1,3 +1,4 @@
+import type { CallbackToolEntry } from "./callback-tool.js";
 import type { HTTPToolEntry } from "./http-tool.js";
 
 /**
@@ -15,7 +16,8 @@ export type ToolReference =
 			headers?: Record<string, string>;
 	  }
 	| { type: "agent"; agentId: string }
-	| { type: "http"; entry: HTTPToolEntry };
+	| { type: "http"; entry: HTTPToolEntry }
+	| { type: "callback"; entry: CallbackToolEntry };
 
 /**
  * A reusable skill: instructions plus optional tools, loaded on demand by the

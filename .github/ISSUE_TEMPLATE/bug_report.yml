@@ -1,0 +1,41 @@
+name: Bug report
+description: Report a reproducible defect in an agntz package or service
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include secrets or report vulnerabilities here. Use SECURITY.md for private reports.
+  - type: input
+    id: package
+    attributes:
+      label: Package and version
+      placeholder: "@agntz/sdk 0.2.0"
+    validations:
+      required: true
+  - type: input
+    id: runtime
+    attributes:
+      label: Runtime and operating system
+      placeholder: "Node 22.14 on Ubuntu 24.04"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include the smallest manifest or code sample and exact commands.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and logs
+    validations:
+      required: true

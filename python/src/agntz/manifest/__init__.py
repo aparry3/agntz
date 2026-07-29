@@ -4,6 +4,7 @@ from .conditions import evaluate_condition
 from .executor import execute, execute_with_state
 from .parser import (
     ManifestParseError,
+    find_manifest_files,
     load_manifest_file,
     load_manifests_from_dir,
     normalize_manifest,
@@ -51,6 +52,7 @@ __all__ = [
     "evaluate_condition",
     "execute",
     "execute_with_state",
+    "find_manifest_files",
     "get_manifest_state_key",
     "get_state_key",
     "interpolate",

@@ -32,6 +32,7 @@ The \`.env.example\` lists every variable. The non-optional ones:
 | \`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY\` | app | From Clerk Dashboard → API Keys. Enable Organizations for shared workspaces. |
 | \`CLERK_SECRET_KEY\` | app | Same source |
 | \`WORKER_INTERNAL_SECRET\` | app + worker | Must be identical on both. Generate with \`openssl rand -base64 32\`. |
+| \`CORS_ORIGINS\` | worker | Comma-separated browser origins allowed to call the API. Defaults include local development. |
 | \`DATABASE_URL\` | app + worker | Defaults to the compose-provided Postgres. |
 | \`OPENAI_API_KEY\` (or any provider key) | worker | At least one provider key for default models. |
 | \`DEFAULT_MODEL_PROVIDER\`, \`DEFAULT_MODEL_NAME\` | worker | Fallback when an agent omits \`model:\`. |

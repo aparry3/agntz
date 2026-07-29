@@ -1,7 +1,7 @@
 # @agntz/client
 
 Official TypeScript HTTP client for hosted Agntz and self-hosted workers. It
-runs in Node 20+ and modern browsers, with zero runtime dependencies.
+runs in Node 22+ and modern browsers, with zero runtime dependencies.
 
 ## Install
 
@@ -27,6 +27,49 @@ const result = await client.agents.run({
 });
 
 console.log(result.output);
+console.log(result.model, result.usage, result.resolvedAgentVersion);
+```
+
+`agents.run`, `agents.stream`, and `agents.start` share one input contract.
+The active manifest kind selects text generation, structured output,
+transcription, or image generation.
+
+## Rich content, artifacts, and retention
+
+Local image and audio files are uploaded automatically and replaced with
+tenant-scoped artifact references before the run starts:
+
+```ts
+const transcript = await client.agents.run({
+  agentId: "social-narration-transcription",
+  content: [
+    {
+      type: "audio",
+      file: { path: "./narration.mp3", mediaType: "audio/mpeg" },
+    },
+  ],
+  retention: {
+    mode: "none",
+    artifactTtlSeconds: 3600,
+  },
+});
+
+console.log(transcript.output, transcript.model, transcript.usage);
+```
+
+Use `mode: "none"` for synchronous stateless calls, `"result"` to retain a
+redacted result/run record, and `"session"` for conversation history and
+traces. Durable `agents.start`/`runs.start` calls require `result` or `session`.
+
+Artifacts can also be managed explicitly:
+
+```ts
+const artifact = await client.artifacts.upload({
+  file: { path: "./frame.png", mediaType: "image/png" },
+  expiresInSeconds: 3600,
+});
+const bytes = await client.artifacts.download(artifact.id);
+await client.artifacts.delete(artifact.id);
 ```
 
 ## Streaming

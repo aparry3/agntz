@@ -7,8 +7,11 @@
     "build:app": "pnpm --filter @agntz/app build",
     "build:site": "pnpm --filter @agntz/site build",
     "test": "turbo test",
+    "test:packed": "node scripts/test-packed-consumer.mjs",
+    "test:providers:smoke": "pnpm --filter @agntz/provider-harness test:smoke",
+    "test:providers:compat": "pnpm --filter @agntz/provider-harness test:compat",
     "lint": "turbo lint",
-    "format": "biome check --write packages/*/src packages/*/tests apps/provider-harness/src --no-errors-on-unmatched",
+    "format": "biome check --write packages/*/src packages/*/tests apps/provider-harness/src apps/provider-harness/tests --no-errors-on-unmatched",
     "prepare": "node scripts/install-hooks.mjs",
     "dev": "turbo dev",
     "dev:app": "pnpm --filter @agntz/app dev",
@@ -26,9 +29,15 @@
   },
   "pnpm": {
     "overrides": {
-      "fast-uri": "3.1.2",
-      "hono": "4.12.23",
-      "path-to-regexp": "8.4.0"
+      "fast-uri": "3.1.4",
+      "@hono/node-server": "1.19.13",
+      "hono": "4.12.29",
+      "ip-address": "10.2.0",
+      "path-to-regexp": "8.4.0",
+      "postcss": "8.5.18",
+      "qs": "6.15.3",
+      "sharp": "0.35.3",
+      "uuid": "11.1.1"
     },
     "onlyBuiltDependencies": [
       "better-sqlite3",

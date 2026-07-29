@@ -7,6 +7,7 @@ from .client import (
     AgntzClient,
     AgntzError,
     ApiKeyRecord,
+    ArtifactRef,
     AsyncAgntzClient,
     AuthenticationError,
     EvalCaseResult,
@@ -20,7 +21,11 @@ from .client import (
     EvalRunListResult,
     EvalRunSummary,
     NotFoundError,
+    RetentionRequest,
+    Run,
+    RunResult,
     StreamError,
+    TokenUsage,
 )
 from .context import (
     NamespaceGrantError,
@@ -97,6 +102,7 @@ __all__ = [
     "DeterministicReasoner",
     "DirtyTopic",
     "ApiKeyRecord",
+    "ArtifactRef",
     "EvalCaseResult",
     "EvalCriterion",
     "EvalCriterionResult",
@@ -136,11 +142,14 @@ __all__ = [
     "PostgresMemoryStoreOptions",
     "ProtectedNamespaceRule",
     "ReasonerModelConfig",
+    "RetentionRequest",
     "ResourceProvider",
     "ResourceProviderToolDefinition",
     "ResourceRegistrationContext",
     "ResourceToolContext",
     "SQLiteStore",
+    "Run",
+    "RunResult",
     "SqliteMemoryStore",
     "SqliteMemoryStoreOptions",
     "StreamError",
@@ -149,6 +158,7 @@ __all__ = [
     "ToolResult",
     "TopicMeta",
     "TopicSummary",
+    "TokenUsage",
     "WritePolicy",
     "agntz",
     "agntz_reasoner",
@@ -162,4 +172,4 @@ __all__ = [
     "tool",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

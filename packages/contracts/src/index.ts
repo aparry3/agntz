@@ -12,6 +12,7 @@
  * (which parses it from YAML).
  */
 export * from "./agent-ref.js";
+export * from "./callback-tool.js";
 export * from "./crypto.js";
 export * from "./errors.js";
 export * from "./eval-runs.js";

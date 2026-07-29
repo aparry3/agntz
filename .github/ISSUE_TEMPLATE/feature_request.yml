@@ -1,0 +1,36 @@
+name: Feature request
+description: Propose a concrete improvement to agntz
+title: "feat: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the workflow or limitation, not only the desired API.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Primary surface
+      options:
+        - TypeScript SDK
+        - Python SDK
+        - Manifest schema
+        - CLI
+        - Worker or hosted API
+        - memrez
+        - Documentation
+    validations:
+      required: true

@@ -18,7 +18,12 @@ import { isContentBlockArray } from "./types.js";
  */
 export type AiMessagePart =
 	| { type: "text"; text: string; providerOptions?: unknown }
-	| { type: "image"; image: string; mediaType?: string }
+	| {
+			type: "image";
+			image: string;
+			mediaType?: string;
+			providerOptions?: unknown;
+	  }
 	| {
 			type: "file";
 			data: string;
@@ -179,12 +184,27 @@ export function contentBlocksToAiSdkParts(
 			parts.push({ type: "text", text: b.text });
 			continue;
 		}
-		if ("base64" in b) {
-			parts.push({ type: "image", image: b.base64, mediaType: b.mediaType });
+		if (b.type === "image" && "base64" in b) {
+			parts.push({
+				type: "image",
+				image: b.base64,
+				mediaType: b.mediaType,
+				providerOptions: b.detail
+					? { openai: { imageDetail: b.detail } }
+					: undefined,
+			});
 			continue;
 		}
-		// image-with-url that escaped normalization: degrade gracefully.
-		parts.push({ type: "text", text: `[image: ${b.url}]` });
+		if (b.type === "audio" && "base64" in b) {
+			parts.push({
+				type: "file",
+				data: b.base64,
+				mediaType: b.mediaType,
+			});
+			continue;
+		}
+		const source = "url" in b ? b.url : "artifactId" in b ? b.artifactId : "";
+		parts.push({ type: "text", text: `[${b.type}: ${source}]` });
 	}
 	return parts;
 }
@@ -200,7 +220,7 @@ export function flattenContentToText(content: string | ContentBlock[]): string {
 	const pieces: string[] = [];
 	for (const b of content) {
 		if (b.type === "text") pieces.push(b.text);
-		else pieces.push("[image]");
+		else pieces.push(`[${b.type}]`);
 	}
 	return pieces.join(" ");
 }

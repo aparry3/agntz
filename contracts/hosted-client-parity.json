@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "resources": {
+    "agents": ["run", "stream", "start"],
+    "artifacts": ["upload", "get", "download", "delete"],
+    "runs": ["start", "get", "stream", "cancel", "list"]
+  },
+  "runRequestFields": [
+    "agentId",
+    "input",
+    "content",
+    "sessionId",
+    "context",
+    "retention"
+  ],
+  "durableRunFields": ["callbackUrl", "webhookSecretName"],
+  "retentionModes": ["none", "result", "session"],
+  "contentBlockTypes": ["text", "image", "audio"]
+}

@@ -6,10 +6,15 @@ export type {
 	LocalAgentsResource,
 	LocalDatasetsResource,
 	LocalEvalsResource,
+	LocalMemoryCurateOptions,
+	LocalMemoryListOptions,
 	LocalMemoryResource,
+	LocalMemoryReadOptions,
+	LocalMemoryScanOptions,
 	LocalRunsResource,
 	LocalSessionsResource,
 	LocalTracesResource,
+	MemrezLike,
 } from "./client.js";
 
 // Loader (exposed for tests and advanced cases)

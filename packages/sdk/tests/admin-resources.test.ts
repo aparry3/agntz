@@ -83,4 +83,58 @@ describe("agntz() — admin resources", () => {
 		expect(del?.deleted).toBe(1);
 		expect(await client.memory?.list(["app/user/u1"])).toHaveLength(0);
 	});
+
+	it("honors pre-aborted import signals before mutating local state", async () => {
+		const store = new MemoryStore().forUser("local-abort");
+		const memrez = createMemrez();
+		const client = await agntz({
+			agents: fixturesDir,
+			tools: noopTools,
+			store,
+			memrez,
+		});
+		const controller = new AbortController();
+		controller.abort(new Error("stop import"));
+
+		await expect(
+			client.agents.import({
+				agents: [
+					{
+						id: "never-added",
+						manifest:
+							"id: never-added\nkind: llm\nmodel: { provider: openai, name: gpt-5.4 }\ninstruction: test",
+					},
+				],
+				signal: controller.signal,
+			}),
+		).rejects.toThrow("stop import");
+		await expect(
+			client.sessions.import({
+				sessions: [{ sessionId: "never-added", messages: [] }],
+				signal: controller.signal,
+			}),
+		).rejects.toThrow("stop import");
+		await expect(
+			client.memory?.import({
+				entries: [
+					{
+						id: "never-added",
+						scope: "app/user/u1",
+						content: "not written",
+						topics: ["test"],
+						type: "fact",
+						status: "active",
+						createdAt: new Date().toISOString(),
+						updatedAt: new Date().toISOString(),
+					},
+				],
+				signal: controller.signal,
+			}),
+		).rejects.toThrow("stop import");
+
+		expect(client.manifests.has("never-added")).toBe(false);
+		expect(await store.getMessages("never-added")).toEqual([]);
+		expect(await memrez.store.getEntry("never-added")).toBeNull();
+		await client.close();
+	});
 });

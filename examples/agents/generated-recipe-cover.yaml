@@ -1,0 +1,19 @@
+id: generated-recipe-cover
+kind: image
+name: Generated recipe cover
+model:
+  provider: openai
+  name: gpt-image-1.5
+  providerOptions:
+    openai:
+      quality: high
+      background: opaque
+instruction: Create an appetizing editorial food photograph.
+prompt: "Recipe: {{userQuery}}"
+settings:
+  n: 1
+  size: 1024x1024
+retention:
+  mode: result
+  ttlSeconds: 86400
+  artifactTtlSeconds: 86400

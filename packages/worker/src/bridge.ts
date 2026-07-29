@@ -3,8 +3,10 @@ import {
 	manifestToAgentDefinition,
 } from "@agntz/core";
 import type {
+	ContentBlock,
 	ManifestBridgeHooks,
 	Reply,
+	RetentionPolicy,
 	RunRegistry,
 	Runner,
 	SpanEmitter,
@@ -12,8 +14,11 @@ import type {
 import type {
 	AgentManifest,
 	AgentRef,
+	AgentState,
 	ExecutionContext,
+	ImageAgentManifest,
 	ToolCallConfig,
+	TranscriptionAgentManifest,
 } from "@agntz/core/manifest";
 import { parseManifest } from "@agntz/core/manifest";
 
@@ -59,6 +64,20 @@ export interface CreateExecutionContextOptions {
 	 * care about replies (e.g. `/runs` async creation) can omit it.
 	 */
 	replyCollector?: Reply[];
+	content?: ContentBlock[];
+	persistenceContent?: ContentBlock[];
+	contentAgentId?: string;
+	retention?: RetentionPolicy;
+	invokeTranscription?: (
+		manifest: TranscriptionAgentManifest,
+		state: AgentState,
+		content: ContentBlock[] | undefined,
+	) => Promise<unknown>;
+	invokeImage?: (
+		manifest: ImageAgentManifest,
+		state: AgentState,
+		content: ContentBlock[] | undefined,
+	) => Promise<unknown>;
 }
 
 /**
@@ -114,6 +133,12 @@ export function createExecutionContext(
 		context: options.context,
 		signal: options.signal,
 		replyCollector: options.replyCollector,
+		content: options.content,
+		persistenceContent: options.persistenceContent,
+		contentAgentId: options.contentAgentId,
+		retention: options.retention,
+		invokeTranscription: options.invokeTranscription,
+		invokeImage: options.invokeImage,
 	});
 }
 

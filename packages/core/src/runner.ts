@@ -2,6 +2,7 @@ import { formatAgentRef, isIsoTimestamp, parseAgentRef } from "./agent-ref.js";
 import type { ParsedAgentRef } from "./agent-ref.js";
 import { MapTokenCache, createTokenResolver } from "./auth/index.js";
 import type { TokenCache, TokenResolver } from "./auth/index.js";
+import { buildCallbackToolDefinition } from "./callback-tool.js";
 import {
 	AgentNotFoundError,
 	AgentVersionNotFoundError,
@@ -812,12 +813,13 @@ export class Runner {
 		}
 
 		// Close stores that have a close() method (e.g., SQLite)
-		for (const store of [
+		const stores = new Set([
 			this.agentStore,
 			this.sessionStore,
 			this.contextStore,
 			this.logStore,
-		]) {
+		]);
+		for (const store of stores) {
 			if (isClosableStore(store)) {
 				cleanups.push(Promise.resolve(store.close()).catch(() => {}));
 			}
@@ -885,6 +887,15 @@ export class Runner {
 			const invocationId = generateInvocationId();
 			const resolved = await self.resolveAgent(agentId);
 			const agent = resolved.agent;
+			const retention = options.retention ??
+				agent.retention ?? { mode: "session" };
+			options = { ...options, retention };
+			const persistSession = retention.mode === "session";
+			let persistedInput = options._persistenceInput ?? input;
+			const retentionExpiresAt =
+				retention.mode !== "none" && retention.ttlSeconds
+					? new Date(startTime + retention.ttlSeconds * 1000).toISOString()
+					: undefined;
 			const resolvedResources = self.resolveResourcesForAgent(
 				agent,
 				options._resourceModes,
@@ -893,14 +904,20 @@ export class Runner {
 
 			// Always work with a concrete sessionId — symmetric with invoke().
 			const effectiveSessionId = options.sessionId ?? generateSessionId();
-			await self.sessionStore.getOrCreateSession(effectiveSessionId);
+			if (persistSession) {
+				await self.sessionStore.getOrCreateSession(effectiveSessionId);
+			}
 
 			// For multimodal input the Run record/InvocationLog still need a string
 			// — the flattened text view is what list UIs render and what spawn
 			// semantics require. The actual blocks (with base64 image bodies) live
 			// on the persisted Message and on InvocationLog.input.
 			const inputAsString =
-				typeof input === "string" ? input : flattenContentToText(input);
+				retention.mode === "session"
+					? typeof persistedInput === "string"
+						? persistedInput
+						: flattenContentToText(persistedInput)
+					: "";
 
 			// ─── Secrets pre-fetch ────────────────────────────────────────────
 			// Mirror of the non-streaming invoke() path. See comments there for
@@ -977,7 +994,9 @@ export class Runner {
 								input: inputAsString,
 								parentRunId: options.parentRunId,
 								userId: options.userId,
-								sessionId: effectiveSessionId,
+								sessionId: persistSession ? effectiveSessionId : undefined,
+								retentionMode: retention.mode,
+								expiresAt: retentionExpiresAt,
 								spanEmitter: options.spanEmitter,
 							});
 							runId = root.id;
@@ -993,7 +1012,9 @@ export class Runner {
 							input: inputAsString,
 							parentRunId: options.parentRunId,
 							userId: options.userId,
-							sessionId: effectiveSessionId,
+							sessionId: persistSession ? effectiveSessionId : undefined,
+							retentionMode: retention.mode,
+							expiresAt: retentionExpiresAt,
 							spanEmitter: options.spanEmitter,
 						});
 						runId = root.id;
@@ -1072,7 +1093,7 @@ export class Runner {
 			try {
 				// Load session history
 				let sessionHistory: Message[] = [];
-				{
+				if (persistSession) {
 					sessionHistory =
 						await self.sessionStore.getMessages(effectiveSessionId);
 					const maxMessages = self.config.session?.maxMessages ?? 50;
@@ -1124,6 +1145,9 @@ export class Runner {
 							outboundUrlPolicy: self.config.outboundUrlPolicy,
 						})
 					: input;
+				if (options._persistenceInput === undefined) {
+					persistedInput = normalizedInput;
+				}
 
 				const messages = buildMessages({
 					agent,
@@ -1153,22 +1177,30 @@ export class Runner {
 					resources: resolvedResources.resources,
 					grants: options.context ?? [],
 					invocationId,
+					persistSession,
 				});
 
 				// See invoke() for the rationale. Persist the user turn up-front when
 				// the agent can reply mid-run so reply rows land after the user row
 				// in session history.
 				const replyEnabled = Boolean(agent.reply);
-				if (replyEnabled) {
+				if (replyEnabled && persistSession) {
 					const nowEarly = new Date().toISOString();
 					await self.sessionStore.append(effectiveSessionId, [
-						{ role: "user", content: normalizedInput, timestamp: nowEarly },
+						{ role: "user", content: persistedInput, timestamp: nowEarly },
 					]);
 				}
 
 				// allToolCalls and totalUsage are hoisted above so a mid-loop cancel
 				// can still produce an audit log entry.
 				let finalOutput = "";
+				let finalProvider: string | undefined;
+				let finalRequestedModel: string | undefined;
+				let finalModel: string | undefined;
+				let finalResponseId: string | undefined;
+				let finalFinishReason: string | undefined;
+				let finalRawFinishReason: string | undefined;
+				let finalWarnings: string[] | undefined;
 				let step = 0;
 
 				const baseMaxSteps =
@@ -1266,6 +1298,14 @@ export class Runner {
 						resultResponseMessages = streamResult.responseMessages
 							? await streamResult.responseMessages
 							: undefined;
+						const completedStep = await streamResult.toResult();
+						finalProvider = completedStep.provider;
+						finalRequestedModel = completedStep.requestedModel;
+						finalModel = completedStep.model;
+						finalResponseId = completedStep.responseId;
+						finalFinishReason = completedStep.finishReason;
+						finalRawFinishReason = completedStep.rawFinishReason;
+						finalWarnings = completedStep.warnings;
 					} else {
 						// Fallback for providers without streaming
 						const result = await self.modelProvider.generateText({
@@ -1285,6 +1325,13 @@ export class Runner {
 						resultResponseMessages = result.responseMessages;
 						stepUsage = result.usage;
 						stepFinishReason = result.finishReason;
+						finalProvider = result.provider;
+						finalRequestedModel = result.requestedModel;
+						finalModel = result.model;
+						finalResponseId = result.responseId;
+						finalFinishReason = result.finishReason;
+						finalRawFinishReason = result.rawFinishReason;
+						finalWarnings = result.warnings;
 
 						// For symmetry, emit the entire text as a single delta.
 						if (resultText) {
@@ -1493,6 +1540,7 @@ export class Runner {
 							resources: resolvedResources.resources,
 							grants: options.context ?? [],
 							invocationId,
+							persistSession,
 						});
 						const seen = new Set(base.map((t) => t.name));
 						availableTools = base.concat(
@@ -1516,13 +1564,13 @@ export class Runner {
 				// Reply path: see invoke() — user + replies were persisted earlier,
 				// so we only need the final assistant row here, and skip it when
 				// empty replies already represent the response.
-				if (!effectiveSignal?.aborted) {
+				if (persistSession && !effectiveSignal?.aborted) {
 					const now = new Date().toISOString();
 					const newMessages: Message[] = [];
 					if (!replyEnabled) {
 						newMessages.push({
 							role: "user",
-							content: normalizedInput,
+							content: persistedInput,
 							timestamp: now,
 						});
 					}
@@ -1542,7 +1590,12 @@ export class Runner {
 				}
 
 				// Context write
-				if (agent.contextWrite && options.contextIds?.length && finalOutput) {
+				if (
+					persistSession &&
+					agent.contextWrite &&
+					options.contextIds?.length &&
+					finalOutput
+				) {
 					for (const contextId of options.contextIds) {
 						await self.contextStore.addContext(contextId, {
 							contextId,
@@ -1558,19 +1611,21 @@ export class Runner {
 
 				// Log — preserve the normalized blocks (or original string) so the
 				// input view rebuilds exactly what was sent to the model.
-				await self.logStore.log({
-					id: invocationId,
-					agentId,
-					sessionId: effectiveSessionId,
-					input: normalizedInput,
-					output: finalOutput,
-					toolCalls: allToolCalls,
-					usage: totalUsage,
-					duration,
-					model: modelStr,
-					status: cancelled ? "cancelled" : "completed",
-					timestamp: new Date().toISOString(),
-				});
+				if (persistSession) {
+					await self.logStore.log({
+						id: invocationId,
+						agentId,
+						sessionId: effectiveSessionId,
+						input: persistedInput,
+						output: finalOutput,
+						toolCalls: allToolCalls,
+						usage: totalUsage,
+						duration,
+						model: finalModel ?? modelStr,
+						status: cancelled ? "cancelled" : "completed",
+						timestamp: new Date().toISOString(),
+					});
+				}
 
 				const invokeResult: InvokeResult = {
 					output: finalOutput,
@@ -1579,7 +1634,17 @@ export class Runner {
 					toolCalls: allToolCalls,
 					usage: totalUsage,
 					duration,
-					model: modelStr,
+					model: finalModel ?? modelStr,
+					...(finalProvider ? { provider: finalProvider } : {}),
+					...(finalRequestedModel
+						? { requestedModel: finalRequestedModel }
+						: {}),
+					...(finalResponseId ? { responseId: finalResponseId } : {}),
+					...(finalFinishReason ? { finishReason: finalFinishReason } : {}),
+					...(finalRawFinishReason
+						? { rawFinishReason: finalRawFinishReason }
+						: {}),
+					...(finalWarnings?.length ? { warnings: finalWarnings } : {}),
 					...(replyCollector.length > 0 ? { replies: replyCollector } : {}),
 				};
 
@@ -1607,26 +1672,28 @@ export class Runner {
 					surfacedErr instanceof InvocationCancelledError ||
 					surfacedErr instanceof InvocationTimeoutError ||
 					(effectiveSignal?.aborted ?? false);
-				try {
-					await self.logStore.log({
-						id: invocationId,
-						agentId,
-						sessionId: effectiveSessionId,
-						input,
-						output: "",
-						toolCalls: allToolCalls,
-						usage: totalUsage,
-						duration: Date.now() - startTime,
-						model: modelStr,
-						error:
-							surfacedErr instanceof Error
-								? surfacedErr.message
-								: String(surfacedErr),
-						status: cancelled ? "cancelled" : "failed",
-						timestamp: new Date().toISOString(),
-					});
-				} catch {
-					// Log persistence failure should not mask the original error.
+				if (persistSession) {
+					try {
+						await self.logStore.log({
+							id: invocationId,
+							agentId,
+							sessionId: effectiveSessionId,
+							input: persistedInput,
+							output: "",
+							toolCalls: allToolCalls,
+							usage: totalUsage,
+							duration: Date.now() - startTime,
+							model: modelStr,
+							error:
+								surfacedErr instanceof Error
+									? surfacedErr.message
+									: String(surfacedErr),
+							status: cancelled ? "cancelled" : "failed",
+							timestamp: new Date().toISOString(),
+						});
+					} catch {
+						// Log persistence failure should not mask the original error.
+					}
 				}
 				if (runRegistry && runId) {
 					runRegistry.notifyFailed(runId, surfacedErr);
@@ -1680,6 +1747,15 @@ export class Runner {
 		const invocationId = generateInvocationId();
 		const resolved = await this.resolveAgent(agentId);
 		const agent = resolved.agent;
+		const retention = options.retention ??
+			agent.retention ?? { mode: "session" };
+		options = { ...options, retention };
+		const persistSession = retention.mode === "session";
+		let persistedInput = options._persistenceInput ?? input;
+		const retentionExpiresAt =
+			retention.mode !== "none" && retention.ttlSeconds
+				? new Date(startTime + retention.ttlSeconds * 1000).toISOString()
+				: undefined;
 		const resolvedResources = this.resolveResourcesForAgent(
 			agent,
 			options._resourceModes,
@@ -1690,14 +1766,20 @@ export class Runner {
 		// didn't pass one. The session row is ensured below so the id has a
 		// persistent home before any messages get appended.
 		const effectiveSessionId = options.sessionId ?? generateSessionId();
-		await this.sessionStore.getOrCreateSession(effectiveSessionId);
+		if (persistSession) {
+			await this.sessionStore.getOrCreateSession(effectiveSessionId);
+		}
 
 		// For multimodal input the Run record/telemetry input still need a
 		// string view (used by list UIs and span attributes); the actual blocks
 		// (with base64 image bodies) live on the persisted Message and on
 		// InvocationLog.input.
 		const inputAsString =
-			typeof input === "string" ? input : flattenContentToText(input);
+			retention.mode === "session"
+				? typeof persistedInput === "string"
+					? persistedInput
+					: flattenContentToText(persistedInput)
+				: "";
 
 		// ─── Secrets pre-fetch ────────────────────────────────────────────
 		// Walk the agent's HTTP tool entries and pre-resolve every
@@ -1780,7 +1862,9 @@ export class Runner {
 							input: inputAsString,
 							parentRunId: options.parentRunId,
 							userId: options.userId,
-							sessionId: effectiveSessionId,
+							sessionId: persistSession ? effectiveSessionId : undefined,
+							retentionMode: retention.mode,
+							expiresAt: retentionExpiresAt,
 							spanEmitter: options.spanEmitter,
 						});
 						runId = root.id;
@@ -1796,7 +1880,9 @@ export class Runner {
 						input: inputAsString,
 						parentRunId: options.parentRunId,
 						userId: options.userId,
-						sessionId: effectiveSessionId,
+						sessionId: persistSession ? effectiveSessionId : undefined,
+						retentionMode: retention.mode,
+						expiresAt: retentionExpiresAt,
 						spanEmitter: options.spanEmitter,
 					});
 					runId = root.id;
@@ -1888,7 +1974,7 @@ export class Runner {
 		try {
 			// Load session history
 			let sessionHistory: Message[] = [];
-			{
+			if (persistSession) {
 				sessionHistory =
 					await this.sessionStore.getMessages(effectiveSessionId);
 				const maxMessages = this.config.session?.maxMessages ?? 50;
@@ -1942,6 +2028,9 @@ export class Runner {
 						outboundUrlPolicy: this.config.outboundUrlPolicy,
 					})
 				: input;
+			if (options._persistenceInput === undefined) {
+				persistedInput = normalizedInput;
+			}
 
 			// Build messages
 			const messages = buildMessages({
@@ -1976,6 +2065,7 @@ export class Runner {
 				resources: resolvedResources.resources,
 				grants: options.context ?? [],
 				invocationId,
+				persistSession,
 			});
 
 			// When the agent can reply mid-run, persist the user input *before* the
@@ -1984,10 +2074,10 @@ export class Runner {
 			// The end-of-run persistence path below only writes the final assistant
 			// row in that case.
 			const replyEnabled = Boolean(agent.reply);
-			if (replyEnabled) {
+			if (replyEnabled && persistSession) {
 				const now = new Date().toISOString();
 				await this.sessionStore.append(effectiveSessionId, [
-					{ role: "user", content: normalizedInput, timestamp: now },
+					{ role: "user", content: persistedInput, timestamp: now },
 				]);
 			}
 
@@ -1995,6 +2085,13 @@ export class Runner {
 			// totalUsage are hoisted above so a mid-loop cancel can still produce
 			// an audit log entry.
 			let finalOutput = "";
+			let finalProvider: string | undefined;
+			let finalRequestedModel: string | undefined;
+			let finalModel: string | undefined;
+			let finalResponseId: string | undefined;
+			let finalFinishReason: string | undefined;
+			let finalRawFinishReason: string | undefined;
+			let finalWarnings: string[] | undefined;
 			let step = 0;
 
 			const baseMaxSteps =
@@ -2094,6 +2191,13 @@ export class Runner {
 
 				// Accumulate usage
 				accumulateTokenUsage(totalUsage, result.usage);
+				finalProvider = result.provider;
+				finalRequestedModel = result.requestedModel;
+				finalModel = result.model;
+				finalResponseId = result.responseId;
+				finalFinishReason = result.finishReason;
+				finalRawFinishReason = result.rawFinishReason;
+				finalWarnings = result.warnings;
 
 				// Termination rule. Without a registry: classic "no tool calls → done".
 				// With a registry: a child may have settled *during* this model call
@@ -2284,6 +2388,7 @@ export class Runner {
 						resources: resolvedResources.resources,
 						grants: options.context ?? [],
 						invocationId,
+						persistSession,
 					});
 					const seen = new Set(base.map((t) => t.name));
 					availableTools = base.concat(
@@ -2315,13 +2420,13 @@ export class Runner {
 			// call time). Only append the final assistant row here, and skip it
 			// entirely when the model produced no final text — the replies are
 			// the agent's response and a trailing empty row just clutters history.
-			if (!effectiveSignal?.aborted) {
+			if (persistSession && !effectiveSignal?.aborted) {
 				const now = new Date().toISOString();
 				const newMessages: Message[] = [];
 				if (!replyEnabled) {
 					newMessages.push({
 						role: "user",
-						content: normalizedInput,
+						content: persistedInput,
 						timestamp: now,
 					});
 				}
@@ -2341,7 +2446,12 @@ export class Runner {
 			}
 
 			// Write to context if agent has contextWrite enabled
-			if (agent.contextWrite && options.contextIds?.length && finalOutput) {
+			if (
+				persistSession &&
+				agent.contextWrite &&
+				options.contextIds?.length &&
+				finalOutput
+			) {
 				for (const contextId of options.contextIds) {
 					await this.contextStore.addContext(contextId, {
 						contextId,
@@ -2357,20 +2467,22 @@ export class Runner {
 			// the token bill, tool calls, and any partial output are still
 			// attributable even when the run was superseded.
 			const cancelled = effectiveSignal?.aborted ?? false;
-			const logEntry: InvocationLog = {
-				id: invocationId,
-				agentId,
-				sessionId: effectiveSessionId,
-				input: normalizedInput,
-				output: finalOutput,
-				toolCalls: allToolCalls,
-				usage: totalUsage,
-				duration,
-				model: modelStr,
-				status: cancelled ? "cancelled" : "completed",
-				timestamp: new Date().toISOString(),
-			};
-			await this.logStore.log(logEntry);
+			if (persistSession) {
+				const logEntry: InvocationLog = {
+					id: invocationId,
+					agentId,
+					sessionId: effectiveSessionId,
+					input: persistedInput,
+					output: finalOutput,
+					toolCalls: allToolCalls,
+					usage: totalUsage,
+					duration,
+					model: finalModel ?? modelStr,
+					status: cancelled ? "cancelled" : "completed",
+					timestamp: new Date().toISOString(),
+				};
+				await this.logStore.log(logEntry);
+			}
 
 			span.end();
 
@@ -2381,7 +2493,15 @@ export class Runner {
 				toolCalls: allToolCalls,
 				usage: totalUsage,
 				duration,
-				model: modelStr,
+				model: finalModel ?? modelStr,
+				...(finalProvider ? { provider: finalProvider } : {}),
+				...(finalRequestedModel ? { requestedModel: finalRequestedModel } : {}),
+				...(finalResponseId ? { responseId: finalResponseId } : {}),
+				...(finalFinishReason ? { finishReason: finalFinishReason } : {}),
+				...(finalRawFinishReason
+					? { rawFinishReason: finalRawFinishReason }
+					: {}),
+				...(finalWarnings?.length ? { warnings: finalWarnings } : {}),
 				...(replyCollector.length > 0 ? { replies: replyCollector } : {}),
 			};
 
@@ -2413,26 +2533,28 @@ export class Runner {
 				surfacedErr instanceof InvocationCancelledError ||
 				surfacedErr instanceof InvocationTimeoutError ||
 				(effectiveSignal?.aborted ?? false);
-			try {
-				await this.logStore.log({
-					id: invocationId,
-					agentId,
-					sessionId: effectiveSessionId,
-					input,
-					output: "",
-					toolCalls: allToolCalls,
-					usage: totalUsage,
-					duration: Date.now() - startTime,
-					model: modelStr,
-					error:
-						surfacedErr instanceof Error
-							? surfacedErr.message
-							: String(surfacedErr),
-					status: cancelled ? "cancelled" : "failed",
-					timestamp: new Date().toISOString(),
-				});
-			} catch {
-				// Persistence failure on the audit log shouldn't mask the original.
+			if (persistSession) {
+				try {
+					await this.logStore.log({
+						id: invocationId,
+						agentId,
+						sessionId: effectiveSessionId,
+						input: persistedInput,
+						output: "",
+						toolCalls: allToolCalls,
+						usage: totalUsage,
+						duration: Date.now() - startTime,
+						model: modelStr,
+						error:
+							surfacedErr instanceof Error
+								? surfacedErr.message
+								: String(surfacedErr),
+						status: cancelled ? "cancelled" : "failed",
+						timestamp: new Date().toISOString(),
+					});
+				} catch {
+					// Persistence failure on the audit log shouldn't mask the original.
+				}
 			}
 			if (runRegistry && runId) {
 				runRegistry.notifyFailed(runId, surfacedErr);
@@ -2542,6 +2664,7 @@ export class Runner {
 			context: options.context,
 			contextIds: options.contextIds,
 			invocationId,
+			signal: options.signal,
 			runId,
 			userId: options.userId,
 			runRegistry,
@@ -2582,6 +2705,7 @@ export class Runner {
 						this.config.namespacePolicy,
 					),
 					_resourceModes: options._resourceModes,
+					retention: innerOpts?.retention ?? options.retention,
 					_recursionDepth: (innerOpts?._recursionDepth ?? currentDepth) + 1,
 				}),
 			...(options.toolContext ?? {}),
@@ -2644,6 +2768,8 @@ export class Runner {
 			replyCollector?: Reply[];
 			/** Effective session id for the current invocation. */
 			effectiveSessionId?: string;
+			/** Whether reply tool calls should be written to session history. */
+			persistSession?: boolean;
 			/** Run id for the current invocation. */
 			runId?: string;
 			/** Root run id; defaults to `runId` for top-level runs. */
@@ -2773,6 +2899,25 @@ export class Runner {
 					description: httpTool.description,
 					parameters: zodToJsonSchema(httpTool.input),
 				});
+			} else if (ref.type === "callback") {
+				if (!opts?.ephemeralTools) continue;
+				if (!this._secretStore) {
+					throw new Error(
+						`Callback tool '${ref.entry.name}' requires a SecretStore`,
+					);
+				}
+				const callbackTool = buildCallbackToolDefinition(ref.entry, {
+					secretStore: this._secretStore,
+					outboundUrlPolicy: this.config.outboundUrlPolicy,
+				});
+				opts.ephemeralTools.set(callbackTool.name, callbackTool);
+				resolved.push({
+					name: callbackTool.name,
+					description: callbackTool.description,
+					parameters:
+						callbackTool.modelInputSchema ??
+						zodToJsonSchema(callbackTool.input),
+				});
 			}
 		}
 
@@ -2887,6 +3032,7 @@ export class Runner {
 				runId,
 				rootId: opts?.rootId,
 				sessionStore: this.sessionStore,
+				persist: opts?.persistSession,
 				runRegistry: opts?.runRegistry,
 				maxPerRun,
 				onAccepted: opts?.onReplyAccepted,

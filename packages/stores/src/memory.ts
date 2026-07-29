@@ -7,6 +7,7 @@ import {
 import type {
 	AgentDefinition,
 	AgentVersionSummary,
+	ArtifactMetadata,
 	Connection,
 	ConnectionKind,
 	ContextEntry,
@@ -117,6 +118,7 @@ export interface MemoryBackend {
 	providers: Map<string, Map<string, ProviderConfig>>; // userId -> providerId -> config
 	connections: Map<string, Map<string, Connection>>; // userId -> `${kind}:${id}` -> connection
 	runs: Map<string, Run>; // `${userId}:${runId}` -> run
+	artifacts: Map<string, ArtifactMetadata>; // `${userId}:${artifactId}` -> metadata
 	spans: Map<string, Span>; // spanId -> span
 	summaries: Map<string, TraceSummary>; // traceId -> summary
 	skills: Map<string, Map<string, SkillDefinition>>; // userId -> name -> skill
@@ -141,6 +143,7 @@ export function createMemoryBackend(): MemoryBackend {
 		providers: new Map(),
 		connections: new Map(),
 		runs: new Map(),
+		artifacts: new Map(),
 		spans: new Map(),
 		summaries: new Map(),
 		skills: new Map(),
@@ -842,6 +845,44 @@ export class MemoryStore implements AgntzStore {
 
 	async deleteSecret(name: string): Promise<void> {
 		this.secretMap().delete(name);
+	}
+
+	// ═══ ArtifactStore ═══
+
+	async putArtifact(artifact: ArtifactMetadata): Promise<void> {
+		const u = this.requireUser();
+		if (artifact.ownerId !== u) {
+			throw new Error("Artifact owner does not match scoped user");
+		}
+		this.backend.artifacts.set(`${u}:${artifact.id}`, { ...artifact });
+	}
+
+	async getArtifact(artifactId: string): Promise<ArtifactMetadata | null> {
+		const u = this.requireUser();
+		const artifact = this.backend.artifacts.get(`${u}:${artifactId}`);
+		return artifact ? { ...artifact } : null;
+	}
+
+	async deleteArtifact(artifactId: string): Promise<void> {
+		const u = this.requireUser();
+		this.backend.artifacts.delete(`${u}:${artifactId}`);
+	}
+
+	async listExpiredArtifacts(
+		before: string,
+		limit = 100,
+	): Promise<ArtifactMetadata[]> {
+		const u = this.requireUser();
+		return [...this.backend.artifacts.values()]
+			.filter(
+				(artifact) =>
+					artifact.ownerId === u &&
+					artifact.status === "ready" &&
+					artifact.expiresAt <= before,
+			)
+			.sort((a, b) => a.expiresAt.localeCompare(b.expiresAt))
+			.slice(0, Math.max(0, limit))
+			.map((artifact) => ({ ...artifact }));
 	}
 
 	// ═══ RunStore ═══

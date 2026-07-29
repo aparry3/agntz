@@ -89,20 +89,28 @@ export function Hero({ accent = "blue" }: { accent?: AccentName }) {
 	return (
 		<Section
 			dense
-			style={{ paddingTop: 76, paddingBottom: 88, overflow: "hidden" }}
+			style={{ paddingTop: 44, paddingBottom: 48, overflow: "hidden" }}
 		>
 			<BgGrid />
 
 			<div
+				className="landing-library-hero"
 				style={{
 					position: "relative",
 					display: "grid",
-					gridTemplateColumns: "1.04fr 0.96fr",
-					gap: 64,
+					gridTemplateColumns: "1fr",
+					gap: 34,
 					alignItems: "center",
 				}}
 			>
-				<Stack gap={28}>
+				<Stack
+					gap={22}
+					style={{
+						alignItems: "center",
+						textAlign: "center",
+						margin: "0 auto",
+					}}
+				>
 					<Row gap={8} style={{ alignItems: "center", flexWrap: "wrap" }}>
 						<Pill accent="green" dot>
 							TS + Python runtimes
@@ -112,19 +120,18 @@ export function Hero({ accent = "blue" }: { accent?: AccentName }) {
 						<LanguageToggle compact label="Hero examples" />
 					</Row>
 
-					<H1 size={76} style={{ maxWidth: 680, letterSpacing: "-0.04em" }}>
-						Describe your agent.
-						<br />
-						<span style={{ color: TOKENS.muted }}>Run it.</span>
+					<H1 size={68} style={{ maxWidth: 680, letterSpacing: 0 }}>
+						agntz
 					</H1>
 
-					<Lede style={{ fontSize: 19, maxWidth: 560 }}>
-						A declarative runtime for production agents. Define agents in YAML,
-						call your existing APIs, and run anywhere — local, hosted, or
+					<Lede style={{ fontSize: 19, maxWidth: 680 }}>
+						The portable YAML agent runtime for TypeScript and Python. Call your
+						existing APIs and run the same manifest locally, hosted, or
 						self-hosted.
 					</Lede>
 
 					<div
+						className="landing-hero-install"
 						style={{
 							display: "inline-flex",
 							alignItems: "center",
@@ -178,32 +185,41 @@ export function Hero({ accent = "blue" }: { accent?: AccentName }) {
 						</Btn>
 					</Row>
 
-					<Row
-						gap={20}
-						style={{
-							marginTop: 8,
-							alignItems: "center",
-							color: TOKENS.text2,
-							fontSize: 13,
-							flexWrap: "wrap",
-						}}
-					>
-						{[
-							"YAML in, agent out",
-							"Your existing APIs",
-							"Local · Hosted · Self-host",
-						].map((t) => (
-							<Row key={t} gap={6} style={{ alignItems: "center" }}>
-								<span style={{ color: a.fg, display: "inline-flex" }}>
-									<CheckIcon />
-								</span>
-								{t}
-							</Row>
-						))}
-					</Row>
+					<div className="landing-hero-checks">
+						<Row
+							gap={20}
+							style={{
+								marginTop: 8,
+								alignItems: "center",
+								color: TOKENS.text2,
+								fontSize: 13,
+								flexWrap: "wrap",
+							}}
+						>
+							{[
+								"YAML in, agent out",
+								"Your existing APIs",
+								"Local · Hosted · Self-host",
+							].map((t) => (
+								<Row key={t} gap={6} style={{ alignItems: "center" }}>
+									<span style={{ color: a.fg, display: "inline-flex" }}>
+										<CheckIcon />
+									</span>
+									{t}
+								</Row>
+							))}
+						</Row>
+					</div>
 				</Stack>
 
-				<Stack gap={0} style={{ position: "relative" }}>
+				<Stack
+					gap={0}
+					style={{
+						position: "relative",
+						width: "min(920px, 100%)",
+						margin: "0 auto",
+					}}
+				>
 					<div
 						style={{
 							background: TOKENS.surface,
@@ -291,7 +307,8 @@ export function Hero({ accent = "blue" }: { accent?: AccentName }) {
 								overflowX: "auto",
 								whiteSpace: "pre-wrap",
 								overflowWrap: "anywhere",
-								minHeight: 350,
+								minHeight: 240,
+								maxHeight: 240,
 							}}
 						>
 							<code>
@@ -352,6 +369,7 @@ export function Hero({ accent = "blue" }: { accent?: AccentName }) {
 					</div>
 
 					<div
+						className="landing-hero-note"
 						style={{
 							marginTop: 14,
 							padding: "12px 16px",

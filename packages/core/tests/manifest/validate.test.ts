@@ -177,7 +177,7 @@ tools:
 		).toBe(true);
 	});
 
-	it("fails on invalid inputSchema type", () => {
+	it("accepts integer in the expanded JSON Schema type vocabulary", () => {
 		const result = validateManifest(`
 id: test
 kind: llm
@@ -188,10 +188,7 @@ instruction: test
 inputSchema:
   name: integer
 `);
-		expect(result.valid).toBe(false);
-		expect(result.errors.some((e) => e.message.includes("Invalid type"))).toBe(
-			true,
-		);
+		expect(result.valid).toBe(true);
 	});
 
 	it("passes valid inputSchema", () => {
@@ -255,8 +252,6 @@ steps:
 	});
 
 	it("fails on step with both ref and agent", () => {
-		// This is caught by normalizeStep, not validateStep
-		// But let's make sure the error propagates
 		const result = validateManifest(`
 id: test
 kind: sequential
@@ -270,9 +265,28 @@ steps:
         name: gpt-5.4
       instruction: test
 `);
-		// The parser will pick one — but validation should catch the conflict
-		// Actually parser handles this, so test that either works
-		expect(result).toBeDefined();
+		expect(result.valid).toBe(false);
+		expect(result.errors).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					level: "structural",
+					message: "Step cannot have both 'ref' and 'agent'",
+				}),
+			]),
+		);
+	});
+
+	it("rejects a fractional reply limit", () => {
+		const result = validateManifest(`
+id: test
+kind: llm
+model: { provider: openai, name: gpt-5.4 }
+instruction: test
+reply:
+  maxPerRun: 1.5
+`);
+		expect(result.valid).toBe(false);
+		expect(result.errors[0]?.message).toContain("positive integer");
 	});
 
 	it("warns on maxIterations without until", () => {
@@ -1083,6 +1097,57 @@ tools:
 `);
 		expect(result.valid).toBe(true);
 		expect(result.errors).toHaveLength(0);
+	});
+
+	it("accepts a POST HTTP tool agent with body and auth", () => {
+		const result = validateManifest(`
+id: create-user
+kind: tool
+tool:
+  kind: http
+  name: create_user
+  url: https://api.example.com/users
+  method: POST
+  body_type: json
+  body:
+    name: "{{name}}"
+  auth:
+    type: oauth2_client_credentials
+    token_url: https://login.example.com/oauth/token
+    client_id: "{{secrets.client_id}}"
+    client_secret: "{{secrets.client_secret}}"
+inputSchema:
+  name: string
+`);
+		expect(result.valid).toBe(true);
+		expect(result.errors).toHaveLength(0);
+		if (result.manifest?.kind === "tool") {
+			expect(result.manifest.tool.body).toEqual({ name: "{{name}}" });
+			expect(result.manifest.tool.auth?.type).toBe("oauth2_client_credentials");
+		}
+	});
+
+	it("applies HTTP body rules to tool agents", () => {
+		const result = validateManifest(`
+id: get-user
+kind: tool
+tool:
+  kind: http
+  name: get_user
+  url: https://api.example.com/users
+  method: GET
+  body:
+    unexpected: value
+`);
+		expect(result.valid).toBe(false);
+		expect(result.errors).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					path: "tool.body",
+					message: expect.stringContaining("body is not allowed"),
+				}),
+			]),
+		);
 	});
 
 	it("errors on unknown HTTP method", () => {

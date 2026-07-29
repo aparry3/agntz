@@ -162,3 +162,26 @@ describe("workerAuth — X-User-Id header fallback", () => {
 		expect(body.error).toMatch(/userId/);
 	});
 });
+
+describe("worker CORS", () => {
+	it("allows configured browser origins and rejects arbitrary origins", async () => {
+		const store = new MemoryStore();
+		const app = createWorkerAPI({
+			store,
+			internalSecret: SECRET,
+			corsOrigins: ["https://app.example.com"],
+		});
+
+		const allowed = await app.request("/health", {
+			headers: { Origin: "https://app.example.com" },
+		});
+		const denied = await app.request("/health", {
+			headers: { Origin: "https://evil.example.com" },
+		});
+
+		expect(allowed.headers.get("access-control-allow-origin")).toBe(
+			"https://app.example.com",
+		);
+		expect(denied.headers.get("access-control-allow-origin")).toBeNull();
+	});
+});

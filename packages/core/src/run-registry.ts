@@ -139,6 +139,8 @@ export class InMemoryRunRegistry implements RunRegistry {
 			requestedAgentVersion: opts.requestedAgentVersion,
 			userId: opts.userId,
 			sessionId: opts.sessionId,
+			retentionMode: opts.retentionMode ?? parent?.retentionMode,
+			expiresAt: opts.expiresAt ?? parent?.expiresAt,
 			spawnToolUseId: opts.spawnToolUseId,
 			input: opts.input,
 			status: "pending",
@@ -252,6 +254,14 @@ export class InMemoryRunRegistry implements RunRegistry {
 	get(runId: string): Run | undefined {
 		const run = this.runs.get(runId);
 		return run ? toExternal(run) : undefined;
+	}
+
+	activeRootIds(): string[] {
+		const ids: string[] = [];
+		for (const run of this.runs.values()) {
+			if (!run.parentId && !isTerminal(run.status)) ids.push(run.id);
+		}
+		return ids;
 	}
 
 	/**

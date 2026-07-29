@@ -178,6 +178,7 @@ export class Memrez {
 					entries,
 					topics: opts.topics,
 					topicConfig: opts.topicConfig,
+					signal: opts.signal,
 				})
 			: [];
 

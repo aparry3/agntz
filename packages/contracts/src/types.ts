@@ -1,6 +1,16 @@
 import type { ZodSchema } from "zod";
 import type { SkillDefinition, ToolReference } from "./tools.js";
 
+export type RetentionMode = "none" | "result" | "session";
+
+export interface RetentionPolicy {
+	mode: RetentionMode;
+	/** Optional expiry for durable result/session records. */
+	ttlSeconds?: number;
+	/** Optional independent expiry for uploaded or generated artifacts. */
+	artifactTtlSeconds?: number;
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Agent Definition — the core portable data structure
 // ═══════════════════════════════════════════════════════════════════════
@@ -82,6 +92,8 @@ export interface AgentDefinition {
 	 * no timeout.
 	 */
 	timeoutMs?: number;
+	/** Default persistence policy. Callers may override it per invocation. */
+	retention?: RetentionPolicy;
 
 	/** Arbitrary tags for categorization */
 	tags?: string[];
@@ -99,6 +111,15 @@ export interface ModelConfig {
 	temperature?: number;
 	maxTokens?: number;
 	topP?: number;
+	topK?: number;
+	presencePenalty?: number;
+	frequencyPenalty?: number;
+	stopSequences?: string[];
+	seed?: number;
+	maxRetries?: number;
+	/** Provider-scoped AI SDK options. */
+	providerOptions?: Record<string, Record<string, unknown>>;
+	/** @deprecated Use providerOptions. */
 	options?: Record<string, unknown>;
 }
 
@@ -216,6 +237,18 @@ export interface InvokeResult {
 	duration: number;
 	/** Model used */
 	model: string;
+	/** Provider selected for the final model operation. */
+	provider?: string;
+	/** Model name requested by the active agent version. */
+	requestedModel?: string;
+	/** Provider response/request id, when available. */
+	responseId?: string;
+	/** Normalized finish reason for the final model operation. */
+	finishReason?: string;
+	/** Provider-native finish reason, when available. */
+	rawFinishReason?: string;
+	/** Provider warnings normalized to readable strings. */
+	warnings?: string[];
 	/**
 	 * Intermediate replies the agent delivered during this invocation via the
 	 * synthetic `reply` tool. Only present when at least one reply was sent.
@@ -290,6 +323,7 @@ export type ImageMediaType =
 	| "image/png"
 	| "image/gif"
 	| "image/webp";
+export type ImageDetail = "auto" | "low" | "high";
 
 /**
  * One block of a multimodal message. Text blocks pass through to the model
@@ -303,8 +337,28 @@ export type ContentBlock =
 			url: string;
 			headers?: Record<string, string>;
 			mediaType?: ImageMediaType;
+			detail?: ImageDetail;
 	  }
-	| { type: "image"; base64: string; mediaType: ImageMediaType };
+	| {
+			type: "image";
+			base64: string;
+			mediaType: ImageMediaType;
+			detail?: ImageDetail;
+	  }
+	| {
+			type: "image";
+			artifactId: string;
+			mediaType?: ImageMediaType;
+			detail?: ImageDetail;
+	  }
+	| { type: "audio"; base64: string; mediaType: string }
+	| {
+			type: "audio";
+			url: string;
+			headers?: Record<string, string>;
+			mediaType?: string;
+	  }
+	| { type: "audio"; artifactId: string; mediaType?: string };
 
 /**
  * Type guard for `ContentBlock[]`. Returns true only for non-empty arrays
@@ -323,7 +377,14 @@ export function isContentBlockArray(input: unknown): input is ContentBlock[] {
 		} else if (b.type === "image") {
 			const hasUrl = typeof b.url === "string";
 			const hasBase64 = typeof b.base64 === "string";
-			if (!hasUrl && !hasBase64) return false;
+			const hasArtifact = typeof b.artifactId === "string";
+			if (!hasUrl && !hasBase64 && !hasArtifact) return false;
+			if (hasBase64 && typeof b.mediaType !== "string") return false;
+		} else if (b.type === "audio") {
+			const hasUrl = typeof b.url === "string";
+			const hasBase64 = typeof b.base64 === "string";
+			const hasArtifact = typeof b.artifactId === "string";
+			if (!hasUrl && !hasBase64 && !hasArtifact) return false;
 			if (hasBase64 && typeof b.mediaType !== "string") return false;
 		} else {
 			return false;
@@ -626,6 +687,9 @@ export interface Run {
 	requestedAgentVersion?: string;
 	userId?: string;
 	sessionId?: string;
+	retentionMode?: RetentionMode;
+	/** ISO timestamp after which a durable record may be removed. */
+	expiresAt?: string;
 	/** Parent's tool_use_id that spawned this Run (for spawned children). */
 	spawnToolUseId?: string;
 	status: RunStatus;
@@ -679,6 +743,35 @@ export interface RunStore {
 	 * cursor when more pages exist.
 	 */
 	listRuns(filters: RunListFilters): Promise<RunListResult>;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Artifacts — owner-scoped metadata for uploaded/generated binary objects
+// ═══════════════════════════════════════════════════════════════════════
+
+export type ArtifactPurpose = "input" | "output";
+export type ArtifactStatus = "ready" | "deleted" | "failed";
+
+export interface ArtifactMetadata {
+	id: string;
+	ownerId: string;
+	purpose: ArtifactPurpose;
+	mediaType: string;
+	sizeBytes: number;
+	sha256: string;
+	createdAt: string;
+	expiresAt: string;
+	status: ArtifactStatus;
+}
+
+export interface ArtifactStore {
+	putArtifact(artifact: ArtifactMetadata): Promise<void>;
+	getArtifact(artifactId: string): Promise<ArtifactMetadata | null>;
+	deleteArtifact(artifactId: string): Promise<void>;
+	listExpiredArtifacts(
+		before: string,
+		limit?: number,
+	): Promise<ArtifactMetadata[]>;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1086,6 +1179,7 @@ export type UnifiedStore = AgentStore &
 	ProviderStore &
 	ConnectionStore &
 	RunStore &
+	ArtifactStore &
 	TraceStore &
 	SkillStore &
 	SecretStore &
@@ -1176,4 +1270,15 @@ export interface GenerateTextResult {
 	}>;
 	usage: TokenUsage;
 	finishReason: string;
+	rawFinishReason?: string;
+	/** Provider selected by the agent definition. */
+	provider?: string;
+	/** Model requested by the agent definition. */
+	requestedModel?: string;
+	/** Actual model id reported by the provider response, when available. */
+	model?: string;
+	/** Provider response/request id, when available. */
+	responseId?: string;
+	/** Provider warnings normalized to readable strings. */
+	warnings?: string[];
 }

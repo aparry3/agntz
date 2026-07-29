@@ -8,6 +8,10 @@ dist/
 out/
 *.tsbuildinfo
 
+# Python
+__pycache__/
+*.py[cod]
+
 # Next.js
 .next/
 .next

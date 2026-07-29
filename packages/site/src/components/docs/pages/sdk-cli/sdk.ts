@@ -10,7 +10,7 @@ pnpm add @agntz/sdk
 pip install "agntz[litellm]"
 \`\`\`
 
-Node 20+ for TypeScript. Python 3.11+ for Python. Universal clients that cannot read from the local filesystem should use the hosted client instead.
+Node 22+ for TypeScript. Python 3.11+ for Python. Universal clients that cannot read from the local filesystem should use the hosted client instead.
 
 ## Basic usage
 
@@ -36,6 +36,8 @@ const { output, state } = await client.agents.run({
   agentId: "support",
   input: { message: "Hello" },
 });
+
+await client.close();
 \`\`\`
 
 \`\`\`python [main.py] {group=sdk-basic}
@@ -184,7 +186,8 @@ TypeScript local streaming includes token deltas and tool-loop events. Python lo
 \`\`\`ts {group=sdk-runs}
 const { rows } = await client.runs.list({ agentId, status, limit: 10 });
 const run = await client.runs.get(rows[0].id);
-const trace = await client.traces.get(rows[0].id);
+const traces = await client.traces.list({ agentId, limit: 10 });
+const trace = await client.traces.get(traces.rows[0].traceId);
 \`\`\`
 
 \`\`\`python {group=sdk-runs}
@@ -216,7 +219,9 @@ client = agntz(
 )
 \`\`\`
 
-The same store backs sessions, runs, and traces. Python's SQLite store persists messages and trace spans in the same file.
+The same store backs sessions, runs, and traces. Without a configured store, TypeScript uses bounded in-memory history. SQLite persists messages, runs, and trace spans in the same file across client instances.
+
+Call \`await client.close()\` during process shutdown to flush pending trace writes and close owned SQLite and MCP connections. The TypeScript close operation is idempotent.
 
 Persisted stores also keep agent versions and aliases. References can be a bare id, \`agent@latest\`, an exact created-at version, or an alias. In-memory registered agents run by id only; use a store when you need version history.
 

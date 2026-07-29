@@ -1,6 +1,6 @@
 {
   "name": "@agntz/sdk",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Official agntz SDK. Run YAML agent manifests in-process with a five-line code path, or call the hosted agntz API. The library you build agntz apps with.",
   "type": "module",
   "main": "./dist/index.js",
@@ -58,7 +58,7 @@
     "@agntz/stores": "workspace:*"
   },
   "peerDependencies": {
-    "@agntz/memrez": "workspace:*"
+    "@agntz/memrez": ">=0.1.0 <1.0.0"
   },
   "peerDependenciesMeta": {
     "@agntz/memrez": {
@@ -74,6 +74,6 @@
     "vitest": "^3.2.0"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   }
 }

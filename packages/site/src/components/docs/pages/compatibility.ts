@@ -22,13 +22,13 @@ What runs where, today. Embedded means in-process SDK execution: \`@agntz/sdk\` 
 | Skills (\`use_skill\` tool) | ✓ | not yet | ✓ |
 | Reply tool (intermediate messages) | ✓ | persisted messages only | ✓ |
 | Sessions | ✓ (memory or sqlite) | ✓ (memory or sqlite) | ✓ (managed) |
-| Runs & traces | ✓ (ring buffer / sqlite) | ✓ (memory or sqlite) | ✓ (Postgres) |
+| Runs & traces | ✓ (bounded memory or persisted store) | ✓ (memory or sqlite) | ✓ (Postgres) |
 | Eval records / datasets | ✓ | ✓ | ✓ |
 | Local streaming for LLM agents | ✓ (full event stream) | start / complete snapshots | N/A |
 | Hosted SSE streaming | ✓ | ✓ | ✓ |
 | OpenTelemetry export | ✓ | not yet | ✓ |
 | \`{{env.X}}\` template refs | ✓ | not yet | opt-in per server |
-| \`{{secrets.X}}\` template refs | × | × | ✓ |
+| \`{{secrets.X}}\` template refs | ✓ (configured SecretStore) | × | ✓ |
 | Versioned refs | ✓ (persisted stores) | ✓ (persisted stores) | ✓ |
 | Version aliases | local store aliases | local store aliases | ✓ |
 | Multi-user isolation | × | × | ✓ |

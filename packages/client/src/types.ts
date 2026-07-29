@@ -16,6 +16,27 @@ export type ImageMediaType =
 	| "image/gif"
 	| "image/webp";
 
+export type ImageDetail = "auto" | "low" | "high";
+
+export type LocalArtifactInput =
+	| Blob
+	| ArrayBuffer
+	| Uint8Array
+	| { path: string; mediaType?: string; filename?: string };
+
+export interface ArtifactRef {
+	id: string;
+	ownerId: string;
+	purpose: "input" | "output";
+	mediaType: string;
+	sizeBytes: number;
+	sha256: string;
+	createdAt: string;
+	expiresAt: string;
+	status: "ready" | "deleted" | "failed";
+	downloadUrl?: string;
+}
+
 /**
  * One block of a multimodal user message. Either a text fragment or an
  * image referenced by URL (fetched server-side) or already-base64-encoded
@@ -28,8 +49,51 @@ export type ContentBlock =
 			url: string;
 			headers?: Record<string, string>;
 			mediaType?: ImageMediaType;
+			detail?: ImageDetail;
 	  }
-	| { type: "image"; base64: string; mediaType: ImageMediaType };
+	| {
+			type: "image";
+			base64: string;
+			mediaType: ImageMediaType;
+			detail?: ImageDetail;
+	  }
+	| {
+			type: "image";
+			artifactId: string;
+			mediaType?: ImageMediaType;
+			detail?: ImageDetail;
+	  }
+	| {
+			type: "image";
+			file: LocalArtifactInput;
+			mediaType?: ImageMediaType;
+			detail?: ImageDetail;
+	  }
+	| {
+			type: "audio";
+			artifactId: string;
+			mediaType?: string;
+	  }
+	| { type: "audio"; base64: string; mediaType: string }
+	| {
+			type: "audio";
+			url: string;
+			headers?: Record<string, string>;
+			mediaType?: string;
+	  }
+	| { type: "audio"; file: LocalArtifactInput; mediaType?: string };
+
+/** Wire-safe rich content after local files have been uploaded. */
+export type WireContentBlock = Exclude<
+	ContentBlock,
+	{ file: LocalArtifactInput }
+>;
+
+export interface RetentionRequest {
+	mode?: "none" | "result" | "session";
+	ttlSeconds?: number;
+	artifactTtlSeconds?: number;
+}
 
 export interface RunInput {
 	agentId: string;
@@ -40,22 +104,40 @@ export interface RunInput {
 	 * consume.
 	 */
 	input?: unknown | string | ContentBlock[];
+	/** Exact ordered user/media message, independent from structured input. */
+	content?: ContentBlock[];
 	/** Forward-compat: worker accepts but ignores today. */
 	sessionId?: string;
 	/** Runtime namespace capability grants passed through to resource providers. */
 	context?: string[];
+	retention?: RetentionRequest;
 	signal?: AbortSignal;
 }
 
 export interface RunResult {
 	output: unknown;
 	state: Record<string, unknown>;
+	runId: string;
+	traceId?: string;
+	status: "completed";
+	requestedAgentVersion?: string;
+	resolvedAgentVersion?: string;
+	provider?: string;
+	model: string;
+	usage: {
+		inputTokens: number;
+		outputTokens: number;
+		totalTokens: number;
+	};
+	finishReason?: string;
+	responseId?: string;
+	warnings?: string[];
 	/**
-	 * Session this run executed under. Always present — the worker auto-allocates
-	 * one if the caller didn't pass `sessionId` on the request. Persist this id
-	 * client-side to continue the conversation on subsequent /run calls.
+	 * Session this run executed under. Present for `session` retention; omitted
+	 * for `none` and `result`, which intentionally do not create history.
 	 */
-	sessionId: string;
+	sessionId?: string;
+	retention?: RetentionRequest;
 	/**
 	 * Intermediate replies the agent emitted via the `reply` tool during this
 	 * run. Only present when at least one reply was sent. Each entry was also
@@ -78,14 +160,21 @@ export interface Reply {
 	runId: string;
 }
 
-export type AgentKind = "llm" | "tool" | "sequential" | "parallel";
+export type AgentKind =
+	| "llm"
+	| "tool"
+	| "sequential"
+	| "parallel"
+	| "transcription"
+	| "image";
 
 export type StreamEvent =
 	| {
 			type: "start";
 			agentId: string;
 			kind: AgentKind;
-			sessionId: string;
+			sessionId?: string;
+			retention?: RetentionRequest;
 			/** Durable root Run created for this invocation (newer workers). */
 			runId?: string;
 			/** Trace associated with the root Run (newer workers). */
@@ -95,7 +184,8 @@ export type StreamEvent =
 			type: "complete";
 			output: unknown;
 			state: Record<string, unknown>;
-			sessionId: string;
+			sessionId?: string;
+			retention?: RetentionRequest;
 	  }
 	/**
 	 * Intermediate reply delivered via the agent's `reply` tool. Emitted in
@@ -343,7 +433,7 @@ export interface EvalDefinition {
 
 export interface EvalDatasetItem {
 	id: string;
-	input: string | ContentBlock[];
+	input: string | Record<string, unknown> | WireContentBlock[];
 	expected?: unknown;
 	metadata?: Record<string, unknown>;
 }
@@ -370,7 +460,7 @@ export type EvalCaseStatus = "completed" | "failed" | "skipped" | "cancelled";
 export interface EvalCaseResult {
 	itemId: string;
 	status: EvalCaseStatus;
-	input: string | ContentBlock[];
+	input: string | Record<string, unknown> | WireContentBlock[];
 	expected?: unknown;
 	output?: string;
 	agentRunId?: string;
@@ -518,8 +608,12 @@ export interface Run {
 	rootId: string;
 	parentId?: string;
 	agentId: string;
+	agentVersion?: string;
+	requestedAgentVersion?: string;
 	userId?: string;
 	sessionId?: string;
+	retentionMode?: "none" | "result" | "session";
+	expiresAt?: string;
 	spawnToolUseId?: string;
 	status: RunStatus;
 	input: string;
@@ -542,6 +636,12 @@ export interface Run {
 		};
 		duration: number;
 		model: string;
+		provider?: string;
+		requestedModel?: string;
+		responseId?: string;
+		finishReason?: string;
+		rawFinishReason?: string;
+		warnings?: string[];
 	};
 	error?: string;
 	startedAt: number;
@@ -553,9 +653,11 @@ export interface RunsStartInput {
 	agentId: string;
 	/** See `RunInput.input` for the accepted shapes. */
 	input?: unknown | string | ContentBlock[];
+	content?: ContentBlock[];
 	sessionId?: string;
 	/** Runtime namespace capability grants passed through to resource providers. */
 	context?: string[];
+	retention?: RetentionRequest;
 	signal?: AbortSignal;
 	/**
 	 * Per-invocation webhook callback URL. When set, the worker will POST

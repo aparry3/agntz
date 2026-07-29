@@ -34,11 +34,15 @@ Run it:
 import { agntz } from "@agntz/sdk";
 
 const client = await agntz({ agents: "./agents" });
-const result = await client.agents.run({
-  agentId: "support",
-  input: "How do I reset my password?",
-});
-console.log(result.output);
+try {
+  const result = await client.agents.run({
+    agentId: "support",
+    input: "How do I reset my password?",
+  });
+  console.log(result.output);
+} finally {
+  await client.close();
+}
 ```
 
 Set `ANTHROPIC_API_KEY` (or `OPENAI_API_KEY`, etc. — whichever provider you used) in your environment and run the file. That's it.
@@ -217,11 +221,19 @@ const client = await agntz({
 // Pass the same sessionId across runs to continue a conversation:
 await client.agents.run({ agentId: "support", input: "hi", sessionId: "user-42" });
 await client.agents.run({ agentId: "support", input: "follow-up", sessionId: "user-42" });
+
+// Flush pending trace writes and close the owned SQLite connection.
+await client.close();
 ```
+
+Call `close()` during process shutdown when the client owns persistent stores or
+MCP connections. It is safe to call more than once.
 
 ## Runs and traces
 
-Every invocation is recorded in an in-memory ring buffer (default 1000 entries):
+Without a configured store, invocations use bounded in-memory ring buffers
+(default 1000 entries). When `store` is configured, runs and full trace trees
+are persisted and remain queryable after a restart:
 
 ```ts
 const { rows } = await client.runs.list({ limit: 10 });
@@ -229,7 +241,8 @@ for (const run of rows) {
   console.log(run.agentId, run.status, run.result?.output);
 }
 
-const trace = await client.traces.get(rows[0].id);
+const traces = await client.traces.list({ limit: 10 });
+const trace = await client.traces.get(traces.rows[0].traceId);
 console.log(trace?.spans);
 ```
 
@@ -302,14 +315,14 @@ The `client.agents.run / .stream`, `client.runs.list / .get`, and `client.traces
 | Agent-as-tool (subagent calls) | ✓ | ✓ |
 | Spawnable subagents | ✓ | ✓ |
 | Sessions | ✓ (memory or sqlite) | ✓ (managed) |
-| Runs / traces | ✓ (in-memory) | ✓ (persisted) |
+| Runs / traces | ✓ (bounded memory or persisted store) | ✓ (persisted) |
 | Agent/session/memory import | ✓ | ✓ |
 | Memory admin with memrez | ✓ | ✓ |
 | Datasets / eval records | ✓ | ✓ |
 | Streaming for LLM agents | ✓ (full event stream) | ✓ |
 | Streaming for pipelines | ✓ (single `complete` event) | ✓ |
 | `{{env.X}}` template refs | ✓ | (opt-in per server) |
-| `{{secrets.X}}` template refs | × | ✓ |
+| `{{secrets.X}}` template refs | ✓ (configured SecretStore) | ✓ |
 | Skills | ✓ | ✓ |
 | Multi-user isolation | × | ✓ |
 

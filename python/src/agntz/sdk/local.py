@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from agntz.agent_ref import is_iso_timestamp, parse_agent_ref
 from agntz.client.models import AgentDefinition as StoredAgentDefinition
@@ -27,7 +27,7 @@ from agntz.client.models import (
     EvalRunListResult,
     Event,
     Run,
-    RunResult,
+    TokenUsage,
 )
 from agntz.client.models import (
     ModelConfig as StoredModelConfig,
@@ -87,9 +87,27 @@ from agntz.stores import (
 )
 
 
+class LocalRunResult(BaseModel):
+    """Local execution always creates and persists a session."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
+    output: Any = None
+    state: dict[str, Any] = Field(default_factory=dict)
+    run_id: str = Field(alias="runId")
+    trace_id: str = Field(alias="traceId")
+    status: str = "completed"
+    resolved_agent_version: str | None = Field(default=None, alias="resolvedAgentVersion")
+    provider: str | None = None
+    model: str
+    usage: TokenUsage = Field(default_factory=TokenUsage)
+    session_id: str = Field(alias="sessionId")
+    replies: list[Any] | None = None
+
+
 @dataclass(frozen=True)
 class _ExecutionOutcome:
-    result: RunResult
+    result: LocalRunResult
     run_id: str
     invocation_id: str
     usage: dict[str, int] | None
@@ -135,7 +153,7 @@ class LocalClient:
         input: Any = None,
         session_id: str | None = None,
         context: list[str] | None = None,
-    ) -> RunResult:
+    ) -> LocalRunResult:
         return (
             await self._execute_with_metadata(
                 agent_id=agent_id,
@@ -153,7 +171,7 @@ class LocalClient:
         session_id: str | None = None,
         context: list[str] | None = None,
     ) -> _ExecutionOutcome:
-        manifest, resolved_agent, _resolved_version = self._resolve_manifest(agent_id)
+        manifest, resolved_agent, resolved_version = self._resolve_manifest(agent_id)
         base_agent_id = resolved_agent.id
         resolved_session_id = session_id or new_session_id()
         normalized_context = normalize_namespace_grants(context, self.namespace_policy)
@@ -264,9 +282,19 @@ class LocalClient:
                 output=result.output,
             )
         )
-        run_result = RunResult(
+        run_result = LocalRunResult(
             output=result.output,
             state=result.state,
+            runId=local_run_id,
+            traceId=local_trace_id,
+            resolvedAgentVersion=resolved_version,
+            provider=manifest.model.provider if manifest.kind == "llm" else None,
+            model=manifest.model.name if manifest.kind == "llm" else "manifest",
+            usage=TokenUsage(
+                inputTokens=(ctx.usage or {}).get("promptTokens", 0),
+                outputTokens=(ctx.usage or {}).get("completionTokens", 0),
+                totalTokens=(ctx.usage or {}).get("totalTokens", 0),
+            ),
             sessionId=resolved_session_id,
         )
         return _ExecutionOutcome(
@@ -363,7 +391,7 @@ class LocalAgentsResource:
         input: Any = None,
         session_id: str | None = None,
         context: list[str] | None = None,
-    ) -> RunResult:
+    ) -> LocalRunResult:
         return _run_blocking(
             self._client._execute(
                 agent_id=agent_id,
@@ -380,7 +408,7 @@ class LocalAgentsResource:
         input: Any = None,
         session_id: str | None = None,
         context: list[str] | None = None,
-    ) -> RunResult:
+    ) -> LocalRunResult:
         return await self._client._execute(
             agent_id=agent_id,
             input=input,

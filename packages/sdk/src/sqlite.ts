@@ -47,5 +47,17 @@ export function sqliteStore(
 		wal: opts.wal,
 		verbose: opts.verbose,
 	});
-	return admin.forUser(opts.userId ?? "embedded") as unknown as UnifiedStore;
+	const scoped = admin.forUser(opts.userId ?? "embedded") as UnifiedStore & {
+		close?: () => void;
+	};
+	let closed = false;
+	Object.defineProperty(scoped, "close", {
+		configurable: true,
+		value: () => {
+			if (closed) return;
+			closed = true;
+			admin.close();
+		},
+	});
+	return scoped;
 }

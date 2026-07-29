@@ -71,6 +71,7 @@ export interface CurateOptions {
 	topics?: string[];
 	topicConfig?: MemoryTopicConfig;
 	includeDescendants?: boolean;
+	signal?: AbortSignal;
 }
 
 export interface TaggerInput {
@@ -115,6 +116,7 @@ export interface CuratorInput {
 	entries: MemoryEntry[];
 	topics?: string[];
 	topicConfig?: MemoryTopicConfig;
+	signal?: AbortSignal;
 }
 
 export interface CurateReport {

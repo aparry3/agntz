@@ -198,20 +198,16 @@ describe("createManifestExecutionContext — invokeLLM", () => {
 		expect(out).toEqual({ a: 1 });
 	});
 
-	it("returns raw text when schema output is not valid JSON", async () => {
+	it("rejects raw text when schema output is not valid JSON", async () => {
 		const { runner } = fakeRunner({
 			invoke: async () => ({ output: "not json" }),
 		});
 		const ctx = createManifestExecutionContext(runner, {
 			resolveAgent: async () => llm(),
 		});
-		const out = await ctx.invokeLLM(
-			llm({ outputSchema: { a: "number" } }),
-			"i",
-			"u",
-			st(),
-		);
-		expect(out).toBe("not json");
+		await expect(
+			ctx.invokeLLM(llm({ outputSchema: { a: "number" } }), "i", "u", st()),
+		).rejects.toMatchObject({ code: "STRUCTURED_OUTPUT_INVALID" });
 	});
 
 	it("does not parse output when there is no outputSchema", async () => {

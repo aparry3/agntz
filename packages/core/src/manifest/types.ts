@@ -4,12 +4,20 @@
 
 import type {
 	AgentState,
+	CallbackToolEntry,
 	ExecutionSpanEmitter,
 	HTTPAuth,
 	HTTPToolEntry,
+	RetentionPolicy,
 } from "@agntz/contracts";
 
-export type AgentKind = "llm" | "tool" | "sequential" | "parallel";
+export type AgentKind =
+	| "llm"
+	| "tool"
+	| "sequential"
+	| "parallel"
+	| "transcription"
+	| "image";
 
 /**
  * Top-level agent manifest. This is what a YAML file parses into.
@@ -18,7 +26,9 @@ export type AgentManifest =
 	| LLMAgentManifest
 	| ToolAgentManifest
 	| SequentialAgentManifest
-	| ParallelAgentManifest;
+	| ParallelAgentManifest
+	| TranscriptionAgentManifest
+	| ImageAgentManifest;
 
 /** Fields shared by all agent kinds */
 export interface AgentManifestBase {
@@ -28,6 +38,10 @@ export interface AgentManifestBase {
 	kind: AgentKind;
 	inputSchema?: InputSchema;
 	stateKey?: string;
+	maxSteps?: number;
+	tokenBudget?: number;
+	timeoutMs?: number;
+	retention?: RetentionPolicy;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -35,26 +49,24 @@ export interface AgentManifestBase {
 // ═══════════════════════════════════════════════════════════════════════
 
 /**
- * Flat property map. Each key is a property name.
- * Value is either a type string ("string", "number", "boolean")
- * or an object with constraints ({ type, default, enum, min, max }).
+ * Canonical object-root JSON Schema, or the legacy property-map shorthand.
+ * The parser normalizes shorthand before compilation.
  */
-export type InputSchema = Record<string, PropertyDef>;
+export type InputSchema = Record<string, unknown>;
 
 export type PropertyDef = string | PropertyDefExpanded;
 
 export interface PropertyDefExpanded {
-	type: string;
+	type: string | string[];
 	default?: unknown;
 	enum?: unknown[];
 	min?: number;
 	max?: number;
+	[key: string]: unknown;
 }
 
-/**
- * Output schema for LLM structured output (same shape as InputSchema).
- */
-export type OutputSchema = Record<string, PropertyDef>;
+/** Canonical object-root JSON Schema, or the legacy property-map shorthand. */
+export type OutputSchema = Record<string, unknown>;
 
 /**
  * Output mapping for pipeline agents.
@@ -125,6 +137,16 @@ export interface ModelConfig {
 	temperature?: number;
 	maxTokens?: number;
 	topP?: number;
+	topK?: number;
+	presencePenalty?: number;
+	frequencyPenalty?: number;
+	stopSequences?: string[];
+	seed?: number;
+	maxRetries?: number;
+	/** Provider-scoped AI SDK options, e.g. `{ openai: { store: false } }`. */
+	providerOptions?: Record<string, Record<string, unknown>>;
+	/** @deprecated Use providerOptions. */
+	options?: Record<string, unknown>;
 }
 
 export type ResourceMode = "read" | "read-write";
@@ -154,6 +176,38 @@ export interface Example {
 export interface ToolAgentManifest extends AgentManifestBase {
 	kind: "tool";
 	tool: ToolCallConfig;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Hosted model operations
+// ═══════════════════════════════════════════════════════════════════════
+
+export interface TranscriptionAgentManifest extends AgentManifestBase {
+	kind: "transcription";
+	model: ModelConfig;
+	/** Provider transcription prompt/instruction. */
+	instruction?: string;
+	settings?: {
+		language?: string;
+		temperature?: number;
+		timestampGranularities?: Array<"word" | "segment">;
+	};
+}
+
+export interface ImageAgentManifest extends AgentManifestBase {
+	kind: "image";
+	model: ModelConfig;
+	/** Optional text prepended to the rendered/user prompt. */
+	instruction?: string;
+	/** Template rendered from structured input; defaults to `userQuery`. */
+	prompt?: string;
+	settings?: {
+		n?: number;
+		maxImagesPerCall?: number;
+		size?: `${number}x${number}`;
+		aspectRatio?: `${number}:${number}`;
+		seed?: number;
+	};
 }
 
 export interface ToolCallConfig {
@@ -225,7 +279,8 @@ export type ManifestToolEntry =
 	| MCPToolEntry
 	| LocalToolEntry
 	| AgentToolEntry
-	| HTTPToolEntry;
+	| HTTPToolEntry
+	| CallbackToolEntry;
 
 export interface MCPToolEntry {
 	kind: "mcp";
@@ -271,7 +326,7 @@ export interface AgentToolEntry {
 
 // `HTTPToolEntry` and the declarative HTTP auth config (`HTTPAuth`,
 // `TokenExchangeAuth`, …) are shared vocabulary defined in `@agntz/contracts`.
-export type { HTTPToolEntry };
+export type { CallbackToolEntry, HTTPToolEntry };
 
 // ═══════════════════════════════════════════════════════════════════════
 // State
@@ -301,6 +356,14 @@ export interface ExecutionContext {
 	) => Promise<unknown>;
 	/** Execute a tool call */
 	invokeTool: (config: ToolCallConfig, state: AgentState) => Promise<unknown>;
+	invokeTranscription?: (
+		manifest: TranscriptionAgentManifest,
+		state: AgentState,
+	) => Promise<unknown>;
+	invokeImage?: (
+		manifest: ImageAgentManifest,
+		state: AgentState,
+	) => Promise<unknown>;
 
 	/** Per-request span emitter — used by executor and pipelines to wrap manifest
 	 *  and step lifecycles with spans. Null/undefined disables emission.

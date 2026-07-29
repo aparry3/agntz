@@ -1,14 +1,19 @@
 import { pythonAdapter } from "./adapters/python.js";
 import { tsAdapter } from "./adapters/ts.js";
-import { maybeOpenIssue } from "./github.js";
+import {
+	parseArgs,
+	requireConfiguredProvider,
+	selectMatrix,
+	selectTests,
+} from "./config.js";
 import { ALL_CAPABILITIES, MATRIX } from "./matrix.js";
 import { writeReport } from "./report.js";
+import { isRegression } from "./result-policy.js";
 import { DEFAULT_PROVIDER_START_INTERVAL_MS, runMatrix } from "./runner.js";
 import { ALL_TESTS } from "./tests/index.js";
 import type {
 	Capability,
 	HarnessSdkSelection,
-	Provider,
 	ProviderAdapter,
 	ProviderModelEntry,
 	ResultBucket,
@@ -131,183 +136,28 @@ process.on("unhandledRejection", () => {
 	unhandledRejections++;
 });
 
-function parseArgs(argv: readonly string[]): {
-	sdk: HarnessSdkSelection;
-	updateSnapshots: boolean;
-	reportGithub: boolean;
-	githubDryRun: boolean;
-	globalConcurrency?: number;
-	providerConcurrency?: number;
-	providerStartIntervalMs: Partial<Record<Provider, number>>;
-	providerFilters: readonly string[];
-	modelFilters: readonly string[];
-	testFilters: readonly string[];
-} {
-	const sdk = parseSdk(argv);
-	if (sdk !== "ts" && sdk !== "python" && sdk !== "both") {
-		throw new Error(
-			`Invalid --sdk value "${sdk}". Expected ts, python, or both.`,
-		);
-	}
-	return {
-		sdk,
-		updateSnapshots: argv.includes("--update-snapshots") || argv.includes("-u"),
-		reportGithub: argv.includes("--report-github"),
-		githubDryRun: argv.includes("--github-dry-run"),
-		globalConcurrency: parsePositiveIntFlag(argv, "global-concurrency"),
-		providerConcurrency: parsePositiveIntFlag(argv, "provider-concurrency"),
-		providerStartIntervalMs: parseProviderStartIntervalMs(argv),
-		providerFilters: parseListFlag(argv, "provider"),
-		modelFilters: parseListFlag(argv, "model"),
-		testFilters: parseListFlag(argv, "test"),
-	};
-}
-
-function parseSdk(argv: readonly string[]): HarnessSdkSelection {
-	const equalsArg = argv.find((arg) => arg.startsWith("--sdk="));
-	if (equalsArg) return equalsArg.slice("--sdk=".length) as HarnessSdkSelection;
-	const flagIndex = argv.indexOf("--sdk");
-	if (flagIndex !== -1) {
-		return (argv[flagIndex + 1] || "ts") as HarnessSdkSelection;
-	}
-	return "ts";
-}
-
-function parsePositiveIntFlag(
-	argv: readonly string[],
-	name: string,
-): number | undefined {
-	const flag = `--${name}`;
-	const equalsArg = argv.find((arg) => arg.startsWith(`${flag}=`));
-	const raw =
-		equalsArg?.slice(`${flag}=`.length) ??
-		(argv.includes(flag) ? argv[argv.indexOf(flag) + 1] : undefined);
-	if (raw === undefined) return undefined;
-	const parsed = Number.parseInt(raw, 10);
-	if (!Number.isFinite(parsed) || parsed < 1) {
-		throw new Error(
-			`Invalid ${flag} value "${raw}". Expected a positive integer.`,
-		);
-	}
-	return parsed;
-}
-
-function parseProviderStartIntervalMs(
-	argv: readonly string[],
-): Partial<Record<Provider, number>> {
-	const entries = parseListFlag(argv, "provider-start-interval-ms");
-	const intervals: Partial<Record<Provider, number>> = {};
-	for (const entry of entries) {
-		const [provider, raw] = entry.split("=");
-		if (!isProvider(provider)) {
-			throw new Error(
-				`Invalid --provider-start-interval-ms provider "${provider}".`,
-			);
-		}
-		const parsed = Number.parseInt(raw ?? "", 10);
-		if (!Number.isFinite(parsed) || parsed < 0) {
-			throw new Error(
-				`Invalid --provider-start-interval-ms value "${entry}". Expected provider=non-negative-integer.`,
-			);
-		}
-		intervals[provider] = parsed;
-	}
-	return intervals;
-}
-
-function parseListFlag(argv: readonly string[], name: string): string[] {
-	const flag = `--${name}`;
-	const values: string[] = [];
-	for (let i = 0; i < argv.length; i++) {
-		const arg = argv[i];
-		if (arg === flag) {
-			const next = argv[i + 1];
-			if (next !== undefined) {
-				values.push(next);
-				i++;
-			}
-			continue;
-		}
-		if (arg.startsWith(`${flag}=`)) {
-			values.push(arg.slice(`${flag}=`.length));
-		}
-	}
-	return values
-		.flatMap((value) => value.split(","))
-		.map((value) => value.trim())
-		.filter(Boolean);
-}
-
-function isProvider(value: string | undefined): value is Provider {
-	return (
-		value === "anthropic" ||
-		value === "openai" ||
-		value === "google" ||
-		value === "mistral" ||
-		value === "groq" ||
-		value === "cohere" ||
-		value === "openrouter"
-	);
-}
-
 function adaptersFor(selection: HarnessSdkSelection): ProviderAdapter[] {
 	if (selection === "ts") return [tsAdapter];
 	if (selection === "python") return [pythonAdapter];
 	return [tsAdapter, pythonAdapter];
 }
 
-function filterMatrix(
-	entries: readonly ProviderModelEntry[],
-	args: {
-		providerFilters: readonly string[];
-		modelFilters: readonly string[];
-	},
-): ProviderModelEntry[] {
-	return entries.filter((entry) => {
-		const providerOk =
-			args.providerFilters.length === 0 ||
-			args.providerFilters.includes(entry.provider);
-		const modelOk =
-			args.modelFilters.length === 0 ||
-			args.modelFilters.some(
-				(filter) =>
-					entry.model.includes(filter) ||
-					`${entry.provider}/${entry.model}`.includes(filter),
-			);
-		return providerOk && modelOk;
-	});
-}
-
-function filterTests(
-	tests: typeof ALL_TESTS,
-	args: { testFilters: readonly string[] },
-): typeof ALL_TESTS {
-	return tests.filter(
-		(test) =>
-			args.testFilters.length === 0 || args.testFilters.includes(test.id),
-	) as typeof ALL_TESTS;
-}
-
 async function main(): Promise<void> {
 	const args = parseArgs(process.argv.slice(2));
 	const adapters = adaptersFor(args.sdk);
-	const matrix = filterMatrix(MATRIX, args);
-	const tests = filterTests(ALL_TESTS, args);
+	const matrix = selectMatrix(MATRIX, args);
+	const tests = selectTests(ALL_TESTS, args);
+	if (args.requireCredentials) requireConfiguredProvider(matrix);
 	const providerStartIntervalMs = {
 		...DEFAULT_PROVIDER_START_INTERVAL_MS,
 		...args.providerStartIntervalMs,
 	};
-	if (matrix.length === 0) {
-		throw new Error("Filters matched no models.");
-	}
-	if (tests.length === 0) {
-		throw new Error("Filters matched no tests.");
-	}
 	console.log("");
 	console.log(
 		"  agntz · provider harness · v0.1 — Phase 4 (snapshot infrastructure)",
 	);
 	console.log(`  SDK target: ${args.sdk}`);
+	console.log(`  Suite: ${args.suite}`);
 	if (args.updateSnapshots) {
 		console.log(
 			"  Snapshot update mode: existing snapshots will be overwritten.",
@@ -394,19 +244,10 @@ async function main(): Promise<void> {
 	});
 	console.log(`  Wrote ${written.markdownPath}`);
 	console.log(`  Wrote ${written.jsonPath}`);
+	console.log(`  Wrote ${written.junitPath}`);
 	console.log(`  Symlinked ${written.latestMarkdownPath} → latest`);
 
-	await maybeOpenIssue({
-		enabled: args.reportGithub || args.githubDryRun,
-		dryRun: args.githubDryRun,
-		results,
-		markdownPath: written.markdownPath,
-	});
-	console.log("");
-
-	const hasFailure = results.some(
-		(r) => r.bucket === "SDK_ERROR" || r.bucket === "UNEXPECTED_UNSUPPORTED",
-	);
+	const hasFailure = results.some(isRegression) || unhandledRejections > 0;
 	process.exit(hasFailure ? 1 : 0);
 }
 

@@ -4,6 +4,7 @@ import type {
 	AgentRef as ManifestAgentRef,
 	ManifestToolEntry,
 } from "./manifest/index.js";
+import { manifestSchemaToJsonSchema } from "./manifest/schema.js";
 import type { AgentDefinition, AgentRef, ToolReference } from "./types.js";
 
 /**
@@ -75,6 +76,17 @@ function llmManifestToAgentDefinition(
 			temperature: manifest.model.temperature,
 			maxTokens: manifest.model.maxTokens,
 			topP: manifest.model.topP,
+			topK: manifest.model.topK,
+			presencePenalty: manifest.model.presencePenalty,
+			frequencyPenalty: manifest.model.frequencyPenalty,
+			stopSequences: manifest.model.stopSequences,
+			seed: manifest.model.seed,
+			maxRetries: manifest.model.maxRetries,
+			providerOptions:
+				manifest.model.providerOptions ??
+				(manifest.model.options
+					? { [manifest.model.provider]: manifest.model.options }
+					: undefined),
 		},
 		examples: manifest.examples,
 		outputSchema: manifest.outputSchema
@@ -86,6 +98,10 @@ function llmManifestToAgentDefinition(
 			: undefined,
 		reply: manifest.reply,
 		resources: manifest.resources,
+		maxSteps: manifest.maxSteps,
+		tokenBudget: manifest.tokenBudget,
+		timeoutMs: manifest.timeoutMs,
+		retention: manifest.retention,
 	};
 }
 
@@ -109,6 +125,9 @@ function convertTools(
 				break;
 			case "http":
 				out.push({ type: "http", entry });
+				break;
+			case "callback":
+				out.push({ type: "callback", entry });
 				break;
 			case "mcp":
 				out.push({
@@ -148,53 +167,4 @@ function convertSpawnable(
 		});
 		return { kind: "inline", definition: childDef };
 	});
-}
-
-/** Convert the flat manifest `outputSchema` shorthand into a JSON Schema. */
-function manifestSchemaToJsonSchema(
-	schema: Record<string, unknown>,
-): Record<string, unknown> {
-	const properties: Record<string, unknown> = {};
-	const required: string[] = [];
-
-	for (const [key, value] of Object.entries(schema)) {
-		properties[key] =
-			typeof value === "string" ? { type: value } : enforceStrictObject(value);
-		required.push(key);
-	}
-
-	return {
-		type: "object",
-		properties,
-		required,
-		additionalProperties: false,
-	};
-}
-
-/**
- * OpenAI strict structured output requires `additionalProperties: false` on
- * every nested object schema. Walk the schema and enforce it.
- */
-function enforceStrictObject(value: unknown): unknown {
-	if (!value || typeof value !== "object") return value;
-	const obj = value as Record<string, unknown>;
-	const out: Record<string, unknown> = { ...obj };
-
-	if (obj.type === "object") {
-		if (!("additionalProperties" in out)) out.additionalProperties = false;
-		const props = obj.properties as Record<string, unknown> | undefined;
-		if (props) {
-			const walked: Record<string, unknown> = {};
-			for (const [key, child] of Object.entries(props)) {
-				walked[key] = enforceStrictObject(child);
-			}
-			out.properties = walked;
-		}
-	}
-
-	if (obj.type === "array" && obj.items) {
-		out.items = enforceStrictObject(obj.items);
-	}
-
-	return out;
 }

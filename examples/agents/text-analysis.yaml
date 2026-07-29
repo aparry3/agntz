@@ -19,6 +19,8 @@ branches:
         provider: openai
         name: gpt-5.4-mini
         temperature: 0
+      inputSchema:
+        text: string
       instruction: |
         Extract all named entities (people, places, organizations, dates) from this text.
         Respond as a JSON array of objects with "name" and "type" fields.
@@ -37,6 +39,8 @@ branches:
         provider: openai
         name: gpt-5.4-mini
         temperature: 0
+      inputSchema:
+        text: string
       instruction: |
         Classify the primary intent of this text.
         Respond with a JSON object.

@@ -15,9 +15,9 @@ const geistMono = Geist_Mono({
 });
 
 const SITE_URL = "https://agntz.co";
-const SITE_TITLE = "Agntz — Describe your agent. Run it.";
+const SITE_TITLE = "agntz — Portable YAML agent runtime";
 const SITE_DESCRIPTION =
-	"A declarative runtime for production agents. Define agents in YAML, call your existing APIs, and run anywhere — local, hosted, or self-hosted.";
+	"Build portable YAML agents with TypeScript or Python, then run them embedded, hosted, or self-hosted with durable traces, evals, and memory.";
 
 export const metadata: Metadata = {
 	metadataBase: new URL(SITE_URL),

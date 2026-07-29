@@ -20,6 +20,7 @@ from .types import (
 )
 
 _TOOL_KINDS = {"mcp", "local", "http"}
+_IGNORED_MANIFEST_DIRS = {"node_modules", "dist", "coverage"}
 
 
 class ManifestParseError(ValueError):
@@ -38,16 +39,32 @@ def load_manifest_file(path: str | Path) -> AgentManifest:
 
 
 def load_manifests_from_dir(path: str | Path) -> dict[str, AgentManifest]:
-    root = Path(path)
     manifests: dict[str, AgentManifest] = {}
-    for manifest_path in sorted(
-        candidate for candidate in root.rglob("*") if candidate.suffix.lower() in {".yaml", ".yml"}
-    ):
+    for manifest_path in find_manifest_files(path):
         manifest = load_manifest_file(manifest_path)
         if manifest.id in manifests:
             raise ManifestParseError(f"Duplicate agent id '{manifest.id}' in {manifest_path}")
         manifests[manifest.id] = manifest
     return manifests
+
+
+def find_manifest_files(path: str | Path) -> list[Path]:
+    root = Path(path)
+    files: list[Path] = []
+
+    def visit(directory: Path) -> None:
+        for candidate in sorted(directory.iterdir()):
+            if candidate.is_symlink():
+                continue
+            if candidate.is_dir():
+                if candidate.name.startswith(".") or candidate.name in _IGNORED_MANIFEST_DIRS:
+                    continue
+                visit(candidate)
+            elif candidate.is_file() and candidate.suffix.lower() in {".yaml", ".yml"}:
+                files.append(candidate)
+
+    visit(root)
+    return files
 
 
 def normalize_manifest(raw: dict[str, Any]) -> AgentManifest:
@@ -147,6 +164,10 @@ def _normalize_step(raw: Any) -> StepRef:
         agent = normalize_manifest(agent)
     elif agent is not None:
         raise ManifestParseError("Step 'agent' must be an inline manifest object")
+    if "ref" in raw and agent is not None:
+        raise ManifestParseError("Step cannot have both 'ref' and 'agent'")
+    if "ref" in raw and not isinstance(raw["ref"], str):
+        raise ManifestParseError("Step 'ref' must be a string")
     if not isinstance(raw.get("ref"), str) and agent is None:
         raise ManifestParseError("Step must have either 'ref' or inline 'agent'")
     return StepRef(
@@ -183,9 +204,11 @@ def _normalize_reply(value: Any) -> bool | dict[str, Any] | None:
     if isinstance(value, dict):
         max_per_run = value.get("maxPerRun")
         if max_per_run is not None and (
-            not isinstance(max_per_run, int | float) or max_per_run < 1
+            not isinstance(max_per_run, int)
+            or isinstance(max_per_run, bool)
+            or max_per_run < 1
         ):
-            raise ManifestParseError("'reply.maxPerRun' must be a positive number")
+            raise ManifestParseError("'reply.maxPerRun' must be a positive integer")
         return value
     raise ManifestParseError("'reply' must be a boolean or object")
 

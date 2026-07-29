@@ -58,6 +58,10 @@ export class AISDKModelProvider implements ModelProvider {
 			Output,
 			jsonSchema,
 		);
+		const mergedProviderOptions = mergeProviderOptions(
+			options.model,
+			providerOptions,
+		);
 
 		let result: Awaited<ReturnType<typeof generateText>>;
 		try {
@@ -66,8 +70,16 @@ export class AISDKModelProvider implements ModelProvider {
 				messages,
 				tools: Object.keys(tools).length > 0 ? tools : undefined,
 				experimental_output,
-				providerOptions,
-				maxOutputTokens: options.maxTokens,
+				providerOptions: mergedProviderOptions,
+				maxOutputTokens: options.maxTokens ?? options.model.maxTokens,
+				temperature: options.model.temperature,
+				topP: options.model.topP,
+				topK: options.model.topK,
+				presencePenalty: options.model.presencePenalty,
+				frequencyPenalty: options.model.frequencyPenalty,
+				stopSequences: options.model.stopSequences,
+				seed: options.model.seed,
+				maxRetries: options.model.maxRetries,
 				abortSignal: options.signal,
 			});
 		} catch (err) {
@@ -91,6 +103,12 @@ export class AISDKModelProvider implements ModelProvider {
 			})),
 			usage,
 			finishReason: result.finishReason ?? "stop",
+			rawFinishReason: result.rawFinishReason,
+			provider: options.model.provider,
+			requestedModel: options.model.name,
+			model: result.response.modelId,
+			responseId: result.response.id,
+			warnings: normalizeWarnings(result.warnings),
 		};
 	}
 
@@ -122,6 +140,10 @@ export class AISDKModelProvider implements ModelProvider {
 			Output,
 			jsonSchema,
 		);
+		const mergedProviderOptions = mergeProviderOptions(
+			options.model,
+			providerOptions,
+		);
 
 		let result: ReturnType<typeof streamText>;
 		try {
@@ -130,8 +152,16 @@ export class AISDKModelProvider implements ModelProvider {
 				messages,
 				tools: Object.keys(tools).length > 0 ? tools : undefined,
 				experimental_output,
-				providerOptions,
-				maxOutputTokens: options.maxTokens,
+				providerOptions: mergedProviderOptions,
+				maxOutputTokens: options.maxTokens ?? options.model.maxTokens,
+				temperature: options.model.temperature,
+				topP: options.model.topP,
+				topK: options.model.topK,
+				presencePenalty: options.model.presencePenalty,
+				frequencyPenalty: options.model.frequencyPenalty,
+				stopSequences: options.model.stopSequences,
+				seed: options.model.seed,
+				maxRetries: options.model.maxRetries,
 				abortSignal: options.signal,
 			});
 		} catch (err) {
@@ -184,7 +214,20 @@ export class AISDKModelProvider implements ModelProvider {
 				const usage = await usagePromise;
 				const finishReason = await finishReasonPromise;
 				const responseMessages = await responseMessagesPromise;
-				return { text, responseMessages, toolCalls, usage, finishReason };
+				const response = await Promise.resolve(result.response);
+				return {
+					text,
+					responseMessages,
+					toolCalls,
+					usage,
+					finishReason,
+					rawFinishReason: await Promise.resolve(result.rawFinishReason),
+					provider: options.model.provider,
+					requestedModel: options.model.name,
+					model: response.modelId,
+					responseId: response.id,
+					warnings: normalizeWarnings(await Promise.resolve(result.warnings)),
+				};
 			},
 		};
 	}
@@ -366,6 +409,40 @@ function buildStructuredOutput(
 		}),
 		providerOptions: undefined,
 	};
+}
+
+function mergeProviderOptions(
+	model: ModelConfig,
+	structured: AiStructuredOutputConfig["providerOptions"],
+): AiStructuredOutputConfig["providerOptions"] {
+	const configured =
+		model.providerOptions ??
+		(model.options ? { [model.provider]: model.options } : undefined);
+	if (!configured && !structured) return undefined;
+
+	const merged: Record<string, Record<string, unknown>> = {};
+	for (const [provider, options] of Object.entries(configured ?? {})) {
+		merged[provider] = { ...options };
+	}
+	for (const [provider, options] of Object.entries(structured ?? {})) {
+		merged[provider] = {
+			...(merged[provider] ?? {}),
+			...(options as Record<string, unknown>),
+		};
+	}
+	return merged as AiStructuredOutputConfig["providerOptions"];
+}
+
+function normalizeWarnings(warnings: unknown): string[] | undefined {
+	if (!Array.isArray(warnings) || warnings.length === 0) return undefined;
+	return warnings.map((warning) => {
+		if (typeof warning === "string") return warning;
+		try {
+			return JSON.stringify(warning);
+		} catch {
+			return String(warning);
+		}
+	});
 }
 
 // The native structured-output paths (google, openrouter) sometimes wrap the JSON

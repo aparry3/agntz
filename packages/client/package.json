@@ -1,6 +1,6 @@
 {
   "name": "@agntz/client",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Official TypeScript HTTP client for the agntz API. Universal (Node + browser), SSE streaming, AbortSignal-native.",
   "type": "module",
   "main": "./dist/index.js",
@@ -49,6 +49,6 @@
     "vitest": "^3.2.0"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   }
 }

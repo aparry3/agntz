@@ -231,6 +231,17 @@ export class ValidationError extends AgntzError {
 	}
 }
 
+/** Thrown when a structured-output model response is not valid JSON/schema. */
+export class StructuredOutputError extends AgntzError {
+	readonly details: string[];
+
+	constructor(message: string, details: string[] = [], cause?: Error) {
+		super("STRUCTURED_OUTPUT_INVALID", message, { cause });
+		this.name = "StructuredOutputError";
+		this.details = details;
+	}
+}
+
 /**
  * Thrown when a skill is referenced but not found in the SkillStore.
  */

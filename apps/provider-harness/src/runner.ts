@@ -205,9 +205,12 @@ async function runOne(
 			if (isMissingCredentials(error)) {
 				return {
 					...base,
-					bucket: "SKIPPED",
+					bucket: "SDK_ERROR",
 					durationMs,
-					skipReason: `missing credentials (${error.message})`,
+					error: {
+						name: "CredentialError",
+						message: `configured ${envVarFor(model.provider)} was rejected: ${error.message}`,
+					},
 				};
 			}
 

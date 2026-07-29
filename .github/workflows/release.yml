@@ -11,9 +11,9 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
+    environment: npm
     permissions:
       contents: write
-      packages: write
       id-token: write
       pull-requests: write
 
@@ -28,6 +28,9 @@ jobs:
           cache: pnpm
           registry-url: "https://registry.npmjs.org"
 
+      - name: Install npm with trusted publishing support
+        run: npm install --global npm@^11.5.1
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -36,6 +39,9 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+      - name: Verify packed consumer
+        run: pnpm test:packed
 
       - name: Create Release Pull Request or Publish
         id: changesets
@@ -46,6 +52,5 @@ jobs:
           commit: "chore: release packages"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_IGNORE_SCRIPTS: "true"
+          NPM_CONFIG_PROVENANCE: "true"

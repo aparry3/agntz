@@ -2,6 +2,12 @@ export default `# Common fields
 
 Every agent manifest starts with the same four-field header, regardless of kind. These are the identity fields surfaced everywhere — in the trace, the runs list, the agent picker, and (on the hosted edition) the version history.
 
+The published JSON Schema is available at
+\`https://agntz.co/schemas/agent-manifest.schema.json\` and from
+\`@agntz/core/schema\`. Associate that URL with \`agents/**/*.yaml\` in your
+editor for completion and inline diagnostics, then run \`agntz validate
+./agents\` for recursive cross-file reference checks.
+
 \`\`\`yaml
 id: my-agent                          # required, unique within the registry
 name: My Agent                        # optional, display label

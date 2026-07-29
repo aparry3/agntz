@@ -12,6 +12,8 @@ branches:
     agent:
       id: tone-reviewer
       kind: llm
+      inputSchema:
+        userQuery: string
       model:
         provider: anthropic
         name: claude-sonnet-4.5

@@ -157,16 +157,17 @@ Use agntz locally first.
 2. Install or invoke the CLI from @agntz/sdk.
 3. Create or update ./agents/<agent-id>.yaml with agntz create.
 4. Inspect the YAML and make direct edits for ids, prompts, schemas, models, tools, and resources.
-5. Run the YAML with agntz run ./agents/<agent-id>.yaml --input "...".
-6. If the agent needs local code tools or resource providers, add @agntz/sdk service code and pass tools/resources to agntz(...).
-7. Treat hosted login and hosted run management as optional follow-up work.
+5. Validate the manifest set with agntz validate ./agents.
+6. Run the YAML with agntz run ./agents/<agent-id>.yaml --input "...".
+7. If the agent needs local code tools or resource providers, add @agntz/sdk service code and pass tools/resources to agntz(...).
+8. Treat hosted login and hosted run management as optional follow-up work.
 \`\`\`
 
 ## Current CLI boundary
 
-The current CLI supports \`create\`, \`run\`, \`login\`, \`logout\`, \`whoami\`, \`runs\`, and \`traces\`.
+The current CLI supports \`create\`, \`edit\`, \`validate\`, \`run\`, \`publish\`, \`login\`, \`logout\`, \`whoami\`, \`eval\`, \`runs\`, and \`traces\`.
 
-It does not currently provide project scaffolding, eval execution, validation-only execution, an interactive playground, or a Studio launcher. If an older README mentions commands such as \`init\`, \`invoke\`, \`validate\`, \`eval\`, or \`playground\`, prefer this page and the [CLI reference](/docs/sdk-cli/cli).
+It does not currently provide project scaffolding, an interactive terminal playground, or a Studio launcher. Use \`agntz validate --json\` for CI and editor automation, and see the [CLI reference](/docs/sdk-cli/cli) for the current command set.
 
 ## Next steps
 

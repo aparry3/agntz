@@ -11,3 +11,25 @@ export {
 	getSystemAgent,
 } from "./system-agents.js";
 export type { SystemAgentInfo } from "./system-agents.js";
+export {
+	HostedOperationRegistry,
+	createDefaultHostedOperationRegistry,
+	executeHostedImage,
+	executeHostedTranscription,
+} from "./model-operations.js";
+export type {
+	HostedOperationAdapter,
+	HostedOperationAdapterRequest,
+	HostedOperationAdapterResult,
+	HostedOperationMetadata,
+} from "./model-operations.js";
+export {
+	FileArtifactBlobStore,
+	MemoryArtifactBlobStore,
+	S3ArtifactBlobStore,
+	sha256,
+} from "./artifacts.js";
+export type {
+	ArtifactBlobStore,
+	S3ArtifactBlobStoreOptions,
+} from "./artifacts.js";
