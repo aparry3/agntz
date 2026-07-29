@@ -79,6 +79,8 @@ class Event(AgntzModel):
     text: str | None = None
     ts: str | None = None
     run_id: str | None = Field(default=None, alias="runId")
+    trace_id: str | None = Field(default=None, alias="traceId")
+    retention: RetentionRequest | None = None
     seq: int | None = None
     error: str | None = None
     run: dict[str, Any] | None = None

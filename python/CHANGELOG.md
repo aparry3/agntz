@@ -10,6 +10,8 @@
   provider/model/usage/version results, and `agents.start()` parity.
 - Gate the migration-critical hosted surface against the shared TypeScript
   contract in `contracts/hosted-client-parity.json`.
+- Normalize hosted streaming events for all six manifest kinds and preserve
+  retention metadata for sessionless `none` and `result` runs.
 - Rename the local Python command to `agntz-py` so it no longer collides with
   the full `agntz` CLI distributed by `@agntz/sdk`.
 - Add file-or-directory validation with canonical JSON reports, a safe

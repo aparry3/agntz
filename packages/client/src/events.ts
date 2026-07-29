@@ -2,6 +2,7 @@ import { StreamError } from "./errors.js";
 import type {
 	AgentKind,
 	MultiplexedRunEvent,
+	RetentionRequest,
 	Run,
 	Span,
 	SseFrame,
@@ -22,23 +23,32 @@ export function normalizeEvent(frame: SseFrame): StreamEvent | null {
 		case "run-start": {
 			const agentId = asString(payload, "agentId");
 			const kind = asAgentKind(payload);
-			const sessionId = asString(payload, "sessionId");
+			const sessionId = optionalString(payload, "sessionId");
 			const runId = optionalString(payload, "runId");
 			const traceId = optionalString(payload, "traceId");
+			const retention = optionalRetention(payload);
 			return {
 				type: "start",
 				agentId,
 				kind,
-				sessionId,
+				...(sessionId ? { sessionId } : {}),
 				...(runId ? { runId } : {}),
 				...(traceId ? { traceId } : {}),
+				...(retention ? { retention } : {}),
 			};
 		}
 		case "run-complete": {
 			const output = (payload as { output?: unknown }).output;
 			const state = asStateRecord(payload);
-			const sessionId = asString(payload, "sessionId");
-			return { type: "complete", output, state, sessionId };
+			const sessionId = optionalString(payload, "sessionId");
+			const retention = optionalRetention(payload);
+			return {
+				type: "complete",
+				output,
+				state,
+				...(sessionId ? { sessionId } : {}),
+				...(retention ? { retention } : {}),
+			};
 		}
 		case "run-error": {
 			const error = asString(payload, "error");
@@ -93,13 +103,23 @@ function asAgentKind(payload: unknown): AgentKind {
 		kind === "llm" ||
 		kind === "tool" ||
 		kind === "sequential" ||
-		kind === "parallel"
+		kind === "parallel" ||
+		kind === "transcription" ||
+		kind === "image"
 	) {
 		return kind;
 	}
 	throw new StreamError(`Unknown agent kind: ${String(kind)}`, {
 		code: "INVALID_SSE_PAYLOAD",
 	});
+}
+
+function optionalRetention(payload: unknown): RetentionRequest | undefined {
+	const value = (payload as Record<string, unknown> | null)?.retention;
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		return undefined;
+	}
+	return value as RetentionRequest;
 }
 
 function asStateRecord(payload: unknown): Record<string, unknown> {

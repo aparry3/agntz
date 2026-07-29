@@ -19,7 +19,10 @@ def normalize_agent_event(frame: SseFrame) -> Event | None:
             type="start",
             agentId=_string(payload, "agentId"),
             kind=_agent_kind(payload),
-            sessionId=_string(payload, "sessionId"),
+            sessionId=_optional_string(payload, "sessionId"),
+            runId=_optional_string(payload, "runId"),
+            traceId=_optional_string(payload, "traceId"),
+            retention=payload.get("retention"),
         )
     if frame.event == "run-complete":
         state = payload.get("state")
@@ -27,7 +30,8 @@ def normalize_agent_event(frame: SseFrame) -> Event | None:
             type="complete",
             output=payload.get("output"),
             state=state if isinstance(state, dict) else {},
-            sessionId=_string(payload, "sessionId"),
+            sessionId=_optional_string(payload, "sessionId"),
+            retention=payload.get("retention"),
         )
     if frame.event == "run-error":
         return Event(type="error", error=_string(payload, "error"))
@@ -121,8 +125,13 @@ def _string(payload: dict[str, Any], field: str) -> str:
     return value
 
 
+def _optional_string(payload: dict[str, Any], field: str) -> str | None:
+    value = payload.get(field)
+    return value if isinstance(value, str) else None
+
+
 def _agent_kind(payload: dict[str, Any]) -> str:
     value = payload.get("kind")
-    if value in {"llm", "tool", "sequential", "parallel"}:
+    if value in {"llm", "tool", "sequential", "parallel", "transcription", "image"}:
         return value
     raise StreamError(f"Unknown agent kind: {value}", code="INVALID_SSE_PAYLOAD")

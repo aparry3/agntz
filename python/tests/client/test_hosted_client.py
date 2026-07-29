@@ -229,6 +229,48 @@ def test_agents_stream_normalizes_sse_events() -> None:
     assert events[2].output == "done"
 
 
+def test_agents_stream_accepts_hosted_kinds_and_sessionless_retention() -> None:
+    body = _sse(
+        "run-start",
+        {
+            "agentId": "transcribe",
+            "kind": "transcription",
+            "runId": "run_abc",
+            "retention": {"mode": "result"},
+        },
+    ) + _sse(
+        "run-complete",
+        {
+            "output": {"text": "done"},
+            "state": {},
+            "retention": {"mode": "result"},
+        },
+    )
+
+    client = AgntzClient(
+        api_key="test-key",
+        base_url="https://worker.test",
+        http_client=httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(
+                    200,
+                    content=body.encode(),
+                    headers={"content-type": "text/event-stream"},
+                )
+            )
+        ),
+    )
+
+    events = list(client.agents.stream(agent_id="transcribe", content=[]))
+    assert events[0].kind == "transcription"
+    assert events[0].session_id is None
+    assert events[0].run_id == "run_abc"
+    assert events[0].retention is not None
+    assert events[0].retention.mode == "result"
+    assert events[1].output == {"text": "done"}
+    assert events[1].session_id is None
+
+
 def test_agents_stream_raises_on_truncated_stream() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(

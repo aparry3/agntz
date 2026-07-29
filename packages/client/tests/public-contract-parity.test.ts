@@ -8,7 +8,9 @@ import {
 } from "../src/index.js";
 
 interface ParityContract {
+	version: number;
 	resources: Record<string, string[]>;
+	agentKinds: string[];
 	retentionModes: string[];
 	contentBlockTypes: string[];
 }
@@ -39,7 +41,16 @@ describe("hosted client public-contract parity", () => {
 	});
 
 	it("pins the cross-language content and retention vocabulary", () => {
+		expect(contract.version).toBe(2);
 		expect(contract.retentionModes).toEqual(["none", "result", "session"]);
 		expect(contract.contentBlockTypes).toEqual(["text", "image", "audio"]);
+		expect(contract.agentKinds).toEqual([
+			"llm",
+			"tool",
+			"sequential",
+			"parallel",
+			"transcription",
+			"image",
+		]);
 	});
 });

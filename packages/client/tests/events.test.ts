@@ -43,6 +43,42 @@ describe("normalizeEvent", () => {
 		});
 	});
 
+	it("maps hosted operation kinds and sessionless retention", () => {
+		expect(
+			normalizeEvent({
+				event: "run-start",
+				data: JSON.stringify({
+					agentId: "transcribe",
+					kind: "transcription",
+					runId: "run_1",
+					retention: { mode: "result" },
+				}),
+			}),
+		).toEqual({
+			type: "start",
+			agentId: "transcribe",
+			kind: "transcription",
+			runId: "run_1",
+			retention: { mode: "result" },
+		});
+
+		expect(
+			normalizeEvent({
+				event: "run-start",
+				data: JSON.stringify({
+					agentId: "cover",
+					kind: "image",
+					runId: "run_2",
+				}),
+			}),
+		).toEqual({
+			type: "start",
+			agentId: "cover",
+			kind: "image",
+			runId: "run_2",
+		});
+	});
+
 	it("maps run-complete", () => {
 		expect(
 			normalizeEvent({
@@ -104,6 +140,23 @@ describe("normalizeEvent", () => {
 				data: JSON.stringify({ output: 1, sessionId: "sess_1" }),
 			}),
 		).toEqual({ type: "complete", output: 1, state: {}, sessionId: "sess_1" });
+	});
+
+	it("maps sessionless run-complete retention", () => {
+		expect(
+			normalizeEvent({
+				event: "run-complete",
+				data: JSON.stringify({
+					output: { text: "done" },
+					retention: { mode: "result" },
+				}),
+			}),
+		).toEqual({
+			type: "complete",
+			output: { text: "done" },
+			state: {},
+			retention: { mode: "result" },
+		});
 	});
 
 	it("maps reply with seq", () => {

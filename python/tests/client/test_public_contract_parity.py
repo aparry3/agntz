@@ -43,5 +43,14 @@ def test_run_fields_and_vocab_match_shared_contract() -> None:
     for wire_name in CONTRACT["durableRunFields"]:
         assert _camel_to_snake(wire_name) in start
 
+    assert CONTRACT["version"] == 2
     assert CONTRACT["retentionModes"] == ["none", "result", "session"]
     assert CONTRACT["contentBlockTypes"] == ["text", "image", "audio"]
+    assert CONTRACT["agentKinds"] == [
+        "llm",
+        "tool",
+        "sequential",
+        "parallel",
+        "transcription",
+        "image",
+    ]
