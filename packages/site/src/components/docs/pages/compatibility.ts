@@ -6,8 +6,16 @@ What runs where, today. Embedded means in-process SDK execution: \`@agntz/sdk\` 
 |---|:---:|:---:|:---:|
 | LLM agents | ✓ | ✓ | ✓ |
 | Sequential / parallel / tool kinds | ✓ | ✓ | ✓ |
+| Canonical recursive JSON Schema | ✓ | ✓ | ✓ |
+| Common model controls / provider options | ✓ | provider-dependent | ✓ |
+| Ordered text + image content | ✓ | provider-dependent | ✓ |
+| Managed input/output artifacts | × | × | ✓ |
+| Transcription manifest kind | × | × | ✓ (OpenAI built-in) |
+| Image manifest kind | × | × | ✓ (OpenAI built-in) |
+| \`none\` / \`result\` / \`session\` retention | runtime-specific | runtime-specific | ✓ |
 | Local tools | ✓ (JS/TS) | ✓ (Python) | (use MCP / HTTP instead) |
 | HTTP tools | ✓ | ✓ | ✓ |
+| Signed callback tools | ✓ if SecretStore wired | not yet | ✓ |
 | HTTP tools — OAuth2 / token exchange | ✓ | partial | ✓ |
 | MCP tools (raw URL + headers) | ✓ | ✓ (HTTP JSON-RPC) | ✓ |
 | Agent-as-tool | ✓ | ✓ | ✓ |
@@ -46,6 +54,11 @@ Most of the way is a constructor change (see [Embedded SDK → Switching to host
 - **\`{{env.X}}\` → \`{{secrets.X}}\`** — multi-tenant workers do not share an environment with your code. Use \`{{secrets.X}}\` and configure values in **Settings → Secrets**.
 - **Resources** — make sure the hosted worker has the same provider kinds wired server-side. Runtime \`context\` grants still come from trusted application code.
 - **Version refs** — local persisted stores and hosted stores can resolve bare ids, \`@latest\`, exact version timestamps, and aliases. In-memory registered agents do not retain version history.
+- **Local media** — the hosted TypeScript and Python clients upload local files
+  automatically. Direct HTTP callers must upload an artifact or send URL/base64
+  content blocks.
+- **Local business tools** — use signed callback tools when the model needs to
+  call an application-owned endpoint with trusted run context.
 
 ### TypeScript embedded → Python embedded
 

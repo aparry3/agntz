@@ -34,6 +34,10 @@ Same Railway project → **Add Service** → **GitHub Repo** → select your for
   - \`DEFAULT_MODEL_PROVIDER=openai\`
   - \`DEFAULT_MODEL_NAME=gpt-4o\`
   - \`OPENAI_API_KEY=sk-...\`
+  - \`ARTIFACT_STORE=s3\`
+  - \`ARTIFACT_S3_BUCKET=<private bucket>\`
+  - \`ARTIFACT_S3_PREFIX=production\`
+  - \`AWS_REGION=<bucket region>\`
   - \`MEMREZ_STORE=postgres\`
   - \`MEMREZ_REASONER=llm\`
   - \`MEMREZ_CURATE_INTERVAL=30m\` (optional)
@@ -45,6 +49,18 @@ With \`STORE=postgres\`, the worker can wire the memrez memory provider against
 Postgres. \`MEMREZ_CURATE_INTERVAL\` enables the worker's periodic dirty-topic
 curation sweep; omit it if you prefer to call the memory curation endpoint or
 library primitives from your own scheduler.
+
+Provider-replacement workloads can upload as much as 50 MiB per artifact.
+Configure the platform request-body limit accordingly. Use
+\`ARTIFACT_S3_ENDPOINT\` and \`ARTIFACT_S3_FORCE_PATH_STYLE=true\` for
+compatible object stores that require them; provide credentials through the
+AWS SDK environment or workload identity. Keep the bucket private and add a
+lifecycle policy as a deletion backstop.
+
+The worker makes outbound calls to model providers, remote media URLs, MCP/HTTP
+tools, and signed callback endpoints. Production defaults reject localhost and
+private-network destinations. Callback receivers must verify HMAC, timestamp,
+and delivery id before using the trusted run/session context.
 
 ## 3. Set up Clerk
 
@@ -122,12 +138,19 @@ Every store row is scoped to the active Clerk organization id, falling back to t
 ## Operating the deployment
 
 - **Logs.** Railway streams worker logs in its UI; Vercel does the same for the app. Wire both into your observability stack if you have one.
-- **Scaling.** The worker is stateless — scale it horizontally by raising Railway's replica count. The app is similarly stateless on Vercel.
+- **Scaling.** With Postgres plus S3 artifact storage, the worker is stateless
+  enough to scale horizontally by raising Railway's replica count. Do not use
+  filesystem artifacts across replicas.
 - **Database.** A managed Postgres with daily backups is sufficient for most teams. Run migrations via worker boot only — we don't ship a separate migration runner.
+- **Retention.** Run-record and artifact TTLs are independent. Monitor expired
+  metadata/object cleanup and align object lifecycle rules with the longest
+  allowed artifact TTL.
 - **Updating.** Push to your fork → Railway and Vercel auto-deploy. Pin the worker image tag if you want manual control over rollouts.
 
 ## See also
 
 - **[HTTP API reference](/docs/deploy/http-api)** — endpoints the worker exposes.
 - **[Hosted cloud](/docs/deploy/hosted-cloud)** — managed alternative.
+- **[Provider replacement](/docs/hosted/provider-replacement)** — application
+  migration boundary and hosted operation contract.
 `;

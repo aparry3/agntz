@@ -75,19 +75,51 @@ GOOGLE_GENERATIVE_AI_API_KEY=<provider key>
 ARTIFACT_STORE=s3
 ARTIFACT_S3_BUCKET=<private bucket>
 ARTIFACT_S3_PREFIX=agntz-artifacts
+ARTIFACT_S3_ENDPOINT=<optional S3-compatible endpoint>
+ARTIFACT_S3_FORCE_PATH_STYLE=false
 AWS_REGION=<bucket region>
+AWS_ACCESS_KEY_ID=<unless using another AWS credential source>
+AWS_SECRET_ACCESS_KEY=<unless using another AWS credential source>
 ```
 
 `ARTIFACT_STORE=filesystem` with `ARTIFACT_DIR` is suitable only for a
 single persistent worker. Use S3-compatible storage for multiple replicas and
 configure a matching bucket lifecycle policy as a backstop to the worker's
-artifact expiry sweep.
+artifact expiry sweep. Keep the bucket private: callers download through the
+authenticated worker endpoint, and metadata remains tenant-scoped in Postgres.
+
+Provider-replacement workloads also need:
+
+- every manifest provider credential installed in the worker environment or
+  hosted connection store;
+- enough request-body capacity for the 50 MiB artifact upload ceiling;
+- outbound HTTPS access to provider APIs, public callback endpoints, and any
+  remote media referenced by content blocks;
+- tenant secrets provisioned for every `tools[].kind: callback` declaration.
+
+Run records and artifacts have independent expiries. Confirm the database
+cleanup job and object-store lifecycle policy cover your maximum
+`retention.ttlSeconds` and `retention.artifactTtlSeconds` values. The worker
+blocks localhost and private-network callback/media destinations by default to
+reduce SSRF risk.
 
 Verify:
 
 ```sh
 curl https://<worker-domain>/health
 ```
+
+Then exercise the same boundary your application will use:
+
+1. Import a canonical-schema `llm` manifest and run it through an API key.
+2. Upload and download a small artifact; confirm it is private in object
+   storage and tenant-isolated through the API.
+3. Run one `retention.mode: none` request and confirm no durable run/trace row
+   is created.
+4. If enabled, invoke a signed callback tool and verify signature, timestamp,
+   and delivery-id replay protection in the receiver.
+5. If enabled, run one transcription and one image manifest and verify the
+   normalized output plus artifact expiry metadata.
 
 ## Deploy app
 
@@ -179,3 +211,5 @@ sessions, runs, traces, and memory appear in Postgres.
 - Confirm database backup and retention policy.
 - Rotate `WORKER_INTERNAL_SECRET` if it has ever been shared outside deploy
   tooling.
+- Rotate callback secrets independently and accept both old and new values
+  during a controlled receiver rollout.

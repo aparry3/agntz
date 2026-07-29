@@ -2,9 +2,51 @@ export default `# Input, state, and output
 
 How data flows into and out of an agent. The same model applies to every \`kind\` — primitives consume their input, pipelines merge per-step outputs into a shared state object, and the agent's final result is shaped by \`outputSchema\` (LLM) or \`output\` (pipelines).
 
-## Input
+## Canonical JSON Schema
 
-\`inputSchema\` declares the agent's input contract. Properties are listed directly; all are **required but nullable**.
+\`inputSchema\`, \`outputSchema\`, and callback-tool \`inputSchema\` use JSON
+Schema Draft 2020-12. New manifests should use an object-root schema:
+
+\`\`\`yaml [agents/search.yaml]
+inputSchema:
+  type: object
+  properties:
+    query:
+      type: string
+      minLength: 1
+    filters:
+      type: object
+      properties:
+        tags:
+          type: array
+          items: { type: string }
+        maxMinutes:
+          type: [integer, "null"]
+          minimum: 1
+      required: [tags]
+      additionalProperties: false
+  required: [query, filters]
+  additionalProperties: false
+\`\`\`
+
+Supported vocabulary includes nested objects and arrays, \`required\`,
+\`additionalProperties\`, nullable type unions, \`enum\`, \`const\`, numeric
+limits, string and array constraints, composition keywords, and local
+\`#/$defs\` references. Remote \`$ref\` URLs are rejected. Schemas are capped
+at 256 KiB encoded and 64 levels of nesting.
+
+Agntz validates schema definitions when manifests are imported and reports
+JSON Pointer paths for invalid definitions. Input values are validated before
+execution. Structured model output is constrained at the provider and validated
+again before it is returned.
+
+The published complete manifest schema is available at
+\`https://agntz.co/schemas/agent-manifest.schema.json\` and from the
+\`@agntz/core/schema\` package export.
+
+### Legacy property-map shorthand
+
+Existing manifests remain valid:
 
 \`\`\`yaml
 inputSchema:
@@ -12,25 +54,32 @@ inputSchema:
   language:
     type: string
     default: en
-  format:
-    type: string
-    enum: [json, text, markdown]
 \`\`\`
 
-Shorthand: \`name: string\` is equivalent to \`name: { type: string }\`. Supported types are \`string\`, \`number\`, \`boolean\`, \`object\`, and \`array\`. Use \`enum\` to restrict string values; use \`default\` to fall back when the caller omits the field.
+Agntz migrates this shorthand to a strict object schema with every listed field
+required and \`additionalProperties: false\`. Use canonical JSON Schema when
+fields are optional, nested, nullable, or shared through \`$defs\`.
 
-If \`inputSchema\` is omitted, the agent accepts a plain string, accessible in templates as \`{{userQuery}}\`.
+## Input
+
+If \`inputSchema\` is omitted, an LLM agent accepts a plain string accessible as
+\`{{userQuery}}\`. A canonical input object exposes its root properties to
+templates by name.
 
 ### Model config (LLM kind only)
 
 \`\`\`yaml
 model:
-  provider: openai            # openai | anthropic | google | mistral
+  provider: openai
   name: gpt-5.4
-  temperature: 0.7            # optional
-  maxTokens: 4096             # optional
-  topP: 1.0                   # optional
+  temperature: 0.7
+  maxTokens: 4096
+  topP: 0.95
+  maxRetries: 2
 \`\`\`
+
+See [Models and providers](/docs/models#common-model-controls) for every common
+field and provider-scoped \`providerOptions\`.
 
 ### Instruction and prompt (LLM kind only)
 
@@ -75,10 +124,17 @@ Constrains the model's response to a JSON object. The runner enforces the schema
 
 \`\`\`yaml
 outputSchema:
-  sentiment:
-    type: string
-    enum: [positive, negative, neutral]
-  confidence: number
+  type: object
+  properties:
+    sentiment:
+      type: string
+      enum: [positive, negative, neutral]
+    confidence:
+      type: number
+      minimum: 0
+      maximum: 1
+  required: [sentiment, confidence]
+  additionalProperties: false
 \`\`\`
 
 \`\`\`ts
@@ -115,5 +171,7 @@ examples:
     output: '{"sentiment": "neutral", "confidence": 0.88}'
 \`\`\`
 
-When the agent has an \`outputSchema\`, examples should produce JSON that matches it.
+When the agent has an \`outputSchema\`, examples should produce JSON that
+matches it. Treat the schema as the transport contract and continue to enforce
+domain invariants—such as known database ids or row counts—in application code.
 `;

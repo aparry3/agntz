@@ -18,8 +18,11 @@ eval records, API keys, and namespace roots.
 | Evals | `GET/POST /datasets`, `GET/POST /evals`, `POST /eval-runs`, `GET /eval-runs`, `POST /eval-runs/:id/cancel`, `GET /eval-scores` |
 | System/webhooks | `GET /system/agents`, webhook secret routes |
 
-See the website HTTP API reference for request shapes and client-facing
-semantics.
+See the [HTTP API reference](https://agntz.co/docs/deploy/http-api) for raw
+request shapes. Application code should normally use
+[`@agntz/client`](https://agntz.co/docs/sdk-cli/client) or the Python
+`AgntzClient`, which normalize results, stream events, local-file uploads, and
+errors.
 
 ## Authentication
 
@@ -72,6 +75,8 @@ ARTIFACT_S3_PREFIX=agntz-artifacts
 ARTIFACT_S3_ENDPOINT=               # optional S3-compatible endpoint
 ARTIFACT_S3_FORCE_PATH_STYLE=false
 AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=                   # or another AWS SDK credential source
+AWS_SECRET_ACCESS_KEY=
 
 BUILT_IN_AGENTS_DIR=...           # optional extra system agents
 ```
@@ -88,6 +93,11 @@ Use an S3-compatible artifact store for multi-replica production deployments.
 Filesystem storage is intended for a single worker. Artifact metadata remains
 tenant-scoped in the configured Agntz store; object keys use a hash of the
 owner ID and artifacts expire independently from run records.
+
+Uploads and fetched media are limited to 50 MiB. Explicit artifact uploads
+accept lifetimes from 60 seconds through 7 days. Generated artifacts use the
+run's `artifactTtlSeconds` policy and may live from 60 seconds through one year.
+Use a private bucket and configure its lifecycle policy as a cleanup backstop.
 
 ## Hosted model operations
 
@@ -131,6 +141,52 @@ exactly one audio content block. The built-in operation adapter currently
 targets OpenAI; the execution boundary is kept separate from the manifest
 dispatcher so additional providers and future operation kinds can be added
 without changing client request transport.
+
+### Retention
+
+Hosted requests resolve the manifest default and caller override before
+execution:
+
+| Mode | Synchronous run | Durable start | Stored data |
+|---|---:|---:|---|
+| `none` | yes | no | no run, trace, or session record |
+| `result` | yes | yes | redacted result record |
+| `session` | yes | yes | result, messages, and complete trace |
+
+Callers may tighten but not loosen the manifest policy
+(`none < result < session`). Record TTL and artifact TTL are independent.
+
+### Signed callback tools
+
+Hosted LLM agents can call an application endpoint without exposing tenant,
+run, or session identifiers to the model:
+
+```yaml
+tools:
+  - kind: callback
+    name: save_recipe
+    description: Save a validated recipe.
+    url: https://app.example.com/api/agntz/save-recipe
+    secret: recipe_callback
+    timeoutMs: 15000
+    maxRetries: 2
+    inputSchema:
+      type: object
+      properties:
+        recipeId: { type: string }
+      required: [recipeId]
+      additionalProperties: false
+```
+
+The worker resolves the named secret from the tenant `SecretStore`, validates
+the model arguments, attaches trusted runtime context, and signs
+`timestamp.deliveryId.rawBody` with HMAC-SHA256. Receivers must verify
+`X-Agntz-Signature` and `X-Agntz-Timestamp`, reject stale requests, and
+deduplicate `X-Agntz-Delivery-Id` / `Idempotency-Key`. Callback URLs and remote
+media are subject to the outbound SSRF policy.
+
+See the [callback guide](https://agntz.co/docs/tools/callback) for the complete
+payload and verification examples.
 
 ## System agents
 

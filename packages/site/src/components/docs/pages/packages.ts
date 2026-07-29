@@ -7,8 +7,8 @@ Agntz is a monorepo, but the packages have distinct jobs. Use the smallest packa
 | Package | Use when you need |
 |---|---|
 | \`@agntz/sdk\` | Embedded TypeScript execution, local client resources, CLI, local SQLite helper |
-| \`@agntz/client\` | Hosted or self-hosted HTTP client for agents, runs, sessions, memory, traces, datasets, and evals |
-| \`@agntz/core\` | Low-level runner, tool definitions, model providers, telemetry, MCP helpers, and \`@agntz/core/manifest\` |
+| \`@agntz/client\` | Hosted or self-hosted HTTP client for normalized runs, streaming, rich content, artifacts, retention, sessions, traces, datasets, and evals |
+| \`@agntz/core\` | Low-level runner, tool definitions, model providers, telemetry, MCP helpers, and the manifest parser plus published JSON Schema |
 | \`@agntz/contracts\` | Shared store/resource ports, entity types, namespace grants, agent refs, errors, and leaf utilities |
 | \`@agntz/db\` | Shared SQLite/Postgres connection and migration plumbing |
 | \`@agntz/stores\` | Store contracts plus in-memory, SQLite, and Postgres implementations |
@@ -36,4 +36,9 @@ import { AgntzClient } from "@agntz/client";
 \`\`\`
 
 Use \`@agntz/core\` directly when you are building a custom runtime host or need the low-level runner. Use \`@agntz/stores\` when you need persistent runtime or hosted control-plane storage.
+
+For a backend that would otherwise import a provider SDK, start with
+\`@agntz/client\` and the
+[provider-replacement guide](/docs/hosted/provider-replacement). The Python
+\`agntz\` package exposes the corresponding sync and async hosted clients.
 `;

@@ -48,7 +48,22 @@ The same store also backs runs and traces, so durability extends across the loca
 
 ### Hosted
 
-Sessions are stored in Postgres and scoped to the authenticated user. They survive restarts, redeploys, and SDK reconnects. No configuration needed — pass any session id string you want.
+Sessions are stored in Postgres and scoped to the authenticated tenant when the
+effective retention mode is \`session\`. They survive restarts, redeploys, and
+SDK reconnects until their configured expiry.
+
+\`\`\`ts
+await client.agents.run({
+  agentId: "support",
+  input: "follow-up",
+  sessionId: "user-42",
+  retention: { mode: "session", ttlSeconds: 604_800 },
+});
+\`\`\`
+
+\`none\` and \`result\` do not retain conversation history. A caller may tighten
+the manifest's default retention but cannot loosen it. See
+[Content, artifacts, and retention](/docs/hosted/content-artifacts-retention).
 
 ## Reading local session messages
 

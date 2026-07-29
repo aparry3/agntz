@@ -1,6 +1,10 @@
 # Agent Manifest Examples
 
-YAML manifest examples demonstrating each agent kind and feature. See the [schema reference](https://agntz.co/docs/schema) or the [machine-readable JSON Schema](https://agntz.co/schemas/agent-manifest.schema.json) for the complete contract.
+YAML manifest examples demonstrating each agent kind and feature. See the
+[schema reference](https://agntz.co/docs/schema/common-fields), the
+[hosted AI guide](https://agntz.co/docs/hosted/provider-replacement), or the
+[machine-readable JSON Schema](https://agntz.co/schemas/agent-manifest.schema.json)
+for the complete contract.
 
 The **Agent Builder** (`agent-builder`) is a built-in default agent that ships with the worker and is automatically seeded on startup. Its source lives in `packages/worker/src/defaults/agents/`.
 
@@ -20,3 +24,8 @@ The **Agent Builder** (`agent-builder`) is a built-in default agent that ships w
 | [social-transcription.yaml](social-transcription.yaml) | `transcription` | Managed audio input, manifest-controlled transcription prompt, and no-retention execution |
 | [generated-recipe-cover.yaml](generated-recipe-cover.yaml) | `image` | Image generation with provider options and expiring output artifacts |
 | [hosted-nutritionist-callback.yaml](hosted-nutritionist-callback.yaml) | `llm` | Typed signed application callback with trusted runtime identity |
+
+The `transcription` and `image` examples require a hosted/self-hosted worker
+with the matching model-operation adapter and artifact store. The callback
+example also requires its named secret to exist in the tenant secret store and
+the receiver to verify the Agntz signature and delivery id.

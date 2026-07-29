@@ -26,6 +26,27 @@ Embeddings, speech synthesis, moderation, realtime, and provider batch APIs
 remain future operation adapters rather than public manifest kinds. They are
 not required by the Nutritext call inventory in this document.
 
+The detailed gap sections below intentionally preserve the pre-implementation
+audit: they explain the original application behavior, missing capability, and
+acceptance criteria. Treat phrases such as “not currently representable” as
+historical unless the implementation-status table above says otherwise.
+
+## Post-implementation migration readiness
+
+| Nutritext call | Agntz migration path now available |
+|---|---|
+| Recipe facet enrichment | Canonical recursive input/output schema, Anthropic model controls, normalized result metadata |
+| Ingredient residue parsing | Same hosted `llm` path with structured output and stateless/result retention |
+| Social narration transcription | `transcription` manifest plus local-file upload or reusable audio artifact |
+| Social visual recipe extraction | Ordered text/image content with per-image detail and automatic upload |
+| SMS nutritionist | Hosted `llm` with typed signed callback tools and trusted runtime context |
+| Future image generation | `image` manifest with expiring output artifacts |
+
+Application migration and production rollout remain separate work: publish the
+manifests, configure provider/callback secrets, compare outputs in evals, then
+replace each direct call while preserving Nutritext authorization, validation,
+budgeting, and persistence.
+
 ## Purpose
 
 Nutritext currently makes several non-batch OpenAI and Anthropic requests
@@ -107,9 +128,9 @@ Zod changes, TypeScript changes, and persistence changes even if the model
 schema is hosted in Agntz. The no-code promise applies to agent behavior within
 an existing application contract.
 
-## Current AI call inventory
+## Original AI call inventory (pre-implementation)
 
-| Call | Current transport | Agntz state |
+| Call | Transport at audit time | Agntz state at audit time |
 |---|---|---|
 | Recipe search intent | Hosted Agntz agent | Already migrated |
 | User profile parsing | Hosted Agntz agent | Already migrated |

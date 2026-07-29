@@ -48,10 +48,25 @@ Releases are driven by Changesets through `.github/workflows/release.yml`.
    ```sh
    pnpm changeset status
    ```
-3. Merge the PR to `main`.
-4. The release workflow opens a "chore: release packages" PR that bumps package
+   For the hosted AI release, confirm the projection includes
+   `@agntz/client`, `@agntz/contracts`, `@agntz/core`, and
+   `@agntz/stores`; `@agntz/sdk` is also part of the coordinated `0.2.0`
+   beta line.
+3. Run the release gate locally:
+   ```sh
+   pnpm lint
+   pnpm build
+   pnpm test
+   pnpm test:packed
+   pnpm --filter @agntz/site build
+   ```
+   The packed-consumer check must import `@agntz/core/schema` from the tarball
+   and typecheck the public hosted-client surface. The site build validates the
+   canonical documentation route manifest.
+4. Merge the PR to `main`.
+5. The release workflow opens a "chore: release packages" PR that bumps package
    versions and rewrites workspace dependencies.
-5. Merge the release PR. The workflow runs `pnpm changeset publish`.
+6. Merge the release PR. The workflow runs `pnpm changeset publish`.
 
 ## Manual publish order
 
@@ -101,4 +116,23 @@ cd "$tmpdir"
 npm init -y
 npm i @agntz/core @agntz/sdk @agntz/stores @agntz/memrez
 node -e 'import("@agntz/core").then(() => import("@agntz/sdk")).then(() => console.log("ok"))'
+```
+
+For this release, also verify the provider-replacement exports:
+
+```sh
+node --input-type=module <<'JS'
+import { AgntzClient } from "@agntz/client";
+import { parseManifest } from "@agntz/core/manifest";
+import schema from "@agntz/core/schema" with { type: "json" };
+
+parseManifest(`
+id: generated-cover
+kind: image
+model: { provider: openai, name: gpt-image-1.5 }
+prompt: "{{userQuery}}"
+retention: { mode: result, artifactTtlSeconds: 3600 }
+`);
+console.log(typeof AgntzClient, schema.$id);
+JS
 ```

@@ -39,6 +39,10 @@ choose to automate that maintenance action.
    python -m basedpyright
    python -m build
    ```
+   The test suite includes the shared
+   `contracts/hosted-client-parity.json` gate. Confirm it covers all six
+   manifest kinds, rich content/artifacts, retention, normalized results, and
+   durable starts.
 4. Merge the version and documentation PR.
 5. Run the release workflow:
    ```sh
@@ -65,6 +69,25 @@ from agntz.resources.memrez import create_memrez
 
 print(AgntzClient, AsyncAgntzClient, agntz, create_memrez)
 print("ok")
+PY
+```
+
+Smoke-test the packaged hosted contract without making a provider call:
+
+```sh
+python - <<'PY'
+from agntz import AgntzClient
+from agntz.client.models import RetentionRequest, RunResult
+
+result = RunResult.model_validate({
+    "output": {"text": "ok"},
+    "runId": "run_smoke",
+    "model": "test-model",
+    "usage": {"inputTokens": 1, "outputTokens": 1, "totalTokens": 2},
+    "retention": {"mode": "result"},
+})
+assert result.retention == RetentionRequest(mode="result")
+print(AgntzClient, result.run_id, result.usage.total_tokens)
 PY
 ```
 

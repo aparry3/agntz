@@ -4,9 +4,11 @@ This document describes the complete YAML schema for defining agents. Use it to 
 
 ## Agent Kinds
 
-There are four kinds of agents:
+There are six kinds of agents:
 
 - `llm` — calls a language model
+- `transcription` — transcribes one managed audio input
+- `image` — generates managed image artifacts
 - `tool` — deterministic function call (no LLM)
 - `sequential` — runs steps in order (optionally loops)
 - `parallel` — runs branches simultaneously
@@ -17,33 +19,46 @@ Every agent must have:
 
 ```yaml
 id: my-agent          # required, unique identifier (even for inline agents)
-kind: llm             # required: llm | tool | sequential | parallel
+kind: llm             # required: llm | transcription | image | tool | sequential | parallel
 name: My Agent        # optional display name
 description: ...      # optional
 ```
 
 ## Input Schema
 
-Declares what input the agent expects. All properties are required but nullable.
+Declares what input the agent expects. New manifests must use canonical
+object-root JSON Schema Draft 2020-12:
 
 ```yaml
-# Simple types
 inputSchema:
-  query: string
-  count: number
-  active: boolean
-
-# With constraints
-inputSchema:
-  language:
-    type: string
-    default: en
-    enum: [en, es, fr]
-  temperature:
-    type: number
-    min: 0
-    max: 1
+  type: object
+  properties:
+    query:
+      type: string
+      minLength: 1
+    filters:
+      type: object
+      properties:
+        language:
+          type: string
+          enum: [en, es, fr]
+        tags:
+          type: array
+          items: { type: string }
+      required: [language]
+      additionalProperties: false
+  required: [query]
+  additionalProperties: false
 ```
+
+Use `required` to choose required properties. Canonical schemas preserve their
+declared nullability; add `"null"` explicitly when null is valid. Local
+`$ref: "#/..."` is supported, while remote references are rejected. Schemas
+are limited to 256 KiB and 64 levels of nesting.
+
+The older property-map shorthand (`query: string`) is still parsed for
+compatibility. In that legacy syntax all properties become required and the
+root rejects additional properties. Do not emit shorthand in new manifests.
 
 If `inputSchema` is omitted, the agent takes a plain string accessible as `{{userQuery}}`.
 
@@ -190,6 +205,16 @@ model:
   temperature: 0.7        # optional (0-2)
   maxTokens: 4096         # optional
   topP: 1.0               # optional
+  topK: 40                # optional
+  presencePenalty: 0      # optional
+  frequencyPenalty: 0     # optional
+  stopSequences: ["END"]  # optional
+  seed: 42                # optional, best effort
+  maxRetries: 2           # optional
+  providerOptions:        # optional provider-specific passthrough
+    openai:
+      reasoningEffort: medium
+      store: false
 
 instruction: |
   Analyze the sentiment of: {{text}}
@@ -207,7 +232,7 @@ outputSchema:
   confidence: number
 
 # Optional: tools available to the LLM.
-# Four kinds — mcp / http / local / agent. Mix freely in one array.
+# Five kinds — mcp / http / local / agent / callback. Mix freely in one array.
 tools:
   # MCP server — one or more tools from a remote MCP endpoint.
   - kind: mcp
@@ -235,7 +260,26 @@ tools:
   # Another agent exposed as a callable tool.
   - kind: agent
     agent: helper-agent
+
+  # Signed application callback. The model sees only inputSchema; the runtime
+  # injects trusted run/session/agent context and signs the request.
+  - kind: callback
+    name: save_result
+    description: Save the validated result.
+    url: https://app.example.com/api/agntz/save-result
+    secret: save_result_callback
+    timeoutMs: 10000
+    maxRetries: 2
+    inputSchema:
+      type: object
+      properties:
+        resultId: { type: string }
+      required: [resultId]
+      additionalProperties: false
 ```
+
+`providerOptions` keys must be nested under the selected provider. Never put
+credentials in model options; use the host's connection or secret store.
 
 ### Tool wrapping (MCP)
 
@@ -353,12 +397,66 @@ Static credentials (Bearer / Basic / API key) go in `headers:` via `{{secrets.X}
 - User describes one or more HTTP API endpoints ("fetch from /users/{id}", "POST to this URL", "this REST API") → one `kind: http` entry per endpoint.
 - User names a tool that's been registered locally (calculator, date formatter, send_slack, etc.) → `kind: local`.
 - User wants one agent to delegate to another → `kind: agent`.
+- User wants hosted model-controlled access to application business logic with
+  trusted runtime identity → `kind: callback`. Require canonical
+  `inputSchema`, a public HTTPS `url`, and a named signing `secret`.
 
 Many real agents combine kinds — e.g. an MCP search server plus a couple of internal HTTP endpoints in the same `tools:` array.
 
+## Transcription Agent
+
+Accepts exactly one audio content block at run time and returns transcript
+text plus optional language, duration, and segment/word timestamp metadata.
+The built-in worker adapter currently supports OpenAI.
+
+```yaml
+id: transcribe-narration
+kind: transcription
+model:
+  provider: openai
+  name: gpt-4o-mini-transcribe
+instruction: Preserve names, measurements, and times exactly.
+settings:
+  language: en
+  temperature: 0
+  timestampGranularities: [segment]
+retention:
+  mode: none
+  artifactTtlSeconds: 3600
+```
+
+## Image Agent
+
+Renders `prompt` from state, optionally accepts image content blocks as
+references, and stores generated bytes as expiring artifacts.
+
+```yaml
+id: create-cover
+kind: image
+model:
+  provider: openai
+  name: gpt-image-1.5
+  providerOptions:
+    openai:
+      quality: high
+      background: transparent
+instruction: Create an editorial cover.
+prompt: "Subject: {{userQuery}}"
+settings:
+  n: 1
+  maxImagesPerCall: 1
+  size: 1024x1024
+retention:
+  mode: result
+  ttlSeconds: 86400
+  artifactTtlSeconds: 86400
+```
+
 ## Tool Agent
 
-Deterministic function call. No LLM involved. The `tool:` block accepts the same four kinds as an LLM's `tools:` array, but exactly one tool per agent.
+Deterministic function call. No LLM involved. The `tool:` block accepts one
+`mcp`, `http`, or `local` call. Agent and callback declarations are
+model-visible LLM tools, not deterministic tool-agent targets.
 
 ```yaml
 # MCP variant
@@ -573,14 +671,22 @@ Operators: `==`, `!=`, `>`, `<`, `>=`, `<=`, `&&`, `||`
 
 ### LLM agents: `outputSchema`
 
-Enforces structured JSON output from the model:
+Enforces structured JSON output from the model. New manifests use canonical
+object-root JSON Schema:
 
 ```yaml
 outputSchema:
-  sentiment:
-    type: string
-    enum: [positive, negative, neutral]
-  confidence: number
+  type: object
+  properties:
+    sentiment:
+      type: string
+      enum: [positive, negative, neutral]
+    confidence:
+      type: number
+      minimum: 0
+      maximum: 1
+  required: [sentiment, confidence]
+  additionalProperties: false
 ```
 
 ### Pipeline agents: `output`
@@ -595,13 +701,34 @@ output:
     academic: "{{academicResearcher}}"
 ```
 
+## Retention
+
+Hosted manifests may define a default:
+
+```yaml
+retention:
+  mode: result              # none | result | session
+  ttlSeconds: 86400         # run/result lifetime
+  artifactTtlSeconds: 3600  # managed media lifetime
+```
+
+`none` stores no durable run, trace, or session and is synchronous-only.
+`result` stores a redacted result record. `session` also stores conversation
+messages and the complete trace. Callers may tighten but cannot loosen the
+manifest default. Artifact lifetime is independent from record lifetime.
+
 ## Rules
 
 1. Every agent (including inline) must have an `id`
 2. Steps must have either `ref` or `agent`, not both
-3. All `inputSchema` properties are required but nullable
+3. Canonical JSON Schema controls required and nullable properties exactly;
+   only legacy property-map shorthand makes every property required
 4. `until` and `maxIterations` only apply to sequential agents
 5. Template `{{}}` references state. Two special namespaces are also available in tool `params`, HTTP `headers`/`body`/`url`, and `auth:` blocks: `{{secrets.NAME}}` (host SecretStore) and `{{env.NAME}}` (process env). Never use these in `instruction:` — they're for credential plumbing, not LLM context.
 6. Skipped steps (via `when`) produce null output
 7. Pipelines fail fast — any step failure stops the pipeline
 8. `outputSchema` is for LLM structured output; `output` is for pipeline state mapping
+9. Transcription accepts exactly one audio block; image output is returned as
+   managed artifact references
+10. Callback input must validate before delivery; secrets are resolved by the
+    host and never belong in a manifest

@@ -5,9 +5,10 @@ them locally with TypeScript or Python, then move the same manifests to hosted
 or self-hosted workers when you need multi-user isolation, durable runs, traces,
 memory, and eval records.
 
-The packages are currently public beta at `0.2.x`. TypeScript runtimes require
-Node 22 or newer; the Python package requires Python 3.11 or newer. See
-[`ROADMAP.md`](./ROADMAP.md) for the pre-1.0 stability policy.
+The TypeScript packages are entering public beta at `0.2.x`; the Python package
+uses the `0.3.x` line for this hosted-client release. TypeScript runtimes require
+Node 22 or newer, and Python requires 3.11 or newer. See [`ROADMAP.md`](./ROADMAP.md)
+for the pre-1.0 stability policy.
 
 ## Install
 
@@ -97,6 +98,76 @@ const result = await client.agents.run({
   input: { message: "Can I change my shipping address?" },
 });
 ```
+
+## Replace direct provider calls
+
+The hosted run API can own the prompt, provider/model choice, recursive
+structured-output schema, model settings, multimodal transport, and response
+metadata that would otherwise live in an OpenAI or Anthropic call site.
+
+```yaml
+# agents/recipe-enrichment.yaml
+id: recipe-enrichment
+kind: llm
+model:
+  provider: anthropic
+  name: claude-sonnet-4-6
+  temperature: 0
+  maxTokens: 4096
+inputSchema:
+  type: object
+  properties:
+    recipes:
+      type: array
+      items:
+        type: object
+        properties:
+          id: { type: string }
+          title: { type: string }
+        required: [id, title]
+        additionalProperties: true
+  required: [recipes]
+  additionalProperties: false
+outputSchema:
+  type: object
+  properties:
+    recipes:
+      type: array
+      items:
+        type: object
+        properties:
+          id: { type: string }
+          tags:
+            type: array
+            items: { type: string }
+        required: [id, tags]
+        additionalProperties: false
+  required: [recipes]
+  additionalProperties: false
+retention:
+  mode: result
+  ttlSeconds: 86400
+```
+
+```ts
+const result = await client.agents.run({
+  agentId: "recipe-enrichment",
+  input: { recipes },
+  retention: { mode: "result" },
+});
+
+console.log(result.output);
+console.log(result.provider, result.model, result.usage);
+```
+
+The same client supports ordered text/image/audio content, automatic local-file
+uploads, managed artifacts, transcription, image generation, signed application
+callbacks, and explicit `none` / `result` / `session` retention.
+
+- [Provider-replacement guide](https://agntz.co/docs/hosted/provider-replacement)
+- [Content, artifacts, and retention](https://agntz.co/docs/hosted/content-artifacts-retention)
+- [Transcription and image generation](https://agntz.co/docs/hosted/transcription-images)
+- [Signed callback tools](https://agntz.co/docs/tools/callback)
 
 ## Package map
 

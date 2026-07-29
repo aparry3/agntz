@@ -27,6 +27,19 @@ The hosted client wraps the worker HTTP API. You can call the API directly from 
 
 Some self-hosted app/server deployments also expose create/update/delete agent routes and version/alias administration. The public clients use the import and run surfaces first, so those are the portable routes.
 
+### Managed artifacts
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| \`POST\` | \`/artifacts\` | required | Multipart upload; fields \`file\`, \`purpose\`, and optional \`expiresInSeconds\` |
+| \`GET\` | \`/artifacts/:id\` | required | Tenant-scoped metadata and signed download URL |
+| \`GET\` | \`/artifacts/:id/content\` | required | Authenticated binary download |
+| \`DELETE\` | \`/artifacts/:id\` | required | Delete metadata and bytes |
+| \`GET\` | \`/artifact-download/:id\` | signed query | Short-lived signed binary download |
+
+Uploads are limited to 50 MiB. The public clients automatically upload local
+files and replace them with \`artifactId\` content blocks.
+
 ### Runs and streams
 
 | Method | Path | Auth | Description |
@@ -123,15 +136,71 @@ The product app uses this when calling the worker for a signed-in user. Current 
 \`\`\`json
 {
   "agentId": "support",
-  "input": { "message": "Hello" },
+  "input": { "customerId": "cus_123" },
+  "content": [
+    { "type": "text", "text": "Explain this invoice" },
+    {
+      "type": "image",
+      "artifactId": "artifact_...",
+      "mediaType": "image/png",
+      "detail": "high"
+    }
+  ],
   "sessionId": "optional-session-id",
-  "context": ["app/user/u_123"]
+  "context": ["app/user/u_123"],
+  "retention": {
+    "mode": "result",
+    "ttlSeconds": 86400,
+    "artifactTtlSeconds": 3600
+  }
 }
 \`\`\`
 
-\`input\` accepts either a plain string or an object matching the agent schema. \`context\` is a namespace grant array minted by trusted server-side code and passed to resource providers such as memory.
+\`input\` accepts a plain string, an object matching the agent schema, or rich
+content for compatibility. Prefer the independent ordered \`content\` array for
+text/image/audio messages. Content sources are \`url\`, \`base64\`,
+\`artifactId\`, or client-only \`file\`; raw HTTP callers cannot send a local
+file path.
+
+\`context\` is a namespace grant array minted by trusted server-side code and
+passed to resource providers such as memory. \`retention\` defaults to the
+manifest policy or \`session\`. A caller can tighten a manifest default but
+cannot loosen it. \`none\` is synchronous-only.
 
 Run endpoints accept the same core fields. Async runs also accept callback and webhook fields when webhook delivery is configured.
+
+The active manifest kind selects ordinary LLM execution, transcription, image
+generation, or a composed workflow. No provider-specific route is required.
+
+## Run response shape
+
+\`\`\`json
+{
+  "output": { "answer": "..." },
+  "state": {},
+  "runId": "run_...",
+  "traceId": "trace_...",
+  "sessionId": "session_...",
+  "status": "completed",
+  "requestedAgentVersion": "production",
+  "resolvedAgentVersion": "2026-07-28T18:30:00.000Z",
+  "provider": "openai",
+  "model": "gpt-5.4-2026-07-15",
+  "usage": {
+    "inputTokens": 412,
+    "outputTokens": 87,
+    "totalTokens": 499
+  },
+  "finishReason": "stop",
+  "responseId": "resp_...",
+  "warnings": [],
+  "retention": { "mode": "session" }
+}
+\`\`\`
+
+\`traceId\` and \`sessionId\` are omitted for \`none\` and \`result\`
+retention. \`runId\` remains a correlation id even when no durable run record is
+created. See [Results, streaming, and errors](/docs/hosted/results-errors).
 
 ## Stream format
 

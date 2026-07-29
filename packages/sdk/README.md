@@ -2,7 +2,11 @@
 
 Official agntz SDK. Embedded in-process YAML agent runner — five lines of code, one YAML file, and you're running an AI agent. No server, no signup, no infrastructure.
 
-When you outgrow embedded mode, swap one import line and the same code runs against the hosted [@agntz/client](https://www.npmjs.com/package/@agntz/client).
+When you outgrow embedded mode, the same manifest and client resource shape
+move to the hosted
+[@agntz/client](https://www.npmjs.com/package/@agntz/client). Hosted workers
+also add managed media, transcription, image generation, explicit retention,
+and normalized provider metadata.
 
 ## Install
 
@@ -301,7 +305,12 @@ When you outgrow embedded mode — multi-user isolation, durable run history, ho
 + const client = new AgntzClient({ apiKey: process.env.AGNTZ_API_KEY!, baseUrl: "https://api.agntz.co" });
 ```
 
-The `client.agents.run / .stream`, `client.runs.list / .get`, and `client.traces.list / .get` calls work identically. YAML manifests move to the hosted registry; local tool handlers don't graduate (those become hosted MCP servers or HTTP endpoints).
+The `client.agents.run / .stream`, `client.runs.list / .get`, and
+`client.traces.list / .get` resource shapes stay familiar. YAML manifests move
+to the hosted registry. In-process local tool handlers become hosted MCP/HTTP
+tools or typed signed callback endpoints. Add an explicit hosted retention
+policy and treat `traceId` / `sessionId` as optional when using `none` or
+`result`.
 
 ## What's supported in embedded mode
 
@@ -309,13 +318,19 @@ The `client.agents.run / .stream`, `client.runs.list / .get`, and `client.traces
 |---|---|---|
 | LLM agents | ✓ | ✓ |
 | Sequential / parallel / tool agent kinds | ✓ | ✓ |
+| Transcription / image agent kinds | × | ✓ (managed operations) |
+| Canonical recursive input/output JSON Schema | ✓ | ✓ |
+| Ordered text/image/audio run content | × | ✓ |
+| Managed input/output artifacts | × | ✓ |
+| Explicit `none` / `result` / `session` retention | × | ✓ |
 | Local tools (in-process JS/TS) | ✓ | (use MCP/HTTP instead) |
 | HTTP tools | ✓ | ✓ |
 | MCP tools (raw URL + headers) | ✓ | ✓ |
+| Signed callback tools | ✓ (with `SecretStore`) | ✓ |
 | Agent-as-tool (subagent calls) | ✓ | ✓ |
 | Spawnable subagents | ✓ | ✓ |
 | Sessions | ✓ (memory or sqlite) | ✓ (managed) |
-| Runs / traces | ✓ (bounded memory or persisted store) | ✓ (persisted) |
+| Runs / traces | ✓ (bounded memory or persisted store) | ✓ (retention-aware) |
 | Agent/session/memory import | ✓ | ✓ |
 | Memory admin with memrez | ✓ | ✓ |
 | Datasets / eval records | ✓ | ✓ |

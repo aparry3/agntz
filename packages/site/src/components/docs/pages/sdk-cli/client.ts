@@ -12,6 +12,10 @@ pip install agntz
 
 Same resource shape as the embedded SDK — code is portable between local and hosted modes once your local tools are HTTP or MCP tools.
 
+For provider-replacement workloads, start with
+[Provider replacement](/docs/hosted/provider-replacement). This page is the
+complete client resource reference.
+
 ## Basic usage
 
 \`\`\`ts [index.ts] {group=client-basic}
@@ -22,10 +26,13 @@ const client = new AgntzClient({
   baseUrl: "https://api.agntz.co",       // or your self-hosted worker URL
 });
 
-const { output, state } = await client.agents.run({
+const result = await client.agents.run({
   agentId: "support-agent",
   input: { message: email.body, customerId: email.from },
+  retention: { mode: "result", ttlSeconds: 86_400 },
 });
+
+console.log(result.output, result.model, result.usage);
 \`\`\`
 
 \`\`\`python [main.py] {group=client-basic}
@@ -40,6 +47,7 @@ client = AgntzClient(
 result = client.agents.run(
     agent_id="support-agent",
     input={"message": email.body, "customerId": email.from},
+    retention={"mode": "result", "ttl_seconds": 86_400},
 )
 output = result.output
 state = result.state
@@ -95,11 +103,22 @@ AgntzClient(
 
 ### \`client.agents.run(...)\`
 
-Run an agent to completion. Returns \`{ output, state, sessionId, replies }\` in TypeScript and the same fields as Python attributes such as \`result.session_id\`.
+Run an agent to completion. The normalized result includes \`output\`, \`state\`,
+\`runId\`, requested/resolved agent versions, provider, actual model, token
+usage, finish reason, response id, warnings, and retention metadata.
+\`sessionId\` and \`traceId\` are optional because stateless and result-only
+retention deliberately do not create them.
 
 ### \`client.agents.stream(...)\`
 
 Streams SSE events. Always yields a terminal \`complete\` or \`error\` event.
+
+### \`client.agents.start(...)\`
+
+Start a durable asynchronous run using the same \`input\`, \`content\`,
+\`context\`, and \`retention\` fields. Use \`client.runs.get\`,
+\`client.runs.cancel\`, or \`client.runs.stream\` to manage it. Durable starts
+require \`result\` or \`session\` retention.
 
 ### \`client.agents.import(...)\`
 
@@ -142,6 +161,75 @@ result = client.agents.run(
 \`\`\`
 
 The worker must be configured with matching resource providers. See [Context and resources](/docs/concepts/context-and-resources) and [Memory with memrez](/docs/tools/memory-memrez).
+
+## Rich content
+
+\`content\` is an ordered array of text, image, and audio blocks. Blocks can
+reference URLs, base64 bytes, existing artifacts, or local files. TypeScript and
+Python automatically upload local files before execution.
+
+\`\`\`ts {group=client-content}
+const transcript = await client.agents.run({
+  agentId: "social-transcription",
+  content: [{
+    type: "audio",
+    file: { path: "./narration.mp3", mediaType: "audio/mpeg" },
+  }],
+  retention: { mode: "none", artifactTtlSeconds: 3_600 },
+});
+\`\`\`
+
+\`\`\`python {group=client-content}
+from pathlib import Path
+
+transcript = client.agents.run(
+    agent_id="social-transcription",
+    content=[{
+        "type": "audio",
+        "file": Path("./narration.mp3"),
+        "media_type": "audio/mpeg",
+    }],
+    retention={"mode": "none", "artifact_ttl_seconds": 3_600},
+)
+\`\`\`
+
+See [Content, artifacts, and retention](/docs/hosted/content-artifacts-retention)
+for every block source, limit, and persistence rule.
+
+## Artifacts
+
+\`\`\`ts {group=client-artifacts}
+const artifact = await client.artifacts.upload({
+  file: { path: "./frame.png", mediaType: "image/png" },
+  expiresInSeconds: 3_600,
+});
+const metadata = await client.artifacts.get(artifact.id);
+const bytes = await client.artifacts.download(artifact.id);
+await client.artifacts.delete(artifact.id);
+\`\`\`
+
+\`\`\`python {group=client-artifacts}
+artifact = client.artifacts.upload(
+    file="./frame.png",
+    media_type="image/png",
+    expires_in_seconds=3_600,
+)
+metadata = client.artifacts.get(artifact.id)
+image_bytes = client.artifacts.download(artifact.id)
+client.artifacts.delete(artifact.id)
+\`\`\`
+
+## Retention
+
+| Mode | Behavior |
+|---|---|
+| \`none\` | Synchronous stateless execution; no durable run, session, or trace |
+| \`result\` | Redacted durable result without raw input, tool calls, session, or trace |
+| \`session\` | Conversation history, complete run data, and trace |
+
+Set a default in the manifest and optionally tighten it per call. TTL fields use
+\`ttlSeconds\` / \`artifactTtlSeconds\` in TypeScript and
+\`ttl_seconds\` / \`artifact_ttl_seconds\` in Python.
 
 ### \`client.runs.*\`
 
@@ -291,16 +379,16 @@ scores = client.evals.list_latest_scores(eval_id="support-quality")
 ## Errors
 
 \`\`\`ts {group=client-errors}
-import { AuthenticationError, NotFoundError, RateLimitError } from "@agntz/client";
+import { AgntzError, AuthenticationError, NotFoundError } from "@agntz/client";
 
 try {
   await client.agents.run({ agentId: "unknown", input: {} });
 } catch (err) {
   if (err instanceof NotFoundError) {
-    // 404 — unknown agent id
+    console.error(err.code, err.status, err.message);
   }
-  if (err instanceof RateLimitError) {
-    // 429 — back off
+  if (err instanceof AgntzError && err.status === 429) {
+    // Rate limited — back off
   }
 }
 \`\`\`
@@ -317,6 +405,12 @@ except AuthenticationError:
     # 401 — invalid or revoked API key
     pass
 \`\`\`
+
+The base \`AgntzError\` preserves the worker's stable error \`code\`. Use the
+code for program logic and the message for diagnostics. Structured output,
+manifest schema, retention, artifact, and callback failures retain their
+specific worker codes where supplied. See
+[Results, streaming, and errors](/docs/hosted/results-errors).
 
 ## Authentication
 

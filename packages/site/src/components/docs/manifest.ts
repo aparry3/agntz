@@ -22,7 +22,13 @@ import schemaResources from "./pages/schema/resources";
 import schemaSkillsSpawnableReply from "./pages/schema/skills-spawnable-reply";
 import schemaTemplatesConditions from "./pages/schema/templates-conditions";
 
+import hostedContentArtifactsRetention from "./pages/hosted/content-artifacts-retention";
+import hostedOverview from "./pages/hosted/overview";
+import hostedResultsErrors from "./pages/hosted/results-errors";
+import hostedTranscriptionImages from "./pages/hosted/transcription-images";
+
 import toolsAgentAsTool from "./pages/tools/agent-as-tool";
+import toolsCallback from "./pages/tools/callback";
 import toolsHttp from "./pages/tools/http";
 import toolsLocal from "./pages/tools/local";
 import toolsMcp from "./pages/tools/mcp";
@@ -91,8 +97,9 @@ export const DOCS_GROUPS: DocsGroup[] = [
 			},
 			{
 				slug: "concepts/agent-kinds",
-				title: "The four agent kinds",
-				description: "llm, tool, sequential, and parallel — when to use each.",
+				title: "The six agent kinds",
+				description:
+					"llm, transcription, image, tool, sequential, and parallel — when to use each.",
 				markdown: conceptsAgentKinds,
 			},
 			{
@@ -164,6 +171,39 @@ export const DOCS_GROUPS: DocsGroup[] = [
 		],
 	},
 	{
+		label: "Hosted AI",
+		pages: [
+			{
+				slug: "hosted/provider-replacement",
+				title: "Provider replacement",
+				description:
+					"Move provider calls behind versioned Agntz manifests and one stable run API.",
+				markdown: hostedOverview,
+			},
+			{
+				slug: "hosted/content-artifacts-retention",
+				title: "Content, artifacts, retention",
+				description:
+					"Ordered media blocks, managed binary objects, and explicit persistence controls.",
+				markdown: hostedContentArtifactsRetention,
+			},
+			{
+				slug: "hosted/transcription-images",
+				title: "Transcription and images",
+				description:
+					"First-class audio transcription and image generation manifests.",
+				markdown: hostedTranscriptionImages,
+			},
+			{
+				slug: "hosted/results-errors",
+				title: "Results, streaming, errors",
+				description:
+					"Normalized provider metadata, durable starts, SSE, and structured failures.",
+				markdown: hostedResultsErrors,
+			},
+		],
+	},
+	{
 		label: "Tools",
 		pages: [
 			{
@@ -179,6 +219,13 @@ export const DOCS_GROUPS: DocsGroup[] = [
 				description:
 					"A single HTTP endpoint exposed as a tool, with optional OAuth2 / token-exchange auth.",
 				markdown: toolsHttp,
+			},
+			{
+				slug: "tools/callback",
+				title: "Signed callback tools",
+				description:
+					"Typed hosted application callbacks with trusted runtime context, HMAC, and retries.",
+				markdown: toolsCallback,
 			},
 			{
 				slug: "tools/mcp",

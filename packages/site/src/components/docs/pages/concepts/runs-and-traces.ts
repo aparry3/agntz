@@ -1,6 +1,9 @@
 export default `# Runs and traces
 
-Every invocation produces a **Run** (the top-level execution record) and a **Trace** (the span tree below it).
+Every invocation has a run correlation id. Whether Agntz persists a **Run**
+(the top-level execution record), a **Trace** (the span tree below it), or a
+session is controlled by the runtime store in embedded mode and the explicit
+retention policy in hosted mode.
 
 A trace's spans cover three kinds of work:
 
@@ -100,7 +103,18 @@ The same store backs sessions, messages, runs, and trace spans.
 
 ### Hosted
 
-Runs and traces are written to Postgres, scoped to the authenticated user. No eviction.
+Hosted persistence is tenant-scoped and retention-aware:
+
+| Mode | Durable result | Session messages | Complete trace |
+|---|---:|---:|---:|
+| \`none\` | No | No | No |
+| \`result\` | Redacted result record | No | No |
+| \`session\` | Yes | Yes | Yes |
+
+\`ttlSeconds\` controls record expiry where supported. \`artifactTtlSeconds\`
+controls managed media separately, so deleting a run never implicitly extends
+an artifact's lifetime. See
+[Content, artifacts, and retention](/docs/hosted/content-artifacts-retention).
 
 ## OpenTelemetry
 

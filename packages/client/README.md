@@ -12,7 +12,7 @@ pnpm add @agntz/client
 ## Usage
 
 ```ts
-import { AgntzClient } from "@agntz/client";
+import { AgntzClient, type ContentBlock } from "@agntz/client";
 
 const client = new AgntzClient({
   apiKey: process.env.AGNTZ_API_KEY!,
@@ -33,6 +33,10 @@ console.log(result.model, result.usage, result.resolvedAgentVersion);
 `agents.run`, `agents.stream`, and `agents.start` share one input contract.
 The active manifest kind selects text generation, structured output,
 transcription, or image generation.
+
+The normalized result also includes `runId`, optional `traceId` / `sessionId`,
+requested and resolved agent versions, provider, actual model, finish reason,
+provider response id, warnings, and retention metadata.
 
 ## Rich content, artifacts, and retention
 
@@ -68,9 +72,58 @@ const artifact = await client.artifacts.upload({
   file: { path: "./frame.png", mediaType: "image/png" },
   expiresInSeconds: 3600,
 });
-const bytes = await client.artifacts.download(artifact.id);
+const imageBlob = await client.artifacts.download(artifact.id);
 await client.artifacts.delete(artifact.id);
 ```
+
+Content blocks preserve order:
+
+```ts
+const content = [
+  { type: "text", text: "Compare these frames." },
+  { type: "image", url: "https://example.com/one.png", detail: "high" },
+  { type: "image", base64: encodedPng, mediaType: "image/png" },
+  { type: "image", artifactId: artifact.id },
+] satisfies ContentBlock[];
+```
+
+Images accept `auto`, `low`, or `high` detail. Audio blocks accept URL, base64,
+artifact id, or local file sources. Node supports path objects, byte arrays,
+`ArrayBuffer`, and `Blob`; browser code should use `Blob` or uploaded artifact
+ids.
+
+`ttlSeconds` and `artifactTtlSeconds` accept 60 seconds through one year.
+Explicit input uploads are capped at seven days by the worker. A caller may
+tighten a manifest retention default but cannot loosen it.
+
+## Transcription and image output
+
+Transcription manifests return:
+
+```ts
+{
+  text: string;
+  segments?: unknown[];
+  language?: string;
+  durationInSeconds?: number;
+}
+```
+
+Image manifests return managed references:
+
+```ts
+{
+  artifacts: Array<{
+    artifactId: string;
+    mediaType: string;
+    sizeBytes: number;
+    expiresAt: string;
+  }>;
+}
+```
+
+Download generated images with `client.artifacts.download(artifactId)`.
+Built-in hosted transcription and image adapters currently use OpenAI.
 
 ## Streaming
 
@@ -182,8 +235,17 @@ API keys in browser code; proxy through your own backend.
 - `AgntzError` is the base class for client errors.
 - `AuthenticationError` represents 401 responses.
 - `NotFoundError` represents 404 responses.
-- `RateLimitError` represents 429 responses.
 - `StreamError` represents SSE protocol failures.
+
+`AgntzError` preserves the worker's stable `code` and HTTP `status`; check
+`error.status === 429` for rate limiting.
 
 Pass an `AbortSignal` via `signal` on any call, or `defaultSignal` on the
 client. Breaking from a `for await` stream loop closes the underlying response.
+
+## Documentation
+
+- [Provider replacement](https://agntz.co/docs/hosted/provider-replacement)
+- [Content, artifacts, and retention](https://agntz.co/docs/hosted/content-artifacts-retention)
+- [Transcription and image generation](https://agntz.co/docs/hosted/transcription-images)
+- [Results, streaming, and errors](https://agntz.co/docs/hosted/results-errors)

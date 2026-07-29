@@ -37,10 +37,16 @@ The important fields are:
 | Field | Why it matters |
 |---|---|
 | \`id\` | The name used by the CLI, SDK, and hosted client. |
-| \`kind\` | The agent shape, such as \`llm\`, \`tool\`, \`sequential\`, or \`parallel\`. |
+| \`kind\` | The agent shape: \`llm\`, \`transcription\`, \`image\`, \`tool\`, \`sequential\`, or \`parallel\`. |
 | \`model\` | The provider and model used for local LLM calls. |
 | \`instruction\` / \`prompt\` | The behavior and input template. |
+| \`inputSchema\` / \`outputSchema\` | Canonical JSON Schema for application contracts and structured output. |
 | \`tools\` / \`resources\` | Runtime capabilities the agent expects. |
+| \`retention\` | Hosted defaults for run, trace, session, and artifact persistence. |
+
+\`transcription\` and \`image\` manifests use the hosted/self-hosted worker
+operation adapters; the local CLI currently executes \`llm\`, \`tool\`,
+\`sequential\`, and \`parallel\`.
 
 ## 2. Edit or iterate
 

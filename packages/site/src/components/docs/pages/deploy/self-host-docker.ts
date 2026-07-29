@@ -7,8 +7,8 @@ The whole stack is open source under MIT. The fastest way to get it running on y
 | Service | Role | Port |
 |---|---|---|
 | \`@agntz/app\` | Next.js 15 web UI (Clerk auth + organizations, agent editor, playground) | 3000 |
-| \`@agntz/worker\` | Hono HTTP worker — executes agents, runs, traces, memory, and eval records | 4001 |
-| Postgres | Backing store for sessions, runs, traces, agents | 5432 |
+| \`@agntz/worker\` | Hono HTTP worker — executes agents, model operations, artifacts, runs, traces, memory, and eval records | 4001 |
+| Postgres | Backing store for agents, artifact metadata, sessions, runs, and traces | 5432 |
 | \`@agntz/site\` | Marketing site (optional) | 3001 |
 
 ## One-command bootstrap
@@ -39,11 +39,41 @@ The \`.env.example\` lists every variable. The non-optional ones:
 | \`MEMREZ_STORE\` | worker | Optional. Defaults from \`STORE\`; set \`postgres\` to force Postgres-backed memory. |
 | \`MEMREZ_REASONER\` | worker | Optional. \`llm\` by default; \`deterministic\` is the emergency no-LLM fallback. |
 | \`MEMREZ_CURATE_INTERVAL\` | worker | Optional. Enables periodic memory curation, e.g. \`30m\` or \`1h\`. |
+| \`ARTIFACT_STORE\` | worker | \`memory\` for disposable development, \`filesystem\` for one persistent worker, or \`s3\` for replicas. |
 
 When \`STORE=postgres\`, the worker wires the memrez memory resource provider by
 default. Agents that declare \`resources.memory\` can use \`memory_read\` and
 \`memory_write\`; curation runs only when \`MEMREZ_CURATE_INTERVAL\` is set or
 when you call the curation endpoint manually.
+
+## Managed artifact storage
+
+Transcription inputs, multimodal image/audio content, and generated images use
+the artifact store. Compose defaults to in-memory blobs unless you set:
+
+\`\`\`bash
+# One persistent worker; mount ARTIFACT_DIR as a durable volume.
+ARTIFACT_STORE=filesystem
+ARTIFACT_DIR=/var/lib/agntz/artifacts
+\`\`\`
+
+For more than one worker replica, use a private S3-compatible bucket:
+
+\`\`\`bash
+ARTIFACT_STORE=s3
+ARTIFACT_S3_BUCKET=agntz-artifacts
+ARTIFACT_S3_PREFIX=production
+ARTIFACT_S3_ENDPOINT=               # omit for AWS S3
+ARTIFACT_S3_FORCE_PATH_STYLE=false
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+\`\`\`
+
+Uploads are capped at 50 MiB. Configure a bucket lifecycle rule as a cleanup
+backstop, and keep the bucket private because downloads are authorized through
+the worker. See
+[Content, artifacts, and retention](/docs/hosted/content-artifacts-retention).
 
 ## First-run flow
 
@@ -60,6 +90,10 @@ const client = new AgntzClient({
   baseUrl: "http://localhost:4001",
 });
 \`\`\`
+
+For a provider-replacement smoke test, import one \`transcription\` or \`image\`
+example, exercise an artifact upload/download, and verify the effective
+\`none\` / \`result\` / \`session\` retention mode in the normalized result.
 
 ## Logs & data
 

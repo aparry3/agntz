@@ -93,7 +93,11 @@ id: text-analysis
 kind: parallel
 
 inputSchema:
-  text: string
+  type: object
+  properties:
+    text: { type: string }
+  required: [text]
+  additionalProperties: false
 
 branches:
   - ref: sentiment-analyzer

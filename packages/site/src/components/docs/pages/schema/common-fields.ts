@@ -12,7 +12,7 @@ editor for completion and inline diagnostics, then run \`agntz validate
 id: my-agent                          # required, unique within the registry
 name: My Agent                        # optional, display label
 description: Does a thing             # optional, surfaced in UIs
-kind: llm                             # llm | tool | sequential | parallel
+kind: llm                             # llm | transcription | image | tool | sequential | parallel
 \`\`\`
 
 ## Field reference
@@ -40,11 +40,16 @@ Selects the agent type:
 | Value | Behavior | Required fields |
 |---|---|---|
 | \`llm\` | Single language-model call | \`model\`, \`instruction\` |
+| \`transcription\` | Turn one managed audio input into a typed transcript | \`model\` |
+| \`image\` | Generate one or more managed image artifacts | \`model\`, \`prompt\` |
 | \`tool\` | Deterministic tool call, no model | \`tool\` |
 | \`sequential\` | Run \`steps\` in order; optionally loops with \`until\` | \`steps\` |
 | \`parallel\` | Run \`branches\` simultaneously, merge outputs | \`branches\` |
 
-See [The four agent kinds](/docs/concepts/agent-kinds) for examples.
+The built-in \`transcription\` and \`image\` operation adapters run on hosted or
+self-hosted workers. See [The six agent kinds](/docs/concepts/agent-kinds) for
+examples and [Transcription and image generation](/docs/hosted/transcription-images)
+for their request and result contracts.
 
 ## Where to go next
 

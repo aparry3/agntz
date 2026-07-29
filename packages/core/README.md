@@ -54,6 +54,44 @@ console.log(result.output);
 // → "Hey there! Welcome — great to have you here."
 ```
 
+## Manifest and hosted-operation contract
+
+`@agntz/core/manifest` parses and validates the portable YAML contract used by
+the embedded SDK and hosted/self-hosted workers. The published schema is
+available from `@agntz/core/schema` and at
+<https://agntz.co/schemas/agent-manifest.schema.json>.
+
+Manifest `inputSchema`, `outputSchema`, and callback-tool `inputSchema` fields
+accept canonical object-root JSON Schema Draft 2020-12, including nested
+objects, arrays, unions, local `$ref`, enums, and numeric/string constraints.
+The older flat property-map syntax remains readable for compatibility.
+
+The manifest union contains six kinds: `llm`, `transcription`, `image`, `tool`,
+`sequential`, and `parallel`. `@agntz/core` supplies the parser and execution
+boundary for hosted model operations; a worker host supplies transcription and
+image adapters plus managed artifact storage.
+
+Model declarations share portable controls such as `maxTokens`, `topP`,
+`topK`, penalties, stop sequences, seed, and retries. Put non-portable controls
+under a provider namespace:
+
+```yaml
+model:
+  provider: openai
+  name: gpt-5.4
+  temperature: 0.2
+  maxTokens: 4096
+  providerOptions:
+    openai:
+      reasoningEffort: medium
+      store: false
+```
+
+Hosted applications normally consume this surface through `@agntz/client`.
+See the [provider-replacement guide](https://agntz.co/docs/hosted/provider-replacement)
+for rich content, normalized results, artifacts, retention, and signed callback
+tools.
+
 ## Usage
 
 ### Defining Agents

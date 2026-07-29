@@ -1,6 +1,10 @@
 export default `# Models & providers
 
-agntz calls model providers directly with your API key — there's no proxy and no data routing through our servers. You configure a provider by exporting its API key as an environment variable (embedded mode) or saving it in **Settings → Connections** (hosted / self-hosted).
+The active runtime calls the configured model provider. In embedded mode that
+is your process; in hosted or self-hosted mode it is the Agntz worker. Configure
+a provider by exporting its API key in embedded mode or saving it in
+**Settings → Connections** for a worker. Provider credentials are never sent by
+the hosted client on individual run requests.
 
 ## Supported providers
 
@@ -28,6 +32,74 @@ model:
 \`\`\`
 
 \`provider\` is the id from the table above; \`name\` is the exact model id the provider expects (e.g. \`gpt-5.4-mini\`, \`claude-sonnet-4-6\`, \`gemini-3-pro\`).
+
+## Common model controls
+
+These manifest fields are normalized through the AI SDK and forwarded when the
+selected model supports them:
+
+| Field | Meaning |
+|---|---|
+| \`temperature\` | Sampling temperature |
+| \`maxTokens\` | Maximum generated/output tokens |
+| \`topP\` / \`topK\` | Nucleus and top-k sampling |
+| \`presencePenalty\` / \`frequencyPenalty\` | Repetition controls |
+| \`stopSequences\` | One or more generation stop strings |
+| \`seed\` | Best-effort deterministic seed |
+| \`maxRetries\` | Provider request retry ceiling |
+
+\`\`\`yaml
+model:
+  provider: openai
+  name: gpt-5.4
+  temperature: 0.2
+  maxTokens: 4096
+  topP: 0.95
+  presencePenalty: 0
+  frequencyPenalty: 0
+  stopSequences: ["<END>"]
+  seed: 42
+  maxRetries: 2
+\`\`\`
+
+Unsupported settings may be ignored or reported as provider warnings. The
+normalized run result records the requested provider/model, the actual model
+reported by the provider, finish reason, response id, warnings, and usage.
+
+## Provider-scoped options
+
+Use \`providerOptions\` for settings with no portable equivalent. Options are
+namespaced so switching the manifest provider cannot accidentally send OpenAI
+settings to Anthropic.
+
+\`\`\`yaml
+model:
+  provider: openai
+  name: gpt-5.4
+  providerOptions:
+    openai:
+      reasoningEffort: medium
+      store: false
+\`\`\`
+
+\`\`\`yaml
+model:
+  provider: anthropic
+  name: claude-sonnet-4-6
+  providerOptions:
+    anthropic:
+      thinking:
+        type: enabled
+        budgetTokens: 2048
+\`\`\`
+
+The inner keys are passed to the selected AI SDK provider. Validate them against
+that provider's current documentation and keep them additive so a model switch
+can fall back to the common fields. Secret-like option keys are rejected; store
+credentials in Connections or Secrets, never in \`providerOptions\`.
+
+The old \`model.options\` field remains accepted for compatibility but new
+manifests should use \`providerOptions\`.
 
 ## OpenRouter — one key, hundreds of models
 

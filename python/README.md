@@ -43,10 +43,20 @@ instruction: |
 prompt: |
   Help with this request: {{userQuery}}
 inputSchema:
-  userQuery: string
+  type: object
+  properties:
+    userQuery:
+      type: string
+      minLength: 1
+  required: [userQuery]
+  additionalProperties: false
 outputSchema:
-  answer: string
-  confidence: number
+  type: object
+  properties:
+    answer: { type: string }
+    confidence: { type: number, minimum: 0, maximum: 1 }
+  required: [answer, confidence]
+  additionalProperties: false
 ```
 
 The same file can be loaded by the TypeScript and Python SDKs.
@@ -84,7 +94,10 @@ client = AgntzClient(
 )
 
 result = client.agents.run(agent_id="support", input="Hello")
-print(result.model, result.usage.total_tokens, result.resolved_agent_version)
+print(result.output)
+print(result.provider, result.model)
+print(result.usage.total_tokens, result.resolved_agent_version)
+print(result.finish_reason, result.warnings)
 ```
 
 The async hosted client has the same resource shape:
@@ -134,7 +147,25 @@ image_bytes = client.artifacts.download(artifact.id)
 
 Use `client.agents.start(...)` for a durable asynchronous run. `none` is
 synchronous-only; `result` retains a redacted result record, while `session`
-retains conversation history and traces.
+retains conversation history and traces. A caller can tighten the manifest's
+default retention but cannot loosen it.
+
+The same `agents.run`, `agents.stream`, and `agents.start` methods dispatch
+`llm`, `transcription`, `image`, `tool`, `sequential`, and `parallel`
+manifests. Transcription output includes `text`, optional `language`,
+`durationInSeconds`, and timestamped `segments`. Image output contains artifact
+references with media type, size, checksum, expiry, and download URL metadata;
+download bytes with `client.artifacts.download(...)`.
+
+For a backend that would otherwise call a provider SDK directly, keep
+authorization and domain persistence in the application and move prompts,
+model selection, JSON Schema, media handling, and provider-specific settings
+into versioned manifests:
+
+- [Provider-replacement guide](https://agntz.co/docs/hosted/provider-replacement)
+- [Content, artifacts, and retention](https://agntz.co/docs/hosted/content-artifacts-retention)
+- [Transcription and image generation](https://agntz.co/docs/hosted/transcription-images)
+- [Results, streaming, and errors](https://agntz.co/docs/hosted/results-errors)
 
 ## Local tools
 
@@ -404,6 +435,8 @@ Implemented in this package:
   caller-controlled retention, normalized result metadata, versions, aliases,
   run, run stream, async runs, traces, datasets, evals, eval runs,
   cancellation, and eval scores.
+- Hosted stream normalization for all six manifest kinds, including
+  sessionless `none` and `result` retention events.
 - Local YAML execution for `llm`, `tool`, `sequential`, and `parallel` agents.
 - Local Python tools, HTTP tools, MCP JSON-RPC tools, and agent-as-tool calls.
 - Versioned local and hosted agent resolution for bare ids, `@latest`, exact
