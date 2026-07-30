@@ -13,8 +13,21 @@ import type {
 	AgentSummary,
 	AgntzClientOptions,
 	ArtifactRef,
+	BatchDefinition,
+	BatchRun,
+	BatchRunComparisonResult,
+	BatchRunInput,
+	BatchRunItemsPage,
+	BatchRunListFilter,
+	BatchRunListResult,
+	BatchSummary,
+	BatchVersionSummary,
 	ClientToolContext,
 	ContentBlock,
+	DatasetImportInput,
+	DatasetImportResult,
+	DatasetItem,
+	DatasetItemsPage,
 	EvalDataset,
 	EvalDatasetListFilter,
 	EvalDefinition,
@@ -59,6 +72,7 @@ import type {
 export class AgntzClient {
 	readonly agents: AgentsResource;
 	readonly artifacts: ArtifactsResource;
+	readonly batches: BatchesResource;
 	readonly datasets: DatasetsResource;
 	readonly evals: EvalsResource;
 	readonly memory: MemoryResource;
@@ -79,6 +93,7 @@ export class AgntzClient {
 		this.defaultSignal = opts.defaultSignal;
 		this.agents = new AgentsResource(this);
 		this.artifacts = new ArtifactsResource(this);
+		this.batches = new BatchesResource(this);
 		this.datasets = new DatasetsResource(this);
 		this.evals = new EvalsResource(this);
 		this.memory = new MemoryResource(this);
@@ -655,6 +670,378 @@ export class DatasetsResource {
 			signal,
 			fetchImpl: this.client._fetchImpl,
 		});
+	}
+
+	async items(
+		datasetId: string,
+		options: {
+			version?: string;
+			limit?: number;
+			cursor?: string;
+			signal?: AbortSignal;
+		} = {},
+	): Promise<DatasetItemsPage> {
+		const params = new URLSearchParams();
+		if (options.version) params.set("version", options.version);
+		if (options.limit !== undefined) params.set("limit", String(options.limit));
+		if (options.cursor) params.set("cursor", options.cursor);
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/datasets/${encodeURIComponent(datasetId)}/items${params.size ? `?${params}` : ""}`,
+			method: "GET",
+			apiKey: this.client._apiKey,
+			signal: this.client._composeSignal(options.signal),
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as DatasetItemsPage;
+	}
+
+	/**
+	 * Import JSONL, CSV, or already-normalized items through the staged,
+	 * chunked dataset API. CSV defaults to `id` and `input` columns.
+	 */
+	async import(input: DatasetImportInput): Promise<EvalDataset> {
+		const signal = this.client._composeSignal(input.signal);
+		const stagedRes = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: "/dataset-imports",
+			method: "POST",
+			apiKey: this.client._apiKey,
+			body: {
+				datasetId: input.datasetId,
+				name: input.name,
+				description: input.description,
+				agentId: input.agentId,
+				metadata: input.metadata,
+			},
+			signal,
+			fetchImpl: this.client._fetchImpl,
+		});
+		const staged = (await stagedRes.json()) as DatasetImportResult;
+		try {
+			const items = await parseDatasetSource(input);
+			for (let offset = 0; offset < items.length; offset += 1_000) {
+				await sendRequest({
+					baseUrl: this.client._baseUrl,
+					path: `/dataset-imports/${encodeURIComponent(staged.id)}/items`,
+					method: "POST",
+					apiKey: this.client._apiKey,
+					body: { items: items.slice(offset, offset + 1_000) },
+					signal,
+					fetchImpl: this.client._fetchImpl,
+				});
+			}
+			const complete = await sendRequest({
+				baseUrl: this.client._baseUrl,
+				path: `/dataset-imports/${encodeURIComponent(staged.id)}/complete`,
+				method: "POST",
+				apiKey: this.client._apiKey,
+				signal,
+				fetchImpl: this.client._fetchImpl,
+			});
+			return (await complete.json()) as EvalDataset;
+		} catch (error) {
+			await sendRequest({
+				baseUrl: this.client._baseUrl,
+				path: `/dataset-imports/${encodeURIComponent(staged.id)}`,
+				method: "DELETE",
+				apiKey: this.client._apiKey,
+				fetchImpl: this.client._fetchImpl,
+			}).catch(() => {});
+			throw error;
+		}
+	}
+}
+
+export class BatchesResource {
+	constructor(private readonly client: AgntzClient) {}
+
+	async list(opts: { signal?: AbortSignal } = {}): Promise<BatchSummary[]> {
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: "/batches",
+			method: "GET",
+			apiKey: this.client._apiKey,
+			signal: this.client._composeSignal(opts.signal),
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as BatchSummary[];
+	}
+
+	async create(
+		manifest: string,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<BatchDefinition> {
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: "/batches",
+			method: "POST",
+			apiKey: this.client._apiKey,
+			body: { manifest },
+			signal: this.client._composeSignal(opts.signal),
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as BatchDefinition;
+	}
+
+	async get(
+		batchId: string,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<BatchDefinition> {
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/batches/${encodeURIComponent(batchId)}`,
+			method: "GET",
+			apiKey: this.client._apiKey,
+			signal: this.client._composeSignal(opts.signal),
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as BatchDefinition;
+	}
+
+	async update(
+		batchId: string,
+		manifest: string,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<BatchDefinition> {
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/batches/${encodeURIComponent(batchId)}`,
+			method: "PUT",
+			apiKey: this.client._apiKey,
+			body: { manifest },
+			signal: this.client._composeSignal(opts.signal),
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as BatchDefinition;
+	}
+
+	async delete(
+		batchId: string,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<void> {
+		await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/batches/${encodeURIComponent(batchId)}`,
+			method: "DELETE",
+			apiKey: this.client._apiKey,
+			signal: this.client._composeSignal(opts.signal),
+			fetchImpl: this.client._fetchImpl,
+		});
+	}
+
+	async versions(
+		batchId: string,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<BatchVersionSummary[]> {
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/batches/${encodeURIComponent(batchId)}/versions`,
+			method: "GET",
+			apiKey: this.client._apiKey,
+			signal: this.client._composeSignal(opts.signal),
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as BatchVersionSummary[];
+	}
+
+	async getVersion(
+		batchId: string,
+		version: string,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<BatchDefinition> {
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/batches/${encodeURIComponent(batchId)}/versions/${encodeURIComponent(version)}`,
+			method: "GET",
+			apiKey: this.client._apiKey,
+			signal: this.client._composeSignal(opts.signal),
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as BatchDefinition;
+	}
+
+	async activateVersion(
+		batchId: string,
+		version: string,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<BatchDefinition> {
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/batches/${encodeURIComponent(batchId)}/versions/${encodeURIComponent(version)}/activate`,
+			method: "POST",
+			apiKey: this.client._apiKey,
+			signal: this.client._composeSignal(opts.signal),
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as BatchDefinition;
+	}
+
+	async setAlias(
+		batchId: string,
+		alias: string,
+		version: string,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<{ alias: string; version: string }> {
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/batches/${encodeURIComponent(batchId)}/aliases/${encodeURIComponent(alias)}`,
+			method: "PUT",
+			apiKey: this.client._apiKey,
+			body: { version },
+			signal: this.client._composeSignal(opts.signal),
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as { alias: string; version: string };
+	}
+
+	async removeAlias(
+		batchId: string,
+		alias: string,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<void> {
+		await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/batches/${encodeURIComponent(batchId)}/aliases/${encodeURIComponent(alias)}`,
+			method: "DELETE",
+			apiKey: this.client._apiKey,
+			signal: this.client._composeSignal(opts.signal),
+			fetchImpl: this.client._fetchImpl,
+		});
+	}
+
+	async run(input: BatchRunInput): Promise<BatchRun> {
+		const { signal, idempotencyKey, ...body } = input;
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: "/batch-runs",
+			method: "POST",
+			apiKey: this.client._apiKey,
+			body,
+			headers: idempotencyKey
+				? { "Idempotency-Key": idempotencyKey }
+				: undefined,
+			signal: this.client._composeSignal(signal),
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as BatchRun;
+	}
+
+	async getRun(
+		runId: string,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<BatchRun> {
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/batch-runs/${encodeURIComponent(runId)}`,
+			method: "GET",
+			apiKey: this.client._apiKey,
+			signal: this.client._composeSignal(opts.signal),
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as BatchRun;
+	}
+
+	async listRuns(
+		filter: BatchRunListFilter = {},
+		opts: { signal?: AbortSignal } = {},
+	): Promise<BatchRunListResult> {
+		const params = encodeRecord(filter);
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/batch-runs${params ? `?${params}` : ""}`,
+			method: "GET",
+			apiKey: this.client._apiKey,
+			signal: this.client._composeSignal(opts.signal),
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as BatchRunListResult;
+	}
+
+	async cancel(
+		runId: string,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<BatchRun> {
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/batch-runs/${encodeURIComponent(runId)}/cancel`,
+			method: "POST",
+			apiKey: this.client._apiKey,
+			signal: this.client._composeSignal(opts.signal),
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as BatchRun;
+	}
+
+	async deleteRun(
+		runId: string,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<void> {
+		await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/batch-runs/${encodeURIComponent(runId)}`,
+			method: "DELETE",
+			apiKey: this.client._apiKey,
+			signal: this.client._composeSignal(opts.signal),
+			fetchImpl: this.client._fetchImpl,
+		});
+	}
+
+	async items(
+		runId: string,
+		options: {
+			status?: string;
+			limit?: number;
+			cursor?: string;
+			signal?: AbortSignal;
+		} = {},
+	): Promise<BatchRunItemsPage> {
+		const { signal, ...filter } = options;
+		const params = encodeRecord(filter);
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/batch-runs/${encodeURIComponent(runId)}/items${params ? `?${params}` : ""}`,
+			method: "GET",
+			apiKey: this.client._apiKey,
+			signal: this.client._composeSignal(signal),
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as BatchRunItemsPage;
+	}
+
+	async resultsJsonl(
+		runId: string,
+		opts: { signal?: AbortSignal } = {},
+	): Promise<string> {
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/batch-runs/${encodeURIComponent(runId)}/results.jsonl`,
+			method: "GET",
+			apiKey: this.client._apiKey,
+			signal: this.client._composeSignal(opts.signal),
+			accept: "application/x-ndjson",
+			fetchImpl: this.client._fetchImpl,
+		});
+		return res.text();
+	}
+
+	async compare(
+		left: string,
+		right: string,
+		options: { limit?: number; cursor?: string; signal?: AbortSignal } = {},
+	): Promise<BatchRunComparisonResult> {
+		const params = new URLSearchParams({ left, right });
+		if (options.limit !== undefined) params.set("limit", String(options.limit));
+		if (options.cursor) params.set("cursor", options.cursor);
+		const res = await sendRequest({
+			baseUrl: this.client._baseUrl,
+			path: `/batch-runs/compare?${params}`,
+			method: "GET",
+			apiKey: this.client._apiKey,
+			signal: this.client._composeSignal(options.signal),
+			fetchImpl: this.client._fetchImpl,
+		});
+		return (await res.json()) as BatchRunComparisonResult;
 	}
 }
 
@@ -1407,4 +1794,192 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
 			else signal.addEventListener("abort", onAbort, { once: true });
 		}
 	});
+}
+
+function encodeRecord(value: object): string {
+	const params = new URLSearchParams();
+	for (const [key, entry] of Object.entries(value)) {
+		if (entry !== undefined) params.set(key, String(entry));
+	}
+	return params.toString();
+}
+
+async function parseDatasetSource(
+	input: DatasetImportInput,
+): Promise<DatasetItem[]> {
+	if (Array.isArray(input.source)) {
+		return validateImportedItems(input.source);
+	}
+	let text: string;
+	if (typeof input.source === "string") text = input.source;
+	else if (input.source instanceof Blob) text = await input.source.text();
+	else if (
+		typeof input.source === "object" &&
+		"path" in input.source &&
+		typeof input.source.path === "string"
+	) {
+		const { readFile } = await import("node:fs/promises");
+		text = await readFile(input.source.path, "utf8");
+	} else if (
+		input.source instanceof Uint8Array ||
+		input.source instanceof ArrayBuffer
+	) {
+		const bytes =
+			input.source instanceof Uint8Array
+				? input.source
+				: new Uint8Array(input.source);
+		text = new TextDecoder().decode(bytes);
+	} else {
+		throw new Error("Unsupported dataset import source");
+	}
+	const format =
+		input.format ??
+		(text.trimStart().split(/\r?\n/, 1)[0]?.trimStart().startsWith("{")
+			? "jsonl"
+			: "csv");
+	return validateImportedItems(
+		format === "jsonl"
+			? parseDatasetJsonl(text)
+			: parseDatasetCsv(
+					text,
+					input.idColumn ?? "id",
+					input.inputColumn ?? "input",
+				),
+	);
+}
+
+function parseDatasetJsonl(text: string): DatasetItem[] {
+	return text
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.filter(Boolean)
+		.map((line, index) => {
+			const value = JSON.parse(line) as unknown;
+			if (
+				value &&
+				typeof value === "object" &&
+				!Array.isArray(value) &&
+				"input" in value
+			) {
+				const row = value as Record<string, unknown>;
+				return {
+					id:
+						typeof row.id === "string"
+							? row.id
+							: `row_${String(index + 1).padStart(6, "0")}`,
+					name: typeof row.name === "string" ? row.name : undefined,
+					input: row.input as DatasetItem["input"],
+					metadata:
+						row.metadata &&
+						typeof row.metadata === "object" &&
+						!Array.isArray(row.metadata)
+							? (row.metadata as Record<string, unknown>)
+							: undefined,
+				};
+			}
+			return {
+				id: `row_${String(index + 1).padStart(6, "0")}`,
+				input: value as DatasetItem["input"],
+			};
+		});
+}
+
+function parseDatasetCsv(
+	text: string,
+	idColumn: string,
+	inputColumn: string,
+): DatasetItem[] {
+	const rows = parseCsvRows(text);
+	const headers = rows.shift();
+	if (!headers?.length) return [];
+	return rows
+		.filter((row) => row.some((cell) => cell.length > 0))
+		.map((row, index) => {
+			const record = Object.fromEntries(
+				headers.map((header, column) => [header, row[column] ?? ""]),
+			);
+			const id =
+				record[idColumn]?.trim() || `row_${String(index + 1).padStart(6, "0")}`;
+			const rawInput = record[inputColumn];
+			const metadata = Object.fromEntries(
+				Object.entries(record).filter(
+					([key]) => ![idColumn, inputColumn, "name"].includes(key),
+				),
+			);
+			return {
+				id,
+				name: record.name?.trim() || undefined,
+				input:
+					rawInput !== undefined
+						? parseMaybeJson(rawInput)
+						: Object.fromEntries(
+								Object.entries(record).filter(([key]) => key !== idColumn),
+							),
+				metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+			};
+		});
+}
+
+function parseCsvRows(text: string): string[][] {
+	const rows: string[][] = [];
+	let row: string[] = [];
+	let cell = "";
+	let quoted = false;
+	for (let index = 0; index < text.length; index++) {
+		const char = text[index];
+		if (char === '"') {
+			if (quoted && text[index + 1] === '"') {
+				cell += '"';
+				index++;
+			} else {
+				quoted = !quoted;
+			}
+		} else if (char === "," && !quoted) {
+			row.push(cell);
+			cell = "";
+		} else if ((char === "\n" || char === "\r") && !quoted) {
+			if (char === "\r" && text[index + 1] === "\n") index++;
+			row.push(cell);
+			rows.push(row);
+			row = [];
+			cell = "";
+		} else {
+			cell += char;
+		}
+	}
+	if (cell.length > 0 || row.length > 0) {
+		row.push(cell);
+		rows.push(row);
+	}
+	return rows;
+}
+
+function parseMaybeJson(value: string): DatasetItem["input"] {
+	const trimmed = value.trim();
+	if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+		try {
+			return JSON.parse(trimmed) as DatasetItem["input"];
+		} catch {
+			// Keep malformed JSON-looking cells as ordinary text.
+		}
+	}
+	return value;
+}
+
+function validateImportedItems(items: DatasetItem[]): DatasetItem[] {
+	if (items.length === 0) throw new Error("Dataset import contains no items");
+	const ids = new Set<string>();
+	for (const [index, item] of items.entries()) {
+		if (!item || typeof item !== "object") {
+			throw new Error(`Dataset item ${index + 1} must be an object`);
+		}
+		if (!item.id) throw new Error(`Dataset item ${index + 1} has no id`);
+		if (ids.has(item.id))
+			throw new Error(`Duplicate dataset item id '${item.id}'`);
+		if (item.input === undefined) {
+			throw new Error(`Dataset item '${item.id}' has no input`);
+		}
+		ids.add(item.id);
+	}
+	return items;
 }

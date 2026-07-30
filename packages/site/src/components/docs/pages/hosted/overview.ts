@@ -115,8 +115,9 @@ or \`session\` for conversational history and complete traces.
 The built-in hosted transcription and image adapters currently use OpenAI.
 Ordinary \`llm\` manifests support every provider listed in
 [Models and providers](/docs/models). Self-hosted workers expose an operation
-registry for additional adapters. Embeddings, speech synthesis, moderation,
-realtime, and provider batch APIs are not yet stable public manifest kinds.
+registry for additional adapters. Provider-native asynchronous batches are a
+separate record type—not a manifest kind—and support OpenAI, Anthropic, Gemini,
+and Mistral. See [Provider-native batches](/docs/hosted/batches).
 
 ## Read next
 

@@ -109,6 +109,30 @@ async with AsyncAgntzClient(api_key="...", base_url="https://api.agntz.co") as c
     result = await client.agents.run(agent_id="support", input="Hello")
 ```
 
+Provider-native batches are also available in both clients:
+
+```python
+dataset = client.datasets.import_(
+    "./customers.csv",
+    format="csv",
+    dataset_id="customers",
+    name="Customers",
+)
+batch = client.batches.create(batch_yaml)
+run = client.batches.run(
+    batch_id=batch.id,
+    dataset_id=dataset.id,
+    idempotency_key="customers-2026-07-29",
+)
+
+items = client.batches.items(run.id, limit=500)
+jsonl = client.batches.results_jsonl(run.id)
+comparison = client.batches.compare(first_run.id, second_run.id)
+```
+
+Use `client.batches.delete_run(run_id)` to explicitly remove a terminal run and
+its retained results.
+
 Pass runtime namespace grants with `context` when the run needs resource access:
 
 ```python

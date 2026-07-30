@@ -101,6 +101,33 @@ Namespace-root administration is app/server owned. The worker enforces bounded g
 | \`GET\` | \`/eval-scores/latest\` | required | Latest scores by agent/eval/dataset/version |
 | \`GET\` | \`/eval-scores\` | required | Score history |
 
+### Provider-native batches
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| \`GET/POST\` | \`/batches\` | required | List or create versioned batch definitions |
+| \`GET/PUT/DELETE\` | \`/batches/:id\` | required | Fetch, create a version, or delete a definition |
+| \`GET\` | \`/batches/:id/versions\` | required | List immutable manifest versions |
+| \`GET\` | \`/batches/:id/versions/:version\` | required | Resolve an exact version, \`latest\`, or alias |
+| \`POST\` | \`/batches/:id/versions/:version/activate\` | required | Make a version or alias active |
+| \`PUT/DELETE\` | \`/batches/:id/aliases/:alias\` | required | Set or remove a version alias |
+| \`POST\` | \`/batch-runs\` | required | Submit a stored dataset or inline items |
+| \`GET\` | \`/batch-runs\` | required | Filter and page batch runs |
+| \`GET\` | \`/batch-runs/:id\` | required | Fetch reconciled provider state |
+| \`DELETE\` | \`/batch-runs/:id\` | required | Delete a terminal run and its retained results |
+| \`POST\` | \`/batch-runs/:id/cancel\` | required | Request native provider cancellation |
+| \`GET\` | \`/batch-runs/:id/items\` | required | Page normalized item results |
+| \`GET\` | \`/batch-runs/:id/results.jsonl\` | required | Export normalized JSONL |
+| \`GET\` | \`/batch-runs/compare\` | required | Compare two runs by item id |
+| \`POST\` | \`/dataset-imports\` | required | Start a staged CSV/JSONL import |
+| \`POST\` | \`/dataset-imports/:id/items\` | required | Append normalized import items |
+| \`POST\` | \`/dataset-imports/:id/complete\` | required | Publish a dataset version atomically |
+
+Batch runs are provider-native asynchronous jobs and do not create ordinary
+runs, sessions, or traces. See
+[Provider-native batches](/docs/hosted/batches) for manifests, status semantics,
+version pinning, callbacks, and client examples.
+
 ### System agents and webhooks
 
 | Method | Path | Auth | Description |

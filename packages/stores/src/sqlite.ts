@@ -12,11 +12,25 @@ import type {
 	AgentDefinition,
 	AgentVersionSummary,
 	ArtifactMetadata,
+	BatchDefinition,
+	BatchRun,
+	BatchRunClaim,
+	BatchRunItem,
+	BatchRunItemListOptions,
+	BatchRunItemListResult,
+	BatchRunListFilters,
+	BatchRunListResult,
+	BatchSummary,
+	BatchVersionSummary,
 	Connection,
 	ConnectionConfig,
 	ConnectionKind,
 	ContentBlock,
 	ContextEntry,
+	DatasetImport,
+	DatasetItem,
+	DatasetItemListOptions,
+	DatasetItemListResult,
 	EvalDataset,
 	EvalDatasetListFilters,
 	EvalDatasetVersionSummary,
@@ -621,6 +635,134 @@ const MIGRATIONS = [
   CREATE INDEX IF NOT EXISTS idx_runs_expiry ON runs(user_id, expires_at);
 
   UPDATE schema_version SET version = 16;
+  `,
+	// v17: provider-native batch definitions/runs and normalized dataset items.
+	`
+  CREATE TABLE IF NOT EXISTS batches (
+    user_id    TEXT NOT NULL,
+    id         TEXT NOT NULL,
+    definition TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_batches_user_updated
+    ON batches(user_id, updated_at DESC, id DESC);
+
+  CREATE TABLE IF NOT EXISTS batch_versions (
+    user_id      TEXT NOT NULL,
+    batch_id     TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    activated_at TEXT,
+    definition   TEXT NOT NULL,
+    PRIMARY KEY (user_id, batch_id, created_at)
+  );
+  CREATE INDEX IF NOT EXISTS idx_batch_versions_user_batch
+    ON batch_versions(user_id, batch_id, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS batch_aliases (
+    user_id            TEXT NOT NULL,
+    batch_id           TEXT NOT NULL,
+    alias              TEXT NOT NULL,
+    version_created_at TEXT NOT NULL,
+    created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, batch_id, alias)
+  );
+
+  CREATE TABLE IF NOT EXISTS batch_runs (
+    user_id          TEXT NOT NULL,
+    id               TEXT NOT NULL,
+    batch_id         TEXT NOT NULL,
+    batch_version    TEXT NOT NULL,
+    dataset_id       TEXT,
+    dataset_version  TEXT,
+    provider         TEXT NOT NULL,
+    model            TEXT NOT NULL,
+    status           TEXT NOT NULL,
+    idempotency_key  TEXT,
+    run              TEXT NOT NULL,
+    created_at       TEXT NOT NULL,
+    ended_at         TEXT,
+    next_poll_at     TEXT,
+    lease_owner      TEXT,
+    lease_expires_at TEXT,
+    PRIMARY KEY (user_id, id)
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_batch_runs_user_idempotency
+    ON batch_runs(user_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_batch_runs_user_created
+    ON batch_runs(user_id, created_at DESC, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_batch_runs_reconcile
+    ON batch_runs(status, next_poll_at, lease_expires_at);
+
+  CREATE TABLE IF NOT EXISTS batch_run_items (
+    user_id TEXT NOT NULL,
+    run_id  TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    ordinal INTEGER NOT NULL,
+    status  TEXT NOT NULL,
+    item    TEXT NOT NULL,
+    PRIMARY KEY (user_id, run_id, item_id)
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_batch_run_items_ordinal
+    ON batch_run_items(user_id, run_id, ordinal);
+
+  CREATE TABLE IF NOT EXISTS dataset_items (
+    user_id         TEXT NOT NULL,
+    dataset_id      TEXT NOT NULL,
+    dataset_version TEXT NOT NULL,
+    item_id         TEXT NOT NULL,
+    ordinal         INTEGER NOT NULL,
+    item            TEXT NOT NULL,
+    PRIMARY KEY (user_id, dataset_id, dataset_version, item_id)
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_dataset_items_ordinal
+    ON dataset_items(user_id, dataset_id, dataset_version, ordinal);
+
+  INSERT OR IGNORE INTO dataset_items
+    (user_id, dataset_id, dataset_version, item_id, ordinal, item)
+  SELECT v.user_id,
+         v.dataset_id,
+         v.created_at,
+         COALESCE(json_extract(j.value, '$.id'), 'row_' || printf('%06d', CAST(j.key AS INTEGER) + 1)),
+         CAST(j.key AS INTEGER),
+         j.value
+    FROM eval_dataset_versions v,
+         json_each(v.dataset, '$.items') j;
+
+  UPDATE schema_version SET version = 17;
+  `,
+	// v18: durable staged dataset imports
+	`
+  CREATE TABLE IF NOT EXISTS dataset_imports (
+    user_id         TEXT NOT NULL,
+    id              TEXT NOT NULL,
+    dataset_id      TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    description     TEXT,
+    agent_id        TEXT,
+    metadata        TEXT,
+    status          TEXT NOT NULL CHECK (status IN ('open', 'completed')),
+    item_count      INTEGER NOT NULL DEFAULT 0,
+    dataset_version TEXT,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    PRIMARY KEY (user_id, id)
+  );
+  CREATE TABLE IF NOT EXISTS dataset_import_items (
+    user_id   TEXT NOT NULL,
+    import_id TEXT NOT NULL,
+    item_id   TEXT NOT NULL,
+    ordinal   INTEGER NOT NULL,
+    item      TEXT NOT NULL,
+    PRIMARY KEY (user_id, import_id, item_id),
+    UNIQUE (user_id, import_id, ordinal)
+  );
+  CREATE INDEX IF NOT EXISTS idx_dataset_imports_user
+    ON dataset_imports(user_id, created_at DESC);
+
+  UPDATE schema_version SET version = 18;
   `,
 ];
 
@@ -1966,6 +2108,7 @@ export class SqliteStore implements UnifiedStore {
 		const now = this.nextTimestamp();
 		const row: EvalDataset = {
 			...dataset,
+			itemCount: dataset.items.length,
 			createdAt: existing?.createdAt ?? dataset.createdAt ?? now,
 			version: now,
 			updatedAt: now,
@@ -1985,6 +2128,11 @@ export class SqliteStore implements UnifiedStore {
            (user_id, dataset_id, created_at, activated_at, dataset)
          VALUES (?, ?, ?, ?, ?)`,
 		);
+		const insertItem = this.db.prepare(
+			`INSERT INTO dataset_items
+           (user_id, dataset_id, dataset_version, item_id, ordinal, item)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+		);
 		const tx = this.db.transaction(() => {
 			insertHead.run(
 				u,
@@ -1996,6 +2144,9 @@ export class SqliteStore implements UnifiedStore {
 				now,
 			);
 			insertVersion.run(u, row.id, now, now, JSON.stringify(row));
+			for (const [ordinal, item] of row.items.entries()) {
+				insertItem.run(u, row.id, now, item.id, ordinal, JSON.stringify(item));
+			}
 		});
 		tx();
 	}
@@ -2085,6 +2236,7 @@ export class SqliteStore implements UnifiedStore {
 		const now = this.nextTimestamp();
 		const row: EvalDataset = {
 			...version,
+			itemCount: version.itemCount ?? version.items.length,
 			createdAt: existing?.createdAt ?? version.createdAt ?? createdAt,
 			version: createdAt,
 			updatedAt: now,
@@ -2166,6 +2318,669 @@ export class SqliteStore implements UnifiedStore {
 				"DELETE FROM eval_dataset_aliases WHERE user_id = ? AND dataset_id = ? AND alias = ?",
 			)
 			.run(u, datasetId, alias);
+	}
+
+	// ═══ DatasetImportStore ═══
+
+	async createDatasetImport(input: {
+		id: string;
+		datasetId: string;
+		name: string;
+		description?: string;
+		agentId?: string;
+		metadata?: Record<string, unknown>;
+	}): Promise<DatasetImport> {
+		const u = this.requireUser();
+		const now = this.nextTimestamp();
+		this.db
+			.prepare(
+				`INSERT INTO dataset_imports
+           (user_id, id, dataset_id, name, description, agent_id, metadata,
+            status, item_count, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'open', 0, ?, ?)`,
+			)
+			.run(
+				u,
+				input.id,
+				input.datasetId,
+				input.name,
+				input.description ?? null,
+				input.agentId ?? null,
+				input.metadata ? JSON.stringify(input.metadata) : null,
+				now,
+				now,
+			);
+		return {
+			...input,
+			status: "open",
+			itemCount: 0,
+			createdAt: now,
+			updatedAt: now,
+		};
+	}
+
+	async getDatasetImport(importId: string): Promise<DatasetImport | null> {
+		const u = this.requireUser();
+		const row = this.db
+			.prepare("SELECT * FROM dataset_imports WHERE user_id = ? AND id = ?")
+			.get(u, importId) as DatasetImportSqliteRow | undefined;
+		return row ? sqliteRowToDatasetImport(row) : null;
+	}
+
+	async appendDatasetImportItems(
+		importId: string,
+		items: DatasetItem[],
+	): Promise<DatasetImport> {
+		const u = this.requireUser();
+		const current = await this.getDatasetImport(importId);
+		if (!current) throw new Error(`Dataset import '${importId}' not found`);
+		if (current.status !== "open") {
+			throw new Error(`Dataset import '${importId}' is already completed`);
+		}
+		const now = this.nextTimestamp();
+		const insert = this.db.prepare(
+			`INSERT INTO dataset_import_items
+         (user_id, import_id, item_id, ordinal, item)
+       VALUES (?, ?, ?, ?, ?)`,
+		);
+		const tx = this.db.transaction(() => {
+			for (const [offset, item] of items.entries()) {
+				insert.run(
+					u,
+					importId,
+					item.id,
+					current.itemCount + offset,
+					JSON.stringify(item),
+				);
+			}
+			this.db
+				.prepare(
+					`UPDATE dataset_imports
+            SET item_count = ?, updated_at = ?
+            WHERE user_id = ? AND id = ?`,
+				)
+				.run(current.itemCount + items.length, now, u, importId);
+		});
+		tx();
+		return {
+			...current,
+			itemCount: current.itemCount + items.length,
+			updatedAt: now,
+		};
+	}
+
+	async completeDatasetImport(importId: string): Promise<EvalDataset> {
+		const u = this.requireUser();
+		const current = await this.getDatasetImport(importId);
+		if (!current) throw new Error(`Dataset import '${importId}' not found`);
+		if (current.status === "completed") {
+			const dataset = current.datasetVersion
+				? await this.getDatasetVersion(
+						current.datasetId,
+						current.datasetVersion,
+					)
+				: await this.getDataset(current.datasetId);
+			if (!dataset) throw new Error("Completed dataset import is inconsistent");
+			return dataset;
+		}
+		const existing = await this.getDataset(current.datasetId);
+		const now = this.nextTimestamp();
+		const dataset: EvalDataset = {
+			id: current.datasetId,
+			name: current.name,
+			description: current.description,
+			agentId: current.agentId,
+			metadata: current.metadata,
+			items: [],
+			itemCount: current.itemCount,
+			createdAt: existing?.createdAt ?? now,
+			version: now,
+			updatedAt: now,
+		};
+		const tx = this.db.transaction(() => {
+			this.db
+				.prepare(
+					`INSERT INTO eval_datasets
+             (user_id, id, agent_id, name, dataset, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(user_id, id) DO UPDATE SET
+             agent_id = excluded.agent_id,
+             name = excluded.name,
+             dataset = excluded.dataset,
+             updated_at = excluded.updated_at`,
+				)
+				.run(
+					u,
+					dataset.id,
+					dataset.agentId ?? null,
+					dataset.name,
+					JSON.stringify(dataset),
+					dataset.createdAt,
+					now,
+				);
+			this.db
+				.prepare(
+					`INSERT INTO eval_dataset_versions
+             (user_id, dataset_id, created_at, activated_at, dataset)
+           VALUES (?, ?, ?, ?, ?)`,
+				)
+				.run(u, dataset.id, now, now, JSON.stringify(dataset));
+			this.db
+				.prepare(
+					`INSERT INTO dataset_items
+             (user_id, dataset_id, dataset_version, item_id, ordinal, item)
+           SELECT user_id, ?, ?, item_id, ordinal, item
+             FROM dataset_import_items
+            WHERE user_id = ? AND import_id = ?
+            ORDER BY ordinal`,
+				)
+				.run(dataset.id, now, u, importId);
+			this.db
+				.prepare(
+					`UPDATE dataset_imports
+            SET status = 'completed', dataset_version = ?, updated_at = ?
+            WHERE user_id = ? AND id = ?`,
+				)
+				.run(now, now, u, importId);
+		});
+		tx();
+		return dataset;
+	}
+
+	async deleteDatasetImport(importId: string): Promise<void> {
+		const u = this.requireUser();
+		const tx = this.db.transaction(() => {
+			this.db
+				.prepare(
+					"DELETE FROM dataset_import_items WHERE user_id = ? AND import_id = ?",
+				)
+				.run(u, importId);
+			this.db
+				.prepare("DELETE FROM dataset_imports WHERE user_id = ? AND id = ?")
+				.run(u, importId);
+		});
+		tx();
+	}
+
+	// ═══ BatchStore ═══
+
+	async listBatches(): Promise<BatchSummary[]> {
+		const u = this.requireUser();
+		const rows = this.db
+			.prepare(
+				`SELECT definition FROM batches
+          WHERE user_id = ?
+          ORDER BY updated_at DESC, id DESC`,
+			)
+			.all(u) as Array<{ definition: string }>;
+		return rows.map((row) => batchSummary(rowToBatchDefinition(row)));
+	}
+
+	async getBatch(batchId: string): Promise<BatchDefinition | null> {
+		const u = this.requireUser();
+		const row = this.db
+			.prepare("SELECT definition FROM batches WHERE user_id = ? AND id = ?")
+			.get(u, batchId) as { definition: string } | undefined;
+		return row ? rowToBatchDefinition(row) : null;
+	}
+
+	async putBatch(definition: BatchDefinition): Promise<void> {
+		const u = this.requireUser();
+		const existing = await this.getBatch(definition.id);
+		const now = this.nextTimestamp();
+		const row: BatchDefinition = {
+			...definition,
+			createdAt: existing?.createdAt ?? definition.createdAt ?? now,
+			version: now,
+			updatedAt: now,
+		};
+		const tx = this.db.transaction(() => {
+			this.db
+				.prepare(
+					`INSERT INTO batches (user_id, id, definition, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(user_id, id) DO UPDATE SET
+             definition = excluded.definition,
+             updated_at = excluded.updated_at`,
+				)
+				.run(u, row.id, JSON.stringify(row), row.createdAt, now);
+			this.db
+				.prepare(
+					`INSERT INTO batch_versions
+             (user_id, batch_id, created_at, activated_at, definition)
+           VALUES (?, ?, ?, ?, ?)`,
+				)
+				.run(u, row.id, now, now, JSON.stringify(row));
+		});
+		tx();
+	}
+
+	async deleteBatch(batchId: string): Promise<void> {
+		const u = this.requireUser();
+		const tx = this.db.transaction(() => {
+			this.db
+				.prepare("DELETE FROM batches WHERE user_id = ? AND id = ?")
+				.run(u, batchId);
+			this.db
+				.prepare(
+					"DELETE FROM batch_versions WHERE user_id = ? AND batch_id = ?",
+				)
+				.run(u, batchId);
+			this.db
+				.prepare("DELETE FROM batch_aliases WHERE user_id = ? AND batch_id = ?")
+				.run(u, batchId);
+		});
+		tx();
+	}
+
+	async listBatchVersions(batchId: string): Promise<BatchVersionSummary[]> {
+		const u = this.requireUser();
+		const versions = this.db
+			.prepare(
+				`SELECT created_at, activated_at FROM batch_versions
+          WHERE user_id = ? AND batch_id = ?
+          ORDER BY created_at DESC`,
+			)
+			.all(u, batchId) as Array<{
+			created_at: string;
+			activated_at: string | null;
+		}>;
+		const aliases = this.db
+			.prepare(
+				`SELECT alias, version_created_at FROM batch_aliases
+          WHERE user_id = ? AND batch_id = ?`,
+			)
+			.all(u, batchId) as Array<{
+			alias: string;
+			version_created_at: string;
+		}>;
+		const aliasesByVersion = new Map<string, string[]>();
+		for (const row of aliases) {
+			const list = aliasesByVersion.get(row.version_created_at) ?? [];
+			list.push(row.alias);
+			aliasesByVersion.set(row.version_created_at, list);
+		}
+		return versions.map((row) => ({
+			createdAt: row.created_at,
+			activatedAt: row.activated_at,
+			aliases: (aliasesByVersion.get(row.created_at) ?? []).sort(),
+		}));
+	}
+
+	async getBatchVersion(
+		batchId: string,
+		createdAt: string,
+	): Promise<BatchDefinition | null> {
+		const u = this.requireUser();
+		const row = this.db
+			.prepare(
+				`SELECT definition, created_at FROM batch_versions
+          WHERE user_id = ? AND batch_id = ? AND created_at = ?`,
+			)
+			.get(u, batchId, createdAt) as
+			| { definition: string; created_at: string }
+			| undefined;
+		return row ? rowToBatchDefinition(row) : null;
+	}
+
+	async activateBatchVersion(
+		batchId: string,
+		createdAt: string,
+	): Promise<void> {
+		const u = this.requireUser();
+		const version = await this.getBatchVersion(batchId, createdAt);
+		if (!version) {
+			throw new Error(`Batch version not found: ${batchId}@${createdAt}`);
+		}
+		const existing = await this.getBatch(batchId);
+		const now = this.nextTimestamp();
+		const row: BatchDefinition = {
+			...version,
+			createdAt: existing?.createdAt ?? version.createdAt ?? createdAt,
+			version: createdAt,
+			updatedAt: now,
+		};
+		const tx = this.db.transaction(() => {
+			this.db
+				.prepare(
+					`INSERT INTO batches (user_id, id, definition, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(user_id, id) DO UPDATE SET
+             definition = excluded.definition,
+             updated_at = excluded.updated_at`,
+				)
+				.run(u, row.id, JSON.stringify(row), row.createdAt, now);
+			this.db
+				.prepare(
+					`UPDATE batch_versions SET activated_at = ?
+            WHERE user_id = ? AND batch_id = ? AND created_at = ?`,
+				)
+				.run(now, u, batchId, createdAt);
+		});
+		tx();
+	}
+
+	async resolveBatchVersionAlias(
+		batchId: string,
+		alias: string,
+	): Promise<string | null> {
+		const u = this.requireUser();
+		const row = this.db
+			.prepare(
+				`SELECT version_created_at FROM batch_aliases
+          WHERE user_id = ? AND batch_id = ? AND alias = ?`,
+			)
+			.get(u, batchId, alias) as { version_created_at: string } | undefined;
+		return row?.version_created_at ?? null;
+	}
+
+	async setBatchVersionAlias(
+		batchId: string,
+		createdAt: string,
+		alias: string,
+	): Promise<void> {
+		const u = this.requireUser();
+		if (!(await this.getBatchVersion(batchId, createdAt))) {
+			throw new Error(`Batch version not found: ${batchId}@${createdAt}`);
+		}
+		this.db
+			.prepare(
+				`INSERT INTO batch_aliases
+           (user_id, batch_id, alias, version_created_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(user_id, batch_id, alias) DO UPDATE SET
+           version_created_at = excluded.version_created_at`,
+			)
+			.run(u, batchId, alias, createdAt);
+	}
+
+	async removeBatchVersionAlias(batchId: string, alias: string): Promise<void> {
+		const u = this.requireUser();
+		this.db
+			.prepare(
+				"DELETE FROM batch_aliases WHERE user_id = ? AND batch_id = ? AND alias = ?",
+			)
+			.run(u, batchId, alias);
+	}
+
+	async putBatchRun(run: BatchRun): Promise<void> {
+		const u = this.requireUser();
+		const terminal = isTerminalBatchRun(run.status);
+		this.db
+			.prepare(
+				`INSERT INTO batch_runs
+           (user_id, id, batch_id, batch_version, dataset_id, dataset_version,
+            provider, model, status, idempotency_key, run, created_at, ended_at,
+            next_poll_at, lease_owner, lease_expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+         ON CONFLICT(user_id, id) DO UPDATE SET
+           batch_id = excluded.batch_id,
+           batch_version = excluded.batch_version,
+           dataset_id = excluded.dataset_id,
+           dataset_version = excluded.dataset_version,
+           provider = excluded.provider,
+           model = excluded.model,
+           status = excluded.status,
+           idempotency_key = excluded.idempotency_key,
+           run = excluded.run,
+           ended_at = excluded.ended_at,
+           next_poll_at = excluded.next_poll_at,
+           lease_owner = NULL,
+           lease_expires_at = NULL`,
+			)
+			.run(
+				u,
+				run.id,
+				run.batchId,
+				run.batchVersion,
+				run.datasetId ?? null,
+				run.datasetVersion ?? null,
+				run.provider,
+				run.model,
+				run.status,
+				run.idempotencyKey ?? null,
+				JSON.stringify(run),
+				run.createdAt,
+				run.endedAt ?? null,
+				terminal ? null : (run.nextPollAt ?? null),
+			);
+	}
+
+	async getBatchRun(runId: string): Promise<BatchRun | null> {
+		const u = this.requireUser();
+		const row = this.db
+			.prepare("SELECT run FROM batch_runs WHERE user_id = ? AND id = ?")
+			.get(u, runId) as { run: string } | undefined;
+		return row ? rowToBatchRun(row) : null;
+	}
+
+	async getBatchRunByIdempotencyKey(key: string): Promise<BatchRun | null> {
+		const u = this.requireUser();
+		const row = this.db
+			.prepare(
+				"SELECT run FROM batch_runs WHERE user_id = ? AND idempotency_key = ?",
+			)
+			.get(u, key) as { run: string } | undefined;
+		return row ? rowToBatchRun(row) : null;
+	}
+
+	async listBatchRuns(
+		filters: BatchRunListFilters = {},
+	): Promise<BatchRunListResult> {
+		const u = this.requireUser();
+		const limit = Math.min(Math.max(filters.limit ?? 50, 1), 200);
+		const clauses = ["user_id = ?"];
+		const args: unknown[] = [u];
+		const add = (column: string, value: string | undefined): void => {
+			if (value !== undefined) {
+				clauses.push(`${column} = ?`);
+				args.push(value);
+			}
+		};
+		add("batch_id", filters.batchId);
+		add("batch_version", filters.batchVersion);
+		add("dataset_id", filters.datasetId);
+		add("dataset_version", filters.datasetVersion);
+		add("provider", filters.provider);
+		add("model", filters.model);
+		add("status", filters.status);
+		if (filters.startedAfter) {
+			clauses.push("created_at >= ?");
+			args.push(filters.startedAfter);
+		}
+		if (filters.startedBefore) {
+			clauses.push("created_at <= ?");
+			args.push(filters.startedBefore);
+		}
+		const cursor = decodeBatchListCursor(filters.cursor);
+		if (cursor) {
+			clauses.push("(created_at < ? OR (created_at = ? AND id < ?))");
+			args.push(cursor.createdAt, cursor.createdAt, cursor.id);
+		}
+		args.push(limit + 1);
+		const raw = this.db
+			.prepare(
+				`SELECT run FROM batch_runs
+          WHERE ${clauses.join(" AND ")}
+          ORDER BY created_at DESC, id DESC
+          LIMIT ?`,
+			)
+			.all(...args) as Array<{ run: string }>;
+		const hasMore = raw.length > limit;
+		const rows = raw.slice(0, limit).map(rowToBatchRun);
+		const last = rows.at(-1);
+		return {
+			rows,
+			cursor:
+				hasMore && last
+					? encodeBatchListCursor({
+							createdAt: last.createdAt,
+							id: last.id,
+						})
+					: undefined,
+		};
+	}
+
+	async deleteBatchRun(runId: string): Promise<void> {
+		const u = this.requireUser();
+		const tx = this.db.transaction(() => {
+			this.db
+				.prepare("DELETE FROM batch_run_items WHERE user_id = ? AND run_id = ?")
+				.run(u, runId);
+			this.db
+				.prepare("DELETE FROM batch_runs WHERE user_id = ? AND id = ?")
+				.run(u, runId);
+		});
+		tx();
+	}
+
+	async putBatchRunItems(runId: string, items: BatchRunItem[]): Promise<void> {
+		const u = this.requireUser();
+		const stmt = this.db.prepare(
+			`INSERT INTO batch_run_items
+         (user_id, run_id, item_id, ordinal, status, item)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, run_id, item_id) DO UPDATE SET
+         ordinal = excluded.ordinal,
+         status = excluded.status,
+         item = excluded.item`,
+		);
+		const tx = this.db.transaction(() => {
+			for (const item of items) {
+				stmt.run(
+					u,
+					runId,
+					item.itemId,
+					item.ordinal,
+					item.status,
+					JSON.stringify(item),
+				);
+			}
+		});
+		tx();
+	}
+
+	async listBatchRunItems(
+		runId: string,
+		options: BatchRunItemListOptions = {},
+	): Promise<BatchRunItemListResult> {
+		const u = this.requireUser();
+		const limit = Math.min(Math.max(options.limit ?? 100, 1), 1_000);
+		const clauses = ["user_id = ?", "run_id = ?"];
+		const args: unknown[] = [u, runId];
+		if (options.status) {
+			clauses.push("status = ?");
+			args.push(options.status);
+		}
+		const after = decodeOrdinalCursor(options.cursor);
+		if (after !== null) {
+			clauses.push("ordinal > ?");
+			args.push(after);
+		}
+		args.push(limit + 1);
+		const raw = this.db
+			.prepare(
+				`SELECT item FROM batch_run_items
+          WHERE ${clauses.join(" AND ")}
+          ORDER BY ordinal ASC
+          LIMIT ?`,
+			)
+			.all(...args) as Array<{ item: string }>;
+		const hasMore = raw.length > limit;
+		const rows = raw
+			.slice(0, limit)
+			.map((row) => JSON.parse(row.item) as BatchRunItem);
+		const last = rows.at(-1);
+		return {
+			rows,
+			cursor: hasMore && last ? encodeOrdinalCursor(last.ordinal) : undefined,
+		};
+	}
+
+	async listDatasetItems(
+		datasetId: string,
+		options: DatasetItemListOptions = {},
+	): Promise<DatasetItemListResult> {
+		const u = this.requireUser();
+		let version = options.version;
+		if (version) {
+			version =
+				(await this.resolveDatasetVersionAlias(datasetId, version)) ?? version;
+		} else {
+			version = (await this.getDataset(datasetId))?.version;
+		}
+		if (!version) return { rows: [] };
+		const limit = Math.min(Math.max(options.limit ?? 100, 1), 1_000);
+		const after = decodeOrdinalCursor(options.cursor);
+		const raw = this.db
+			.prepare(
+				`SELECT item, ordinal FROM dataset_items
+          WHERE user_id = ? AND dataset_id = ? AND dataset_version = ?
+            AND ordinal > ?
+          ORDER BY ordinal ASC
+          LIMIT ?`,
+			)
+			.all(u, datasetId, version, after ?? -1, limit + 1) as Array<{
+			item: string;
+			ordinal: number;
+		}>;
+		const hasMore = raw.length > limit;
+		const page = raw.slice(0, limit);
+		const rows = page.map(
+			(row) => JSON.parse(row.item) as DatasetItemListResult["rows"][number],
+		);
+		return {
+			rows,
+			cursor:
+				hasMore && page.length > 0
+					? encodeOrdinalCursor(page[page.length - 1].ordinal)
+					: undefined,
+		};
+	}
+
+	async claimBatchRuns(options: {
+		workerId: string;
+		now: string;
+		leaseUntil: string;
+		limit?: number;
+	}): Promise<BatchRunClaim[]> {
+		const limit = Math.min(Math.max(options.limit ?? 20, 1), 200);
+		const tx = this.db.transaction(() => {
+			const rows = this.db
+				.prepare(
+					`SELECT user_id, id, run FROM batch_runs
+            WHERE (
+                status NOT IN ('completed', 'failed', 'expired', 'cancelled')
+                OR (
+                  json_extract(run, '$.callbackUrl') IS NOT NULL
+                  AND json_extract(run, '$.webhookSecretName') IS NOT NULL
+                  AND json_extract(run, '$.terminalWebhookQueuedAt') IS NULL
+                )
+              )
+              AND (next_poll_at IS NULL OR next_poll_at <= ?)
+              AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
+            ORDER BY COALESCE(next_poll_at, created_at) ASC
+            LIMIT ?`,
+				)
+				.all(options.now, options.now, limit) as Array<{
+				user_id: string;
+				id: string;
+				run: string;
+			}>;
+			const lease = this.db.prepare(
+				`UPDATE batch_runs
+          SET lease_owner = ?, lease_expires_at = ?
+          WHERE user_id = ? AND id = ?`,
+			);
+			for (const row of rows) {
+				lease.run(options.workerId, options.leaseUntil, row.user_id, row.id);
+			}
+			return rows.map((row) => ({
+				ownerId: row.user_id,
+				run: rowToBatchRun(row),
+			}));
+		});
+		return tx();
 	}
 
 	async putEvalRun(run: EvalRun): Promise<void> {
@@ -2842,9 +3657,9 @@ export class SqliteStore implements UnifiedStore {
 	): Promise<string> {
 		const u = this.requireUser();
 		const now = new Date().toISOString();
-		this.db
+		const result = this.db
 			.prepare(
-				`INSERT INTO webhook_deliveries (
+				`INSERT OR IGNORE INTO webhook_deliveries (
             id, user_id, run_id, callback_url, secret_name, payload,
             attempts, status, last_error, last_attempt_at, created_at
           ) VALUES (?, ?, ?, ?, ?, ?, 0, 'pending', NULL, NULL, ?)`,
@@ -2858,7 +3673,7 @@ export class SqliteStore implements UnifiedStore {
 				JSON.stringify(delivery.payload),
 				now,
 			);
-		return delivery.id;
+		return result.changes > 0 ? delivery.id : "";
 	}
 
 	async updateStatus(
@@ -3209,11 +4024,105 @@ function rowToEvalDataset(r: {
 	if ((!dataset.agentId && r.agent_id) || (!dataset.version && r.created_at)) {
 		return {
 			...dataset,
-			agentId: dataset.agentId ?? r.agent_id ?? "",
+			agentId: dataset.agentId ?? r.agent_id ?? undefined,
 			version: dataset.version ?? r.created_at ?? undefined,
 		};
 	}
 	return dataset;
+}
+
+function rowToBatchDefinition(r: {
+	definition: string;
+	created_at?: string | null;
+}): BatchDefinition {
+	const definition = JSON.parse(r.definition) as BatchDefinition;
+	if (!definition.version && r.created_at) {
+		return { ...definition, version: r.created_at };
+	}
+	return definition;
+}
+
+function rowToBatchRun(r: { run: string }): BatchRun {
+	return JSON.parse(r.run) as BatchRun;
+}
+
+interface DatasetImportSqliteRow {
+	id: string;
+	dataset_id: string;
+	name: string;
+	description: string | null;
+	agent_id: string | null;
+	metadata: string | null;
+	status: "open" | "completed";
+	item_count: number;
+	dataset_version: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+function sqliteRowToDatasetImport(row: DatasetImportSqliteRow): DatasetImport {
+	return {
+		id: row.id,
+		datasetId: row.dataset_id,
+		name: row.name,
+		description: row.description ?? undefined,
+		agentId: row.agent_id ?? undefined,
+		metadata: row.metadata
+			? (JSON.parse(row.metadata) as Record<string, unknown>)
+			: undefined,
+		status: row.status,
+		itemCount: row.item_count,
+		datasetVersion: row.dataset_version ?? undefined,
+		createdAt: row.created_at,
+		updatedAt: row.updated_at,
+	};
+}
+
+function batchSummary(definition: BatchDefinition): BatchSummary {
+	const { manifest: _manifest, ...summary } = definition;
+	return summary;
+}
+
+function isTerminalBatchRun(status: BatchRun["status"]): boolean {
+	return (
+		status === "completed" ||
+		status === "failed" ||
+		status === "expired" ||
+		status === "cancelled"
+	);
+}
+
+function encodeBatchListCursor(cursor: {
+	createdAt: string;
+	id: string;
+}): string {
+	return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+function decodeBatchListCursor(
+	cursor: string | undefined,
+): { createdAt: string; id: string } | null {
+	if (!cursor) return null;
+	try {
+		const value = JSON.parse(
+			Buffer.from(cursor, "base64url").toString("utf8"),
+		) as { createdAt?: unknown; id?: unknown };
+		return typeof value.createdAt === "string" && typeof value.id === "string"
+			? { createdAt: value.createdAt, id: value.id }
+			: null;
+	} catch {
+		return null;
+	}
+}
+
+function encodeOrdinalCursor(ordinal: number): string {
+	return Buffer.from(String(ordinal), "utf8").toString("base64url");
+}
+
+function decodeOrdinalCursor(cursor: string | undefined): number | null {
+	if (!cursor) return null;
+	const ordinal = Number(Buffer.from(cursor, "base64url").toString("utf8"));
+	return Number.isInteger(ordinal) && ordinal >= 0 ? ordinal : null;
 }
 
 function rowToApiKey(r: ApiKeyRow): ApiKeyRecord {

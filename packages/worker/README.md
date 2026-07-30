@@ -16,6 +16,7 @@ eval records, API keys, and namespace roots.
 | Traces | `GET /traces`, `GET /traces/:id`, `GET /traces/:id/stream`, `DELETE /traces/:id` |
 | Memory | `POST /memory/import`, `GET /memory/topics`, `GET /memory/entries`, `POST /memory/entries/:id/correct`, `DELETE /memory/entries/:id`, `POST /memory/curate`, `POST /scopes/delete` |
 | Evals | `GET/POST /datasets`, `GET/POST /evals`, `POST /eval-runs`, `GET /eval-runs`, `POST /eval-runs/:id/cancel`, `GET /eval-scores` |
+| Batches | `GET/POST /batches`, `POST/GET /batch-runs`, cancellation, normalized item/JSONL results, comparisons, and staged dataset imports |
 | System/webhooks | `GET /system/agents`, webhook secret routes |
 
 See the [HTTP API reference](https://agntz.co/docs/deploy/http-api) for raw
@@ -67,6 +68,7 @@ DEFAULT_MODEL_NAME=gpt-4o-mini
 OPENAI_API_KEY=...
 ANTHROPIC_API_KEY=...
 GOOGLE_GENERATIVE_AI_API_KEY=...
+MISTRAL_API_KEY=...
 
 ARTIFACT_STORE=filesystem           # memory | filesystem | s3
 ARTIFACT_DIR=.agntz-artifacts       # filesystem only

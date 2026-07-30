@@ -1,7 +1,11 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import {
 	type ArtifactMetadata,
+	type BatchDefinition,
+	type BatchRun,
+	type BatchRunListFilters,
 	type ContentBlock,
+	type DatasetItem,
 	type EvalCaseResult,
 	type EvalCriterion,
 	type EvalCriterionResult,
@@ -44,6 +48,7 @@ import {
 } from "@agntz/core";
 import {
 	execute,
+	parseBatchManifest,
 	parseManifest,
 	selectManifestBlock,
 	validateManifestFull,
@@ -67,6 +72,12 @@ import {
 	MemoryArtifactBlobStore,
 	sha256,
 } from "./artifacts.js";
+import {
+	type BatchProviderRegistry,
+	cancelBatchRun,
+	createDefaultBatchProviderRegistry,
+	submitBatchRun,
+} from "./batches/index.js";
 import { createExecutionContext } from "./bridge.js";
 import {
 	AttachedClientToolBroker,
@@ -167,6 +178,8 @@ export interface WorkerAPIOptions {
 	artifactBlobs?: ArtifactBlobStore;
 	/** Host/provider operation adapters. Defaults to OpenAI transcription and image generation. */
 	modelOperations?: HostedOperationRegistry;
+	/** Provider-native batch adapters. Exposed for tests and private providers. */
+	batchProviders?: BatchProviderRegistry;
 }
 
 const DEFAULT_CORS_ORIGINS = [
@@ -189,6 +202,8 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 	const artifactBlobs = opts.artifactBlobs ?? new MemoryArtifactBlobStore();
 	const modelOperations =
 		opts.modelOperations ?? createDefaultHostedOperationRegistry();
+	const batchProviders =
+		opts.batchProviders ?? createDefaultBatchProviderRegistry();
 	const artifactSweepTimes = new Map<string, number>();
 	const sweepExpiredArtifacts = async (userId: string): Promise<void> => {
 		const now = Date.now();
@@ -972,6 +987,12 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 	app.use("/evals/*", workerAuth({ store, internalSecret }));
 	app.use("/datasets", workerAuth({ store, internalSecret }));
 	app.use("/datasets/*", workerAuth({ store, internalSecret }));
+	app.use("/dataset-imports", workerAuth({ store, internalSecret }));
+	app.use("/dataset-imports/*", workerAuth({ store, internalSecret }));
+	app.use("/batches", workerAuth({ store, internalSecret }));
+	app.use("/batches/*", workerAuth({ store, internalSecret }));
+	app.use("/batch-runs", workerAuth({ store, internalSecret }));
+	app.use("/batch-runs/*", workerAuth({ store, internalSecret }));
 	app.use("/eval-runs", workerAuth({ store, internalSecret }));
 	app.use("/eval-runs/*", workerAuth({ store, internalSecret }));
 	app.use("/eval-scores", workerAuth({ store, internalSecret }));
@@ -2120,6 +2141,444 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 		return c.json(runToJSON(after));
 	});
 
+	// /batches, /batch-runs — provider-native asynchronous batch execution
+
+	app.get("/batches", async (c) => {
+		return c.json(await store.forUser(getUserId(c)).listBatches());
+	});
+
+	app.post("/batches", async (c) => {
+		try {
+			const userId = getUserId(c);
+			const body = (getCachedBody(c) ?? (await c.req.json())) as {
+				manifest?: unknown;
+			};
+			const definition = normalizeBatchDefinition(body.manifest);
+			const scoped = store.forUser(userId);
+			if (await scoped.getBatch(definition.id)) {
+				return c.json(
+					{ error: `Batch '${definition.id}' already exists` },
+					409,
+				);
+			}
+			await scoped.putBatch(definition);
+			return c.json(await scoped.getBatch(definition.id), 201);
+		} catch (error) {
+			return c.json({ error: errorMessage(error) }, 400);
+		}
+	});
+
+	app.get("/batches/:id", async (c) => {
+		const row = await store
+			.forUser(getUserId(c))
+			.getBatch(decodeURIComponent(c.req.param("id")));
+		if (!row) return c.json({ error: "Batch not found" }, 404);
+		return c.json(row);
+	});
+
+	app.put("/batches/:id", async (c) => {
+		try {
+			const userId = getUserId(c);
+			const batchId = decodeURIComponent(c.req.param("id"));
+			const scoped = store.forUser(userId);
+			if (!(await scoped.getBatch(batchId))) {
+				return c.json({ error: "Batch not found" }, 404);
+			}
+			const body = (getCachedBody(c) ?? (await c.req.json())) as {
+				manifest?: unknown;
+			};
+			const definition = normalizeBatchDefinition(body.manifest, batchId);
+			await scoped.putBatch(definition);
+			return c.json(await scoped.getBatch(batchId));
+		} catch (error) {
+			return c.json({ error: errorMessage(error) }, 400);
+		}
+	});
+
+	app.delete("/batches/:id", async (c) => {
+		await store
+			.forUser(getUserId(c))
+			.deleteBatch(decodeURIComponent(c.req.param("id")));
+		return c.body(null, 204);
+	});
+
+	app.get("/batches/:id/versions", async (c) => {
+		return c.json(
+			await store
+				.forUser(getUserId(c))
+				.listBatchVersions(decodeURIComponent(c.req.param("id"))),
+		);
+	});
+
+	app.get("/batches/:id/versions/:version", async (c) => {
+		const scoped = store.forUser(getUserId(c));
+		const batchId = decodeURIComponent(c.req.param("id"));
+		const requested = decodeURIComponent(c.req.param("version"));
+		const version = await resolveHostedBatchVersionRef(
+			scoped,
+			batchId,
+			requested,
+		);
+		const row = await scoped.getBatchVersion(batchId, version);
+		if (!row) return c.json({ error: "Batch version not found" }, 404);
+		return c.json(row);
+	});
+
+	app.post("/batches/:id/versions/:version/activate", async (c) => {
+		try {
+			const scoped = store.forUser(getUserId(c));
+			const batchId = decodeURIComponent(c.req.param("id"));
+			const requested = decodeURIComponent(c.req.param("version"));
+			const version = await resolveHostedBatchVersionRef(
+				scoped,
+				batchId,
+				requested,
+			);
+			await scoped.activateBatchVersion(batchId, version);
+			return c.json(await scoped.getBatch(batchId));
+		} catch (error) {
+			return c.json(
+				{ error: errorMessage(error) },
+				isNotFound(error) ? 404 : 400,
+			);
+		}
+	});
+
+	app.put("/batches/:id/aliases/:alias", async (c) => {
+		try {
+			const body = (getCachedBody(c) ?? (await c.req.json())) as {
+				version?: string;
+				createdAt?: string;
+			};
+			const version = body.version ?? body.createdAt;
+			if (!version) {
+				return c.json({ error: "Missing required field: version" }, 400);
+			}
+			const batchId = decodeURIComponent(c.req.param("id"));
+			const alias = decodeURIComponent(c.req.param("alias"));
+			await store
+				.forUser(getUserId(c))
+				.setBatchVersionAlias(batchId, version, alias);
+			return c.json({ alias, version });
+		} catch (error) {
+			return c.json({ error: errorMessage(error) }, 400);
+		}
+	});
+
+	app.delete("/batches/:id/aliases/:alias", async (c) => {
+		const batchId = decodeURIComponent(c.req.param("id"));
+		const alias = decodeURIComponent(c.req.param("alias"));
+		await store.forUser(getUserId(c)).removeBatchVersionAlias(batchId, alias);
+		return c.json({ alias, deleted: true });
+	});
+
+	app.get("/batch-runs/compare", async (c) => {
+		const leftId = c.req.query("left");
+		const rightId = c.req.query("right");
+		if (!leftId || !rightId) {
+			return c.json(
+				{ error: "Missing required query params: left, right" },
+				400,
+			);
+		}
+		const scoped = store.forUser(getUserId(c));
+		const leftRun = await scoped.getBatchRun(leftId);
+		const rightRun = await scoped.getBatchRun(rightId);
+		if (!leftRun || !rightRun) {
+			return c.json({ error: "Batch run not found" }, 404);
+		}
+		const limit = clampInt(c.req.query("limit"), 100, 1, 1_000);
+		const cursor = c.req.query("cursor");
+		const [left, right] = await Promise.all([
+			scoped.listBatchRunItems(leftId, { limit, cursor }),
+			scoped.listBatchRunItems(rightId, { limit, cursor }),
+		]);
+		const leftById = new Map(left.rows.map((row) => [row.itemId, row]));
+		const rightById = new Map(right.rows.map((row) => [row.itemId, row]));
+		const ids = Array.from(new Set([...leftById.keys(), ...rightById.keys()]));
+		return c.json({
+			leftRun,
+			rightRun,
+			rows: ids.map((itemId) => ({
+				itemId,
+				input: leftById.get(itemId)?.input ?? rightById.get(itemId)?.input,
+				left: leftById.get(itemId),
+				right: rightById.get(itemId),
+			})),
+			cursor: left.cursor ?? right.cursor,
+			datasetVersionsMatch:
+				leftRun.datasetId === rightRun.datasetId &&
+				leftRun.datasetVersion === rightRun.datasetVersion,
+		});
+	});
+
+	app.get("/batch-runs", async (c) => {
+		const filters: BatchRunListFilters = {
+			batchId: c.req.query("batchId"),
+			batchVersion: c.req.query("batchVersion"),
+			datasetId: c.req.query("datasetId"),
+			datasetVersion: c.req.query("datasetVersion"),
+			provider: c.req.query("provider"),
+			model: c.req.query("model"),
+			status: c.req.query("status") as BatchRunListFilters["status"],
+			startedAfter: c.req.query("startedAfter"),
+			startedBefore: c.req.query("startedBefore"),
+			cursor: c.req.query("cursor"),
+			limit: c.req.query("limit")
+				? clampInt(c.req.query("limit"), 50, 1, 200)
+				: undefined,
+		};
+		return c.json(await store.forUser(getUserId(c)).listBatchRuns(filters));
+	});
+
+	app.post("/batch-runs", async (c) => {
+		const userId = getUserId(c);
+		try {
+			const body = (getCachedBody(c) ?? (await c.req.json())) as {
+				batchId?: string;
+				batchVersion?: string;
+				datasetId?: string;
+				datasetVersion?: string;
+				items?: DatasetItem[];
+				callbackUrl?: string;
+				webhookSecretName?: string;
+				idempotencyKey?: string;
+			};
+			if (!body.batchId) {
+				return c.json({ error: "Missing required field: batchId" }, 400);
+			}
+			if (Boolean(body.callbackUrl) !== Boolean(body.webhookSecretName)) {
+				return c.json(
+					{
+						error:
+							"callbackUrl and webhookSecretName must be provided together",
+					},
+					400,
+				);
+			}
+			if (body.callbackUrl) {
+				await assertOutboundUrlAllowed(
+					body.callbackUrl,
+					opts.outboundUrlPolicy,
+				);
+				if (
+					!(await store
+						.forUser(userId)
+						.getSecretMetadata(body.webhookSecretName as string))
+				) {
+					return c.json({ error: "Webhook secret not found" }, 404);
+				}
+			}
+			const idempotencyKey =
+				body.idempotencyKey ?? c.req.header("Idempotency-Key");
+			const run = await submitBatchRun({
+				store,
+				userId,
+				providers: batchProviders,
+				input: {
+					batchId: body.batchId,
+					batchVersion: body.batchVersion,
+					datasetId: body.datasetId,
+					datasetVersion: body.datasetVersion,
+					items: body.items,
+					callbackUrl: body.callbackUrl,
+					webhookSecretName: body.webhookSecretName,
+					idempotencyKey,
+				},
+			});
+			return c.json(run, 201);
+		} catch (error) {
+			const status = isNotFound(error)
+				? 404
+				: (error as { batchRun?: unknown }).batchRun
+					? 502
+					: error instanceof OutboundUrlPolicyError
+						? 400
+						: 400;
+			return c.json({ error: errorMessage(error) }, status);
+		}
+	});
+
+	app.get("/batch-runs/:id", async (c) => {
+		const row = await store
+			.forUser(getUserId(c))
+			.getBatchRun(decodeURIComponent(c.req.param("id")));
+		if (!row) return c.json({ error: "Batch run not found" }, 404);
+		return c.json(row);
+	});
+
+	app.post("/batch-runs/:id/cancel", async (c) => {
+		try {
+			const row = await cancelBatchRun({
+				store,
+				userId: getUserId(c),
+				providers: batchProviders,
+				runId: decodeURIComponent(c.req.param("id")),
+			});
+			return c.json(row);
+		} catch (error) {
+			return c.json(
+				{ error: errorMessage(error) },
+				isNotFound(error) ? 404 : 502,
+			);
+		}
+	});
+
+	app.get("/batch-runs/:id/items", async (c) => {
+		const scoped = store.forUser(getUserId(c));
+		const runId = decodeURIComponent(c.req.param("id"));
+		if (!(await scoped.getBatchRun(runId))) {
+			return c.json({ error: "Batch run not found" }, 404);
+		}
+		return c.json(
+			await scoped.listBatchRunItems(runId, {
+				status: c.req.query("status") as never,
+				limit: c.req.query("limit")
+					? clampInt(c.req.query("limit"), 100, 1, 1_000)
+					: undefined,
+				cursor: c.req.query("cursor"),
+			}),
+		);
+	});
+
+	app.get("/batch-runs/:id/results.jsonl", async (c) => {
+		const scoped = store.forUser(getUserId(c));
+		const runId = decodeURIComponent(c.req.param("id"));
+		const run = await scoped.getBatchRun(runId);
+		if (!run) return c.json({ error: "Batch run not found" }, 404);
+		const rows: string[] = [];
+		let cursor: string | undefined;
+		do {
+			const page = await scoped.listBatchRunItems(runId, {
+				cursor,
+				limit: 1_000,
+			});
+			rows.push(...page.rows.map((row) => JSON.stringify(row)));
+			cursor = page.cursor;
+		} while (cursor);
+		c.header("content-type", "application/x-ndjson; charset=utf-8");
+		c.header(
+			"content-disposition",
+			`attachment; filename="${runId}-results.jsonl"`,
+		);
+		return c.body(`${rows.join("\n")}${rows.length ? "\n" : ""}`);
+	});
+
+	app.delete("/batch-runs/:id", async (c) => {
+		const scoped = store.forUser(getUserId(c));
+		const runId = decodeURIComponent(c.req.param("id"));
+		const run = await scoped.getBatchRun(runId);
+		if (!run) return c.json({ error: "Batch run not found" }, 404);
+		if (!["completed", "failed", "expired", "cancelled"].includes(run.status)) {
+			return c.json(
+				{ error: "Cancel the provider batch before deleting this run" },
+				409,
+			);
+		}
+		await scoped.deleteBatchRun(runId);
+		return c.body(null, 204);
+	});
+
+	app.get("/datasets/:id/items", async (c) => {
+		const scoped = store.forUser(getUserId(c));
+		const datasetId = decodeURIComponent(c.req.param("id"));
+		if (!(await scoped.getDataset(datasetId))) {
+			return c.json({ error: "Dataset not found" }, 404);
+		}
+		return c.json(
+			await scoped.listDatasetItems(datasetId, {
+				version: c.req.query("version"),
+				limit: c.req.query("limit")
+					? clampInt(c.req.query("limit"), 100, 1, 1_000)
+					: undefined,
+				cursor: c.req.query("cursor"),
+			}),
+		);
+	});
+
+	app.post("/dataset-imports", async (c) => {
+		try {
+			const body = (getCachedBody(c) ?? (await c.req.json())) as {
+				datasetId?: unknown;
+				name?: unknown;
+				description?: unknown;
+				agentId?: unknown;
+				metadata?: unknown;
+			};
+			const datasetId =
+				stringOrUndefined(body.datasetId) ?? generateId("dataset");
+			const row = await store.forUser(getUserId(c)).createDatasetImport({
+				id: generateId("datasetimport"),
+				datasetId,
+				name: stringOrUndefined(body.name) ?? datasetId,
+				description: stringOrUndefined(body.description),
+				agentId: stringOrUndefined(body.agentId),
+				metadata: isRecord(body.metadata) ? body.metadata : undefined,
+			});
+			return c.json(row, 201);
+		} catch (error) {
+			return c.json({ error: errorMessage(error) }, 400);
+		}
+	});
+
+	app.get("/dataset-imports/:id", async (c) => {
+		const row = await store
+			.forUser(getUserId(c))
+			.getDatasetImport(decodeURIComponent(c.req.param("id")));
+		if (!row) return c.json({ error: "Dataset import not found" }, 404);
+		return c.json(row);
+	});
+
+	app.post("/dataset-imports/:id/items", async (c) => {
+		try {
+			const body = (getCachedBody(c) ?? (await c.req.json())) as {
+				items?: unknown;
+			};
+			if (!Array.isArray(body.items)) {
+				return c.json({ error: "Missing required field: items (array)" }, 400);
+			}
+			if (body.items.length > 1_000) {
+				return c.json(
+					{ error: "Each import chunk may contain at most 1,000 items" },
+					413,
+				);
+			}
+			const items = normalizeDatasetItems(body.items);
+			const row = await store
+				.forUser(getUserId(c))
+				.appendDatasetImportItems(decodeURIComponent(c.req.param("id")), items);
+			return c.json(row);
+		} catch (error) {
+			const status = errorMessage(error).includes("not found") ? 404 : 400;
+			return c.json({ error: errorMessage(error) }, status);
+		}
+	});
+
+	app.post("/dataset-imports/:id/complete", async (c) => {
+		try {
+			const scoped = store.forUser(getUserId(c));
+			const importId = decodeURIComponent(c.req.param("id"));
+			const staged = await scoped.getDatasetImport(importId);
+			if (!staged) return c.json({ error: "Dataset import not found" }, 404);
+			if (staged.itemCount === 0) {
+				return c.json(
+					{ error: "Upload at least one item before completing the import" },
+					400,
+				);
+			}
+			return c.json(await scoped.completeDatasetImport(importId), 201);
+		} catch (error) {
+			return c.json({ error: errorMessage(error) }, 400);
+		}
+	});
+
+	app.delete("/dataset-imports/:id", async (c) => {
+		await store
+			.forUser(getUserId(c))
+			.deleteDatasetImport(decodeURIComponent(c.req.param("id")));
+		return c.body(null, 204);
+	});
+
 	// /evals, /datasets, /eval-runs — hosted eval management
 
 	app.get("/evals", async (c) => {
@@ -2689,8 +3148,19 @@ async function startHostedEval(opts: {
 		opts.datasetVersion ??
 			(opts.datasetId ? undefined : definition.defaultDataset?.version),
 	);
-	const dataset = resolvedDataset.dataset;
-	if (dataset.agentId !== definition.agentId) {
+	const dataset =
+		resolvedDataset.dataset.itemCount !== undefined &&
+		resolvedDataset.dataset.items.length < resolvedDataset.dataset.itemCount
+			? {
+					...resolvedDataset.dataset,
+					items: await loadHostedDatasetItems(
+						scoped,
+						resolvedDataset.dataset.id,
+						resolvedDataset.resolvedVersion,
+					),
+				}
+			: resolvedDataset.dataset;
+	if (dataset.agentId && dataset.agentId !== definition.agentId) {
 		throw new Error(
 			`Dataset "${dataset.id}" belongs to agent "${dataset.agentId}", not "${definition.agentId}"`,
 		);
@@ -3083,6 +3553,42 @@ async function resolveHostedDatasetVersionRef(
 	return version;
 }
 
+async function loadHostedDatasetItems(
+	store: UnifiedStore,
+	datasetId: string,
+	version?: string,
+): Promise<DatasetItem[]> {
+	const rows: DatasetItem[] = [];
+	let cursor: string | undefined;
+	do {
+		const page = await store.listDatasetItems(datasetId, {
+			version,
+			cursor,
+			limit: 1_000,
+		});
+		rows.push(...page.rows);
+		cursor = page.cursor;
+	} while (cursor);
+	return rows;
+}
+
+async function resolveHostedBatchVersionRef(
+	store: UnifiedStore,
+	batchId: string,
+	version: string,
+): Promise<string> {
+	if (version === "latest") {
+		const latest = (await store.listBatchVersions(batchId))[0]?.createdAt;
+		if (!latest) {
+			throw Object.assign(new Error(`Batch '${batchId}@latest' not found`), {
+				code: "NOT_FOUND",
+			});
+		}
+		return latest;
+	}
+	return (await store.resolveBatchVersionAlias(batchId, version)) ?? version;
+}
+
 function selectEvalCriteria(
 	criteria: EvalCriterion[],
 	criterionIds: string[] | undefined,
@@ -3251,22 +3757,9 @@ function normalizeEvalDefinition(
 function normalizeEvalDataset(body: Partial<EvalDataset>): EvalDataset {
 	const id = stringOrUndefined(body.id) ?? generateId("dataset");
 	const agentId = stringOrUndefined(body.agentId);
-	if (!agentId) throw new Error("Missing required field: agentId");
 	const name = stringOrUndefined(body.name) ?? id;
 	const items = Array.isArray(body.items)
-		? body.items.map((item, index) => ({
-				id:
-					stringOrUndefined(item?.id) ??
-					`case_${String(index + 1).padStart(3, "0")}`,
-				name: stringOrUndefined(item?.name),
-				input:
-					typeof item?.input === "string" ||
-					Array.isArray(item?.input) ||
-					isRecord(item?.input)
-						? item.input
-						: JSON.stringify(item?.input ?? ""),
-				metadata: isRecord(item?.metadata) ? item.metadata : undefined,
-			}))
+		? normalizeDatasetItems(body.items)
 		: [];
 	return {
 		id,
@@ -3278,6 +3771,61 @@ function normalizeEvalDataset(body: Partial<EvalDataset>): EvalDataset {
 		version: body.version,
 		createdAt: body.createdAt,
 		updatedAt: body.updatedAt,
+	};
+}
+
+function normalizeDatasetItems(items: unknown[]): DatasetItem[] {
+	const seen = new Set<string>();
+	return items.map((value, index) => {
+		if (!isRecord(value)) {
+			throw new Error(`items[${index}] must be an object`);
+		}
+		const id =
+			stringOrUndefined(value.id) ??
+			`row_${String(index + 1).padStart(6, "0")}`;
+		if (seen.has(id)) throw new Error(`Duplicate dataset item id '${id}'`);
+		seen.add(id);
+		if (
+			!(
+				typeof value.input === "string" ||
+				Array.isArray(value.input) ||
+				isRecord(value.input)
+			)
+		) {
+			throw new Error(
+				`items[${index}].input must be a string, object, or content blocks`,
+			);
+		}
+		return {
+			id,
+			name: stringOrUndefined(value.name),
+			input: value.input,
+			metadata: isRecord(value.metadata) ? value.metadata : undefined,
+		};
+	});
+}
+
+function normalizeBatchDefinition(
+	manifestValue: unknown,
+	forcedId?: string,
+): BatchDefinition {
+	if (typeof manifestValue !== "string" || manifestValue.trim().length === 0) {
+		throw new Error("Missing required field: manifest (YAML string)");
+	}
+	const manifest = parseBatchManifest(manifestValue);
+	if (forcedId && manifest.id !== forcedId) {
+		throw new Error(
+			`Batch manifest id '${manifest.id}' must match route id '${forcedId}'`,
+		);
+	}
+	return {
+		id: forcedId ?? manifest.id,
+		name: manifest.name,
+		description: manifest.description,
+		manifest: manifestValue,
+		provider: manifest.model.provider,
+		model: manifest.model.name,
+		defaultDataset: manifest.defaultDataset,
 	};
 }
 
@@ -3294,7 +3842,7 @@ async function assertEvalDatasetScope(
 			code: "NOT_FOUND",
 		});
 	}
-	if (dataset.agentId !== definition.agentId) {
+	if (dataset.agentId && dataset.agentId !== definition.agentId) {
 		throw new Error(
 			`Dataset "${dataset.id}" belongs to agent "${dataset.agentId}", not "${definition.agentId}"`,
 		);

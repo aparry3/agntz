@@ -8,9 +8,23 @@ import type {
 	AgentDefinition,
 	AgentVersionSummary,
 	ArtifactMetadata,
+	BatchDefinition,
+	BatchRun,
+	BatchRunClaim,
+	BatchRunItem,
+	BatchRunItemListOptions,
+	BatchRunItemListResult,
+	BatchRunListFilters,
+	BatchRunListResult,
+	BatchSummary,
+	BatchVersionSummary,
 	Connection,
 	ConnectionKind,
 	ContextEntry,
+	DatasetImport,
+	DatasetItem,
+	DatasetItemListOptions,
+	DatasetItemListResult,
 	EvalDataset,
 	EvalDatasetListFilters,
 	EvalDatasetVersionSummary,
@@ -58,6 +72,12 @@ interface EvalVersion {
 
 interface EvalDatasetVersion {
 	dataset: EvalDataset;
+	createdAt: string;
+	activatedAt: string | null;
+}
+
+interface BatchVersion {
+	definition: BatchDefinition;
 	createdAt: string;
 	activatedAt: string | null;
 }
@@ -129,8 +149,18 @@ export interface MemoryBackend {
 	datasets: Map<string, Map<string, EvalDataset>>; // userId -> datasetId -> dataset
 	datasetVersions: Map<string, Map<string, EvalDatasetVersion[]>>; // userId -> datasetId -> versions
 	datasetAliases: Map<string, Map<string, Map<string, string>>>; // userId -> datasetId -> alias -> createdAt
+	datasetImports: Map<
+		string,
+		{ ownerId: string; import: DatasetImport; items: DatasetItem[] }
+	>; // importId -> staged import
 	evalRuns: Map<string, EvalRun>; // `${userId}:${runId}` -> run
 	evalLatestScores: Map<string, EvalLatestScore>; // `${userId}:${evalId}:${evalVersion}:${datasetId}:${datasetVersion}:${agentVersion}` -> score
+	batches: Map<string, Map<string, BatchDefinition>>; // userId -> batchId -> batch
+	batchVersions: Map<string, Map<string, BatchVersion[]>>;
+	batchAliases: Map<string, Map<string, Map<string, string>>>;
+	batchRuns: Map<string, BatchRun>; // `${userId}:${runId}` -> run
+	batchRunItems: Map<string, BatchRunItem[]>; // `${userId}:${runId}` -> items
+	batchRunLeases: Map<string, { workerId: string; expiresAt: string }>;
 }
 
 export function createMemoryBackend(): MemoryBackend {
@@ -154,8 +184,15 @@ export function createMemoryBackend(): MemoryBackend {
 		datasets: new Map(),
 		datasetVersions: new Map(),
 		datasetAliases: new Map(),
+		datasetImports: new Map(),
 		evalRuns: new Map(),
 		evalLatestScores: new Map(),
+		batches: new Map(),
+		batchVersions: new Map(),
+		batchAliases: new Map(),
+		batchRuns: new Map(),
+		batchRunItems: new Map(),
+		batchRunLeases: new Map(),
 	};
 }
 
@@ -293,6 +330,7 @@ export class MemoryStore implements AgntzStore {
 		},
 	): Promise<string> {
 		this.requireHostedUser();
+		if (this.hostedBackend.webhookDeliveries.has(delivery.id)) return "";
 		const row: WebhookDelivery = {
 			id: delivery.id,
 			runId: delivery.runId,
@@ -1156,6 +1194,7 @@ export class MemoryStore implements AgntzStore {
 		const now = this.nextTimestamp();
 		const row: EvalDataset = {
 			...cloneJson(dataset),
+			itemCount: dataset.items.length,
 			createdAt: existing?.createdAt ?? dataset.createdAt ?? now,
 			version: now,
 			updatedAt: now,
@@ -1345,6 +1384,456 @@ export class MemoryStore implements AgntzStore {
 		);
 	}
 
+	// ═══ DatasetImportStore ═══
+
+	async createDatasetImport(input: {
+		id: string;
+		datasetId: string;
+		name: string;
+		description?: string;
+		agentId?: string;
+		metadata?: Record<string, unknown>;
+	}): Promise<DatasetImport> {
+		const ownerId = this.requireUser();
+		const existing = this.backend.datasetImports.get(input.id);
+		if (existing)
+			throw new Error(`Dataset import '${input.id}' already exists`);
+		const now = this.nextTimestamp();
+		const row: DatasetImport = {
+			...cloneJson(input),
+			status: "open",
+			itemCount: 0,
+			createdAt: now,
+			updatedAt: now,
+		};
+		this.backend.datasetImports.set(input.id, {
+			ownerId,
+			import: row,
+			items: [],
+		});
+		return cloneJson(row);
+	}
+
+	async getDatasetImport(importId: string): Promise<DatasetImport | null> {
+		const ownerId = this.requireUser();
+		const row = this.backend.datasetImports.get(importId);
+		return row?.ownerId === ownerId ? cloneJson(row.import) : null;
+	}
+
+	async appendDatasetImportItems(
+		importId: string,
+		items: DatasetItem[],
+	): Promise<DatasetImport> {
+		const ownerId = this.requireUser();
+		const row = this.backend.datasetImports.get(importId);
+		if (!row || row.ownerId !== ownerId) {
+			throw new Error(`Dataset import '${importId}' not found`);
+		}
+		if (row.import.status !== "open") {
+			throw new Error(`Dataset import '${importId}' is already completed`);
+		}
+		const ids = new Set(row.items.map((item) => item.id));
+		for (const item of items) {
+			if (ids.has(item.id)) {
+				throw new Error(`Duplicate dataset item id '${item.id}'`);
+			}
+			ids.add(item.id);
+			row.items.push(cloneJson(item));
+		}
+		row.import.itemCount = row.items.length;
+		row.import.updatedAt = this.nextTimestamp();
+		return cloneJson(row.import);
+	}
+
+	async completeDatasetImport(importId: string): Promise<EvalDataset> {
+		const ownerId = this.requireUser();
+		const row = this.backend.datasetImports.get(importId);
+		if (!row || row.ownerId !== ownerId) {
+			throw new Error(`Dataset import '${importId}' not found`);
+		}
+		if (row.import.status === "completed") {
+			const existing = row.import.datasetVersion
+				? await this.getDatasetVersion(
+						row.import.datasetId,
+						row.import.datasetVersion,
+					)
+				: await this.getDataset(row.import.datasetId);
+			if (!existing)
+				throw new Error("Completed dataset import is inconsistent");
+			return existing;
+		}
+		const dataset: EvalDataset = {
+			id: row.import.datasetId,
+			name: row.import.name,
+			description: row.import.description,
+			agentId: row.import.agentId,
+			metadata: row.import.metadata,
+			items: row.items.map(cloneJson),
+			itemCount: row.items.length,
+		};
+		await this.putDataset(dataset);
+		const stored = await this.getDataset(dataset.id);
+		if (!stored) throw new Error("Failed to finalize dataset import");
+		row.import.status = "completed";
+		row.import.itemCount = row.items.length;
+		row.import.datasetVersion = stored.version;
+		row.import.updatedAt = this.nextTimestamp();
+		return stored;
+	}
+
+	async deleteDatasetImport(importId: string): Promise<void> {
+		const ownerId = this.requireUser();
+		const row = this.backend.datasetImports.get(importId);
+		if (row?.ownerId === ownerId) this.backend.datasetImports.delete(importId);
+	}
+
+	// ═══ BatchStore ═══
+
+	private batchMap(): Map<string, BatchDefinition> {
+		const u = this.requireUser();
+		let map = this.backend.batches.get(u);
+		if (!map) {
+			map = new Map();
+			this.backend.batches.set(u, map);
+		}
+		return map;
+	}
+
+	private batchVersionMap(): Map<string, BatchVersion[]> {
+		const u = this.requireUser();
+		let map = this.backend.batchVersions.get(u);
+		if (!map) {
+			map = new Map();
+			this.backend.batchVersions.set(u, map);
+		}
+		return map;
+	}
+
+	private batchAliasMap(): Map<string, Map<string, string>> {
+		const u = this.requireUser();
+		let map = this.backend.batchAliases.get(u);
+		if (!map) {
+			map = new Map();
+			this.backend.batchAliases.set(u, map);
+		}
+		return map;
+	}
+
+	private batchRunKey(userId: string, runId: string): string {
+		return `${userId}:${runId}`;
+	}
+
+	async listBatches(): Promise<BatchSummary[]> {
+		return Array.from(this.batchMap().values())
+			.map((definition) => batchSummary(definition))
+			.sort(
+				(a, b) =>
+					(b.updatedAt ?? "").localeCompare(a.updatedAt ?? "") ||
+					b.id.localeCompare(a.id),
+			);
+	}
+
+	async getBatch(batchId: string): Promise<BatchDefinition | null> {
+		const row = this.batchMap().get(batchId);
+		return row ? cloneJson(row) : null;
+	}
+
+	async putBatch(definition: BatchDefinition): Promise<void> {
+		const map = this.batchMap();
+		const existing = map.get(definition.id);
+		const now = this.nextTimestamp();
+		const row: BatchDefinition = {
+			...cloneJson(definition),
+			createdAt: existing?.createdAt ?? definition.createdAt ?? now,
+			version: now,
+			updatedAt: now,
+		};
+		map.set(row.id, row);
+		const versions = this.batchVersionMap().get(row.id) ?? [];
+		versions.push({
+			definition: cloneJson(row),
+			createdAt: now,
+			activatedAt: now,
+		});
+		this.batchVersionMap().set(row.id, versions);
+	}
+
+	async deleteBatch(batchId: string): Promise<void> {
+		this.batchMap().delete(batchId);
+		this.batchVersionMap().delete(batchId);
+		this.batchAliasMap().delete(batchId);
+	}
+
+	async listBatchVersions(batchId: string): Promise<BatchVersionSummary[]> {
+		const aliasesByVersion = new Map<string, string[]>();
+		for (const [alias, createdAt] of this.batchAliasMap().get(batchId) ?? []) {
+			const aliases = aliasesByVersion.get(createdAt) ?? [];
+			aliases.push(alias);
+			aliasesByVersion.set(createdAt, aliases);
+		}
+		return (this.batchVersionMap().get(batchId) ?? [])
+			.map((version) => ({
+				createdAt: version.createdAt,
+				activatedAt: version.activatedAt,
+				aliases: (aliasesByVersion.get(version.createdAt) ?? []).sort(),
+			}))
+			.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+	}
+
+	async getBatchVersion(
+		batchId: string,
+		createdAt: string,
+	): Promise<BatchDefinition | null> {
+		const found = (this.batchVersionMap().get(batchId) ?? []).find(
+			(version) => version.createdAt === createdAt,
+		);
+		return found ? cloneJson(found.definition) : null;
+	}
+
+	async activateBatchVersion(
+		batchId: string,
+		createdAt: string,
+	): Promise<void> {
+		const found = (this.batchVersionMap().get(batchId) ?? []).find(
+			(version) => version.createdAt === createdAt,
+		);
+		if (!found) {
+			throw new Error(`Batch version not found: ${batchId}@${createdAt}`);
+		}
+		const now = this.nextTimestamp();
+		found.activatedAt = now;
+		const existing = this.batchMap().get(batchId);
+		this.batchMap().set(batchId, {
+			...cloneJson(found.definition),
+			createdAt: existing?.createdAt ?? found.definition.createdAt ?? createdAt,
+			version: createdAt,
+			updatedAt: now,
+		});
+	}
+
+	async resolveBatchVersionAlias(
+		batchId: string,
+		alias: string,
+	): Promise<string | null> {
+		return this.batchAliasMap().get(batchId)?.get(alias) ?? null;
+	}
+
+	async setBatchVersionAlias(
+		batchId: string,
+		createdAt: string,
+		alias: string,
+	): Promise<void> {
+		if (!(await this.getBatchVersion(batchId, createdAt))) {
+			throw new Error(`Batch version not found: ${batchId}@${createdAt}`);
+		}
+		let aliases = this.batchAliasMap().get(batchId);
+		if (!aliases) {
+			aliases = new Map();
+			this.batchAliasMap().set(batchId, aliases);
+		}
+		aliases.set(alias, createdAt);
+	}
+
+	async removeBatchVersionAlias(batchId: string, alias: string): Promise<void> {
+		this.batchAliasMap().get(batchId)?.delete(alias);
+	}
+
+	async putBatchRun(run: BatchRun): Promise<void> {
+		const u = this.requireUser();
+		if (run.idempotencyKey) {
+			for (const [storageKey, existing] of this.backend.batchRuns) {
+				if (
+					storageKey.startsWith(`${u}:`) &&
+					existing.id !== run.id &&
+					existing.idempotencyKey === run.idempotencyKey
+				) {
+					throw new Error(
+						`Batch run idempotency key '${run.idempotencyKey}' already exists`,
+					);
+				}
+			}
+		}
+		this.backend.batchRuns.set(this.batchRunKey(u, run.id), cloneJson(run));
+	}
+
+	async getBatchRun(runId: string): Promise<BatchRun | null> {
+		const u = this.requireUser();
+		const run = this.backend.batchRuns.get(this.batchRunKey(u, runId));
+		return run ? cloneJson(run) : null;
+	}
+
+	async getBatchRunByIdempotencyKey(key: string): Promise<BatchRun | null> {
+		const u = this.requireUser();
+		for (const [storageKey, run] of this.backend.batchRuns) {
+			if (storageKey.startsWith(`${u}:`) && run.idempotencyKey === key) {
+				return cloneJson(run);
+			}
+		}
+		return null;
+	}
+
+	async listBatchRuns(
+		filters: BatchRunListFilters = {},
+	): Promise<BatchRunListResult> {
+		const u = this.requireUser();
+		const limit = Math.min(Math.max(filters.limit ?? 50, 1), 200);
+		const cursor = decodeListCursor(filters.cursor);
+		const rows = Array.from(this.backend.batchRuns.entries())
+			.filter(([key]) => key.startsWith(`${u}:`))
+			.map(([, run]) => cloneJson(run))
+			.filter((run) => {
+				if (filters.batchId && run.batchId !== filters.batchId) return false;
+				if (filters.batchVersion && run.batchVersion !== filters.batchVersion) {
+					return false;
+				}
+				if (filters.datasetId && run.datasetId !== filters.datasetId)
+					return false;
+				if (
+					filters.datasetVersion &&
+					run.datasetVersion !== filters.datasetVersion
+				) {
+					return false;
+				}
+				if (filters.provider && run.provider !== filters.provider) return false;
+				if (filters.model && run.model !== filters.model) return false;
+				if (filters.status && run.status !== filters.status) return false;
+				if (filters.startedAfter && run.createdAt < filters.startedAfter)
+					return false;
+				if (filters.startedBefore && run.createdAt > filters.startedBefore)
+					return false;
+				if (
+					cursor &&
+					!(
+						run.createdAt < cursor.createdAt ||
+						(run.createdAt === cursor.createdAt && run.id < cursor.id)
+					)
+				) {
+					return false;
+				}
+				return true;
+			})
+			.sort(
+				(a, b) =>
+					b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id),
+			);
+		const page = rows.slice(0, limit);
+		return {
+			rows: page,
+			cursor:
+				rows.length > limit && page.length > 0
+					? encodeListCursor({
+							createdAt: page[page.length - 1].createdAt,
+							id: page[page.length - 1].id,
+						})
+					: undefined,
+		};
+	}
+
+	async deleteBatchRun(runId: string): Promise<void> {
+		const u = this.requireUser();
+		const key = this.batchRunKey(u, runId);
+		this.backend.batchRuns.delete(key);
+		this.backend.batchRunItems.delete(key);
+		this.backend.batchRunLeases.delete(key);
+	}
+
+	async putBatchRunItems(runId: string, items: BatchRunItem[]): Promise<void> {
+		const u = this.requireUser();
+		const key = this.batchRunKey(u, runId);
+		const existing = new Map(
+			(this.backend.batchRunItems.get(key) ?? []).map((item) => [
+				item.itemId,
+				item,
+			]),
+		);
+		for (const item of items) existing.set(item.itemId, cloneJson(item));
+		this.backend.batchRunItems.set(
+			key,
+			Array.from(existing.values()).sort((a, b) => a.ordinal - b.ordinal),
+		);
+	}
+
+	async listBatchRunItems(
+		runId: string,
+		options: BatchRunItemListOptions = {},
+	): Promise<BatchRunItemListResult> {
+		const u = this.requireUser();
+		const limit = Math.min(Math.max(options.limit ?? 100, 1), 1_000);
+		const after = decodeOrdinalCursor(options.cursor);
+		const rows = (
+			this.backend.batchRunItems.get(this.batchRunKey(u, runId)) ?? []
+		)
+			.filter((row) => !options.status || row.status === options.status)
+			.filter((row) => after === null || row.ordinal > after)
+			.sort((a, b) => a.ordinal - b.ordinal);
+		const page = rows.slice(0, limit).map(cloneJson);
+		return {
+			rows: page,
+			cursor:
+				rows.length > limit && page.length > 0
+					? encodeOrdinalCursor(page[page.length - 1].ordinal)
+					: undefined,
+		};
+	}
+
+	async listDatasetItems(
+		datasetId: string,
+		options: DatasetItemListOptions = {},
+	): Promise<DatasetItemListResult> {
+		let dataset: EvalDataset | null;
+		if (options.version) {
+			const resolved =
+				(await this.resolveDatasetVersionAlias(datasetId, options.version)) ??
+				options.version;
+			dataset = await this.getDatasetVersion(datasetId, resolved);
+		} else {
+			dataset = await this.getDataset(datasetId);
+		}
+		if (!dataset) return { rows: [] };
+		const limit = Math.min(Math.max(options.limit ?? 100, 1), 1_000);
+		const after = decodeOrdinalCursor(options.cursor);
+		const start = after === null ? 0 : after + 1;
+		const rows = dataset.items.slice(start, start + limit).map(cloneJson);
+		return {
+			rows,
+			cursor:
+				start + rows.length < dataset.items.length
+					? encodeOrdinalCursor(start + rows.length - 1)
+					: undefined,
+		};
+	}
+
+	async claimBatchRuns(options: {
+		workerId: string;
+		now: string;
+		leaseUntil: string;
+		limit?: number;
+	}): Promise<BatchRunClaim[]> {
+		const limit = Math.min(Math.max(options.limit ?? 20, 1), 200);
+		const terminal = new Set(["completed", "failed", "expired", "cancelled"]);
+		const claims: BatchRunClaim[] = [];
+		for (const [key, run] of this.backend.batchRuns) {
+			if (claims.length >= limit) break;
+			const needsTerminalWebhook =
+				terminal.has(run.status) &&
+				Boolean(run.callbackUrl) &&
+				Boolean(run.webhookSecretName) &&
+				!run.terminalWebhookQueuedAt;
+			if (terminal.has(run.status) && !needsTerminalWebhook) continue;
+			if (run.nextPollAt && run.nextPollAt > options.now) continue;
+			const lease = this.backend.batchRunLeases.get(key);
+			if (lease && lease.expiresAt > options.now) continue;
+			const separator = key.indexOf(":");
+			const ownerId = key.slice(0, separator);
+			this.backend.batchRunLeases.set(key, {
+				workerId: options.workerId,
+				expiresAt: options.leaseUntil,
+			});
+			claims.push({ ownerId, run: cloneJson(run) });
+		}
+		return claims;
+	}
+
 	// ═══ TraceStore ═══
 	// Note: spans are shallow-copied on insert and read. Callers must not
 	// mutate `attributes`, `events`, or `scores` on a span after it crosses
@@ -1474,6 +1963,41 @@ export class MemoryStore implements AgntzStore {
 
 function cloneJson<T>(value: T): T {
 	return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function batchSummary(definition: BatchDefinition): BatchSummary {
+	const { manifest: _manifest, ...summary } = definition;
+	return cloneJson(summary);
+}
+
+function encodeListCursor(cursor: { createdAt: string; id: string }): string {
+	return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+function decodeListCursor(
+	cursor: string | undefined,
+): { createdAt: string; id: string } | null {
+	if (!cursor) return null;
+	try {
+		const value = JSON.parse(
+			Buffer.from(cursor, "base64url").toString("utf8"),
+		) as { createdAt?: unknown; id?: unknown };
+		return typeof value.createdAt === "string" && typeof value.id === "string"
+			? { createdAt: value.createdAt, id: value.id }
+			: null;
+	} catch {
+		return null;
+	}
+}
+
+function encodeOrdinalCursor(ordinal: number): string {
+	return Buffer.from(String(ordinal), "utf8").toString("base64url");
+}
+
+function decodeOrdinalCursor(cursor: string | undefined): number | null {
+	if (!cursor) return null;
+	const ordinal = Number(Buffer.from(cursor, "base64url").toString("utf8"));
+	return Number.isInteger(ordinal) && ordinal >= 0 ? ordinal : null;
 }
 
 function apiKeyRowToRecord(row: ApiKeyRow): ApiKeyRecord {

@@ -1,5 +1,11 @@
 import { createHmac, randomBytes } from "node:crypto";
-import type { InvokeResult, Reply, SecretStore } from "@agntz/contracts";
+import type {
+	BatchRequestCounts,
+	BatchRunStatus,
+	InvokeResult,
+	Reply,
+	SecretStore,
+} from "@agntz/contracts";
 import {
 	OutboundUrlPolicyError,
 	type OutboundUrlPolicyOptions,
@@ -42,6 +48,8 @@ export interface WebhookDispatcherOptions {
 	spanEmitter?: WebhookSpanEmitter;
 	ownerId?: string;
 	setTimeoutImpl?: (cb: () => void, ms: number) => unknown;
+	/** Stable outbox id for events that must be enqueued exactly once. */
+	deliveryId?: string;
 }
 
 export type WebhookEvent =
@@ -60,6 +68,19 @@ export type WebhookEvent =
 			output: unknown;
 			replies?: Reply[];
 			result?: InvokeResult;
+			error?: string;
+	  }
+	| {
+			type: "batch.complete";
+			runId: string;
+			batchId: string;
+			status: Extract<
+				BatchRunStatus,
+				"completed" | "failed" | "expired" | "cancelled"
+			>;
+			provider: string;
+			model: string;
+			counts: BatchRequestCounts;
 			error?: string;
 	  };
 
@@ -94,16 +115,18 @@ export function createWebhookDispatcher(
 		: (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 	async function dispatch(event: WebhookEvent): Promise<void> {
-		const deliveryId = `whd_${randomBytes(12).toString("hex")}`;
+		const deliveryId =
+			opts.deliveryId ?? `whd_${randomBytes(12).toString("hex")}`;
 		const payload = eventToPayload(event);
 
-		await opts.deliveryStore.insert({
+		const inserted = await opts.deliveryStore.insert({
 			id: deliveryId,
 			runId: opts.runId,
 			callbackUrl: opts.callbackUrl,
 			secretName: opts.secretName,
 			payload,
 		});
+		if (!inserted) return;
 
 		const span =
 			opts.spanEmitter && opts.ownerId

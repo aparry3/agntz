@@ -22,6 +22,7 @@ import schemaResources from "./pages/schema/resources";
 import schemaSkillsSpawnableReply from "./pages/schema/skills-spawnable-reply";
 import schemaTemplatesConditions from "./pages/schema/templates-conditions";
 
+import hostedBatches from "./pages/hosted/batches";
 import hostedContentArtifactsRetention from "./pages/hosted/content-artifacts-retention";
 import hostedOverview from "./pages/hosted/overview";
 import hostedResultsErrors from "./pages/hosted/results-errors";
@@ -200,6 +201,13 @@ export const DOCS_GROUPS: DocsGroup[] = [
 				description:
 					"Normalized provider metadata, durable starts, SSE, and structured failures.",
 				markdown: hostedResultsErrors,
+			},
+			{
+				slug: "hosted/batches",
+				title: "Provider-native batches",
+				description:
+					"Run versioned LLM manifests over datasets, swap models, and compare normalized outputs.",
+				markdown: hostedBatches,
 			},
 		],
 	},

@@ -4,6 +4,9 @@ export type AgntzPermission =
 	| "agents:run"
 	| "api_keys:manage"
 	| "connections:manage"
+	| "batches:read"
+	| "batches:write"
+	| "batches:run"
 	| "evals:read"
 	| "evals:write"
 	| "evals:run"
@@ -24,6 +27,9 @@ const ALL_PERMISSIONS: AgntzPermission[] = [
 	"agents:run",
 	"api_keys:manage",
 	"connections:manage",
+	"batches:read",
+	"batches:write",
+	"batches:run",
 	"evals:read",
 	"evals:write",
 	"evals:run",
@@ -45,6 +51,9 @@ const ROLE_PERMISSIONS: Record<AgntzRole, AgntzPermission[]> = {
 		"agents:write",
 		"agents:run",
 		"connections:manage",
+		"batches:read",
+		"batches:write",
+		"batches:run",
 		"evals:read",
 		"evals:write",
 		"evals:run",
@@ -59,6 +68,8 @@ const ROLE_PERMISSIONS: Record<AgntzRole, AgntzPermission[]> = {
 	operator: [
 		"agents:read",
 		"agents:run",
+		"batches:read",
+		"batches:run",
 		"evals:read",
 		"evals:run",
 		"runs:read",
@@ -69,6 +80,7 @@ const ROLE_PERMISSIONS: Record<AgntzRole, AgntzPermission[]> = {
 	],
 	viewer: [
 		"agents:read",
+		"batches:read",
 		"evals:read",
 		"runs:read",
 		"settings:read",
@@ -151,7 +163,8 @@ export function requiredPermissionForRequest(
 	}
 	if (
 		pathname.startsWith("/api/evals") ||
-		pathname.startsWith("/api/datasets")
+		pathname.startsWith("/api/datasets") ||
+		pathname.startsWith("/api/dataset-imports")
 	) {
 		return mutates ? "evals:write" : "evals:read";
 	}
@@ -159,10 +172,19 @@ export function requiredPermissionForRequest(
 		return m === "POST" ? "evals:run" : "evals:read";
 	}
 	if (pathname.startsWith("/api/eval-scores")) return "evals:read";
+	if (pathname.startsWith("/api/batches")) {
+		return mutates ? "batches:write" : "batches:read";
+	}
+	if (pathname.startsWith("/api/batch-runs")) {
+		if (m === "POST") return "batches:run";
+		if (m === "DELETE") return "batches:write";
+		return "batches:read";
+	}
 
 	if (pathname.startsWith("/agents")) return "agents:read";
 	if (pathname.startsWith("/skills")) return "skills:read";
 	if (pathname.startsWith("/runs")) return "runs:read";
+	if (pathname.startsWith("/batches")) return "batches:read";
 	if (pathname.startsWith("/traces")) return "traces:read";
 	if (pathname.startsWith("/logs")) return "runs:read";
 	if (pathname.startsWith("/sessions")) return "runs:read";

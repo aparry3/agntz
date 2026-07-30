@@ -778,7 +778,9 @@ export interface ArtifactStore {
 // Evals — reusable datasets, rubric definitions, and scored run history
 // ═══════════════════════════════════════════════════════════════════════
 
-export type EvalInput = string | Record<string, unknown> | ContentBlock[];
+export type DatasetInput = string | Record<string, unknown> | ContentBlock[];
+/** @deprecated Use DatasetInput. */
+export type EvalInput = DatasetInput;
 
 export interface EvalCriterionGate {
 	minimumScore: number;
@@ -834,23 +836,80 @@ export interface EvalDefinition {
 	updatedAt?: string;
 }
 
-export interface EvalDatasetItem {
+export interface DatasetItem {
 	id: string;
 	name?: string;
-	input: EvalInput;
+	input: DatasetInput;
 	metadata?: Record<string, unknown>;
 }
 
-export interface EvalDataset {
+export interface Dataset {
 	id: string;
-	agentId: string;
+	/** Optional legacy eval affinity. Omit for datasets shared by batches/evals. */
+	agentId?: string;
 	name: string;
 	description?: string;
-	items: EvalDatasetItem[];
+	items: DatasetItem[];
+	/** Number of items in the resolved version. Present on summary responses. */
+	itemCount?: number;
 	metadata?: Record<string, unknown>;
 	version?: string;
 	createdAt?: string;
 	updatedAt?: string;
+}
+
+/** @deprecated Use DatasetItem. */
+export type EvalDatasetItem = DatasetItem;
+/** @deprecated Use Dataset. */
+export type EvalDataset = Dataset;
+
+export interface DatasetRef {
+	id: string;
+	version?: string;
+}
+
+export interface DatasetItemListOptions {
+	version?: string;
+	/** Default 100, max 1,000. */
+	limit?: number;
+	cursor?: string;
+}
+
+export interface DatasetItemListResult {
+	rows: DatasetItem[];
+	cursor?: string;
+}
+
+export interface DatasetImport {
+	id: string;
+	datasetId: string;
+	name: string;
+	description?: string;
+	agentId?: string;
+	metadata?: Record<string, unknown>;
+	status: "open" | "completed";
+	itemCount: number;
+	createdAt: string;
+	updatedAt: string;
+	datasetVersion?: string;
+}
+
+export interface DatasetImportStore {
+	createDatasetImport(input: {
+		id: string;
+		datasetId: string;
+		name: string;
+		description?: string;
+		agentId?: string;
+		metadata?: Record<string, unknown>;
+	}): Promise<DatasetImport>;
+	getDatasetImport(importId: string): Promise<DatasetImport | null>;
+	appendDatasetImportItems(
+		importId: string,
+		items: DatasetItem[],
+	): Promise<DatasetImport>;
+	completeDatasetImport(importId: string): Promise<Dataset>;
+	deleteDatasetImport(importId: string): Promise<void>;
 }
 
 export interface EvalCriterionResult {
@@ -1160,6 +1219,225 @@ export interface TraceStore {
 	deleteOlderThan(ownerId: string, before: Date): Promise<number>;
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// Provider-native batches
+// ═══════════════════════════════════════════════════════════════════════
+
+export interface BatchDefinition {
+	id: string;
+	name?: string;
+	description?: string;
+	/** Raw extended `kind: llm` Agntz YAML. This is the versioned source of truth. */
+	manifest: string;
+	provider: string;
+	model: string;
+	defaultDataset?: DatasetRef;
+	version?: string;
+	createdAt?: string;
+	updatedAt?: string;
+}
+
+export interface BatchSummary {
+	id: string;
+	name?: string;
+	description?: string;
+	provider: string;
+	model: string;
+	defaultDataset?: DatasetRef;
+	version?: string;
+	createdAt?: string;
+	updatedAt?: string;
+}
+
+export interface BatchVersionSummary {
+	createdAt: string;
+	activatedAt?: string | null;
+	aliases: string[];
+}
+
+export type BatchRunStatus =
+	| "validating"
+	| "submitting"
+	| "queued"
+	| "running"
+	| "cancelling"
+	| "completed"
+	| "failed"
+	| "expired"
+	| "cancelled";
+
+export type BatchItemStatus =
+	| "pending"
+	| "succeeded"
+	| "failed"
+	| "expired"
+	| "cancelled";
+
+export interface BatchRequestCounts {
+	total: number;
+	pending: number;
+	succeeded: number;
+	failed: number;
+	expired: number;
+	cancelled: number;
+}
+
+export interface BatchRunSnapshot {
+	batch: BatchDefinition;
+	dataset?: Omit<Dataset, "items"> & { itemCount: number };
+	inlineDataset?: boolean;
+}
+
+export interface BatchRun {
+	id: string;
+	batchId: string;
+	requestedBatchVersion?: string;
+	batchVersion: string;
+	datasetId?: string;
+	requestedDatasetVersion?: string;
+	datasetVersion?: string;
+	provider: string;
+	model: string;
+	providerBatchId?: string;
+	providerStatus?: string;
+	status: BatchRunStatus;
+	counts: BatchRequestCounts;
+	snapshot: BatchRunSnapshot;
+	callbackUrl?: string;
+	webhookSecretName?: string;
+	terminalWebhookQueuedAt?: string;
+	idempotencyKey?: string;
+	createdAt: string;
+	submittedAt?: string;
+	startedAt?: string;
+	endedAt?: string;
+	providerExpiresAt?: string;
+	nextPollAt?: string;
+	lastSyncAt?: string;
+	lastSyncError?: string;
+	syncAttempts?: number;
+	error?: string;
+}
+
+export interface BatchRunItem {
+	runId: string;
+	itemId: string;
+	ordinal: number;
+	name?: string;
+	input: DatasetInput;
+	metadata?: Record<string, unknown>;
+	status: BatchItemStatus;
+	output?: unknown;
+	rawOutput?: string;
+	error?: string;
+	usage?: TokenUsage;
+	finishReason?: string;
+	providerRequestId?: string;
+	durationMs?: number;
+}
+
+export interface BatchRunListFilters {
+	batchId?: string;
+	batchVersion?: string;
+	datasetId?: string;
+	datasetVersion?: string;
+	provider?: string;
+	model?: string;
+	status?: BatchRunStatus;
+	startedAfter?: string;
+	startedBefore?: string;
+	/** Default 50, max 200. */
+	limit?: number;
+	cursor?: string;
+}
+
+export interface BatchRunListResult {
+	rows: BatchRun[];
+	cursor?: string;
+}
+
+export interface BatchRunItemListOptions {
+	status?: BatchItemStatus;
+	/** Default 100, max 1,000. */
+	limit?: number;
+	cursor?: string;
+}
+
+export interface BatchRunItemListResult {
+	rows: BatchRunItem[];
+	cursor?: string;
+}
+
+export interface BatchRunComparisonRow {
+	itemId: string;
+	input?: DatasetInput;
+	left?: BatchRunItem;
+	right?: BatchRunItem;
+}
+
+export interface BatchRunComparisonResult {
+	leftRun: BatchRun;
+	rightRun: BatchRun;
+	rows: BatchRunComparisonRow[];
+	cursor?: string;
+	datasetVersionsMatch: boolean;
+}
+
+export interface BatchRunClaim {
+	ownerId: string;
+	run: BatchRun;
+}
+
+export interface BatchStore {
+	listBatches(): Promise<BatchSummary[]>;
+	getBatch(batchId: string): Promise<BatchDefinition | null>;
+	putBatch(definition: BatchDefinition): Promise<void>;
+	deleteBatch(batchId: string): Promise<void>;
+	listBatchVersions(batchId: string): Promise<BatchVersionSummary[]>;
+	getBatchVersion(
+		batchId: string,
+		createdAt: string,
+	): Promise<BatchDefinition | null>;
+	activateBatchVersion(batchId: string, createdAt: string): Promise<void>;
+	resolveBatchVersionAlias(
+		batchId: string,
+		alias: string,
+	): Promise<string | null>;
+	setBatchVersionAlias(
+		batchId: string,
+		createdAt: string,
+		alias: string,
+	): Promise<void>;
+	removeBatchVersionAlias(batchId: string, alias: string): Promise<void>;
+
+	putBatchRun(run: BatchRun): Promise<void>;
+	getBatchRun(runId: string): Promise<BatchRun | null>;
+	getBatchRunByIdempotencyKey(key: string): Promise<BatchRun | null>;
+	listBatchRuns(filters?: BatchRunListFilters): Promise<BatchRunListResult>;
+	deleteBatchRun(runId: string): Promise<void>;
+	putBatchRunItems(runId: string, items: BatchRunItem[]): Promise<void>;
+	listBatchRunItems(
+		runId: string,
+		options?: BatchRunItemListOptions,
+	): Promise<BatchRunItemListResult>;
+
+	listDatasetItems(
+		datasetId: string,
+		options?: DatasetItemListOptions,
+	): Promise<DatasetItemListResult>;
+
+	/**
+	 * Root-store operation used by durable workers. Implementations atomically
+	 * lease due, non-terminal runs and return their owner IDs.
+	 */
+	claimBatchRuns(options: {
+		workerId: string;
+		now: string;
+		leaseUntil: string;
+		limit?: number;
+	}): Promise<BatchRunClaim[]>;
+}
+
 /**
  * Stores that can be scoped to a user. `forUser(userId)` returns a new store
  * instance where every AgentStore/SessionStore/ContextStore/LogStore/
@@ -1184,6 +1462,8 @@ export type UnifiedStore = AgentStore &
 	SkillStore &
 	SecretStore &
 	EvalStore &
+	DatasetImportStore &
+	BatchStore &
 	ScopableStore;
 
 // ═══════════════════════════════════════════════════════════════════════

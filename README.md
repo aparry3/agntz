@@ -5,10 +5,11 @@ them locally with TypeScript or Python, then move the same manifests to hosted
 or self-hosted workers when you need multi-user isolation, durable runs, traces,
 memory, and eval records.
 
-The TypeScript packages are entering public beta at `0.2.x`; the Python package
-uses the `0.3.x` line for this hosted-client release. TypeScript runtimes require
-Node 22 or newer, and Python requires 3.11 or newer. See [`ROADMAP.md`](./ROADMAP.md)
-for the pre-1.0 stability policy.
+The TypeScript packages are in public beta; the hosted client, contracts, and
+core runtime use the `0.4.x` line, while stores use `0.3.x`. The Python package
+uses the `0.5.x` line. TypeScript runtimes require Node 22 or newer, and Python
+requires 3.11 or newer. See [`ROADMAP.md`](./ROADMAP.md) for the pre-1.0
+stability policy.
 
 ## Install
 
@@ -164,7 +165,13 @@ The same client supports ordered text/image/audio content, automatic local-file
 uploads, managed artifacts, transcription, image generation, signed application
 callbacks, and explicit `none` / `result` / `session` retention.
 
+For offline workloads, provider-native batches version a strict `kind: llm`
+manifest independently from a reusable dataset, submit through OpenAI,
+Anthropic, Gemini, or Mistral, and normalize results so model-swap reruns can be
+compared item by item.
+
 - [Provider-replacement guide](https://agntz.co/docs/hosted/provider-replacement)
+- [Provider-native batches](https://agntz.co/docs/hosted/batches)
 - [Content, artifacts, and retention](https://agntz.co/docs/hosted/content-artifacts-retention)
 - [Transcription and image generation](https://agntz.co/docs/hosted/transcription-images)
 - [Signed callback tools](https://agntz.co/docs/tools/callback)

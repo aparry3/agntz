@@ -1,5 +1,17 @@
 # @agntz/stores
 
+## 0.3.0
+
+### Minor Changes
+
+- Add versioned provider-native batch manifests, staged reusable dataset imports,
+  durable batch reconciliation, normalized results, and model-run comparisons.
+
+### Patch Changes
+
+- Updated dependencies
+  - @agntz/contracts@0.4.0
+
 ## 0.2.1
 
 ### Patch Changes

@@ -68,7 +68,6 @@ export function normalizeEvalDataset(
 		stringOrUndefined(body.id) ??
 		generateId("dataset");
 	const agentId = stringOrUndefined(body.agentId);
-	if (!agentId) throw new Error("Missing required field: agentId");
 	const name = stringOrUndefined(body.name) ?? id;
 	const items = Array.isArray(body.items)
 		? body.items.map((item, index) => ({
@@ -111,7 +110,7 @@ export async function assertEvalDatasetScope(
 	if (!dataset) {
 		throw new Error(`Dataset "${datasetId}" not found`);
 	}
-	if (dataset.agentId !== definition.agentId) {
+	if (dataset.agentId && dataset.agentId !== definition.agentId) {
 		throw new Error(
 			`Dataset "${dataset.id}" belongs to agent "${dataset.agentId}", not "${definition.agentId}"`,
 		);

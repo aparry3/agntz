@@ -12,11 +12,25 @@ import type {
 	AgentDefinition,
 	AgentVersionSummary,
 	ArtifactMetadata,
+	BatchDefinition,
+	BatchRun,
+	BatchRunClaim,
+	BatchRunItem,
+	BatchRunItemListOptions,
+	BatchRunItemListResult,
+	BatchRunListFilters,
+	BatchRunListResult,
+	BatchSummary,
+	BatchVersionSummary,
 	Connection,
 	ConnectionConfig,
 	ConnectionKind,
 	ContentBlock,
 	ContextEntry,
+	DatasetImport,
+	DatasetItem,
+	DatasetItemListOptions,
+	DatasetItemListResult,
 	EvalDataset,
 	EvalDatasetListFilters,
 	EvalDatasetVersionSummary,
@@ -640,6 +654,135 @@ const MIGRATIONS: string[] = [
     ON ar_runs(user_id, expires_at);
 
   UPDATE ar_schema_version SET version = 17;
+  `,
+	// v18: provider-native batch definitions/runs and normalized dataset items.
+	`
+  CREATE TABLE IF NOT EXISTS ar_batches (
+    user_id    TEXT NOT NULL,
+    id         TEXT NOT NULL,
+    definition JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (user_id, id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ar_batches_user_updated
+    ON ar_batches(user_id, updated_at DESC, id DESC);
+
+  CREATE TABLE IF NOT EXISTS ar_batch_versions (
+    user_id      TEXT NOT NULL,
+    batch_id     TEXT NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL,
+    activated_at TIMESTAMPTZ,
+    definition   JSONB NOT NULL,
+    PRIMARY KEY (user_id, batch_id, created_at)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ar_batch_versions_user_batch
+    ON ar_batch_versions(user_id, batch_id, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS ar_batch_aliases (
+    user_id            TEXT NOT NULL,
+    batch_id           TEXT NOT NULL,
+    alias              TEXT NOT NULL,
+    version_created_at TIMESTAMPTZ NOT NULL,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, batch_id, alias)
+  );
+
+  CREATE TABLE IF NOT EXISTS ar_batch_runs (
+    user_id          TEXT NOT NULL,
+    id               TEXT NOT NULL,
+    batch_id         TEXT NOT NULL,
+    batch_version    TIMESTAMPTZ NOT NULL,
+    dataset_id       TEXT,
+    dataset_version  TIMESTAMPTZ,
+    provider         TEXT NOT NULL,
+    model            TEXT NOT NULL,
+    status           TEXT NOT NULL,
+    idempotency_key  TEXT,
+    run              JSONB NOT NULL,
+    created_at       TIMESTAMPTZ NOT NULL,
+    ended_at         TIMESTAMPTZ,
+    next_poll_at     TIMESTAMPTZ,
+    lease_owner      TEXT,
+    lease_expires_at TIMESTAMPTZ,
+    PRIMARY KEY (user_id, id)
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_ar_batch_runs_user_idempotency
+    ON ar_batch_runs(user_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_ar_batch_runs_user_created
+    ON ar_batch_runs(user_id, created_at DESC, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_ar_batch_runs_reconcile
+    ON ar_batch_runs(status, next_poll_at, lease_expires_at);
+
+  CREATE TABLE IF NOT EXISTS ar_batch_run_items (
+    user_id TEXT NOT NULL,
+    run_id  TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    ordinal INTEGER NOT NULL,
+    status  TEXT NOT NULL,
+    item    JSONB NOT NULL,
+    PRIMARY KEY (user_id, run_id, item_id),
+    UNIQUE (user_id, run_id, ordinal)
+  );
+
+  CREATE TABLE IF NOT EXISTS ar_dataset_items (
+    user_id         TEXT NOT NULL,
+    dataset_id      TEXT NOT NULL,
+    dataset_version TIMESTAMPTZ NOT NULL,
+    item_id         TEXT NOT NULL,
+    ordinal         INTEGER NOT NULL,
+    item            JSONB NOT NULL,
+    PRIMARY KEY (user_id, dataset_id, dataset_version, item_id),
+    UNIQUE (user_id, dataset_id, dataset_version, ordinal)
+  );
+
+  INSERT INTO ar_dataset_items
+    (user_id, dataset_id, dataset_version, item_id, ordinal, item)
+  SELECT v.user_id,
+         v.dataset_id,
+         v.created_at,
+         COALESCE(j.value->>'id', 'row_' || lpad(j.ordinality::text, 6, '0')),
+         (j.ordinality - 1)::integer,
+         j.value
+    FROM ar_eval_dataset_versions v
+    CROSS JOIN LATERAL jsonb_array_elements(
+      COALESCE(v.dataset->'items', '[]'::jsonb)
+    ) WITH ORDINALITY AS j(value, ordinality)
+  ON CONFLICT DO NOTHING;
+
+  UPDATE ar_schema_version SET version = 18;
+  `,
+	// v19: durable staged dataset imports
+	`
+  CREATE TABLE IF NOT EXISTS ar_dataset_imports (
+    user_id         TEXT NOT NULL,
+    id              TEXT NOT NULL,
+    dataset_id      TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    description     TEXT,
+    agent_id        TEXT,
+    metadata        JSONB,
+    status          TEXT NOT NULL CHECK (status IN ('open', 'completed')),
+    item_count      INTEGER NOT NULL DEFAULT 0,
+    dataset_version TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL,
+    updated_at      TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (user_id, id)
+  );
+  CREATE TABLE IF NOT EXISTS ar_dataset_import_items (
+    user_id   TEXT NOT NULL,
+    import_id TEXT NOT NULL,
+    item_id   TEXT NOT NULL,
+    ordinal   INTEGER NOT NULL,
+    item      JSONB NOT NULL,
+    PRIMARY KEY (user_id, import_id, item_id),
+    UNIQUE (user_id, import_id, ordinal)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ar_dataset_imports_user
+    ON ar_dataset_imports(user_id, created_at DESC);
+
+  UPDATE ar_schema_version SET version = 19;
   `,
 ];
 
@@ -2032,6 +2175,7 @@ export class PostgresStore implements UnifiedStore {
 		const now = this.nextTimestamp();
 		const row: EvalDataset = {
 			...dataset,
+			itemCount: dataset.items.length,
 			createdAt: existing?.createdAt ?? dataset.createdAt ?? now,
 			version: now,
 			updatedAt: now,
@@ -2064,6 +2208,14 @@ export class PostgresStore implements UnifiedStore {
          VALUES ($1, $2, $3, $4, $5)`,
 				[u, row.id, now, now, JSON.stringify(row)],
 			);
+			for (const [ordinal, item] of row.items.entries()) {
+				await client.query(
+					`INSERT INTO ${this.t("dataset_items")}
+             (user_id, dataset_id, dataset_version, item_id, ordinal, item)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+					[u, row.id, now, item.id, ordinal, JSON.stringify(item)],
+				);
+			}
 			await client.query("COMMIT");
 		} catch (error) {
 			await client.query("ROLLBACK");
@@ -2155,6 +2307,7 @@ export class PostgresStore implements UnifiedStore {
 		const now = this.nextTimestamp();
 		const row: EvalDataset = {
 			...version,
+			itemCount: version.itemCount ?? version.items.length,
 			createdAt: existing?.createdAt ?? version.createdAt ?? createdAt,
 			version: createdAt,
 			updatedAt: now,
@@ -2242,6 +2395,759 @@ export class PostgresStore implements UnifiedStore {
         WHERE user_id = $1 AND dataset_id = $2 AND alias = $3`,
 			[u, datasetId, alias],
 		);
+	}
+
+	// ═══ DatasetImportStore ═══
+
+	async createDatasetImport(input: {
+		id: string;
+		datasetId: string;
+		name: string;
+		description?: string;
+		agentId?: string;
+		metadata?: Record<string, unknown>;
+	}): Promise<DatasetImport> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const now = this.nextTimestamp();
+		await this.pool.query(
+			`INSERT INTO ${this.t("dataset_imports")}
+         (user_id, id, dataset_id, name, description, agent_id, metadata,
+          status, item_count, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'open',0,$8,$8)`,
+			[
+				u,
+				input.id,
+				input.datasetId,
+				input.name,
+				input.description ?? null,
+				input.agentId ?? null,
+				input.metadata ? JSON.stringify(input.metadata) : null,
+				now,
+			],
+		);
+		return {
+			...input,
+			status: "open",
+			itemCount: 0,
+			createdAt: now,
+			updatedAt: now,
+		};
+	}
+
+	async getDatasetImport(importId: string): Promise<DatasetImport | null> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT * FROM ${this.t("dataset_imports")}
+        WHERE user_id = $1 AND id = $2`,
+			[u, importId],
+		);
+		return rows[0] ? pgRowToDatasetImport(rows[0]) : null;
+	}
+
+	async appendDatasetImportItems(
+		importId: string,
+		items: DatasetItem[],
+	): Promise<DatasetImport> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const client = await this.pool.connect();
+		try {
+			await client.query("BEGIN");
+			const { rows } = await client.query(
+				`SELECT * FROM ${this.t("dataset_imports")}
+          WHERE user_id = $1 AND id = $2
+          FOR UPDATE`,
+				[u, importId],
+			);
+			if (!rows[0]) throw new Error(`Dataset import '${importId}' not found`);
+			const current = pgRowToDatasetImport(rows[0]);
+			if (current.status !== "open") {
+				throw new Error(`Dataset import '${importId}' is already completed`);
+			}
+			for (const [offset, item] of items.entries()) {
+				await client.query(
+					`INSERT INTO ${this.t("dataset_import_items")}
+             (user_id, import_id, item_id, ordinal, item)
+           VALUES ($1, $2, $3, $4, $5)`,
+					[
+						u,
+						importId,
+						item.id,
+						current.itemCount + offset,
+						JSON.stringify(item),
+					],
+				);
+			}
+			const now = this.nextTimestamp();
+			const itemCount = current.itemCount + items.length;
+			await client.query(
+				`UPDATE ${this.t("dataset_imports")}
+          SET item_count = $1, updated_at = $2
+          WHERE user_id = $3 AND id = $4`,
+				[itemCount, now, u, importId],
+			);
+			await client.query("COMMIT");
+			return { ...current, itemCount, updatedAt: now };
+		} catch (error) {
+			await client.query("ROLLBACK");
+			throw error;
+		} finally {
+			client.release();
+		}
+	}
+
+	async completeDatasetImport(importId: string): Promise<EvalDataset> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const client = await this.pool.connect();
+		try {
+			await client.query("BEGIN");
+			const { rows } = await client.query(
+				`SELECT * FROM ${this.t("dataset_imports")}
+          WHERE user_id = $1 AND id = $2
+          FOR UPDATE`,
+				[u, importId],
+			);
+			if (!rows[0]) throw new Error(`Dataset import '${importId}' not found`);
+			const current = pgRowToDatasetImport(rows[0]);
+			if (current.status === "completed") {
+				const found = current.datasetVersion
+					? await client.query(
+							`SELECT dataset, NULL AS agent_id, created_at
+                 FROM ${this.t("eval_dataset_versions")}
+                WHERE user_id = $1 AND dataset_id = $2 AND created_at = $3`,
+							[u, current.datasetId, current.datasetVersion],
+						)
+					: await client.query(
+							`SELECT dataset, agent_id, created_at
+                 FROM ${this.t("eval_datasets")}
+                WHERE user_id = $1 AND id = $2`,
+							[u, current.datasetId],
+						);
+				if (!found.rows[0]) {
+					throw new Error("Completed dataset import is inconsistent");
+				}
+				await client.query("COMMIT");
+				return rowToEvalDataset(found.rows[0]);
+			}
+			const existing = await client.query(
+				`SELECT created_at FROM ${this.t("eval_datasets")}
+          WHERE user_id = $1 AND id = $2`,
+				[u, current.datasetId],
+			);
+			const now = this.nextTimestamp();
+			const dataset: EvalDataset = {
+				id: current.datasetId,
+				name: current.name,
+				description: current.description,
+				agentId: current.agentId,
+				metadata: current.metadata,
+				items: [],
+				itemCount: current.itemCount,
+				createdAt: existing.rows[0]
+					? toIsoString(existing.rows[0].created_at)
+					: now,
+				version: now,
+				updatedAt: now,
+			};
+			await client.query(
+				`INSERT INTO ${this.t("eval_datasets")}
+           (user_id, id, agent_id, name, dataset, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)
+         ON CONFLICT (user_id, id) DO UPDATE SET
+           agent_id = EXCLUDED.agent_id,
+           name = EXCLUDED.name,
+           dataset = EXCLUDED.dataset,
+           updated_at = EXCLUDED.updated_at`,
+				[
+					u,
+					dataset.id,
+					dataset.agentId ?? null,
+					dataset.name,
+					JSON.stringify(dataset),
+					dataset.createdAt,
+					now,
+				],
+			);
+			await client.query(
+				`INSERT INTO ${this.t("eval_dataset_versions")}
+           (user_id, dataset_id, created_at, activated_at, dataset)
+         VALUES ($1,$2,$3,$4,$5)`,
+				[u, dataset.id, now, now, JSON.stringify(dataset)],
+			);
+			await client.query(
+				`INSERT INTO ${this.t("dataset_items")}
+           (user_id, dataset_id, dataset_version, item_id, ordinal, item)
+         SELECT user_id, $1, $2, item_id, ordinal, item
+           FROM ${this.t("dataset_import_items")}
+          WHERE user_id = $3 AND import_id = $4
+          ORDER BY ordinal`,
+				[dataset.id, now, u, importId],
+			);
+			await client.query(
+				`UPDATE ${this.t("dataset_imports")}
+          SET status = 'completed', dataset_version = $1, updated_at = $1
+          WHERE user_id = $2 AND id = $3`,
+				[now, u, importId],
+			);
+			await client.query("COMMIT");
+			return dataset;
+		} catch (error) {
+			await client.query("ROLLBACK");
+			throw error;
+		} finally {
+			client.release();
+		}
+	}
+
+	async deleteDatasetImport(importId: string): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const client = await this.pool.connect();
+		try {
+			await client.query("BEGIN");
+			await client.query(
+				`DELETE FROM ${this.t("dataset_import_items")}
+          WHERE user_id = $1 AND import_id = $2`,
+				[u, importId],
+			);
+			await client.query(
+				`DELETE FROM ${this.t("dataset_imports")}
+          WHERE user_id = $1 AND id = $2`,
+				[u, importId],
+			);
+			await client.query("COMMIT");
+		} catch (error) {
+			await client.query("ROLLBACK");
+			throw error;
+		} finally {
+			client.release();
+		}
+	}
+
+	// ═══ BatchStore ═══
+
+	async listBatches(): Promise<BatchSummary[]> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT definition FROM ${this.t("batches")}
+        WHERE user_id = $1
+        ORDER BY updated_at DESC, id DESC`,
+			[u],
+		);
+		return rows.map((row) => batchSummary(rowToBatchDefinition(row)));
+	}
+
+	async getBatch(batchId: string): Promise<BatchDefinition | null> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT definition FROM ${this.t("batches")}
+        WHERE user_id = $1 AND id = $2`,
+			[u, batchId],
+		);
+		return rows[0] ? rowToBatchDefinition(rows[0]) : null;
+	}
+
+	async putBatch(definition: BatchDefinition): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const existing = await this.getBatch(definition.id);
+		const now = this.nextTimestamp();
+		const row: BatchDefinition = {
+			...definition,
+			createdAt: existing?.createdAt ?? definition.createdAt ?? now,
+			version: now,
+			updatedAt: now,
+		};
+		const client = await this.pool.connect();
+		try {
+			await client.query("BEGIN");
+			await client.query(
+				`INSERT INTO ${this.t("batches")}
+           (user_id, id, definition, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (user_id, id) DO UPDATE SET
+           definition = EXCLUDED.definition,
+           updated_at = EXCLUDED.updated_at`,
+				[u, row.id, JSON.stringify(row), row.createdAt, now],
+			);
+			await client.query(
+				`INSERT INTO ${this.t("batch_versions")}
+           (user_id, batch_id, created_at, activated_at, definition)
+         VALUES ($1, $2, $3, $4, $5)`,
+				[u, row.id, now, now, JSON.stringify(row)],
+			);
+			await client.query("COMMIT");
+		} catch (error) {
+			await client.query("ROLLBACK");
+			throw error;
+		} finally {
+			client.release();
+		}
+	}
+
+	async deleteBatch(batchId: string): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const client = await this.pool.connect();
+		try {
+			await client.query("BEGIN");
+			await client.query(
+				`DELETE FROM ${this.t("batches")}
+          WHERE user_id = $1 AND id = $2`,
+				[u, batchId],
+			);
+			await client.query(
+				`DELETE FROM ${this.t("batch_versions")}
+          WHERE user_id = $1 AND batch_id = $2`,
+				[u, batchId],
+			);
+			await client.query(
+				`DELETE FROM ${this.t("batch_aliases")}
+          WHERE user_id = $1 AND batch_id = $2`,
+				[u, batchId],
+			);
+			await client.query("COMMIT");
+		} catch (error) {
+			await client.query("ROLLBACK");
+			throw error;
+		} finally {
+			client.release();
+		}
+	}
+
+	async listBatchVersions(batchId: string): Promise<BatchVersionSummary[]> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT created_at, activated_at FROM ${this.t("batch_versions")}
+        WHERE user_id = $1 AND batch_id = $2
+        ORDER BY created_at DESC`,
+			[u, batchId],
+		);
+		const aliases = await this.pool.query(
+			`SELECT alias, version_created_at FROM ${this.t("batch_aliases")}
+        WHERE user_id = $1 AND batch_id = $2`,
+			[u, batchId],
+		);
+		const aliasesByVersion = new Map<string, string[]>();
+		for (const row of aliases.rows) {
+			const version = toIsoString(row.version_created_at);
+			const list = aliasesByVersion.get(version) ?? [];
+			list.push(row.alias as string);
+			aliasesByVersion.set(version, list);
+		}
+		return rows.map((row) => {
+			const createdAt = toIsoString(row.created_at);
+			return {
+				createdAt,
+				activatedAt:
+					row.activated_at == null ? null : toIsoString(row.activated_at),
+				aliases: (aliasesByVersion.get(createdAt) ?? []).sort(),
+			};
+		});
+	}
+
+	async getBatchVersion(
+		batchId: string,
+		createdAt: string,
+	): Promise<BatchDefinition | null> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT definition, created_at FROM ${this.t("batch_versions")}
+        WHERE user_id = $1 AND batch_id = $2 AND created_at = $3`,
+			[u, batchId, createdAt],
+		);
+		return rows[0] ? rowToBatchDefinition(rows[0]) : null;
+	}
+
+	async activateBatchVersion(
+		batchId: string,
+		createdAt: string,
+	): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const version = await this.getBatchVersion(batchId, createdAt);
+		if (!version) {
+			throw new Error(`Batch version not found: ${batchId}@${createdAt}`);
+		}
+		const existing = await this.getBatch(batchId);
+		const now = this.nextTimestamp();
+		const row: BatchDefinition = {
+			...version,
+			createdAt: existing?.createdAt ?? version.createdAt ?? createdAt,
+			version: createdAt,
+			updatedAt: now,
+		};
+		const client = await this.pool.connect();
+		try {
+			await client.query("BEGIN");
+			await client.query(
+				`INSERT INTO ${this.t("batches")}
+           (user_id, id, definition, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (user_id, id) DO UPDATE SET
+           definition = EXCLUDED.definition,
+           updated_at = EXCLUDED.updated_at`,
+				[u, row.id, JSON.stringify(row), row.createdAt, now],
+			);
+			await client.query(
+				`UPDATE ${this.t("batch_versions")} SET activated_at = $1
+          WHERE user_id = $2 AND batch_id = $3 AND created_at = $4`,
+				[now, u, batchId, createdAt],
+			);
+			await client.query("COMMIT");
+		} catch (error) {
+			await client.query("ROLLBACK");
+			throw error;
+		} finally {
+			client.release();
+		}
+	}
+
+	async resolveBatchVersionAlias(
+		batchId: string,
+		alias: string,
+	): Promise<string | null> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT version_created_at FROM ${this.t("batch_aliases")}
+        WHERE user_id = $1 AND batch_id = $2 AND alias = $3`,
+			[u, batchId, alias],
+		);
+		return rows[0] ? toIsoString(rows[0].version_created_at) : null;
+	}
+
+	async setBatchVersionAlias(
+		batchId: string,
+		createdAt: string,
+		alias: string,
+	): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		if (!(await this.getBatchVersion(batchId, createdAt))) {
+			throw new Error(`Batch version not found: ${batchId}@${createdAt}`);
+		}
+		await this.pool.query(
+			`INSERT INTO ${this.t("batch_aliases")}
+         (user_id, batch_id, alias, version_created_at)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (user_id, batch_id, alias) DO UPDATE SET
+         version_created_at = EXCLUDED.version_created_at`,
+			[u, batchId, alias, createdAt],
+		);
+	}
+
+	async removeBatchVersionAlias(batchId: string, alias: string): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		await this.pool.query(
+			`DELETE FROM ${this.t("batch_aliases")}
+        WHERE user_id = $1 AND batch_id = $2 AND alias = $3`,
+			[u, batchId, alias],
+		);
+	}
+
+	async putBatchRun(run: BatchRun): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		await this.pool.query(
+			`INSERT INTO ${this.t("batch_runs")}
+         (user_id, id, batch_id, batch_version, dataset_id, dataset_version,
+          provider, model, status, idempotency_key, run, created_at, ended_at,
+          next_poll_at, lease_owner, lease_expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NULL,NULL)
+       ON CONFLICT (user_id, id) DO UPDATE SET
+         batch_id = EXCLUDED.batch_id,
+         batch_version = EXCLUDED.batch_version,
+         dataset_id = EXCLUDED.dataset_id,
+         dataset_version = EXCLUDED.dataset_version,
+         provider = EXCLUDED.provider,
+         model = EXCLUDED.model,
+         status = EXCLUDED.status,
+         idempotency_key = EXCLUDED.idempotency_key,
+         run = EXCLUDED.run,
+         ended_at = EXCLUDED.ended_at,
+         next_poll_at = EXCLUDED.next_poll_at,
+         lease_owner = NULL,
+         lease_expires_at = NULL`,
+			[
+				u,
+				run.id,
+				run.batchId,
+				run.batchVersion,
+				run.datasetId ?? null,
+				run.datasetVersion ?? null,
+				run.provider,
+				run.model,
+				run.status,
+				run.idempotencyKey ?? null,
+				JSON.stringify(run),
+				run.createdAt,
+				run.endedAt ?? null,
+				isTerminalBatchRun(run.status) ? null : (run.nextPollAt ?? null),
+			],
+		);
+	}
+
+	async getBatchRun(runId: string): Promise<BatchRun | null> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT run FROM ${this.t("batch_runs")}
+        WHERE user_id = $1 AND id = $2`,
+			[u, runId],
+		);
+		return rows[0] ? rowToBatchRun(rows[0]) : null;
+	}
+
+	async getBatchRunByIdempotencyKey(key: string): Promise<BatchRun | null> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const { rows } = await this.pool.query(
+			`SELECT run FROM ${this.t("batch_runs")}
+        WHERE user_id = $1 AND idempotency_key = $2`,
+			[u, key],
+		);
+		return rows[0] ? rowToBatchRun(rows[0]) : null;
+	}
+
+	async listBatchRuns(
+		filters: BatchRunListFilters = {},
+	): Promise<BatchRunListResult> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const limit = Math.min(Math.max(filters.limit ?? 50, 1), 200);
+		const clauses = ["user_id = $1"];
+		const args: unknown[] = [u];
+		const add = (column: string, value: string | undefined): void => {
+			if (value !== undefined) {
+				args.push(value);
+				clauses.push(`${column} = $${args.length}`);
+			}
+		};
+		add("batch_id", filters.batchId);
+		add("batch_version", filters.batchVersion);
+		add("dataset_id", filters.datasetId);
+		add("dataset_version", filters.datasetVersion);
+		add("provider", filters.provider);
+		add("model", filters.model);
+		add("status", filters.status);
+		if (filters.startedAfter) {
+			args.push(filters.startedAfter);
+			clauses.push(`created_at >= $${args.length}`);
+		}
+		if (filters.startedBefore) {
+			args.push(filters.startedBefore);
+			clauses.push(`created_at <= $${args.length}`);
+		}
+		const cursor = decodeBatchListCursor(filters.cursor);
+		if (cursor) {
+			args.push(cursor.createdAt, cursor.createdAt, cursor.id);
+			clauses.push(
+				`(created_at < $${args.length - 2} OR (created_at = $${args.length - 1} AND id < $${args.length}))`,
+			);
+		}
+		args.push(limit + 1);
+		const { rows: raw } = await this.pool.query(
+			`SELECT run FROM ${this.t("batch_runs")}
+        WHERE ${clauses.join(" AND ")}
+        ORDER BY created_at DESC, id DESC
+        LIMIT $${args.length}`,
+			args,
+		);
+		const hasMore = raw.length > limit;
+		const rows = raw.slice(0, limit).map(rowToBatchRun);
+		const last = rows.at(-1);
+		return {
+			rows,
+			cursor:
+				hasMore && last
+					? encodeBatchListCursor({
+							createdAt: last.createdAt,
+							id: last.id,
+						})
+					: undefined,
+		};
+	}
+
+	async deleteBatchRun(runId: string): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const client = await this.pool.connect();
+		try {
+			await client.query("BEGIN");
+			await client.query(
+				`DELETE FROM ${this.t("batch_run_items")}
+          WHERE user_id = $1 AND run_id = $2`,
+				[u, runId],
+			);
+			await client.query(
+				`DELETE FROM ${this.t("batch_runs")}
+          WHERE user_id = $1 AND id = $2`,
+				[u, runId],
+			);
+			await client.query("COMMIT");
+		} catch (error) {
+			await client.query("ROLLBACK");
+			throw error;
+		} finally {
+			client.release();
+		}
+	}
+
+	async putBatchRunItems(runId: string, items: BatchRunItem[]): Promise<void> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const client = await this.pool.connect();
+		try {
+			await client.query("BEGIN");
+			for (const item of items) {
+				await client.query(
+					`INSERT INTO ${this.t("batch_run_items")}
+             (user_id, run_id, item_id, ordinal, status, item)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (user_id, run_id, item_id) DO UPDATE SET
+             ordinal = EXCLUDED.ordinal,
+             status = EXCLUDED.status,
+             item = EXCLUDED.item`,
+					[
+						u,
+						runId,
+						item.itemId,
+						item.ordinal,
+						item.status,
+						JSON.stringify(item),
+					],
+				);
+			}
+			await client.query("COMMIT");
+		} catch (error) {
+			await client.query("ROLLBACK");
+			throw error;
+		} finally {
+			client.release();
+		}
+	}
+
+	async listBatchRunItems(
+		runId: string,
+		options: BatchRunItemListOptions = {},
+	): Promise<BatchRunItemListResult> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		const limit = Math.min(Math.max(options.limit ?? 100, 1), 1_000);
+		const args: unknown[] = [u, runId];
+		const clauses = ["user_id = $1", "run_id = $2"];
+		if (options.status) {
+			args.push(options.status);
+			clauses.push(`status = $${args.length}`);
+		}
+		const after = decodeOrdinalCursor(options.cursor);
+		if (after !== null) {
+			args.push(after);
+			clauses.push(`ordinal > $${args.length}`);
+		}
+		args.push(limit + 1);
+		const { rows: raw } = await this.pool.query(
+			`SELECT item FROM ${this.t("batch_run_items")}
+        WHERE ${clauses.join(" AND ")}
+        ORDER BY ordinal ASC
+        LIMIT $${args.length}`,
+			args,
+		);
+		const hasMore = raw.length > limit;
+		const rows = raw.slice(0, limit).map(rowToBatchRunItem);
+		const last = rows.at(-1);
+		return {
+			rows,
+			cursor: hasMore && last ? encodeOrdinalCursor(last.ordinal) : undefined,
+		};
+	}
+
+	async listDatasetItems(
+		datasetId: string,
+		options: DatasetItemListOptions = {},
+	): Promise<DatasetItemListResult> {
+		await this.ensureMigrated();
+		const u = this.requireUser();
+		let version = options.version;
+		if (version) {
+			version =
+				(await this.resolveDatasetVersionAlias(datasetId, version)) ?? version;
+		} else {
+			version = (await this.getDataset(datasetId))?.version;
+		}
+		if (!version) return { rows: [] };
+		const limit = Math.min(Math.max(options.limit ?? 100, 1), 1_000);
+		const after = decodeOrdinalCursor(options.cursor);
+		const { rows: raw } = await this.pool.query(
+			`SELECT item, ordinal FROM ${this.t("dataset_items")}
+        WHERE user_id = $1 AND dataset_id = $2 AND dataset_version = $3
+          AND ordinal > $4
+        ORDER BY ordinal ASC
+        LIMIT $5`,
+			[u, datasetId, version, after ?? -1, limit + 1],
+		);
+		const hasMore = raw.length > limit;
+		const page = raw.slice(0, limit);
+		const rows = page.map((row) =>
+			typeof row.item === "string"
+				? (JSON.parse(row.item) as DatasetItemListResult["rows"][number])
+				: (row.item as DatasetItemListResult["rows"][number]),
+		);
+		return {
+			rows,
+			cursor:
+				hasMore && page.length > 0
+					? encodeOrdinalCursor(Number(page[page.length - 1].ordinal))
+					: undefined,
+		};
+	}
+
+	async claimBatchRuns(options: {
+		workerId: string;
+		now: string;
+		leaseUntil: string;
+		limit?: number;
+	}): Promise<BatchRunClaim[]> {
+		await this.ensureMigrated();
+		const limit = Math.min(Math.max(options.limit ?? 20, 1), 200);
+		const { rows } = await this.pool.query(
+			`WITH due AS (
+         SELECT user_id, id
+           FROM ${this.t("batch_runs")}
+          WHERE (
+              status NOT IN ('completed', 'failed', 'expired', 'cancelled')
+              OR (
+                run->>'callbackUrl' IS NOT NULL
+                AND run->>'webhookSecretName' IS NOT NULL
+                AND run->>'terminalWebhookQueuedAt' IS NULL
+              )
+            )
+            AND (next_poll_at IS NULL OR next_poll_at <= $1)
+            AND (lease_expires_at IS NULL OR lease_expires_at <= $1)
+          ORDER BY COALESCE(next_poll_at, created_at) ASC
+          FOR UPDATE SKIP LOCKED
+          LIMIT $2
+       )
+       UPDATE ${this.t("batch_runs")} AS runs
+          SET lease_owner = $3, lease_expires_at = $4
+         FROM due
+        WHERE runs.user_id = due.user_id AND runs.id = due.id
+       RETURNING runs.user_id, runs.run`,
+			[options.now, limit, options.workerId, options.leaseUntil],
+		);
+		return rows.map((row) => ({
+			ownerId: row.user_id as string,
+			run: rowToBatchRun(row),
+		}));
 	}
 
 	async putEvalRun(run: EvalRun): Promise<void> {
@@ -3010,11 +3916,13 @@ export class PostgresStore implements UnifiedStore {
 		await this.ensureMigrated();
 		const u = this.requireUser();
 		const now = new Date().toISOString();
-		await this.pool.query(
+		const { rows } = await this.pool.query(
 			`INSERT INTO ${this.t("webhook_deliveries")} (
           id, user_id, run_id, callback_url, secret_name, payload,
           attempts, status, created_at
-        ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, 0, 'pending', $7)`,
+        ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, 0, 'pending', $7)
+        ON CONFLICT (id) DO NOTHING
+        RETURNING id`,
 			[
 				delivery.id,
 				u,
@@ -3025,7 +3933,7 @@ export class PostgresStore implements UnifiedStore {
 				now,
 			],
 		);
-		return delivery.id;
+		return rows[0]?.id ? delivery.id : "";
 	}
 
 	async updateStatus(
@@ -3328,11 +4236,107 @@ function rowToEvalDataset(r: {
 	if ((!dataset.agentId && r.agent_id) || (!dataset.version && r.created_at)) {
 		return {
 			...dataset,
-			agentId: dataset.agentId ?? r.agent_id ?? "",
+			agentId: dataset.agentId ?? r.agent_id ?? undefined,
 			version: dataset.version ?? toIsoString(r.created_at as Date | string),
 		};
 	}
 	return dataset;
+}
+
+function rowToBatchDefinition(r: {
+	definition: BatchDefinition | string;
+	created_at?: Date | string | null;
+}): BatchDefinition {
+	const definition =
+		typeof r.definition === "string"
+			? (JSON.parse(r.definition) as BatchDefinition)
+			: r.definition;
+	if (!definition.version && r.created_at) {
+		return { ...definition, version: toIsoString(r.created_at) };
+	}
+	return definition;
+}
+
+function rowToBatchRun(r: { run: BatchRun | string }): BatchRun {
+	return typeof r.run === "string" ? (JSON.parse(r.run) as BatchRun) : r.run;
+}
+
+function rowToBatchRunItem(r: {
+	item: BatchRunItem | string;
+}): BatchRunItem {
+	return typeof r.item === "string"
+		? (JSON.parse(r.item) as BatchRunItem)
+		: r.item;
+}
+
+function pgRowToDatasetImport(row: Record<string, unknown>): DatasetImport {
+	const metadata =
+		typeof row.metadata === "string"
+			? (JSON.parse(row.metadata) as Record<string, unknown>)
+			: (row.metadata as Record<string, unknown> | null);
+	return {
+		id: row.id as string,
+		datasetId: row.dataset_id as string,
+		name: row.name as string,
+		description: (row.description as string | null) ?? undefined,
+		agentId: (row.agent_id as string | null) ?? undefined,
+		metadata: metadata ?? undefined,
+		status: row.status as DatasetImport["status"],
+		itemCount: Number(row.item_count),
+		datasetVersion:
+			row.dataset_version == null
+				? undefined
+				: toIsoString(row.dataset_version as Date | string),
+		createdAt: toIsoString(row.created_at as Date | string),
+		updatedAt: toIsoString(row.updated_at as Date | string),
+	};
+}
+
+function batchSummary(definition: BatchDefinition): BatchSummary {
+	const { manifest: _manifest, ...summary } = definition;
+	return summary;
+}
+
+function isTerminalBatchRun(status: BatchRun["status"]): boolean {
+	return (
+		status === "completed" ||
+		status === "failed" ||
+		status === "expired" ||
+		status === "cancelled"
+	);
+}
+
+function encodeBatchListCursor(cursor: {
+	createdAt: string;
+	id: string;
+}): string {
+	return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+function decodeBatchListCursor(
+	cursor: string | undefined,
+): { createdAt: string; id: string } | null {
+	if (!cursor) return null;
+	try {
+		const value = JSON.parse(
+			Buffer.from(cursor, "base64url").toString("utf8"),
+		) as { createdAt?: unknown; id?: unknown };
+		return typeof value.createdAt === "string" && typeof value.id === "string"
+			? { createdAt: value.createdAt, id: value.id }
+			: null;
+	} catch {
+		return null;
+	}
+}
+
+function encodeOrdinalCursor(ordinal: number): string {
+	return Buffer.from(String(ordinal), "utf8").toString("base64url");
+}
+
+function decodeOrdinalCursor(cursor: string | undefined): number | null {
+	if (!cursor) return null;
+	const ordinal = Number(Buffer.from(cursor, "base64url").toString("utf8"));
+	return Number.isInteger(ordinal) && ordinal >= 0 ? ordinal : null;
 }
 
 function pgRowToSpan(r: Record<string, unknown>): Span {

@@ -121,6 +121,25 @@ export interface EvalRunRequest {
 	criterionIds?: string[];
 }
 
+export async function workerBatchFetch(
+	identity: WorkerIdentity,
+	path: string,
+	init: RequestInit = {},
+): Promise<Response> {
+	if (!path.startsWith("/batch-runs")) {
+		throw new Error("workerBatchFetch only accepts /batch-runs paths");
+	}
+	return fetch(`${WORKER_URL}${path}`, {
+		...init,
+		headers: {
+			...internalHeaders(identity),
+			...(init.body ? { "Content-Type": "application/json" } : {}),
+			...(init.headers ?? {}),
+		},
+		cache: "no-store",
+	});
+}
+
 /**
  * Call the worker's /run endpoint on behalf of a logged-in user. The worker
  * trusts X-Internal-Secret + the workspaceId in the body; external callers use

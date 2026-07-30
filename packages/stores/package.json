@@ -1,6 +1,6 @@
 {
   "name": "@agntz/stores",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Storage contracts and memory/Postgres/SQLite store implementations for agntz",
   "type": "module",
   "main": "./dist/index.js",

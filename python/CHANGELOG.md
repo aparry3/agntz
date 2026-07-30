@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.5.0 - 2026-07-29
+
+- Add sync and async hosted APIs for versioned provider-native batch manifests,
+  reusable datasets, staged CSV/JSONL imports, run comparison, result export,
+  cancellation, aliases, and explicit run deletion.
+
 ## 0.4.0 - 2026-07-29
 
 - Add manifest-declared, invocation-scoped client tools to hosted synchronous

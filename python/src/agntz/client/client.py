@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import csv
 import inspect
+import io
 import json
 import mimetypes
 import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Iterator, Mapping, Sequence
+from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -25,6 +28,15 @@ from .models import (
     AgentDefinition,
     AgentVersionSummary,
     ArtifactRef,
+    BatchDefinition,
+    BatchRun,
+    BatchRunComparisonResult,
+    BatchRunItemsPage,
+    BatchRunListResult,
+    BatchSummary,
+    BatchVersionSummary,
+    DatasetImportResult,
+    DatasetItemsPage,
     EvalDataset,
     EvalDefinition,
     EvalLatestScore,
@@ -70,6 +82,7 @@ class AgntzClient:
         self._owns_client = http_client is None
         self.agents = AgentsResource(self)
         self.artifacts = ArtifactsResource(self)
+        self.batches = BatchesResource(self)
         self.datasets = DatasetsResource(self)
         self.evals = EvalsResource(self)
         self.runs = RunsResource(self)
@@ -99,12 +112,14 @@ class AgntzClient:
         json_body: Mapping[str, Any] | None = None,
         auth: bool = True,
         accept: str | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> httpx.Response:
-        headers = _headers(self._api_key if auth else None, accept)
+        request_headers = _headers(self._api_key if auth else None, accept)
+        request_headers.update(headers or {})
         response = self._client.request(
             method,
             _join_url(self._base_url, path),
-            headers=headers,
+            headers=request_headers,
             json=dict(json_body) if json_body is not None else None,
         )
         _raise_for_status(response)
@@ -183,6 +198,7 @@ class AsyncAgntzClient:
         self._owns_client = http_client is None
         self.agents = AsyncAgentsResource(self)
         self.artifacts = AsyncArtifactsResource(self)
+        self.batches = AsyncBatchesResource(self)
         self.datasets = AsyncDatasetsResource(self)
         self.evals = AsyncEvalsResource(self)
         self.runs = AsyncRunsResource(self)
@@ -212,11 +228,14 @@ class AsyncAgntzClient:
         json_body: Mapping[str, Any] | None = None,
         auth: bool = True,
         accept: str | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> httpx.Response:
+        request_headers = _headers(self._api_key if auth else None, accept)
+        request_headers.update(headers or {})
         response = await self._client.request(
             method,
             _join_url(self._base_url, path),
-            headers=_headers(self._api_key if auth else None, accept),
+            headers=request_headers,
             json=dict(json_body) if json_body is not None else None,
         )
         _raise_for_status(response)
@@ -302,9 +321,7 @@ class AgentsResource:
         try:
             for frame in parse_sse(response.iter_text()):
                 if frame.event == "client-tool-request":
-                    _handle_client_tool_sync(
-                        self._client, frame.data, client_tools or {}
-                    )
+                    _handle_client_tool_sync(self._client, frame.data, client_tools or {})
                     continue
                 event = normalize_agent_event(frame)
                 if event is None:
@@ -471,9 +488,7 @@ class AsyncAgentsResource:
             saw_terminal = False
             async for frame in parse_sse_async(response.aiter_text()):
                 if frame.event == "client-tool-request":
-                    await _handle_client_tool_async(
-                        self._client, frame.data, client_tools or {}
-                    )
+                    await _handle_client_tool_async(self._client, frame.data, client_tools or {})
                     continue
                 event = normalize_agent_event(frame)
                 if event is None:
@@ -826,6 +841,65 @@ class DatasetsResource:
     def delete(self, dataset_id: str) -> None:
         self._client._request("DELETE", f"/datasets/{_q(dataset_id)}")
 
+    def items(
+        self,
+        dataset_id: str,
+        *,
+        version: str | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> DatasetItemsPage:
+        response = self._client._request(
+            "GET",
+            _with_query(
+                f"/datasets/{_q(dataset_id)}/items",
+                {"version": version, "limit": limit, "cursor": cursor},
+            ),
+        )
+        return DatasetItemsPage.model_validate(response.json())
+
+    def import_(
+        self,
+        source: str | Path | Sequence[Mapping[str, Any]],
+        *,
+        format: str | None = None,
+        dataset_id: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
+        agent_id: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+        id_column: str = "id",
+        input_column: str = "input",
+    ) -> EvalDataset:
+        staged_response = self._client._request(
+            "POST",
+            "/dataset-imports",
+            json_body=_without_none(
+                {
+                    "datasetId": dataset_id,
+                    "name": name,
+                    "description": description,
+                    "agentId": agent_id,
+                    "metadata": dict(metadata) if metadata is not None else None,
+                }
+            ),
+        )
+        staged = DatasetImportResult.model_validate(staged_response.json())
+        try:
+            items = _parse_dataset_source(source, format, id_column, input_column)
+            for offset in range(0, len(items), 1_000):
+                self._client._request(
+                    "POST",
+                    f"/dataset-imports/{_q(staged.id)}/items",
+                    json_body={"items": items[offset : offset + 1_000]},
+                )
+            response = self._client._request("POST", f"/dataset-imports/{_q(staged.id)}/complete")
+            return EvalDataset.model_validate(response.json())
+        except BaseException:
+            with suppress(BaseException):
+                self._client._request("DELETE", f"/dataset-imports/{_q(staged.id)}")
+            raise
+
 
 class AsyncDatasetsResource:
     def __init__(self, client: AsyncAgntzClient) -> None:
@@ -869,6 +943,370 @@ class AsyncDatasetsResource:
 
     async def delete(self, dataset_id: str) -> None:
         await self._client._request("DELETE", f"/datasets/{_q(dataset_id)}")
+
+    async def items(
+        self,
+        dataset_id: str,
+        *,
+        version: str | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> DatasetItemsPage:
+        response = await self._client._request(
+            "GET",
+            _with_query(
+                f"/datasets/{_q(dataset_id)}/items",
+                {"version": version, "limit": limit, "cursor": cursor},
+            ),
+        )
+        return DatasetItemsPage.model_validate(response.json())
+
+    async def import_(
+        self,
+        source: str | Path | Sequence[Mapping[str, Any]],
+        *,
+        format: str | None = None,
+        dataset_id: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
+        agent_id: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+        id_column: str = "id",
+        input_column: str = "input",
+    ) -> EvalDataset:
+        staged_response = await self._client._request(
+            "POST",
+            "/dataset-imports",
+            json_body=_without_none(
+                {
+                    "datasetId": dataset_id,
+                    "name": name,
+                    "description": description,
+                    "agentId": agent_id,
+                    "metadata": dict(metadata) if metadata is not None else None,
+                }
+            ),
+        )
+        staged = DatasetImportResult.model_validate(staged_response.json())
+        try:
+            items = _parse_dataset_source(source, format, id_column, input_column)
+            for offset in range(0, len(items), 1_000):
+                await self._client._request(
+                    "POST",
+                    f"/dataset-imports/{_q(staged.id)}/items",
+                    json_body={"items": items[offset : offset + 1_000]},
+                )
+            response = await self._client._request(
+                "POST", f"/dataset-imports/{_q(staged.id)}/complete"
+            )
+            return EvalDataset.model_validate(response.json())
+        except BaseException:
+            with suppress(BaseException):
+                await self._client._request("DELETE", f"/dataset-imports/{_q(staged.id)}")
+            raise
+
+
+class BatchesResource:
+    def __init__(self, client: AgntzClient) -> None:
+        self._client = client
+
+    def list(self) -> list[BatchSummary]:
+        response = self._client._request("GET", "/batches")
+        return [BatchSummary.model_validate(row) for row in response.json()]
+
+    def create(self, manifest: str) -> BatchDefinition:
+        response = self._client._request("POST", "/batches", json_body={"manifest": manifest})
+        return BatchDefinition.model_validate(response.json())
+
+    def get(self, batch_id: str) -> BatchDefinition:
+        response = self._client._request("GET", f"/batches/{_q(batch_id)}")
+        return BatchDefinition.model_validate(response.json())
+
+    def update(self, batch_id: str, manifest: str) -> BatchDefinition:
+        response = self._client._request(
+            "PUT", f"/batches/{_q(batch_id)}", json_body={"manifest": manifest}
+        )
+        return BatchDefinition.model_validate(response.json())
+
+    def delete(self, batch_id: str) -> None:
+        self._client._request("DELETE", f"/batches/{_q(batch_id)}")
+
+    def versions(self, batch_id: str) -> list[BatchVersionSummary]:
+        response = self._client._request("GET", f"/batches/{_q(batch_id)}/versions")
+        return [BatchVersionSummary.model_validate(row) for row in response.json()]
+
+    def get_version(self, batch_id: str, version: str) -> BatchDefinition:
+        response = self._client._request("GET", f"/batches/{_q(batch_id)}/versions/{_q(version)}")
+        return BatchDefinition.model_validate(response.json())
+
+    def activate_version(self, batch_id: str, version: str) -> BatchDefinition:
+        response = self._client._request(
+            "POST", f"/batches/{_q(batch_id)}/versions/{_q(version)}/activate"
+        )
+        return BatchDefinition.model_validate(response.json())
+
+    def set_alias(self, batch_id: str, alias: str, version: str) -> dict[str, Any]:
+        response = self._client._request(
+            "PUT",
+            f"/batches/{_q(batch_id)}/aliases/{_q(alias)}",
+            json_body={"version": version},
+        )
+        return dict(response.json())
+
+    def remove_alias(self, batch_id: str, alias: str) -> None:
+        self._client._request("DELETE", f"/batches/{_q(batch_id)}/aliases/{_q(alias)}")
+
+    def run(
+        self,
+        *,
+        batch_id: str,
+        batch_version: str | None = None,
+        dataset_id: str | None = None,
+        dataset_version: str | None = None,
+        items: Sequence[Mapping[str, Any]] | None = None,
+        callback_url: str | None = None,
+        webhook_secret_name: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> BatchRun:
+        body = _without_none(
+            {
+                "batchId": batch_id,
+                "batchVersion": batch_version,
+                "datasetId": dataset_id,
+                "datasetVersion": dataset_version,
+                "items": [dict(item) for item in items] if items is not None else None,
+                "callbackUrl": callback_url,
+                "webhookSecretName": webhook_secret_name,
+            }
+        )
+        response = self._client._request(
+            "POST",
+            "/batch-runs",
+            json_body=body,
+            headers={"Idempotency-Key": idempotency_key} if idempotency_key else None,
+        )
+        return BatchRun.model_validate(response.json())
+
+    def get_run(self, run_id: str) -> BatchRun:
+        response = self._client._request("GET", f"/batch-runs/{_q(run_id)}")
+        return BatchRun.model_validate(response.json())
+
+    def list_runs(self, **filters: Any) -> BatchRunListResult:
+        response = self._client._request(
+            "GET",
+            _with_query(
+                "/batch-runs",
+                {
+                    "batchId": filters.get("batch_id"),
+                    "batchVersion": filters.get("batch_version"),
+                    "datasetId": filters.get("dataset_id"),
+                    "datasetVersion": filters.get("dataset_version"),
+                    "provider": filters.get("provider"),
+                    "model": filters.get("model"),
+                    "status": filters.get("status"),
+                    "startedAfter": filters.get("started_after"),
+                    "startedBefore": filters.get("started_before"),
+                    "limit": filters.get("limit"),
+                    "cursor": filters.get("cursor"),
+                },
+            ),
+        )
+        return BatchRunListResult.model_validate(response.json())
+
+    def cancel(self, run_id: str) -> BatchRun:
+        response = self._client._request("POST", f"/batch-runs/{_q(run_id)}/cancel")
+        return BatchRun.model_validate(response.json())
+
+    def delete_run(self, run_id: str) -> None:
+        self._client._request("DELETE", f"/batch-runs/{_q(run_id)}")
+
+    def items(
+        self,
+        run_id: str,
+        *,
+        status: str | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> BatchRunItemsPage:
+        response = self._client._request(
+            "GET",
+            _with_query(
+                f"/batch-runs/{_q(run_id)}/items",
+                {"status": status, "limit": limit, "cursor": cursor},
+            ),
+        )
+        return BatchRunItemsPage.model_validate(response.json())
+
+    def results_jsonl(self, run_id: str) -> str:
+        response = self._client._request(
+            "GET",
+            f"/batch-runs/{_q(run_id)}/results.jsonl",
+            accept="application/x-ndjson",
+        )
+        return response.text
+
+    def compare(
+        self,
+        left: str,
+        right: str,
+        *,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> BatchRunComparisonResult:
+        response = self._client._request(
+            "GET",
+            _with_query(
+                "/batch-runs/compare",
+                {"left": left, "right": right, "limit": limit, "cursor": cursor},
+            ),
+        )
+        return BatchRunComparisonResult.model_validate(response.json())
+
+
+class AsyncBatchesResource:
+    def __init__(self, client: AsyncAgntzClient) -> None:
+        self._client = client
+
+    async def list(self) -> list[BatchSummary]:
+        response = await self._client._request("GET", "/batches")
+        return [BatchSummary.model_validate(row) for row in response.json()]
+
+    async def create(self, manifest: str) -> BatchDefinition:
+        response = await self._client._request("POST", "/batches", json_body={"manifest": manifest})
+        return BatchDefinition.model_validate(response.json())
+
+    async def get(self, batch_id: str) -> BatchDefinition:
+        response = await self._client._request("GET", f"/batches/{_q(batch_id)}")
+        return BatchDefinition.model_validate(response.json())
+
+    async def update(self, batch_id: str, manifest: str) -> BatchDefinition:
+        response = await self._client._request(
+            "PUT", f"/batches/{_q(batch_id)}", json_body={"manifest": manifest}
+        )
+        return BatchDefinition.model_validate(response.json())
+
+    async def delete(self, batch_id: str) -> None:
+        await self._client._request("DELETE", f"/batches/{_q(batch_id)}")
+
+    async def versions(self, batch_id: str) -> list[BatchVersionSummary]:
+        response = await self._client._request("GET", f"/batches/{_q(batch_id)}/versions")
+        return [BatchVersionSummary.model_validate(row) for row in response.json()]
+
+    async def get_version(self, batch_id: str, version: str) -> BatchDefinition:
+        response = await self._client._request(
+            "GET", f"/batches/{_q(batch_id)}/versions/{_q(version)}"
+        )
+        return BatchDefinition.model_validate(response.json())
+
+    async def activate_version(self, batch_id: str, version: str) -> BatchDefinition:
+        response = await self._client._request(
+            "POST", f"/batches/{_q(batch_id)}/versions/{_q(version)}/activate"
+        )
+        return BatchDefinition.model_validate(response.json())
+
+    async def set_alias(self, batch_id: str, alias: str, version: str) -> dict[str, Any]:
+        response = await self._client._request(
+            "PUT",
+            f"/batches/{_q(batch_id)}/aliases/{_q(alias)}",
+            json_body={"version": version},
+        )
+        return dict(response.json())
+
+    async def remove_alias(self, batch_id: str, alias: str) -> None:
+        await self._client._request("DELETE", f"/batches/{_q(batch_id)}/aliases/{_q(alias)}")
+
+    async def run(self, *, batch_id: str, **options: Any) -> BatchRun:
+        body = _without_none(
+            {
+                "batchId": batch_id,
+                "batchVersion": options.get("batch_version"),
+                "datasetId": options.get("dataset_id"),
+                "datasetVersion": options.get("dataset_version"),
+                "items": options.get("items"),
+                "callbackUrl": options.get("callback_url"),
+                "webhookSecretName": options.get("webhook_secret_name"),
+            }
+        )
+        idempotency_key = options.get("idempotency_key")
+        response = await self._client._request(
+            "POST",
+            "/batch-runs",
+            json_body=body,
+            headers={"Idempotency-Key": idempotency_key} if idempotency_key else None,
+        )
+        return BatchRun.model_validate(response.json())
+
+    async def get_run(self, run_id: str) -> BatchRun:
+        response = await self._client._request("GET", f"/batch-runs/{_q(run_id)}")
+        return BatchRun.model_validate(response.json())
+
+    async def list_runs(self, **filters: Any) -> BatchRunListResult:
+        response = await self._client._request(
+            "GET",
+            _with_query(
+                "/batch-runs",
+                {
+                    "batchId": filters.get("batch_id"),
+                    "batchVersion": filters.get("batch_version"),
+                    "datasetId": filters.get("dataset_id"),
+                    "datasetVersion": filters.get("dataset_version"),
+                    "provider": filters.get("provider"),
+                    "model": filters.get("model"),
+                    "status": filters.get("status"),
+                    "startedAfter": filters.get("started_after"),
+                    "startedBefore": filters.get("started_before"),
+                    "limit": filters.get("limit"),
+                    "cursor": filters.get("cursor"),
+                },
+            ),
+        )
+        return BatchRunListResult.model_validate(response.json())
+
+    async def cancel(self, run_id: str) -> BatchRun:
+        response = await self._client._request("POST", f"/batch-runs/{_q(run_id)}/cancel")
+        return BatchRun.model_validate(response.json())
+
+    async def delete_run(self, run_id: str) -> None:
+        await self._client._request("DELETE", f"/batch-runs/{_q(run_id)}")
+
+    async def items(self, run_id: str, **options: Any) -> BatchRunItemsPage:
+        response = await self._client._request(
+            "GET",
+            _with_query(
+                f"/batch-runs/{_q(run_id)}/items",
+                {
+                    "status": options.get("status"),
+                    "limit": options.get("limit"),
+                    "cursor": options.get("cursor"),
+                },
+            ),
+        )
+        return BatchRunItemsPage.model_validate(response.json())
+
+    async def results_jsonl(self, run_id: str) -> str:
+        response = await self._client._request(
+            "GET",
+            f"/batch-runs/{_q(run_id)}/results.jsonl",
+            accept="application/x-ndjson",
+        )
+        return response.text
+
+    async def compare(
+        self,
+        left: str,
+        right: str,
+        *,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> BatchRunComparisonResult:
+        response = await self._client._request(
+            "GET",
+            _with_query(
+                "/batch-runs/compare",
+                {"left": left, "right": right, "limit": limit, "cursor": cursor},
+            ),
+        )
+        return BatchRunComparisonResult.model_validate(response.json())
 
 
 class EvalsResource:
@@ -1442,9 +1880,9 @@ class MemoryResource:
         limit: int | None = None,
         offset: int | None = None,
     ) -> MemoryEntriesPage:
-        response = self._client._request("GET", _entries_path(
-            grants, topics, include_superseded, limit, offset
-        ))
+        response = self._client._request(
+            "GET", _entries_path(grants, topics, include_superseded, limit, offset)
+        )
         return MemoryEntriesPage.model_validate(response.json())
 
     def delete_entry(self, grants: Sequence[str], entry_id: str) -> MemoryDeleteEntryResult:
@@ -1549,9 +1987,9 @@ class AsyncMemoryResource:
         limit: int | None = None,
         offset: int | None = None,
     ) -> MemoryEntriesPage:
-        response = await self._client._request("GET", _entries_path(
-            grants, topics, include_superseded, limit, offset
-        ))
+        response = await self._client._request(
+            "GET", _entries_path(grants, topics, include_superseded, limit, offset)
+        )
         return MemoryEntriesPage.model_validate(response.json())
 
     async def delete_entry(self, grants: Sequence[str], entry_id: str) -> MemoryDeleteEntryResult:
@@ -1704,9 +2142,7 @@ async def _handle_client_tool_async(
                 if inspect.iscoroutinefunction(handler):
                     output = await handler(request.get("input"), context)
                 else:
-                    output = await asyncio.to_thread(
-                        handler, request.get("input"), context
-                    )
+                    output = await asyncio.to_thread(handler, request.get("input"), context)
                     if inspect.isawaitable(output):
                         output = await output
             _validate_client_tool_output(name, output)
@@ -1735,13 +2171,9 @@ async def _await_client_tool_output(output: Awaitable[Any]) -> Any:
 
 def _validate_client_tool_output(name: str, output: Any) -> None:
     try:
-        serialized = json.dumps(
-            output, ensure_ascii=False, allow_nan=False, separators=(",", ":")
-        )
+        serialized = json.dumps(output, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
     except (TypeError, ValueError) as exc:
-        raise TypeError(
-            f"Client tool '{name}' returned a non-JSON-serializable value"
-        ) from exc
+        raise TypeError(f"Client tool '{name}' returned a non-JSON-serializable value") from exc
     if len(serialized) > CLIENT_TOOL_RESULT_MAX_CHARS:
         raise ValueError(
             f"Client tool '{name}' output exceeds "
@@ -1764,9 +2196,7 @@ def _submit_client_tool_result_sync(
         except AgntzError as exc:
             if exc.status == 410:
                 return
-            transient = exc.status == 429 or (
-                exc.status is not None and exc.status >= 500
-            )
+            transient = exc.status == 429 or (exc.status is not None and exc.status >= 500)
             if not transient or attempt == 2:
                 raise
             time.sleep(delay)
@@ -1787,9 +2217,7 @@ async def _submit_client_tool_result_async(
         except AgntzError as exc:
             if exc.status == 410:
                 return
-            transient = exc.status == 429 or (
-                exc.status is not None and exc.status >= 500
-            )
+            transient = exc.status == 429 or (exc.status is not None and exc.status >= 500)
             if not transient or attempt == 2:
                 raise
             await asyncio.sleep(delay)
@@ -1882,9 +2310,7 @@ def _retention_body(
     if isinstance(retention, RetentionRequest):
         return retention.model_dump(by_alias=True, exclude_none=True)
     return {
-        _snake_to_camel(str(key)): value
-        for key, value in retention.items()
-        if value is not None
+        _snake_to_camel(str(key)): value for key, value in retention.items() if value is not None
     }
 
 
@@ -1924,6 +2350,97 @@ def _artifact_payload(
     resolved_filename = filename or "artifact"
     resolved_media_type = media_type or mimetypes.guess_type(resolved_filename)[0]
     return payload, resolved_filename, resolved_media_type or "application/octet-stream"
+
+
+def _parse_dataset_source(
+    source: str | Path | Sequence[Mapping[str, Any]],
+    format: str | None,
+    id_column: str,
+    input_column: str,
+) -> list[dict[str, Any]]:
+    if isinstance(source, Path):
+        text = source.read_text()
+        resolved_format = format or source.suffix.lstrip(".").lower()
+    elif isinstance(source, str):
+        text = source
+        resolved_format = format
+    else:
+        return _validate_dataset_items([dict(item) for item in source])
+
+    if resolved_format is None:
+        first = next((line.strip() for line in text.splitlines() if line.strip()), "")
+        resolved_format = "jsonl" if first.startswith("{") else "csv"
+    if resolved_format not in {"jsonl", "csv"}:
+        raise ValueError("Dataset format must be 'jsonl' or 'csv'")
+
+    items: list[dict[str, Any]] = []
+    if resolved_format == "jsonl":
+        for index, line in enumerate(text.splitlines()):
+            if not line.strip():
+                continue
+            value = json.loads(line)
+            if isinstance(value, dict) and "input" in value:
+                item = {
+                    "id": value.get("id") or f"row_{index + 1:06d}",
+                    "input": value["input"],
+                }
+                if value.get("name") is not None:
+                    item["name"] = value["name"]
+                if value.get("metadata") is not None:
+                    item["metadata"] = value["metadata"]
+            else:
+                item = {"id": f"row_{index + 1:06d}", "input": value}
+            items.append(item)
+    else:
+        for index, row in enumerate(csv.DictReader(io.StringIO(text))):
+            item_id = (row.get(id_column) or "").strip() or f"row_{index + 1:06d}"
+            raw_input = row.get(input_column)
+            if raw_input is None:
+                item_input: Any = {key: value for key, value in row.items() if key != id_column}
+            else:
+                item_input = _parse_maybe_json(raw_input)
+            item = {"id": item_id, "input": item_input}
+            if row.get("name"):
+                item["name"] = row["name"]
+            metadata = {
+                key: value
+                for key, value in row.items()
+                if key not in {id_column, input_column, "name"}
+            }
+            if metadata:
+                item["metadata"] = metadata
+            items.append(item)
+    return _validate_dataset_items(items)
+
+
+def _parse_maybe_json(value: str) -> Any:
+    stripped = value.strip()
+    if stripped.startswith(("{", "[")):
+        try:
+            return json.loads(stripped)
+        except json.JSONDecodeError:
+            pass
+    return value
+
+
+def _validate_dataset_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not items:
+        raise ValueError("Dataset import contains no items")
+    ids: set[str] = set()
+    for index, item in enumerate(items):
+        item_id = item.get("id")
+        if not isinstance(item_id, str) or not item_id:
+            raise ValueError(f"Dataset item {index + 1} has no id")
+        if item_id in ids:
+            raise ValueError(f"Duplicate dataset item id '{item_id}'")
+        if "input" not in item:
+            raise ValueError(f"Dataset item '{item_id}' has no input")
+        ids.add(item_id)
+    return items
+
+
+def _without_none(value: Mapping[str, Any]) -> dict[str, Any]:
+    return {key: item for key, item in value.items() if item is not None}
 
 
 def _add_if_defined(body: dict[str, Any], key: str, value: Any) -> None:

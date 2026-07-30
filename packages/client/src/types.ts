@@ -454,6 +454,7 @@ export interface EvalDefinition {
 
 export interface EvalDatasetItem {
 	id: string;
+	name?: string;
 	input: string | Record<string, unknown> | WireContentBlock[];
 	expected?: unknown;
 	metadata?: Record<string, unknown>;
@@ -461,13 +462,202 @@ export interface EvalDatasetItem {
 
 export interface EvalDataset {
 	id: string;
-	agentId: string;
+	agentId?: string;
 	name: string;
 	description?: string;
 	items: EvalDatasetItem[];
+	itemCount?: number;
 	metadata?: Record<string, unknown>;
+	version?: string;
 	createdAt?: string;
 	updatedAt?: string;
+}
+
+export type DatasetItem = EvalDatasetItem;
+export type Dataset = EvalDataset;
+
+export interface DatasetItemsPage {
+	rows: DatasetItem[];
+	cursor?: string;
+}
+
+export interface DatasetImportResult {
+	id: string;
+	datasetId: string;
+	name: string;
+	description?: string;
+	agentId?: string;
+	status: "open" | "completed";
+	itemCount: number;
+	createdAt: string;
+	updatedAt: string;
+	datasetVersion?: string;
+}
+
+export interface DatasetImportInput {
+	source:
+		| string
+		| Blob
+		| ArrayBuffer
+		| Uint8Array
+		| DatasetItem[]
+		| { path: string };
+	format?: "jsonl" | "csv";
+	datasetId?: string;
+	name?: string;
+	description?: string;
+	agentId?: string;
+	metadata?: Record<string, unknown>;
+	idColumn?: string;
+	inputColumn?: string;
+	signal?: AbortSignal;
+}
+
+export interface BatchDefinition {
+	id: string;
+	name?: string;
+	description?: string;
+	manifest: string;
+	provider: string;
+	model: string;
+	defaultDataset?: { id: string; version?: string };
+	version?: string;
+	createdAt?: string;
+	updatedAt?: string;
+}
+
+export type BatchSummary = Omit<BatchDefinition, "manifest">;
+
+export interface BatchVersionSummary {
+	createdAt: string;
+	activatedAt?: string | null;
+	aliases: string[];
+}
+
+export type BatchRunStatus =
+	| "validating"
+	| "submitting"
+	| "queued"
+	| "running"
+	| "cancelling"
+	| "completed"
+	| "failed"
+	| "expired"
+	| "cancelled";
+
+export type BatchItemStatus =
+	| "pending"
+	| "succeeded"
+	| "failed"
+	| "expired"
+	| "cancelled";
+
+export interface BatchRequestCounts {
+	total: number;
+	pending: number;
+	succeeded: number;
+	failed: number;
+	expired: number;
+	cancelled: number;
+}
+
+export interface BatchRun {
+	id: string;
+	batchId: string;
+	requestedBatchVersion?: string;
+	batchVersion: string;
+	datasetId?: string;
+	requestedDatasetVersion?: string;
+	datasetVersion?: string;
+	provider: string;
+	model: string;
+	providerBatchId?: string;
+	providerStatus?: string;
+	status: BatchRunStatus;
+	counts: BatchRequestCounts;
+	snapshot: {
+		batch: BatchDefinition;
+		dataset?: Omit<Dataset, "items"> & { itemCount: number };
+		inlineDataset?: boolean;
+	};
+	callbackUrl?: string;
+	webhookSecretName?: string;
+	createdAt: string;
+	submittedAt?: string;
+	startedAt?: string;
+	endedAt?: string;
+	providerExpiresAt?: string;
+	error?: string;
+}
+
+export interface BatchRunItem {
+	runId: string;
+	itemId: string;
+	ordinal: number;
+	name?: string;
+	input: DatasetItem["input"];
+	metadata?: Record<string, unknown>;
+	status: BatchItemStatus;
+	output?: unknown;
+	rawOutput?: string;
+	error?: string;
+	usage?: {
+		promptTokens: number;
+		completionTokens: number;
+		totalTokens: number;
+	};
+	finishReason?: string;
+	providerRequestId?: string;
+	durationMs?: number;
+}
+
+export interface BatchRunInput {
+	batchId: string;
+	batchVersion?: string;
+	datasetId?: string;
+	datasetVersion?: string;
+	items?: DatasetItem[];
+	callbackUrl?: string;
+	webhookSecretName?: string;
+	idempotencyKey?: string;
+	signal?: AbortSignal;
+}
+
+export interface BatchRunListFilter {
+	batchId?: string;
+	batchVersion?: string;
+	datasetId?: string;
+	datasetVersion?: string;
+	provider?: string;
+	model?: string;
+	status?: BatchRunStatus;
+	startedAfter?: string;
+	startedBefore?: string;
+	limit?: number;
+	cursor?: string;
+}
+
+export interface BatchRunListResult {
+	rows: BatchRun[];
+	cursor?: string;
+}
+
+export interface BatchRunItemsPage {
+	rows: BatchRunItem[];
+	cursor?: string;
+}
+
+export interface BatchRunComparisonResult {
+	leftRun: BatchRun;
+	rightRun: BatchRun;
+	rows: Array<{
+		itemId: string;
+		input?: DatasetItem["input"];
+		left?: BatchRunItem;
+		right?: BatchRunItem;
+	}>;
+	cursor?: string;
+	datasetVersionsMatch: boolean;
 }
 
 export interface EvalCriterionResult {

@@ -7,12 +7,17 @@ import {
 	S3ArtifactBlobStore,
 } from "./artifacts.js";
 import {
+	createDefaultBatchProviderRegistry,
+	reconcileBatchRuns,
+} from "./batches/index.js";
+import {
 	describeResourceProviders,
 	getMemrez,
 	getResourceProviders,
 } from "./resources.js";
 import { createWorkerAPI, runCurationSweep } from "./routes.js";
 import { getStore } from "./store.js";
+import { createWebhookDispatcher } from "./webhooks/dispatcher.js";
 
 const port = Number(process.env.PORT ?? 4001);
 const hostname = process.env.HOST ?? "0.0.0.0";
@@ -52,6 +57,7 @@ const artifactBlobs =
 					},
 				})
 			: new MemoryArtifactBlobStore();
+const batchProviders = createDefaultBatchProviderRegistry();
 
 const app = createWorkerAPI({
 	store,
@@ -62,6 +68,7 @@ const app = createWorkerAPI({
 	resources,
 	memrez: memrez ?? undefined,
 	artifactBlobs,
+	batchProviders,
 });
 
 serve({
@@ -74,6 +81,60 @@ console.log(`agntz worker listening on http://${hostname}:${port}`);
 console.log(`Store: ${process.env.STORE ?? "memory"}`);
 console.log(`Resources: ${describeResourceProviders(resources)}`);
 console.log(`Artifacts: ${artifactStoreMode}`);
+
+// Durable provider-batch reconciliation. Database leases allow multiple worker
+// replicas to run this loop safely; terminal webhooks use a stable outbox id.
+const batchWorkerId = `batch-worker:${hostname}:${port}:${process.pid}`;
+const reconcileBatches = async (): Promise<void> => {
+	try {
+		const result = await reconcileBatchRuns({
+			store,
+			providers: batchProviders,
+			workerId: batchWorkerId,
+			limit: 20,
+			onTerminal: async (ownerId, run) => {
+				if (!run.callbackUrl || !run.webhookSecretName) return;
+				const scoped = store.forUser(ownerId);
+				const dispatcher = createWebhookDispatcher({
+					deliveryStore: scoped,
+					secretStore: scoped,
+					secretName: run.webhookSecretName,
+					callbackUrl: run.callbackUrl,
+					runId: run.id,
+					deliveryId: `whd_batch_${run.id}`,
+					ownerId,
+				});
+				await dispatcher.dispatch({
+					type: "batch.complete",
+					runId: run.id,
+					batchId: run.batchId,
+					status: run.status as
+						| "completed"
+						| "failed"
+						| "expired"
+						| "cancelled",
+					provider: run.provider,
+					model: run.model,
+					counts: run.counts,
+					error: run.error,
+				});
+				await dispatcher.drain();
+			},
+		});
+		if (result.failed > 0) {
+			console.warn(
+				`[batches] reconciled=${result.updated} failed=${result.failed}`,
+			);
+		}
+	} catch (error) {
+		console.error(
+			`[batches] reconciliation failed: ${(error as Error).message}`,
+		);
+	}
+};
+void reconcileBatches();
+const batchTimer = setInterval(() => void reconcileBatches(), 15_000);
+batchTimer.unref();
 
 // Periodic memory curation. Off unless MEMREZ_CURATE_INTERVAL is set (e.g.
 // "30m", "1h", "900s", or raw milliseconds). Each tick sweeps every dirty

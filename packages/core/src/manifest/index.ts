@@ -35,6 +35,8 @@ export type {
 
 // Parser
 export { parseManifest, normalizeManifest } from "./parser.js";
+export type { BatchManifest, BatchProvider } from "./batch.js";
+export { BATCH_PROVIDERS, parseBatchManifest } from "./batch.js";
 
 // Template engine
 export {

@@ -256,13 +256,133 @@ class EvalDatasetItem(AgntzModel):
 
 class EvalDataset(AgntzModel):
     id: str
-    agent_id: str = Field(alias="agentId")
+    agent_id: str | None = Field(default=None, alias="agentId")
     name: str
     description: str | None = None
     items: list[EvalDatasetItem] = Field(default_factory=list)
+    item_count: int | None = Field(default=None, alias="itemCount")
     metadata: dict[str, Any] | None = None
+    version: str | None = None
     created_at: str | None = Field(default=None, alias="createdAt")
     updated_at: str | None = Field(default=None, alias="updatedAt")
+
+
+class DatasetItemsPage(AgntzModel):
+    rows: list[EvalDatasetItem] = Field(default_factory=list)
+    cursor: str | None = None
+
+
+class DatasetImportResult(AgntzModel):
+    id: str
+    dataset_id: str = Field(alias="datasetId")
+    name: str
+    description: str | None = None
+    agent_id: str | None = Field(default=None, alias="agentId")
+    status: str
+    item_count: int = Field(alias="itemCount")
+    created_at: str = Field(alias="createdAt")
+    updated_at: str = Field(alias="updatedAt")
+    dataset_version: str | None = Field(default=None, alias="datasetVersion")
+
+
+class BatchDefinition(AgntzModel):
+    id: str
+    name: str | None = None
+    description: str | None = None
+    manifest: str
+    provider: str
+    model: str
+    default_dataset: dict[str, Any] | None = Field(default=None, alias="defaultDataset")
+    version: str | None = None
+    created_at: str | None = Field(default=None, alias="createdAt")
+    updated_at: str | None = Field(default=None, alias="updatedAt")
+
+
+class BatchSummary(AgntzModel):
+    id: str
+    name: str | None = None
+    description: str | None = None
+    provider: str
+    model: str
+    default_dataset: dict[str, Any] | None = Field(default=None, alias="defaultDataset")
+    version: str | None = None
+    created_at: str | None = Field(default=None, alias="createdAt")
+    updated_at: str | None = Field(default=None, alias="updatedAt")
+
+
+class BatchVersionSummary(AgntzModel):
+    created_at: str = Field(alias="createdAt")
+    activated_at: str | None = Field(default=None, alias="activatedAt")
+    aliases: list[str] = Field(default_factory=list)
+
+
+class BatchRequestCounts(AgntzModel):
+    total: int
+    pending: int
+    succeeded: int
+    failed: int
+    expired: int
+    cancelled: int
+
+
+class BatchRun(AgntzModel):
+    id: str
+    batch_id: str = Field(alias="batchId")
+    requested_batch_version: str | None = Field(default=None, alias="requestedBatchVersion")
+    batch_version: str = Field(alias="batchVersion")
+    dataset_id: str | None = Field(default=None, alias="datasetId")
+    requested_dataset_version: str | None = Field(default=None, alias="requestedDatasetVersion")
+    dataset_version: str | None = Field(default=None, alias="datasetVersion")
+    provider: str
+    model: str
+    provider_batch_id: str | None = Field(default=None, alias="providerBatchId")
+    provider_status: str | None = Field(default=None, alias="providerStatus")
+    status: str
+    counts: BatchRequestCounts
+    snapshot: dict[str, Any]
+    callback_url: str | None = Field(default=None, alias="callbackUrl")
+    webhook_secret_name: str | None = Field(default=None, alias="webhookSecretName")
+    created_at: str = Field(alias="createdAt")
+    submitted_at: str | None = Field(default=None, alias="submittedAt")
+    started_at: str | None = Field(default=None, alias="startedAt")
+    ended_at: str | None = Field(default=None, alias="endedAt")
+    provider_expires_at: str | None = Field(default=None, alias="providerExpiresAt")
+    error: str | None = None
+
+
+class BatchRunItem(AgntzModel):
+    run_id: str = Field(alias="runId")
+    item_id: str = Field(alias="itemId")
+    ordinal: int
+    name: str | None = None
+    input: Any
+    metadata: dict[str, Any] | None = None
+    status: str
+    output: Any = None
+    raw_output: str | None = Field(default=None, alias="rawOutput")
+    error: str | None = None
+    usage: dict[str, Any] | None = None
+    finish_reason: str | None = Field(default=None, alias="finishReason")
+    provider_request_id: str | None = Field(default=None, alias="providerRequestId")
+    duration_ms: int | None = Field(default=None, alias="durationMs")
+
+
+class BatchRunListResult(AgntzModel):
+    rows: list[BatchRun] = Field(default_factory=list)
+    cursor: str | None = None
+
+
+class BatchRunItemsPage(AgntzModel):
+    rows: list[BatchRunItem] = Field(default_factory=list)
+    cursor: str | None = None
+
+
+class BatchRunComparisonResult(AgntzModel):
+    left_run: BatchRun = Field(alias="leftRun")
+    right_run: BatchRun = Field(alias="rightRun")
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+    cursor: str | None = None
+    dataset_versions_match: bool = Field(alias="datasetVersionsMatch")
 
 
 class EvalCriterionResult(AgntzModel):

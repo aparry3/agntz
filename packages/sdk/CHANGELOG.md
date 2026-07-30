@@ -1,5 +1,14 @@
 # @agntz/sdk
 
+## 0.3.1
+
+### Patch Changes
+
+- Updated dependencies
+  - @agntz/core@0.4.0
+  - @agntz/stores@0.3.0
+  - @agntz/client@0.4.0
+
 ## 0.3.0
 
 ### Minor Changes

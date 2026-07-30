@@ -138,6 +138,45 @@ client.agents.import_(
 
 Stored agents can be resolved by bare id, \`agent@latest\`, exact version timestamp, or alias when the deployment exposes version and alias administration.
 
+### \`client.batches.*\` and \`client.datasets.import\`
+
+Create a versioned provider-native batch definition, import CSV/JSONL data, and
+run or compare exact manifest/dataset versions.
+
+\`\`\`ts {group=client-batches}
+const dataset = await client.datasets.import({
+  source: { path: "./records.jsonl" },
+  format: "jsonl",
+  datasetId: "records",
+});
+const batch = await client.batches.create(batchYaml);
+const run = await client.batches.run({
+  batchId: batch.id,
+  datasetId: dataset.id,
+  idempotencyKey: "records-2026-07-29",
+});
+const items = await client.batches.items(run.id);
+\`\`\`
+
+\`\`\`python {group=client-batches}
+dataset = client.datasets.import_(
+    "./records.jsonl",
+    format="jsonl",
+    dataset_id="records",
+)
+batch = client.batches.create(batch_yaml)
+run = client.batches.run(
+    batch_id=batch.id,
+    dataset_id=dataset.id,
+    idempotency_key="records-2026-07-29",
+)
+items = client.batches.items(run.id)
+\`\`\`
+
+Both sync and async Python clients expose the same resources. See
+[Provider-native batches](/docs/hosted/batches) for the manifest subset,
+lifecycle, exports, callbacks, and model comparison workflow.
+
 ### Runtime context grants
 
 Pass \`context\` when a hosted run needs access to a resource such as memory. These are namespace grants minted by trusted server-side code; the model never receives a namespace parameter.

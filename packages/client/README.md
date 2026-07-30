@@ -261,6 +261,39 @@ await client.evals.getLatestScore({
 await client.evals.listLatestScores({ evalId: "support-quality" });
 ```
 
+## Provider-native batches
+
+Batch definitions use the strict provider-native subset of a standard
+`kind: llm` manifest. Import a reusable dataset, submit a run, then save a new
+manifest version with another model and compare item outputs.
+
+```ts
+const dataset = await client.datasets.import({
+  source: { path: "./customers.csv" },
+  format: "csv",
+  datasetId: "customers",
+  name: "Customers",
+});
+
+const batch = await client.batches.create(batchYaml);
+const run = await client.batches.run({
+  batchId: batch.id,
+  datasetId: dataset.id,
+  idempotencyKey: "customers-2026-07-29",
+});
+
+await client.batches.getRun(run.id);
+await client.batches.listRuns({ batchId: batch.id });
+await client.batches.items(run.id, { limit: 500 });
+await client.batches.resultsJsonl(run.id);
+await client.batches.cancel(run.id);
+await client.batches.compare(firstRun.id, secondRun.id);
+```
+
+Batch results are durable until explicitly deleted. They do not create ordinary
+runs, sessions, or traces. Use `client.batches.deleteRun(runId)` once a run is
+terminal.
+
 ## Auth
 
 The client sends:

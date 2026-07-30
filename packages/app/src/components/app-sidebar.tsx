@@ -30,6 +30,12 @@ const buildLinks: NavLink[] = [
 		matches: (p) => p === "/agents" || p.startsWith("/agents/"),
 	},
 	{
+		href: "/batches",
+		label: "Batches",
+		Ic: I.Box,
+		matches: (p) => p === "/batches" || p.startsWith("/batches/"),
+	},
+	{
 		href: "/skills",
 		label: "Skills",
 		Ic: I.Skills,

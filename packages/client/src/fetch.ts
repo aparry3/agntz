@@ -8,6 +8,7 @@ export interface RequestArgs {
 	body?: unknown;
 	signal?: AbortSignal;
 	accept?: string;
+	headers?: Record<string, string>;
 	fetchImpl: typeof fetch;
 }
 
@@ -34,7 +35,7 @@ export function composeSignal(
 
 export async function sendRequest(args: RequestArgs): Promise<Response> {
 	const url = joinUrl(args.baseUrl, args.path);
-	const headers: Record<string, string> = {};
+	const headers: Record<string, string> = { ...(args.headers ?? {}) };
 	if (args.body !== undefined) headers["Content-Type"] = "application/json";
 	if (args.apiKey) headers.Authorization = `Bearer ${args.apiKey}`;
 	if (args.accept) headers.Accept = args.accept;

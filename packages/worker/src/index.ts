@@ -33,3 +33,15 @@ export type {
 	ArtifactBlobStore,
 	S3ArtifactBlobStoreOptions,
 } from "./artifacts.js";
+export {
+	createDefaultBatchProviderRegistry,
+	cancelBatchRun,
+	reconcileBatchRuns,
+	submitBatchRun,
+} from "./batches/index.js";
+export type {
+	BatchProviderAdapter,
+	BatchProviderLimits,
+	BatchProviderRegistry,
+	SubmitBatchRunInput,
+} from "./batches/index.js";
