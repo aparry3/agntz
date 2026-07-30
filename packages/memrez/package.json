@@ -52,12 +52,12 @@
   "devDependencies": {
     "@agntz/core": "workspace:*",
     "@agntz/stores": "workspace:*",
-    "@biomejs/biome": "^1.9.0",
+    "@biomejs/biome": "^2.5.6",
     "@types/better-sqlite3": "^7.6.12",
-    "@types/node": "^22.0.0",
+    "@types/node": "^26.1.2",
     "tsup": "^8.5.0",
-    "typescript": "^5.9.0",
-    "vitest": "^3.2.0"
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
   },
   "engines": {
     "node": ">=22.0.0"

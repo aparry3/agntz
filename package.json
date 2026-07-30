@@ -21,11 +21,11 @@
     "release": "pnpm build && changeset publish"
   },
   "devDependencies": {
-    "@biomejs/biome": "^1.9.0",
+    "@biomejs/biome": "^2.5.6",
     "@changesets/changelog-git": "^0.2.1",
-    "@changesets/cli": "^2.30.0",
-    "lefthook": "^2.1.9",
-    "turbo": "^2.9.0"
+    "@changesets/cli": "^2.31.1",
+    "lefthook": "^2.1.10",
+    "turbo": "^2.10.7"
   },
   "pnpm": {
     "overrides": {
