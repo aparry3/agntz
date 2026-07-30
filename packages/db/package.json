@@ -52,11 +52,11 @@
   "author": "Aaron Bidworthy",
   "dependencies": {
     "@types/better-sqlite3": "^7.6.12",
-    "@types/pg": "^8.11.0"
+    "@types/pg": "^8.20.0"
   },
   "peerDependencies": {
-    "better-sqlite3": "^11.8.1",
-    "pg": "^8.20.0"
+    "better-sqlite3": "^13.0.2",
+    "pg": "^8.22.0"
   },
   "peerDependenciesMeta": {
     "better-sqlite3": {
@@ -67,8 +67,8 @@
     }
   },
   "devDependencies": {
-    "better-sqlite3": "^11.8.1",
-    "pg": "^8.20.0",
+    "better-sqlite3": "^13.0.2",
+    "pg": "^8.22.0",
     "tsup": "^8.5.0",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
