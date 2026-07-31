@@ -44,10 +44,10 @@
   "dependencies": {
     "@agntz/contracts": "workspace:*",
     "@agntz/db": "workspace:*",
-    "@types/pg": "^8.11.0",
-    "better-sqlite3": "^11.8.1",
-    "pg": "^8.20.0",
-    "zod": "^3.25.0"
+    "@types/pg": "^8.20.0",
+    "better-sqlite3": "^13.0.1",
+    "pg": "^8.22.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@agntz/core": "workspace:*",
