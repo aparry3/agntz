@@ -56,7 +56,7 @@
   "dependencies": {
     "@agntz/contracts": "workspace:*",
     "ai": "^6.0.0",
-    "nanoid": "^5.1.0",
+    "nanoid": "^5.1.16",
     "yaml": "^2.8.0",
     "zod": "^3.25.0",
     "@ai-sdk/openai": "^3.0.0",
