@@ -67,11 +67,11 @@
   },
   "devDependencies": {
     "@agntz/memrez": "workspace:*",
-    "@biomejs/biome": "^1.9.0",
-    "@types/node": "^22.0.0",
+    "@biomejs/biome": "^2.5.8",
+    "@types/node": "^26.2.0",
     "tsup": "^8.5.0",
-    "typescript": "^5.9.0",
-    "vitest": "^3.2.0"
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
   },
   "engines": {
     "node": ">=22.0.0"
