@@ -2,6 +2,7 @@
 "@agntz/core": minor
 "@agntz/memrez": patch
 "@agntz/contracts": patch
+"@agntz/db": patch
 "@agntz/sdk": patch
 ---
 

@@ -45,7 +45,7 @@
     "@agntz/contracts": "workspace:*",
     "@agntz/db": "workspace:*",
     "@types/pg": "^8.11.0",
-    "better-sqlite3": "^11.8.1",
+    "better-sqlite3": "^13.0.3",
     "pg": "^8.20.0",
     "zod": "^3.25.0"
   },
