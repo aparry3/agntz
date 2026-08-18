@@ -9,6 +9,9 @@ WORKDIR /app
 # Dependencies
 # ═══════════════════════════════════════════════════════════════
 FROM base AS deps
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends python3 make g++ \
+	&& rm -rf /var/lib/apt/lists/*
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json tsconfig.base.json turbo.json ./
 COPY scripts/install-hooks.mjs scripts/install-hooks.mjs
 COPY packages/contracts/package.json packages/contracts/
