@@ -1,5 +1,15 @@
 # @agntz/sdk
 
+## 0.3.2
+
+### Patch Changes
+
+- 15e4df1: Upgrade to the current AI SDK provider adapters and refresh built-in model
+  defaults, pricing, and templates for the August 2026 provider catalogs.
+- Updated dependencies [15e4df1]
+  - @agntz/core@0.5.0
+  - @agntz/stores@0.3.1
+
 ## 0.3.1
 
 ### Patch Changes

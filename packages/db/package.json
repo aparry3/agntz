@@ -1,6 +1,6 @@
 {
   "name": "@agntz/db",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Shared database plumbing for agntz stores — pooling, migrations, and connection hardening for Postgres and SQLite",
   "type": "module",
   "main": "./dist/index.js",

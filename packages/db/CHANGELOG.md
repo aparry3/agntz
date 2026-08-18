@@ -1,5 +1,12 @@
 # @agntz/db
 
+## 0.2.1
+
+### Patch Changes
+
+- 15e4df1: Upgrade to the current AI SDK provider adapters and refresh built-in model
+  defaults, pricing, and templates for the August 2026 provider catalogs.
+
 ## 0.2.0
 
 ### Minor Changes

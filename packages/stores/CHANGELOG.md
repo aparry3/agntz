@@ -1,5 +1,13 @@
 # @agntz/stores
 
+## 0.3.1
+
+### Patch Changes
+
+- Updated dependencies [15e4df1]
+  - @agntz/contracts@0.4.1
+  - @agntz/db@0.2.1
+
 ## 0.3.0
 
 ### Minor Changes
