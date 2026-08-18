@@ -430,19 +430,6 @@ export function AppSidebar() {
 			>
 				{isSignedIn ? (
 					<>
-						<div style={{ flex: "0 0 auto" }}>
-							<UserButton
-								appearance={{
-									elements: {
-										avatarBox: {
-											width: collapsed ? 24 : 22,
-											height: collapsed ? 24 : 22,
-											borderRadius: 4,
-										},
-									},
-								}}
-							/>
-						</div>
 						{!collapsed && (
 							<div style={{ flex: 1, minWidth: 0 }}>
 								<div style={{ fontSize: 12.5, fontWeight: 500, color: ag.ink }}>
@@ -464,10 +451,27 @@ export function AppSidebar() {
 							</div>
 						)}
 						{!collapsed && <I.Ellipsis size={14} />}
+						<div
+							style={{
+								flex: "0 0 auto",
+								marginLeft: collapsed ? 0 : "auto",
+							}}
+						>
+							<UserButton
+								appearance={{
+									elements: {
+										avatarBox: {
+											width: collapsed ? 24 : 22,
+											height: collapsed ? 24 : 22,
+											borderRadius: 4,
+										},
+									},
+								}}
+							/>
+						</div>
 					</>
 				) : (
 					<>
-						<Avatar name="?" size={collapsed ? 24 : 22} square />
 						{!collapsed && (
 							<Link
 								href="/sign-in"
@@ -481,6 +485,7 @@ export function AppSidebar() {
 								Sign in
 							</Link>
 						)}
+						<Avatar name="?" size={collapsed ? 24 : 22} square />
 					</>
 				)}
 			</div>
