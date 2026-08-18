@@ -3,6 +3,7 @@ import { AISDKModelProvider } from "../src/model-provider.js";
 
 const mocks = vi.hoisted(() => ({
 	generateText: vi.fn(),
+	streamText: vi.fn(),
 	outputObject: vi.fn((config: unknown) => ({ type: "object", config })),
 	createCohere: vi.fn(() => vi.fn(() => ({ provider: "cohere-test" }))),
 	createOpenAI: vi.fn(() => vi.fn(() => ({ provider: "openai-test" }))),
@@ -10,6 +11,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("ai", () => ({
 	generateText: mocks.generateText,
+	streamText: mocks.streamText,
 	tool: (config: unknown) => ({ type: "function", config }),
 	Output: { object: mocks.outputObject },
 	jsonSchema: (schema: unknown) => schema,
@@ -26,9 +28,94 @@ vi.mock("@ai-sdk/openai", () => ({
 describe("AISDKModelProvider", () => {
 	beforeEach(() => {
 		mocks.generateText.mockReset();
+		mocks.streamText.mockReset();
 		mocks.outputObject.mockClear();
 		mocks.createCohere.mockClear();
 		mocks.createOpenAI.mockClear();
+	});
+
+	it("passes system messages through the AI SDK instructions option", async () => {
+		mocks.generateText.mockResolvedValueOnce({
+			text: "ok",
+			response: { id: "response_123", modelId: "gpt-5.6-terra", messages: [] },
+			usage: { inputTokens: 5, outputTokens: 2, totalTokens: 7 },
+			finishReason: "stop",
+			rawFinishReason: "stop",
+			warnings: [],
+		});
+
+		const provider = new AISDKModelProvider();
+		await provider.generateText({
+			model: { provider: "openai", name: "gpt-5.6-terra" },
+			messages: [
+				{ role: "system", content: "You are a helpful assistant." },
+				{ role: "user", content: "First question" },
+				{ role: "assistant", content: "First answer" },
+				{ role: "system", content: "[Conversation Summary] Earlier context" },
+				{ role: "user", content: "Follow-up question" },
+			],
+		});
+
+		expect(mocks.generateText).toHaveBeenCalledWith(
+			expect.objectContaining({
+				instructions: [
+					{ role: "system", content: "You are a helpful assistant." },
+					{
+						role: "system",
+						content: "[Conversation Summary] Earlier context",
+					},
+				],
+				messages: [
+					{ role: "user", content: "First question" },
+					{ role: "assistant", content: "First answer" },
+					{ role: "user", content: "Follow-up question" },
+				],
+			}),
+		);
+	});
+
+	it("passes system messages through instructions when streaming", async () => {
+		mocks.streamText.mockReturnValueOnce({
+			textStream: {
+				async *[Symbol.asyncIterator]() {
+					yield "ok";
+				},
+			},
+			text: Promise.resolve("ok"),
+			toolCalls: Promise.resolve([]),
+			usage: Promise.resolve({
+				inputTokens: 5,
+				outputTokens: 2,
+				totalTokens: 7,
+			}),
+			finishReason: Promise.resolve("stop"),
+			rawFinishReason: Promise.resolve("stop"),
+			providerMetadata: Promise.resolve(undefined),
+			response: Promise.resolve({
+				id: "response_123",
+				modelId: "gpt-5.6-terra",
+				messages: [],
+			}),
+			warnings: Promise.resolve([]),
+		});
+
+		const provider = new AISDKModelProvider();
+		await provider.streamText({
+			model: { provider: "openai", name: "gpt-5.6-terra" },
+			messages: [
+				{ role: "system", content: "You are a helpful assistant." },
+				{ role: "user", content: "Hello" },
+			],
+		});
+
+		expect(mocks.streamText).toHaveBeenCalledWith(
+			expect.objectContaining({
+				instructions: [
+					{ role: "system", content: "You are a helpful assistant." },
+				],
+				messages: [{ role: "user", content: "Hello" }],
+			}),
+		);
 	});
 
 	it("forwards common and provider-scoped model settings", async () => {

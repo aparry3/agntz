@@ -19,6 +19,39 @@ type AiStructuredOutputConfig = Pick<
 >;
 
 /**
+ * AI SDK 7 no longer accepts system messages in the `messages` option by
+ * default. Keep the ModelProvider contract provider-neutral, but move system
+ * messages into the SDK's dedicated `instructions` option at this boundary.
+ */
+function splitInstructions(source: GenerateTextOptions["messages"]): {
+	instructions: AiGenerateTextOptions["instructions"];
+	messages: ModelMessage[];
+} {
+	const instructions: Array<{ role: "system"; content: string }> = [];
+	const messages: ModelMessage[] = [];
+
+	for (const message of source) {
+		if (message.role === "system") {
+			if (typeof message.content !== "string") {
+				throw new TypeError("System message content must be a string");
+			}
+			instructions.push({ role: "system", content: message.content });
+			continue;
+		}
+
+		messages.push({
+			role: message.role as "user" | "assistant" | "tool",
+			content: message.content,
+		} as ModelMessage);
+	}
+
+	return {
+		instructions: instructions.length > 0 ? instructions : undefined,
+		messages,
+	};
+}
+
+/**
  * Default model provider using the Vercel AI SDK (`ai` package).
  * Checks the ProviderStore for API keys first, then falls back to env vars.
  */
@@ -34,10 +67,7 @@ export class AISDKModelProvider implements ModelProvider {
 		const { generateText, Output, jsonSchema } = await import("ai");
 		const model = await this.resolveModel(options.model);
 
-		const messages = options.messages.map((m) => ({
-			role: m.role as "system" | "user" | "assistant" | "tool",
-			content: m.content,
-		})) as ModelMessage[];
+		const { instructions, messages } = splitInstructions(options.messages);
 
 		// Build tools map for the AI SDK
 		const tools: ToolSet = {};
@@ -67,6 +97,7 @@ export class AISDKModelProvider implements ModelProvider {
 		try {
 			result = await generateText({
 				model,
+				instructions,
 				messages,
 				tools: Object.keys(tools).length > 0 ? tools : undefined,
 				output,
@@ -116,10 +147,7 @@ export class AISDKModelProvider implements ModelProvider {
 		const { streamText, Output, jsonSchema } = await import("ai");
 		const model = await this.resolveModel(options.model);
 
-		const messages = options.messages.map((m) => ({
-			role: m.role as "system" | "user" | "assistant" | "tool",
-			content: m.content,
-		})) as ModelMessage[];
+		const { instructions, messages } = splitInstructions(options.messages);
 
 		// Build tools map
 		const tools: ToolSet = {};
@@ -149,6 +177,7 @@ export class AISDKModelProvider implements ModelProvider {
 		try {
 			result = streamText({
 				model,
+				instructions,
 				messages,
 				tools: Object.keys(tools).length > 0 ? tools : undefined,
 				output,
