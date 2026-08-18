@@ -44,16 +44,16 @@
   "dependencies": {
     "@agntz/contracts": "workspace:*",
     "@agntz/db": "workspace:*",
-    "@types/pg": "^8.11.0",
+    "@types/pg": "^8.21.0",
     "better-sqlite3": "^13.0.3",
-    "pg": "^8.20.0",
-    "zod": "^3.25.0"
+    "pg": "^8.23.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@agntz/core": "workspace:*",
     "@agntz/stores": "workspace:*",
     "@biomejs/biome": "^1.9.0",
-    "@types/better-sqlite3": "^7.6.12",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^22.0.0",
     "tsup": "^8.5.0",
     "typescript": "^5.9.0",

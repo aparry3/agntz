@@ -56,9 +56,9 @@
   "dependencies": {
     "@agntz/contracts": "workspace:*",
     "ai": "^7.0.0",
-    "nanoid": "^5.1.16",
-    "yaml": "^2.8.0",
-    "zod": "^3.25.0",
+    "nanoid": "^6.0.1",
+    "yaml": "^2.9.0",
+    "zod": "^4.4.3",
     "@ai-sdk/openai": "^4.0.0",
     "@ai-sdk/anthropic": "^4.0.0",
     "@ai-sdk/google": "^4.0.0",
@@ -70,8 +70,8 @@
     "@ai-sdk/cohere": "^4.0.0",
     "@ai-sdk/azure": "^4.0.0",
     "@openrouter/ai-sdk-provider": "^3.0.0",
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "ajv": "^8.17.1"
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "ajv": "^8.20.0"
   },
   "peerDependencies": {
     "@opentelemetry/api": "^1.0.0"
