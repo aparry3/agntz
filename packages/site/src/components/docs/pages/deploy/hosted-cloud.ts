@@ -53,6 +53,20 @@ Every UI-side change is versioned. Runs using \`session\` retention are traced;
 \`result\` stores a redacted durable result, and \`none\` intentionally leaves
 no durable run, trace, or session data.
 
+## From local YAML to hosted cloud
+
+Use the Node CLI to validate and publish manifests from your repository. A dry run still requires hosted credentials because validation includes the hosted import endpoint.
+
+\`\`\`bash
+agntz login --key ar_live_...
+agntz validate ./agents
+agntz publish agents --agents-dir ./agents --dry-run
+agntz publish agents --agents-dir ./agents --yes
+agntz run support-agent --remote --input "Hello"
+\`\`\`
+
+When an agent id already exists, the default publish behavior creates a new version. Use \`--skip-existing\` or \`--fail-existing\` when CI should handle that conflict differently. The CLI publishes YAML manifests, not local in-process tool-handler code; hosted runs need MCP/HTTP tools, signed callbacks, or other dependencies reachable by the worker. See the [CLI reference](/docs/sdk-cli/cli#publish) for every publish option.
+
 ## Versioning
 
 Every save creates a new version of the agent. Runs can resolve a bare id, \`@latest\`, an exact version timestamp, or an alias when aliases are configured. The version that produced any given run or trace is recorded, so you can jump from an observation back to the exact manifest that ran.

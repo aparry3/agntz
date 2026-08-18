@@ -1,6 +1,6 @@
 export default `# CLI reference
 
-The \`agntz\` CLI ships inside \`@agntz/sdk\`. It creates YAML manifests, runs agents locally, publishes local state, and manages hosted runs, traces, and evals from the terminal.
+The \`agntz\` CLI ships inside \`@agntz/sdk\`. It creates and edits YAML manifests, runs agents locally, publishes local state, and manages hosted runs, traces, and evals from the terminal.
 
 \`\`\`bash
 # Run without installing
@@ -18,6 +18,7 @@ For the first local workflow, start with [CLI getting started](/docs/cli-quickst
 | Command | Local? | Hosted? | Auth? | Purpose |
 |---|---:|---:|---:|---|
 | \`create\` | - | ✓ | No | Generate YAML from a description through the hosted builder. |
+| \`edit\` | ✓ | ✓ | No | Send a local YAML draft to the hosted editor and write or print the revision. |
 | \`validate <path>\` | ✓ | - | No | Validate YAML, duplicate ids, and cross-file agent refs. |
 | \`run <path>\` | ✓ | - | No | Run a local YAML file or single-agent directory. |
 | \`run <id>\` | - | ✓ | Yes | Run a hosted agent by id. |
@@ -31,9 +32,12 @@ Every command supports terminal help:
 
 \`\`\`bash
 agntz create --help
+agntz edit --help
 agntz validate --help
 agntz run --help
 agntz login --help
+agntz logout --help
+agntz whoami --help
 agntz publish --help
 agntz runs --help
 agntz traces --help
@@ -85,6 +89,35 @@ agntz create "Classify inbound leads by urgency" --stdout > ./agents/lead-classi
 \`\`\`
 
 \`create\` validates that the builder returned YAML, parses the manifest to get its \`id\`, creates parent directories as needed, and prints the local \`run\` command to try next.
+
+## \`edit\`
+
+\`\`\`bash
+agntz edit <manifest.yaml> "<change request>" [options]
+\`\`\`
+
+Sends an existing local manifest and a change request to the hosted agent editor. No login is required. By default, the complete revised YAML is printed to stdout.
+
+| Flag | Description |
+|---|---|
+| \`-o, --output <path>\` | Write the revised YAML to another path. |
+| \`--write\` | Overwrite the input manifest. Cannot be combined with \`--output\`. |
+| \`--select <agentId>\` | Limit the edit to one uniquely matching inline or referenced agent block. |
+| \`--url <apiUrl>\` | Override the editor API URL for this call. |
+| \`-h, --help\` | Show command help. |
+
+Examples:
+
+\`\`\`bash
+agntz edit ./agents/support.yaml "make the tone more concise" --write
+
+agntz edit ./agents/pipeline.yaml \\
+  "change the classifier output to include urgency" \\
+  --select classifier \\
+  -o ./agents/pipeline.next.yaml
+
+agntz edit ./agents/support.yaml "add an account id input" > ./agents/support.next.yaml
+\`\`\`
 
 ## \`validate\`
 
@@ -190,21 +223,35 @@ Migrates local manifests, persisted sessions, and memrez memory into hosted stor
 agntz publish [all|agents|sessions|memory...] [options]
 \`\`\`
 
-Common options:
+With no entity arguments, \`publish\` attempts to discover and publish all three entity types. An explicitly requested missing source is an error; an undiscovered optional source is reported as skipped.
+
+Options:
 
 | Flag | Description |
 |---|---|
-| \`--agents <dir>\` | Local agents directory. Default: \`./agents\`. |
-| \`--db <path>\` | Local SDK SQLite store for sessions. |
+| \`--agents-dir <dir>\` | Recursively scanned agent manifest directory. Default: \`./agents\`. |
+| \`--db <path>\` | Local SDK SQLite store for sessions. Defaults to \`./agntz.db\` when that file exists. |
 | \`--memory-db <path>\` | Local memrez SQLite store. Default: \`./memory.db\` or \`./memrez.db\` if present. |
 | \`--dry-run\` | Report what would be imported without writing hosted state. |
+| \`--yes\` | Skip the interactive confirmation. Required for a non-interactive publish unless using \`--dry-run\`. |
+| \`--skip-existing\` | Skip hosted agents whose ids already exist instead of creating new versions. |
+| \`--fail-existing\` | Fail when a hosted agent or session already exists. Cannot be combined with \`--skip-existing\`. |
 | \`--include-superseded\` | Include superseded memory entries. |
+| \`--url <apiUrl>\` | Override the hosted API URL for this call. |
+| \`--json\` | Print a machine-readable result. |
+| \`-h, --help\` | Show command help. |
+
+Existing agent ids create new hosted versions by default. Existing session snapshots are skipped by default. Publishing a manifest does not upload arbitrary in-process tool or resource-provider code; move those dependencies to hosted MCP/HTTP tools or signed callback endpoints before running the agent remotely.
 
 Examples:
 
 \`\`\`bash
-agntz publish all --dry-run
-agntz publish agents sessions memory --db ./agntz.db --memory-db ./memory.db
+agntz login --key ar_live_...
+agntz publish agents --agents-dir ./agents --dry-run
+agntz publish agents --agents-dir ./agents --yes
+agntz run support --remote --input "Hello from the hosted runtime"
+
+agntz publish agents sessions memory --db ./agntz.db --memory-db ./memory.db --yes
 agntz publish memory --memory-db ./memrez.db
 \`\`\`
 
@@ -256,7 +303,7 @@ Hosted eval management. Requires \`AGNTZ_API_KEY\` or \`agntz login\`.
 agntz eval run    <evalId> [--dataset <id>] [--version <agentVersion>]
 agntz eval runs   [--agent <id>] [--eval <id>] [--dataset <id>] [--status <s>] [--limit <n>] [--cursor <c>]
 agntz eval cancel <runId>
-agntz eval scores [--agent <id>] [--eval <id>] [--dataset <id>] [--version <createdAt>]
+agntz eval scores [--agent <id>] [--eval <id>] [--dataset <id>] [--version <createdAt>] [--status <s>]
 agntz eval get    <evalId>
 \`\`\`
 
@@ -271,7 +318,7 @@ agntz eval get support-quality
 
 ## Current CLI boundary
 
-The CLI covers manifest generation, recursive validation, local execution, hosted execution, state publishing, hosted run/trace inspection, and hosted eval execution. It does not provide project scaffolding, an interactive playground, or a Studio launcher. Use the SDK for application runtime wiring and the hosted app for managed agent editing.
+The CLI covers manifest generation and AI-assisted editing, recursive validation, local execution, hosted execution, state publishing, hosted run/trace inspection, and hosted eval execution. It does not provide project scaffolding, an interactive playground, or a Studio launcher. Use the SDK for application runtime wiring and the hosted app for interactive managed editing.
 
 ## Exit behavior
 

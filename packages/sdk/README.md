@@ -311,8 +311,20 @@ const run = await client.evals.run({ evalId: "support-quality" });
 const scores = await client.evals.listLatestScores({ evalId: "support-quality" });
 ```
 
-Use `agntz publish agents sessions memory` to migrate local manifests, sessions,
-and memrez entries to a hosted or self-hosted worker.
+Use `agntz publish` to migrate local manifests, sessions, and memrez entries to
+a hosted or self-hosted worker:
+
+```bash
+agntz login --key ar_live_...
+agntz publish agents --agents-dir ./agents --dry-run
+agntz publish agents --agents-dir ./agents --yes
+agntz publish sessions memory --db ./agntz.db --memory-db ./memory.db --yes
+```
+
+Existing agent ids create new hosted versions by default. Use
+`--skip-existing` or `--fail-existing` to select a different conflict policy.
+The CLI publishes manifests and persisted state, not arbitrary local
+tool-handler code.
 
 ## Streaming
 

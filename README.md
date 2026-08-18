@@ -84,6 +84,17 @@ print(result.output)
 Runnable TypeScript and Python programs using the shared manifests live in
 [`examples`](./examples).
 
+Publish local manifests to hosted Agntz:
+
+```sh
+npx @agntz/sdk login --key ar_live_...
+npx @agntz/sdk publish agents --agents-dir ./agents --dry-run
+npx @agntz/sdk publish agents --agents-dir ./agents --yes
+```
+
+Publishing an existing agent id creates a new hosted version by default. The
+CLI publishes manifests, not arbitrary local tool-handler code.
+
 Call a hosted or self-hosted worker:
 
 ```ts

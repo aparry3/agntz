@@ -50,15 +50,15 @@ operation adapters; the local CLI currently executes \`llm\`, \`tool\`,
 
 ## 2. Edit or iterate
 
-You can edit YAML directly, or ask the builder to revise the existing manifest:
+You can edit YAML directly, or ask the hosted editor to revise the existing manifest:
 
 \`\`\`bash
-agntz create "Revise this support agent so it asks one clarifying question when the request is ambiguous." \\
-  --current-manifest ./agents/support.yaml \\
-  -o ./agents/support.yaml
+agntz edit ./agents/support.yaml \\
+  "Ask one clarifying question when the request is ambiguous." \\
+  --write
 \`\`\`
 
-Use direct YAML edits for exact IDs, model changes, prompts, schemas, and tool wiring. Use \`--current-manifest\` when you want a generated structural change.
+Use direct YAML edits for exact IDs, model changes, prompts, schemas, and tool wiring. Use \`agntz edit --select <agentId>\` to target one uniquely matching block in a composed manifest. The older \`create --current-manifest\` revision flow also remains supported.
 
 ## 3. Run locally
 
@@ -126,14 +126,20 @@ console.log(result.output);
 
 The terminal CLI can load local YAML and run HTTP/MCP/LLM-only agents. It cannot register arbitrary in-repo local tool handlers by itself; those handlers live in \`agntz({ tools: [...] })\` in your application code.
 
-## 5. Optional hosted invocation
+## 5. Optional hosted publishing and invocation
 
-When you have an agent saved in hosted agntz, log in and run by id:
+Log in with an API key from the hosted or self-hosted dashboard, preview the import, then publish the local manifests. Publishing an existing agent id creates a new hosted version by default.
 
 \`\`\`bash
 agntz login --key ar_live_...
-agntz run support --input "Hello from the hosted runtime"
+agntz publish agents --agents-dir ./agents --dry-run
+agntz publish agents --agents-dir ./agents --yes
+agntz run support --remote --input "Hello from the hosted runtime"
 \`\`\`
+
+Use \`--skip-existing\` to leave existing hosted ids unchanged or \`--fail-existing\` to treat them as errors. \`--yes\` skips the confirmation prompt and is required for non-interactive publishing unless the command is a dry run.
+
+The publish command uploads manifests, not arbitrary in-process TypeScript or Python tool handlers. Before running remotely, expose those dependencies as hosted MCP/HTTP tools or signed callback endpoints and configure the worker's provider credentials.
 
 A bare target like \`support\` is treated as hosted. Force hosted mode with \`--remote\`; force local mode with \`--local\`.
 
@@ -161,12 +167,12 @@ If you are asking Claude Code, Codex, or another coding agent to use agntz in a 
 Use agntz locally first.
 1. Check whether this repo already has an agents/ directory.
 2. Install or invoke the CLI from @agntz/sdk.
-3. Create or update ./agents/<agent-id>.yaml with agntz create.
+3. Create ./agents/<agent-id>.yaml with agntz create; revise it with agntz edit or direct YAML changes.
 4. Inspect the YAML and make direct edits for ids, prompts, schemas, models, tools, and resources.
 5. Validate the manifest set with agntz validate ./agents.
 6. Run the YAML with agntz run ./agents/<agent-id>.yaml --input "...".
 7. If the agent needs local code tools or resource providers, add @agntz/sdk service code and pass tools/resources to agntz(...).
-8. Treat hosted login and hosted run management as optional follow-up work.
+8. When hosted execution is needed, log in, dry-run \`agntz publish agents --agents-dir ./agents\`, publish with \`--yes\`, and run the hosted id with \`--remote\`.
 \`\`\`
 
 ## Current CLI boundary

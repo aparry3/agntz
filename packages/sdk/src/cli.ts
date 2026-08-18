@@ -200,6 +200,9 @@ Description:
   Publishes local agent manifests, persisted sessions, and memrez memory into
   your hosted agntz account. With no entities, defaults to "all".
 
+Auth:
+  Requires AGNTZ_API_KEY or agntz login, including for --dry-run.
+
 Entities:
   all        Publish every discoverable entity type
   agents    YAML manifests from --agents-dir
@@ -226,6 +229,9 @@ Examples:
   agntz publish sessions --db ./agntz.db
   agntz publish memory --memory-db ./memory.db
   agntz publish agents sessions memory --dry-run
+
+Existing agent ids create new versions by default. Use --skip-existing or
+--fail-existing to change that behavior.
 `;
 
 const EDIT_HELP = `agntz edit — revise a local agent YAML manifest
@@ -327,7 +333,7 @@ Usage:
   agntz eval run  <evalId> [--dataset <id>] [--version <agentVersion>]
   agntz eval runs [--agent <id>] [--eval <id>] [--dataset <id>] [--status <s>] [--limit <n>] [--cursor <c>]
   agntz eval cancel <runId>
-  agntz eval scores [--agent <id>] [--eval <id>] [--dataset <id>] [--version <createdAt>]
+  agntz eval scores [--agent <id>] [--eval <id>] [--dataset <id>] [--version <createdAt>] [--status <s>]
   agntz eval get  <evalId>
 
 Auth:

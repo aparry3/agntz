@@ -82,7 +82,7 @@ export const DOCS_GROUPS: DocsGroup[] = [
 				slug: "cli-quickstart",
 				title: "CLI getting started",
 				description:
-					"Create, edit, run, and call agents locally with the agntz CLI.",
+					"Create, edit, validate, run, and publish agents with the agntz CLI.",
 				markdown: cliQuickstart,
 			},
 		],
@@ -277,7 +277,7 @@ export const DOCS_GROUPS: DocsGroup[] = [
 				slug: "sdk-cli/cli",
 				title: "CLI reference",
 				description:
-					"Full reference for the agntz CLI: create, run, login, runs, traces.",
+					"Full reference for the agntz CLI: create, edit, validate, run, publish, auth, runs, traces, and evals.",
 				markdown: sdkCliCli,
 			},
 		],
