@@ -43,11 +43,11 @@
     "@agntz/contracts": "workspace:*",
     "@agntz/db": "workspace:*",
     "@types/better-sqlite3": "^7.6.12",
-    "@types/pg": "^8.11.0"
+    "@types/pg": "^8.21.0"
   },
   "peerDependencies": {
-    "better-sqlite3": "^11.8.1",
-    "pg": "^8.20.0"
+    "better-sqlite3": "^13.0.3",
+    "pg": "^8.23.0"
   },
   "peerDependenciesMeta": {
     "better-sqlite3": {
@@ -60,8 +60,8 @@
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",
     "@types/node": "^22.0.0",
-    "better-sqlite3": "^11.8.1",
-    "pg": "^8.20.0",
+    "better-sqlite3": "^13.0.3",
+    "pg": "^8.23.0",
     "tsup": "^8.5.0",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
