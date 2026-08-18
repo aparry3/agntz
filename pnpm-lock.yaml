@@ -6,7 +6,7 @@ settings:
 
 overrides:
   fast-uri: 3.1.5
-  '@hono/node-server': 1.19.13
+  '@hono/node-server': 1.19.15
   hono: 4.12.29
   ip-address: 10.3.1
   path-to-regexp: 8.4.0
@@ -453,8 +453,8 @@ importers:
         specifier: ^3.1097.0
         version: 3.1097.0
       '@hono/node-server':
-        specifier: 1.19.13
-        version: 1.19.13(hono@4.12.29)
+        specifier: 1.19.15
+        version: 1.19.15(hono@4.12.29)
       ai:
         specifier: ^7.0.0
         version: 7.0.66(zod@3.25.76)
@@ -583,6 +583,9 @@ packages:
   '@aws-sdk/core@3.977.2':
     resolution: {integrity: sha512-8sT/M5vDcagx5/iM0Bfx7f6i3mfVOQkA34+GTMwp0lIWZb6ma+bjkzDS/r9yqU2yTPBqqMBFPT3+d9kUuuNDJA==}
     engines: {node: '>=20.0.0'}
+    deprecated: |-
+      Deprecated due to Document number parsing bug in JSON, see
+        https://github.com/aws/aws-sdk-js-v3/issues/8246. Newer version available.
 
   '@aws-sdk/credential-provider-env@3.972.63':
     resolution: {integrity: sha512-VSS9dftt7r7GiZ4gs8z0PNaMLVAaSj/MXVr6WQBtsrQQB9miJo7I6lQuJND1/ugFwK9x7OHCYZDkLSYh0FIZtA==}
@@ -1102,8 +1105,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@hono/node-server@1.19.13':
-    resolution: {integrity: sha512-TsQLe4i2gvoTtrHje625ngThGBySOgSK3Xo2XRYOdqGN1teR8+I7vchQC46uLJi8OF62YTYA3AhSpumtkhsaKQ==}
+  '@hono/node-server@1.19.15':
+    resolution: {integrity: sha512-Za2ai6TLdKjUvnur+eenO6nuYYipVAEhyCAdaV8IRvmU9kK8crOZUSYvIXn72E4f8fJqyAbpcJuTsYYmZp9Deg==}
     engines: {node: '>=18.14.1'}
     peerDependencies:
       hono: 4.12.29
@@ -4066,7 +4069,7 @@ snapshots:
   '@esbuild/win32-x64@0.28.0':
     optional: true
 
-  '@hono/node-server@1.19.13(hono@4.12.29)':
+  '@hono/node-server@1.19.15(hono@4.12.29)':
     dependencies:
       hono: 4.12.29
 
@@ -4221,7 +4224,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.29.0(zod@3.25.76)':
     dependencies:
-      '@hono/node-server': 1.19.13(hono@4.12.29)
+      '@hono/node-server': 1.19.15(hono@4.12.29)
       ajv: 8.18.0
       ajv-formats: 3.0.1(ajv@8.18.0)
       content-type: 1.0.5
