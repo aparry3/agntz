@@ -1,5 +1,17 @@
 # @agntz/core
 
+## 0.5.0
+
+### Minor Changes
+
+- 15e4df1: Upgrade to the current AI SDK provider adapters and refresh built-in model
+  defaults, pricing, and templates for the August 2026 provider catalogs.
+
+### Patch Changes
+
+- Updated dependencies [15e4df1]
+  - @agntz/contracts@0.4.1
+
 ## 0.4.0
 
 ### Minor Changes
