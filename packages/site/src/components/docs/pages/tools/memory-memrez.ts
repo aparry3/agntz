@@ -24,7 +24,7 @@ name: Support with Memory
 kind: llm
 model:
   provider: openai
-  name: gpt-5.4
+  name: gpt-5.6-sol
 instruction: |
   Help the user. Use memory when it is relevant, and write only stable facts or preferences.
 resources:

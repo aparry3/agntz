@@ -137,7 +137,7 @@ export function AgentBuilder({
 		const newAgent = {
 			id: `step-${Date.now().toString(36)}`,
 			kind: "llm",
-			model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+			model: { provider: "anthropic", name: "claude-sonnet-5" },
 			instruction: "Write the system prompt here.",
 		};
 		const arrPath: PipelinePath =

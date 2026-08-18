@@ -17,14 +17,14 @@ Spans nest. A sequential pipeline's trace looks like:
 agent.invoke article-pipeline
 ├── agent.invoke research-phase   (parallel)
 │   ├── agent.invoke web-researcher
-│   │   └── model.call gpt-5.4
+│   │   └── model.call gpt-5.6-sol
 │   └── agent.invoke academic-researcher
-│       └── model.call gpt-5.4
+│       └── model.call gpt-5.6-sol
 └── agent.invoke write-review
     ├── agent.invoke writer
-    │   └── model.call claude-sonnet-4-6
+    │   └── model.call claude-sonnet-5
     └── agent.invoke editor
-        └── model.call gpt-5.4-mini
+        └── model.call gpt-5.6-terra
 \`\`\`
 
 ## Listing and inspecting

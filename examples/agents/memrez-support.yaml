@@ -3,7 +3,7 @@ name: memrez Support Example
 kind: llm
 model:
   provider: openai
-  name: gpt-5.4-mini
+  name: gpt-5.6-terra
 instruction: |
   You are a support assistant. Use memory when it helps personalize answers.
 resources:

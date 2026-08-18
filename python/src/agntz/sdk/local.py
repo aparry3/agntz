@@ -1760,7 +1760,7 @@ def _agent_definition_from_manifest(
 ) -> StoredAgentDefinition:
     model = getattr(manifest, "model", None)
     provider = getattr(model, "provider", "openai")
-    name = getattr(model, "name", "gpt-5.4")
+    name = getattr(model, "name", "gpt-5.6-sol")
     metadata: dict[str, Any] = {"kind": manifest.kind}
     if source is not None:
         metadata["manifest"] = source

@@ -70,8 +70,8 @@ templates by name.
 
 \`\`\`yaml
 model:
-  provider: openai
-  name: gpt-5.4
+  provider: mistral
+  name: mistral-small-2603
   temperature: 0.7
   maxTokens: 4096
   topP: 0.95

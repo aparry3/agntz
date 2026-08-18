@@ -14,9 +14,12 @@ pnpm --filter @agntz/provider-harness test
 
 ## Live smoke suite
 
-The smoke suite selects one representative model per configured provider and
-runs text, tool-roundtrip, and structured-output cases against both the
-TypeScript and Python SDKs.
+The smoke suite selects one representative current model per configured
+provider and runs text, tool-roundtrip, and structured-output cases against
+both the TypeScript and Python SDKs. It covers OpenAI, Anthropic, Google,
+Mistral, xAI, Groq, DeepSeek, Perplexity, Cohere, and OpenRouter. Azure is not
+in the shared matrix because its request model is a deployment name chosen by
+the account owner rather than a portable model id.
 
 ```sh
 pnpm test:providers:smoke

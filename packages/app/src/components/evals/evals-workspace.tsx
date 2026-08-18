@@ -1215,7 +1215,7 @@ function ModelFields({
 	model?: ModelConfig;
 	onChange: (model: ModelConfig | undefined) => void;
 }) {
-	const current = model ?? { provider: "openai", name: "gpt-5.4-mini" };
+	const current = model ?? { provider: "openai", name: "gpt-5.6-terra" };
 	return (
 		<>
 			<EditableText
@@ -1439,7 +1439,7 @@ function newEval(agentId: string, dataset?: EvalDataset): EvalDefinition {
 		defaultDataset: dataset ? { id: dataset.id } : undefined,
 		defaultDatasetId: dataset?.id,
 		passPolicy: { minimumScore: 0.7 },
-		judge: { model: { provider: "openai", name: "gpt-5.4-mini" } },
+		judge: { model: { provider: "openai", name: "gpt-5.6-terra" } },
 		criteria: [
 			{
 				id: "quality",

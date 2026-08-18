@@ -257,7 +257,7 @@ function scaffoldFor(
 			return {
 				id,
 				kind: "llm",
-				model: { provider: "openai", name: "gpt-5.4" },
+				model: { provider: "openai", name: "gpt-5.6-sol" },
 				instruction: "Describe what this step should do.",
 			};
 		case "tool":

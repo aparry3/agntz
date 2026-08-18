@@ -126,7 +126,7 @@ export async function POST(req: NextRequest) {
 			id,
 			name: name ?? id,
 			systemPrompt: "",
-			model: { provider: "openai", name: "gpt-5.4" },
+			model: { provider: "openai", name: "gpt-5.6-sol" },
 			metadata: { manifest, ...rest },
 		});
 

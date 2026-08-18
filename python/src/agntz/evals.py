@@ -31,7 +31,7 @@ from agntz.client.models import (
 from agntz.core.ids import nanoid
 
 DEFAULT_PASS_THRESHOLD = 0.7
-DEFAULT_JUDGE_MODEL = ModelConfig(provider="openai", name="gpt-5.4-mini")
+DEFAULT_JUDGE_MODEL = ModelConfig(provider="openai", name="gpt-5.6-terra")
 JUDGE_SYSTEM_PROMPT = (
     "You are the hidden Agntz eval judge. Score the target agent output against "
     "each rubric criterion. Return only the requested structured JSON."

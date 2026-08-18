@@ -25,7 +25,7 @@ id: support
 kind: llm
 model:
   provider: anthropic
-  name: claude-sonnet-4-6
+  name: claude-sonnet-5
 instruction: |
   You are a friendly customer support agent. Answer concisely.
 
@@ -59,7 +59,7 @@ The model can call functions you define in code. Reference them in YAML by name,
 # agents/calculator.yaml
 id: calculator
 kind: llm
-model: { provider: openai, name: gpt-5.4-mini }
+model: { provider: openai, name: gpt-5.6-terra }
 instruction: |
   Use the `add` tool to answer math questions.
 

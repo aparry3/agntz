@@ -36,20 +36,20 @@ export interface LlmReasonerOptions {
 	 * tagging and throws a clear setup error if a real model call is required.
 	 */
 	modelProvider?: ModelProvider;
-	/** Override the tagger model. Default: openai/gpt-5.4-mini. */
+	/** Override the tagger model. Default: openai/gpt-5.6-luna. */
 	taggerModel?: ReasonerModelConfig;
-	/** Override the curator model. Default: openai/gpt-5.4. */
+	/** Override the curator model. Default: openai/gpt-5.6-sol. */
 	curatorModel?: ReasonerModelConfig;
 }
 
 export const DEFAULT_TAGGER_MODEL: ReasonerModelConfig = {
 	provider: "openai",
-	name: "gpt-5.4-mini",
+	name: "gpt-5.6-luna",
 };
 
 export const DEFAULT_CURATOR_MODEL: ReasonerModelConfig = {
 	provider: "openai",
-	name: "gpt-5.4",
+	name: "gpt-5.6-sol",
 };
 
 const TAGGER_INSTRUCTION = `You normalize one memory fact.

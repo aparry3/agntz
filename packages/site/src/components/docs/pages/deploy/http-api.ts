@@ -212,7 +212,7 @@ generation, or a composed workflow. No provider-specific route is required.
   "requestedAgentVersion": "production",
   "resolvedAgentVersion": "2026-07-28T18:30:00.000Z",
   "provider": "openai",
-  "model": "gpt-5.4-2026-07-15",
+  "model": "gpt-5.6-sol",
   "usage": {
     "inputTokens": 412,
     "outputTokens": 87,

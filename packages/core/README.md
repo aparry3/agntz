@@ -46,7 +46,7 @@ runner.registerAgent(defineAgent({
   id: "greeter",
   name: "Greeter",
   systemPrompt: "You are a friendly greeter. Keep responses under 2 sentences.",
-  model: { provider: "openai", name: "gpt-5.4-mini" },
+  model: { provider: "openai", name: "gpt-5.6-terra" },
 }));
 
 const result = await runner.invoke("greeter", "Hello!");
@@ -77,14 +77,13 @@ under a provider namespace:
 
 ```yaml
 model:
-  provider: openai
-  name: gpt-5.4
+  provider: mistral
+  name: mistral-small-2603
   temperature: 0.2
   maxTokens: 4096
   providerOptions:
-    openai:
-      reasoningEffort: medium
-      store: false
+    mistral:
+      safePrompt: true
 ```
 
 Hosted applications normally consume this surface through `@agntz/client`.
@@ -107,7 +106,7 @@ const agent = defineAgent({
   description: "Writes concise, engaging copy",
   version: "1.0.0",
   systemPrompt: "You write concise, engaging copy.",
-  model: { provider: "openai", name: "gpt-5.4" },
+  model: { provider: "openai", name: "gpt-5.6-sol" },
   tags: ["content", "writing"],
 });
 ```
@@ -135,7 +134,7 @@ runner.registerAgent(defineAgent({
   id: "support",
   name: "Support Agent",
   systemPrompt: "Help customers with their orders. Use tools to look up order info.",
-  model: { provider: "openai", name: "gpt-5.4" },
+  model: { provider: "openai", name: "gpt-5.6-sol" },
   tools: [{ type: "inline", name: "lookup_order" }],
 }));
 
@@ -189,14 +188,14 @@ runner.registerAgent(defineAgent({
   id: "researcher",
   name: "Researcher",
   systemPrompt: "Research topics and return concise findings.",
-  model: { provider: "openai", name: "gpt-5.4" },
+  model: { provider: "openai", name: "gpt-5.6-sol" },
 }));
 
 runner.registerAgent(defineAgent({
   id: "writer",
   name: "Writer",
   systemPrompt: "Write articles. Delegate research to the researcher.",
-  model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+  model: { provider: "anthropic", name: "claude-sonnet-5" },
   tools: [{ type: "agent", agentId: "researcher" }],
 }));
 
@@ -251,7 +250,7 @@ runner.registerAgent(defineAgent({
   id: "analyzer",
   name: "Sentiment Analyzer",
   systemPrompt: "Analyze the sentiment of input text.",
-  model: { provider: "openai", name: "gpt-5.4" },
+  model: { provider: "openai", name: "gpt-5.6-sol" },
   outputSchema: {
     type: "object",
     properties: {
@@ -285,7 +284,7 @@ runner.registerAgent(defineAgent({
   id: "code-reviewer",
   name: "Code Reviewer",
   systemPrompt: "Review code from GitHub PRs...",
-  model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+  model: { provider: "anthropic", name: "claude-sonnet-5" },
   tools: [{ type: "mcp", server: "github", tools: ["get_file_contents"] }],
 }));
 ```
@@ -378,8 +377,7 @@ const runner = createRunner({
     strategy: "latest",                   // "latest" | "summary" | "all"
   },
   defaults: {                             // Default model config
-    model: { provider: "openai", name: "gpt-5.4-mini" },
-    temperature: 0.7,
+    model: { provider: "openai", name: "gpt-5.6-terra" },
     maxTokens: 4096,
   },
   retry: {                                // Retry with backoff
@@ -401,7 +399,7 @@ const agent = defineAgent({
   id: "my-agent",
   name: "My Agent",
   systemPrompt: "...",
-  model: { provider: "openai", name: "gpt-5.4" },
+  model: { provider: "openai", name: "gpt-5.6-sol" },
   // ... all fields from AgentDefinition
 });
 ```
@@ -502,16 +500,16 @@ agntz uses the [Vercel AI SDK](https://sdk.vercel.ai/) internally — calls go d
 
 ```typescript
 defineAgent({
-  model: { provider: "openai", name: "gpt-5.4" },         // OPENAI_API_KEY
-  model: { provider: "anthropic", name: "claude-sonnet-4-6" },  // ANTHROPIC_API_KEY
-  model: { provider: "google", name: "gemini-3-flash" },     // GOOGLE_GENERATIVE_AI_API_KEY
-  model: { provider: "openrouter", name: "anthropic/claude-sonnet-4" }, // OPENROUTER_API_KEY
+  model: { provider: "openai", name: "gpt-5.6-sol" },      // OPENAI_API_KEY
+  model: { provider: "anthropic", name: "claude-sonnet-5" }, // ANTHROPIC_API_KEY
+  model: { provider: "google", name: "gemini-3.6-flash" }, // GOOGLE_GENERATIVE_AI_API_KEY
+  model: { provider: "openrouter", name: "anthropic/claude-sonnet-5" }, // OPENROUTER_API_KEY
 });
 ```
 
 Supported providers: `openai`, `anthropic`, `google`, `openrouter`, `mistral`, `xai`, `groq`, `deepseek`, `perplexity`, `cohere`, `azure`.
 
-**OpenRouter** is a meta-provider that proxies to 300+ models (Anthropic, Google, Meta, DeepSeek, open-source) with a single API key — use `provider: "openrouter"` and reference any model by its OpenRouter slug (e.g. `meta-llama/llama-3.3-70b-instruct`, `deepseek/deepseek-chat`). Per-request cost is reported by OpenRouter and surfaced on `TokenUsage.cost`.
+**OpenRouter** is a meta-provider that proxies to hundreds of models (Anthropic, Google, Meta, DeepSeek, open-source) with a single API key — use `provider: "openrouter"` and reference any model by its OpenRouter slug (e.g. `anthropic/claude-sonnet-5`, `deepseek/deepseek-v4-pro`). Per-request cost is reported by OpenRouter and surfaced on `TokenUsage.cost`.
 
 Or bring your own model provider:
 

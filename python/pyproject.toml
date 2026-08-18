@@ -1,6 +1,6 @@
 [project]
 name = "agntz"
-version = "0.5.0"
+version = "0.5.1"
 description = "Python SDK and hosted client for Agntz"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -32,7 +32,7 @@ Changelog = "https://github.com/aparry3/agntz/blob/main/python/CHANGELOG.md"
 
 [project.optional-dependencies]
 litellm = [
-  "litellm>=1.75.0",
+  "litellm>=1.97.0",
 ]
 postgres = [
   "psycopg[binary]>=3.2.0",

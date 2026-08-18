@@ -179,7 +179,7 @@ class AgentDefinition(AgntzModel):
     examples: list[dict[str, Any]] | None = None
     user_prompt_template: str | None = Field(default=None, alias="userPromptTemplate")
     model: ModelConfig = Field(
-        default_factory=lambda: ModelConfig(provider="openai", name="gpt-5.4")
+        default_factory=lambda: ModelConfig(provider="openai", name="gpt-5.6-sol")
     )
     tools: list[dict[str, Any]] | None = None
     spawnable: list[Any] | None = None

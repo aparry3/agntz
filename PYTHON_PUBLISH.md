@@ -4,13 +4,13 @@ The Python SDK is published as a single PyPI package.
 
 | Directory | Package name | Local version | Published version | Publish status |
 |---|---|---:|---:|---|
-| `python` | `agntz` | 0.3.0 | 0.2.0 | publishable |
+| `python` | `agntz` | 0.5.1 | 0.2.0 | publishable |
 
 The package includes the hosted client, local SDK/runtime, manifest execution,
 memrez resources, namespace grant security, SQLite/Postgres stores, and the
 Python store adapters.
 
-The `0.3.0` package is the next public Python SDK release; `0.2.0` is currently
+The `0.5.1` package is the next public Python SDK release; `0.2.0` is currently
 published. Earlier PyPI releases were experimental pre-baseline iterations.
 Publishing is automated through Trusted Publishing. Yanking an earlier release
 requires a PyPI project owner in the PyPI UI, or a future PyPI API token if we

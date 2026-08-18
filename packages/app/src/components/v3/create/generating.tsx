@@ -190,7 +190,7 @@ function GenGraph() {
 						tagBg={ag.blueBg}
 						tagFg={ag.blue}
 					>
-						<Mono size={11.5}>gpt-5.4</Mono>
+						<Mono size={11.5}>gpt-5.6-sol</Mono>
 						<Mono size={11} color={ag.muted}>
 							{" "}
 							· openai · temp 0.3

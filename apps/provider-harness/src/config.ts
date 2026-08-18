@@ -34,6 +34,9 @@ const PROVIDERS: readonly Provider[] = [
 	"mistral",
 	"groq",
 	"cohere",
+	"xai",
+	"deepseek",
+	"perplexity",
 	"openrouter",
 ];
 

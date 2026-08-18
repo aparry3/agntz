@@ -10,7 +10,7 @@ inputSchema:
 
 model:
   provider: openai
-  name: gpt-5.4-mini
+  name: gpt-5.6-terra
 
 instruction: |
   You are a research assistant. Use the available tools to answer the user's question.

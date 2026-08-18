@@ -39,7 +39,7 @@ let safety = 0;
 
 while (safety++ < 10) {
   const resp = await client.messages.create({
-    model: 'claude-sonnet-4-6',
+    model: 'claude-sonnet-5',
     system: 'You are a friendly weather assistant...',
     tools, messages, max_tokens: 1024,
   });
@@ -95,7 +95,7 @@ safety = 0
 while safety < 10:
     safety += 1
     resp = client.messages.create(
-        model="claude-sonnet-4-6",
+        model="claude-sonnet-5",
         system="You are a friendly weather assistant...",
         tools=tools,
         messages=messages,
@@ -124,7 +124,7 @@ kind: llm
 
 model:
   provider: anthropic
-  name: claude-sonnet-4-6
+  name: claude-sonnet-5
 
 instruction: |
   You are a friendly weather assistant.

@@ -29,8 +29,8 @@ class ReasonerModelConfig:
     name: str
 
 
-DEFAULT_TAGGER_MODEL = ReasonerModelConfig(provider="openai", name="gpt-5.4-mini")
-DEFAULT_CURATOR_MODEL = ReasonerModelConfig(provider="openai", name="gpt-5.4")
+DEFAULT_TAGGER_MODEL = ReasonerModelConfig(provider="openai", name="gpt-5.6-luna")
+DEFAULT_CURATOR_MODEL = ReasonerModelConfig(provider="openai", name="gpt-5.6-sol")
 
 
 class ReasonerModelProvider(Protocol):

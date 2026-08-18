@@ -3,6 +3,7 @@ import { AISDKModelProvider } from "../src/model-provider.js";
 
 const mocks = vi.hoisted(() => ({
 	generateText: vi.fn(),
+	outputObject: vi.fn((config: unknown) => ({ type: "object", config })),
 	createCohere: vi.fn(() => vi.fn(() => ({ provider: "cohere-test" }))),
 	createOpenAI: vi.fn(() => vi.fn(() => ({ provider: "openai-test" }))),
 }));
@@ -10,7 +11,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("ai", () => ({
 	generateText: mocks.generateText,
 	tool: (config: unknown) => ({ type: "function", config }),
-	Output: {},
+	Output: { object: mocks.outputObject },
 	jsonSchema: (schema: unknown) => schema,
 }));
 
@@ -25,6 +26,7 @@ vi.mock("@ai-sdk/openai", () => ({
 describe("AISDKModelProvider", () => {
 	beforeEach(() => {
 		mocks.generateText.mockReset();
+		mocks.outputObject.mockClear();
 		mocks.createCohere.mockClear();
 		mocks.createOpenAI.mockClear();
 	});
@@ -95,6 +97,36 @@ describe("AISDKModelProvider", () => {
 			responseId: "response_123",
 			usage: { promptTokens: 5, completionTokens: 2, totalTokens: 7 },
 		});
+	});
+
+	it("uses the AI SDK 7 output API for structured responses", async () => {
+		mocks.generateText.mockResolvedValueOnce({
+			text: '{"answer":"ok"}',
+			response: { id: "response_456", modelId: "gpt-5.6-terra", messages: [] },
+			usage: { inputTokens: 4, outputTokens: 3, totalTokens: 7 },
+			finishReason: "stop",
+			rawFinishReason: "stop",
+			warnings: [],
+		});
+
+		const schema = {
+			type: "object",
+			properties: { answer: { type: "string" } },
+			required: ["answer"],
+		};
+		const provider = new AISDKModelProvider();
+		await provider.generateText({
+			model: { provider: "openai", name: "gpt-5.6-terra" },
+			messages: [{ role: "user", content: "hello" }],
+			outputSchema: { name: "answer", schema },
+		});
+
+		expect(mocks.outputObject).toHaveBeenCalledWith({ name: "answer", schema });
+		expect(mocks.generateText).toHaveBeenCalledWith(
+			expect.objectContaining({
+				output: { type: "object", config: { name: "answer", schema } },
+			}),
+		);
 	});
 
 	it("recovers Cohere tool-result responses rejected by the AI SDK citation schema", async () => {

@@ -18,7 +18,7 @@ export const chatbot: AgentTemplate = {
 	description: "A friendly conversational assistant",
 	systemPrompt: `You are a helpful, friendly assistant. Be concise and clear in your responses.
 If you don't know something, say so honestly rather than guessing.`,
-	model: { provider: "openai", name: "gpt-5.4-mini" },
+	model: { provider: "openai", name: "gpt-5.6-terra" },
 };
 
 /**
@@ -37,7 +37,7 @@ export const codeReviewer: AgentTemplate = {
 
 Be specific and actionable in your feedback. Reference line numbers when possible.
 Use a constructive tone — explain WHY something should change, not just WHAT.`,
-	model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+	model: { provider: "anthropic", name: "claude-opus-5" },
 };
 
 /**
@@ -63,7 +63,7 @@ Output format:
 
 ## Details
 [any important specifics worth preserving]`,
-	model: { provider: "openai", name: "gpt-5.4-mini" },
+	model: { provider: "openai", name: "gpt-5.6-terra" },
 };
 
 /**
@@ -80,7 +80,7 @@ Rules:
 - Do not infer or guess values
 - If the text contains multiple entities, extract all of them
 - Preserve original formatting for names, addresses, etc.`,
-	model: { provider: "openai", name: "gpt-5.4-nano", temperature: 0 },
+	model: { provider: "openai", name: "gpt-5.6-luna" },
 };
 
 /**
@@ -99,7 +99,7 @@ export const creativeWriter: AgentTemplate = {
 
 Always ask clarifying questions if the brief is ambiguous.
 Write a first draft, then refine for clarity and impact.`,
-	model: { provider: "anthropic", name: "claude-sonnet-4-6", temperature: 0.8 },
+	model: { provider: "anthropic", name: "claude-sonnet-5" },
 };
 
 /**
@@ -120,7 +120,7 @@ Guidelines:
 - If you can't resolve something, explain why and offer to escalate
 - Keep responses concise but warm
 - Use the customer's name when available`,
-	model: { provider: "openai", name: "gpt-5.4" },
+	model: { provider: "openai", name: "gpt-5.6-sol" },
 };
 
 /**
@@ -146,7 +146,7 @@ When discussing nutrition:
 - Give general guidance, not medical advice
 - Consider stated dietary preferences
 - Focus on sustainable habits over quick fixes`,
-	model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+	model: { provider: "anthropic", name: "claude-sonnet-5" },
 	contextWrite: true,
 };
 
@@ -176,7 +176,7 @@ Output format:
 
 ### Open Questions
 [what couldn't be answered, areas for further research]`,
-	model: { provider: "openai", name: "gpt-5.4" },
+	model: { provider: "openai", name: "gpt-5.6-sol" },
 	contextWrite: true,
 };
 

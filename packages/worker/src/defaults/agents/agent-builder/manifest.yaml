@@ -31,8 +31,7 @@ steps:
         description: string
       model:
         provider: openai
-        name: gpt-5.4
-        temperature: 0.2
+        name: gpt-5.6-sol
       instruction: |
         You are a pipeline architect for the agntz platform. You do NOT write YAML.
         You produce a structural plan that a separate generator will translate into YAML.
@@ -140,8 +139,7 @@ steps:
               previousYaml: string
             model:
               provider: openai
-              name: gpt-5.4
-              temperature: 0.3
+              name: gpt-5.6-sol
             instruction: |
               You are an expert agent builder for the agntz platform. Your job is to
               translate a structural plan into a valid YAML agent manifest. The plan has

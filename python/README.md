@@ -36,8 +36,7 @@ name: Support Assistant
 description: Answers support questions with a concise plan.
 model:
   provider: openai
-  name: gpt-5.4
-  temperature: 0.2
+  name: gpt-5.6-sol
 instruction: |
   You are a careful support agent.
 prompt: |

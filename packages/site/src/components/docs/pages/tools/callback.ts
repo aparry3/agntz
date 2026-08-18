@@ -13,7 +13,7 @@ kind: llm
 
 model:
   provider: openai
-  name: gpt-5.4
+  name: gpt-5.6-sol
 
 instruction: |
   Help the user find recipes. Call find_recipes when application data is needed.

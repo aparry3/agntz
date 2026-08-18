@@ -42,7 +42,7 @@ kind: llm
 
 model:
   provider: openai
-  name: gpt-4o-mini
+  name: gpt-5.6-terra
 
 instruction: |
   You answer support questions concisely.
@@ -123,8 +123,7 @@ id: recipe-enrichment
 kind: llm
 model:
   provider: anthropic
-  name: claude-sonnet-4-6
-  temperature: 0
+  name: claude-sonnet-5
   maxTokens: 4096
 inputSchema:
   type: object

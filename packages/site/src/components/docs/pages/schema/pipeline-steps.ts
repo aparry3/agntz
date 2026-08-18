@@ -15,7 +15,7 @@ steps:
   - agent:
       id: inline-agent
       kind: llm
-      model: { provider: openai, name: gpt-5.4 }
+      model: { provider: openai, name: gpt-5.6-sol }
       instruction: "..."
 \`\`\`
 

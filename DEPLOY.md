@@ -63,7 +63,7 @@ DATABASE_URL=postgres://...
 WORKER_INTERNAL_SECRET=<shared random secret>
 CORS_ORIGINS=https://<app-domain>
 DEFAULT_MODEL_PROVIDER=openai
-DEFAULT_MODEL_NAME=gpt-4o
+DEFAULT_MODEL_NAME=gpt-5.6-terra
 OPENAI_API_KEY=<provider key>
 ```
 

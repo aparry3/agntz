@@ -169,7 +169,7 @@ describe("computeCost", () => {
 		const cost = computeCost(
 			{ promptTokens: 1_000_000, completionTokens: 0, totalTokens: 1_000_000 },
 			"anthropic",
-			"claude-sonnet-4-6",
+			"claude-sonnet-5",
 		);
 		expect(cost).toBe(3.0);
 	});
@@ -197,6 +197,32 @@ describe("computeCost", () => {
 		expect(cost).toBe(0.5 + 0.5); // 0.5 input + 0.5 output = 1.0 USD
 	});
 
+	it("uses current GPT-5.6 tier pricing", () => {
+		const cost = computeCost(
+			{
+				promptTokens: 1_000_000,
+				completionTokens: 500_000,
+				totalTokens: 1_500_000,
+			},
+			"openai",
+			"gpt-5.6-terra",
+		);
+		expect(cost).toBe(8); // $2 input + $6 output
+	});
+
+	it("supports provider model ids that contain a slash", () => {
+		const cost = computeCost(
+			{
+				promptTokens: 1_000_000,
+				completionTokens: 1_000_000,
+				totalTokens: 2_000_000,
+			},
+			"groq",
+			"openai/gpt-oss-120b",
+		);
+		expect(cost).toBe(0.75);
+	});
+
 	it("prefers embedded cost over rate table", () => {
 		// OpenRouter (and similar) attach per-call cost directly to usage.
 		// Even when a rate is known, the embedded cost should win.
@@ -208,7 +234,7 @@ describe("computeCost", () => {
 				cost: 0.42,
 			},
 			"anthropic",
-			"claude-sonnet-4-6",
+			"claude-sonnet-5",
 		);
 		expect(cost).toBe(0.42);
 	});
@@ -236,7 +262,7 @@ describe("computeCost", () => {
 				cost: Number.NaN,
 			},
 			"anthropic",
-			"claude-sonnet-4-6",
+			"claude-sonnet-5",
 		);
 		expect(cost).toBe(3.0);
 	});

@@ -106,7 +106,7 @@ export interface AgentDefinition {
 export interface ModelConfig {
 	/** Provider name: "openai", "anthropic", "google", etc. */
 	provider: string;
-	/** Model name: "gpt-5.4", "claude-sonnet-4-6", etc. */
+	/** Model name: "gpt-5.6-sol", "claude-sonnet-5", etc. */
 	name: string;
 	temperature?: number;
 	maxTokens?: number;

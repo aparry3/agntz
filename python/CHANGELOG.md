@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.5.1 - 2026-08-17
+
+- Refresh default OpenAI model roles for GPT-5.6 and require a current LiteLLM
+  release for the newest provider model identifiers.
+
 ## 0.5.0 - 2026-07-29
 
 - Add sync and async hosted APIs for versioned provider-native batch manifests,

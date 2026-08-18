@@ -129,6 +129,25 @@ const fetchGoogle: Fetcher = async (apiKey) => {
 		}));
 };
 
+const fetchCohere: Fetcher = async (apiKey) => {
+	const res = await fetchWithTimeout(
+		"https://api.cohere.com/v1/models?endpoint=chat&page_size=1000",
+		{ headers: { Authorization: `Bearer ${apiKey}` } },
+	);
+	if (!res.ok) throw new Error(`Cohere /models ${res.status}`);
+	const data = (await res.json()) as {
+		models?: Array<{
+			name: string;
+			is_deprecated?: boolean;
+			context_length?: number;
+			endpoints?: string[];
+		}>;
+	};
+	return (data.models ?? [])
+		.filter((m) => !m.is_deprecated && (m.endpoints ?? []).includes("chat"))
+		.map((m) => ({ id: m.name, contextLength: m.context_length }));
+};
+
 const FETCHERS: Record<string, { fetch: Fetcher; requiresKey: boolean }> = {
 	openrouter: { fetch: fetchOpenRouter, requiresKey: false },
 	openai: {
@@ -153,6 +172,7 @@ const FETCHERS: Record<string, { fetch: Fetcher; requiresKey: boolean }> = {
 		fetch: fetchOpenAICompatible("https://api.deepseek.com/models"),
 		requiresKey: true,
 	},
+	cohere: { fetch: fetchCohere, requiresKey: true },
 };
 
 const CACHE_TTL_MS = 10 * 60 * 1000;

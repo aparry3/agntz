@@ -5,7 +5,7 @@ Local tools are functions registered at runtime and referenced by name in YAML. 
 \`\`\`yaml [agents/calculator.yaml]
 id: calculator
 kind: llm
-model: { provider: openai, name: gpt-5.4-mini }
+model: { provider: openai, name: gpt-5.6-terra }
 instruction: |
   Use the \`add\` tool to answer math questions.
 

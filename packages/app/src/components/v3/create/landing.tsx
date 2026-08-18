@@ -177,7 +177,7 @@ export function CreateLanding({
 							}}
 						>
 							<Mono color={ag.muted} size={11}>
-								uses gpt-5.4 · ~2s · ⌘↵ to generate
+								uses gpt-5.6-sol · ~2s · ⌘↵ to generate
 							</Mono>
 							<div style={{ flex: 1 }} />
 							<Btn

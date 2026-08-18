@@ -47,8 +47,7 @@ steps:
               previousYaml: string
             model:
               provider: openai
-              name: gpt-5.4
-              temperature: 0.2
+              name: gpt-5.6-sol
             instruction: |
               You are an expert YAML editor for the agntz platform. Your job is to
               revise an existing agent manifest according to a user's change request.

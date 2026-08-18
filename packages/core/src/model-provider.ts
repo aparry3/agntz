@@ -15,7 +15,7 @@ type AiJsonSchema = typeof import("ai").jsonSchema;
 type AiGenerateTextOptions = Parameters<typeof import("ai").generateText>[0];
 type AiStructuredOutputConfig = Pick<
 	AiGenerateTextOptions,
-	"experimental_output" | "providerOptions"
+	"output" | "providerOptions"
 >;
 
 /**
@@ -53,7 +53,7 @@ export class AISDKModelProvider implements ModelProvider {
 			}
 		}
 
-		const { experimental_output, providerOptions } = buildStructuredOutput(
+		const { output, providerOptions } = buildStructuredOutput(
 			options,
 			Output,
 			jsonSchema,
@@ -69,7 +69,7 @@ export class AISDKModelProvider implements ModelProvider {
 				model,
 				messages,
 				tools: Object.keys(tools).length > 0 ? tools : undefined,
-				experimental_output,
+				output,
 				providerOptions: mergedProviderOptions,
 				maxOutputTokens: options.maxTokens ?? options.model.maxTokens,
 				temperature: options.model.temperature,
@@ -135,7 +135,7 @@ export class AISDKModelProvider implements ModelProvider {
 			}
 		}
 
-		const { experimental_output, providerOptions } = buildStructuredOutput(
+		const { output, providerOptions } = buildStructuredOutput(
 			options,
 			Output,
 			jsonSchema,
@@ -151,7 +151,7 @@ export class AISDKModelProvider implements ModelProvider {
 				model,
 				messages,
 				tools: Object.keys(tools).length > 0 ? tools : undefined,
-				experimental_output,
+				output,
 				providerOptions: mergedProviderOptions,
 				maxOutputTokens: options.maxTokens ?? options.model.maxTokens,
 				temperature: options.model.temperature,
@@ -362,21 +362,21 @@ export class AISDKModelProvider implements ModelProvider {
  * Convert a JSON Schema object to a basic Zod schema.
  * This is a simplified conversion for passing tool parameters to the AI SDK.
  */
-// Structured-output config. The AI SDK's generic experimental_output (and
+// Structured-output config. The AI SDK's generic output handling (and
 // generateObject) break on Gemini — truncated text / "could not parse" — whether
 // reached directly or via OpenRouter. Each transport's *native* structured-output
 // mechanism is reliable, so route google and openrouter through providerOptions;
-// every other provider keeps experimental_output, which works for them.
+// every other provider keeps the generic output path, which works for them.
 function buildStructuredOutput(
 	options: GenerateTextOptions,
 	Output: AiOutput,
 	jsonSchema: AiJsonSchema,
 ): AiStructuredOutputConfig {
 	if (!options.outputSchema)
-		return { experimental_output: undefined, providerOptions: undefined };
+		return { output: undefined, providerOptions: undefined };
 	if (options.model.provider === "google") {
 		return {
-			experimental_output: undefined,
+			output: undefined,
 			providerOptions: {
 				google: {
 					responseMimeType: "application/json",
@@ -387,7 +387,7 @@ function buildStructuredOutput(
 	}
 	if (options.model.provider === "openrouter") {
 		return {
-			experimental_output: undefined,
+			output: undefined,
 			providerOptions: {
 				openrouter: {
 					responseFormat: {
@@ -403,7 +403,7 @@ function buildStructuredOutput(
 		};
 	}
 	return {
-		experimental_output: Output.object({
+		output: Output.object({
 			name: options.outputSchema.name,
 			schema: jsonSchema(options.outputSchema.schema),
 		}),
@@ -447,7 +447,7 @@ function normalizeWarnings(warnings: unknown): string[] | undefined {
 
 // The native structured-output paths (google, openrouter) sometimes wrap the JSON
 // in a markdown fence or a short prose preamble. Extract the JSON so callers get
-// clean parseable text. Providers on the experimental_output path already return
+// clean parseable text. Providers on the generic output path already return
 // clean JSON, so this only runs for the native paths.
 function finalizeText(text: string, options: GenerateTextOptions): string {
 	if (

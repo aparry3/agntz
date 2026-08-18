@@ -7,13 +7,13 @@ in [`DEPLOY.md`](./DEPLOY.md).
 
 | Directory | Package name | Current | Release target | Publish status |
 |---|---|---:|---:|---|
-| `packages/contracts` | `@agntz/contracts` | 0.1.0 | 0.2.0 | publishable |
-| `packages/db` | `@agntz/db` | 0.1.0 | 0.2.0 | publishable |
-| `packages/client` | `@agntz/client` | 0.1.0 | 0.2.0 | publishable |
-| `packages/core` | `@agntz/core` | 0.1.0 | 0.2.0 | publishable |
-| `packages/stores` | `@agntz/stores` | 0.1.0 | 0.2.0 | publishable |
-| `packages/memrez` | `@agntz/memrez` | 0.1.0 | 0.2.0 | publishable |
-| `packages/sdk` | `@agntz/sdk` | 0.1.0 | 0.2.0 | publishable |
+| `packages/contracts` | `@agntz/contracts` | 0.4.0 | 0.4.1 | publishable |
+| `packages/db` | `@agntz/db` | 0.2.0 | unchanged | publishable |
+| `packages/client` | `@agntz/client` | 0.4.0 | unchanged | publishable |
+| `packages/core` | `@agntz/core` | 0.4.0 | 0.5.0 | publishable |
+| `packages/stores` | `@agntz/stores` | 0.3.0 | 0.3.1 | publishable |
+| `packages/memrez` | `@agntz/memrez` | 0.2.2 | 0.2.3 | publishable |
+| `packages/sdk` | `@agntz/sdk` | 0.3.1 | 0.3.2 | publishable |
 | `packages/app` | `@agntz/app` | 0.1.10 | - | private service |
 | `packages/worker` | `@agntz/worker` | 0.2.1 | - | private service |
 | `packages/site` | `@agntz/site` | 0.1.0 | - | private site |
@@ -21,10 +21,9 @@ in [`DEPLOY.md`](./DEPLOY.md).
 The standalone `@agntz/manifest` package has been merged into
 `@agntz/core/manifest`.
 
-Version `0.2.0` is the coordinated public-beta line. Earlier npm releases were
-experimental iterations and remain deprecated on the npm registry.
-The checked-in changesets generate the target versions and changelog entries in
-the release PR; do not publish the staging `0.1.0` package manifests directly.
+The checked-in changesets generate target versions and changelog entries in the
+release PR. Earlier experimental releases remain deprecated on the npm
+registry.
 
 ## Prerequisites
 
@@ -48,10 +47,8 @@ Releases are driven by Changesets through `.github/workflows/release.yml`.
    ```sh
    pnpm changeset status
    ```
-   For the hosted AI release, confirm the projection includes
-   `@agntz/client`, `@agntz/contracts`, `@agntz/core`, and
-   `@agntz/stores`; `@agntz/sdk` is also part of the coordinated `0.2.0`
-   beta line.
+   Confirm the projection includes every publishable package changed by the
+   feature and any dependents that Changesets must bump.
 3. Run the release gate locally:
    ```sh
    pnpm lint

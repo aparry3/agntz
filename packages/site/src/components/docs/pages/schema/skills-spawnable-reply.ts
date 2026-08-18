@@ -33,7 +33,7 @@ spawnable:
     definition:
       id: adhoc-helper
       kind: llm
-      model: { provider: openai, name: gpt-5.4-mini }
+      model: { provider: openai, name: gpt-5.6-terra }
       instruction: "Extract dates from the input"
 \`\`\`
 

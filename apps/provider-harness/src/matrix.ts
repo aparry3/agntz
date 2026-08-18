@@ -24,7 +24,7 @@ const caps = (...c: Capability[]): ReadonlySet<Capability> => new Set(c);
 const OPENROUTER_ROUTES: readonly ProviderModelEntry[] = [
 	{
 		provider: "openrouter",
-		model: "anthropic/claude-opus-4-7",
+		model: "anthropic/claude-opus-5",
 		capabilities: caps(
 			"text",
 			"multiTurn",
@@ -43,7 +43,7 @@ const OPENROUTER_ROUTES: readonly ProviderModelEntry[] = [
 	},
 	{
 		provider: "openrouter",
-		model: "openai/gpt-5.5",
+		model: "openai/gpt-5.6-sol",
 		capabilities: caps(
 			"text",
 			"multiTurn",
@@ -62,7 +62,7 @@ const OPENROUTER_ROUTES: readonly ProviderModelEntry[] = [
 	},
 	{
 		provider: "openrouter",
-		model: "google/gemini-3.5-flash",
+		model: "google/gemini-3.6-flash",
 		capabilities: caps(
 			"text",
 			"multiTurn",
@@ -138,7 +138,7 @@ const OPENROUTER_ROUTES: readonly ProviderModelEntry[] = [
 	},
 	{
 		provider: "openrouter",
-		model: "qwen/qwen3.7-max",
+		model: "qwen/qwen3.8-max",
 		capabilities: caps(
 			"text",
 			"multiTurn",
@@ -148,11 +148,13 @@ const OPENROUTER_ROUTES: readonly ProviderModelEntry[] = [
 			"parallelTools",
 			"streamingTools",
 			"toolChoice",
+			"multimodalImage",
 			"structuredOutput",
+			"reasoning",
 			"cancellation",
 		),
 		notes:
-			"Qwen family via OpenRouter; tool caps confirmed by harness run 2026-05-23.",
+			"Current Qwen flagship via OpenRouter; multimodal, reasoning, tools, and structured output are declared by the live catalog.",
 	},
 	{
 		provider: "openrouter",
@@ -175,15 +177,15 @@ const OPENROUTER_ROUTES: readonly ProviderModelEntry[] = [
 	},
 ];
 
-// Prior-generation models — one immediately-previous model per provider, so the
-// harness catches SDK regressions that only surface on older model surfaces
-// (different finish-reason shapes, tool schemas, multimodal handling, etc.).
+// Secondary models — an earlier or lower-cost current route per provider, so the
+// harness catches SDK regressions that only surface on different model surfaces
+// (finish-reason shapes, tool schemas, multimodal handling, etc.).
 // IDs and caps are best-effort from the app's model catalog (supported-providers.ts);
 // the first live run confirms availability and flips any wrong capability cell.
-const PRIOR_GENERATION: readonly ProviderModelEntry[] = [
+const SECONDARY_MODELS: readonly ProviderModelEntry[] = [
 	{
 		provider: "anthropic",
-		model: "claude-opus-4-6",
+		model: "claude-opus-4-8",
 		capabilities: caps(
 			"text",
 			"multiTurn",
@@ -198,11 +200,11 @@ const PRIOR_GENERATION: readonly ProviderModelEntry[] = [
 			"reasoning",
 			"cancellation",
 		),
-		notes: "Prior gen of claude-opus-4-7.",
+		notes: "Prior gen of claude-opus-5; still available on the Claude API.",
 	},
 	{
 		provider: "openai",
-		model: "gpt-5.4",
+		model: "gpt-5.5",
 		capabilities: caps(
 			"text",
 			"multiTurn",
@@ -217,11 +219,11 @@ const PRIOR_GENERATION: readonly ProviderModelEntry[] = [
 			"reasoning",
 			"cancellation",
 		),
-		notes: "Prior gen of gpt-5.5.",
+		notes: "Prior gen of gpt-5.6-sol.",
 	},
 	{
 		provider: "google",
-		model: "gemini-3-flash-preview",
+		model: "gemini-3.5-flash",
 		capabilities: caps(
 			"text",
 			"multiTurn",
@@ -236,12 +238,11 @@ const PRIOR_GENERATION: readonly ProviderModelEntry[] = [
 			"reasoning",
 			"cancellation",
 		),
-		notes:
-			"Prior gen of gemini-3.5-flash. Live ID is gemini-3-flash-preview; plain gemini-3-flash 404s (confirmed via ListModels 2026-05-24).",
+		notes: "Prior stable Flash generation; current counterpart is 3.6 Flash.",
 	},
 	{
 		provider: "mistral",
-		model: "mistral-medium-3",
+		model: "mistral-large-2512",
 		capabilities: caps(
 			"text",
 			"multiTurn",
@@ -255,11 +256,11 @@ const PRIOR_GENERATION: readonly ProviderModelEntry[] = [
 			"structuredOutput",
 			"cancellation",
 		),
-		notes: "Prior gen of mistral-medium-3.5.",
+		notes: "Earlier still-current general-purpose Mistral route.",
 	},
 	{
 		provider: "groq",
-		model: "llama-3.3-70b-versatile",
+		model: "openai/gpt-oss-20b",
 		capabilities: caps(
 			"text",
 			"multiTurn",
@@ -269,24 +270,11 @@ const PRIOR_GENERATION: readonly ProviderModelEntry[] = [
 			"parallelTools",
 			"streamingTools",
 			"toolChoice",
+			"structuredOutput",
+			"reasoning",
 			"cancellation",
 		),
-		sdkCapabilities: {
-			python: caps(
-				"text",
-				"multiTurn",
-				"systemPrompt",
-				"streaming",
-				"tools",
-				"parallelTools",
-				"streamingTools",
-				"toolChoice",
-				"structuredOutput",
-				"cancellation",
-			),
-		},
-		notes:
-			"Prior gen on Groq (Llama 3.3 70B). Text-only; TS json_schema structured-output is unsupported, Python/LiteLLM fallback succeeds (runtime harness 2026-06-03).",
+		notes: "Efficient current Groq production route; text-only.",
 	},
 	{
 		provider: "cohere",
@@ -316,7 +304,7 @@ const PRIOR_GENERATION: readonly ProviderModelEntry[] = [
 export const MATRIX: readonly ProviderModelEntry[] = [
 	{
 		provider: "anthropic",
-		model: "claude-opus-4-7",
+		model: "claude-opus-5",
 		capabilities: new Set<Capability>([
 			"text",
 			"multiTurn",
@@ -334,7 +322,7 @@ export const MATRIX: readonly ProviderModelEntry[] = [
 	},
 	{
 		provider: "openai",
-		model: "gpt-5.5",
+		model: "gpt-5.6-sol",
 		capabilities: new Set<Capability>([
 			"text",
 			"multiTurn",
@@ -352,7 +340,7 @@ export const MATRIX: readonly ProviderModelEntry[] = [
 	},
 	{
 		provider: "google",
-		model: "gemini-3.5-flash",
+		model: "gemini-3.6-flash",
 		capabilities: new Set<Capability>([
 			"text",
 			"multiTurn",
@@ -367,12 +355,11 @@ export const MATRIX: readonly ProviderModelEntry[] = [
 			"reasoning",
 			"cancellation",
 		]),
-		notes:
-			"Pro variant delayed to June 2026; Flash is the available 3.5 entry point.",
+		notes: "Current stable Gemini workhorse model.",
 	},
 	{
 		provider: "mistral",
-		model: "mistral-medium-3.5",
+		model: "mistral-medium-3-5",
 		capabilities: new Set<Capability>([
 			"text",
 			"multiTurn",
@@ -392,7 +379,7 @@ export const MATRIX: readonly ProviderModelEntry[] = [
 	},
 	{
 		provider: "groq",
-		model: "meta-llama/llama-4-scout-17b-16e-instruct",
+		model: "openai/gpt-oss-120b",
 		capabilities: new Set<Capability>([
 			"text",
 			"multiTurn",
@@ -402,12 +389,11 @@ export const MATRIX: readonly ProviderModelEntry[] = [
 			"parallelTools",
 			"streamingTools",
 			"toolChoice",
-			"multimodalImage",
 			"structuredOutput",
+			"reasoning",
 			"cancellation",
 		]),
-		notes:
-			"Llama 4 is natively multimodal; no extended-thinking surface exposed.",
+		notes: "Current flagship Groq production route; text-only.",
 	},
 	{
 		provider: "cohere",
@@ -428,6 +414,56 @@ export const MATRIX: readonly ProviderModelEntry[] = [
 		notes:
 			"Command A+ text/tool/structured/reasoning route; base64 image path returned empty in runtime harness (2026-06-03).",
 	},
-	...PRIOR_GENERATION,
+	{
+		provider: "xai",
+		model: "grok-4.5",
+		capabilities: caps(
+			"text",
+			"multiTurn",
+			"systemPrompt",
+			"streaming",
+			"tools",
+			"parallelTools",
+			"streamingTools",
+			"toolChoice",
+			"multimodalImage",
+			"structuredOutput",
+			"reasoning",
+			"cancellation",
+		),
+	},
+	{
+		provider: "deepseek",
+		model: "deepseek-v4-pro",
+		capabilities: caps(
+			"text",
+			"multiTurn",
+			"systemPrompt",
+			"streaming",
+			"tools",
+			"parallelTools",
+			"streamingTools",
+			"toolChoice",
+			"structuredOutput",
+			"reasoning",
+			"cancellation",
+		),
+	},
+	{
+		provider: "perplexity",
+		model: "sonar-reasoning-pro",
+		capabilities: caps(
+			"text",
+			"multiTurn",
+			"systemPrompt",
+			"streaming",
+			"structuredOutput",
+			"reasoning",
+			"cancellation",
+		),
+		notes:
+			"Sonar search/reasoning route; provider does not expose function tools.",
+	},
+	...SECONDARY_MODELS,
 	...OPENROUTER_ROUTES,
 ];

@@ -32,7 +32,7 @@ Same Railway project → **Add Service** → **GitHub Repo** → select your for
   - \`WORKER_INTERNAL_SECRET=$(openssl rand -base64 32)\`
   - \`CORS_ORIGINS=https://<your-app-domain>\`
   - \`DEFAULT_MODEL_PROVIDER=openai\`
-  - \`DEFAULT_MODEL_NAME=gpt-4o\`
+  - \`DEFAULT_MODEL_NAME=gpt-5.6-terra\`
   - \`OPENAI_API_KEY=sk-...\`
   - \`ARTIFACT_STORE=s3\`
   - \`ARTIFACT_S3_BUCKET=<private bucket>\`
@@ -88,7 +88,7 @@ WORKER_INTERNAL_SECRET=...           # MUST match the worker
 STORE=postgres
 DATABASE_URL=...                     # Railway public TCP proxy URL
 DEFAULT_MODEL_PROVIDER=openai
-DEFAULT_MODEL_NAME=gpt-4o
+DEFAULT_MODEL_NAME=gpt-5.6-terra
 OPENAI_API_KEY=sk-...
 \`\`\`
 

@@ -105,7 +105,7 @@ If the default isn't what the child needs, add an explicit `input:` transform on
     inputSchema:
       text: string                       # child declares what it consumes
       style: string
-    model: { provider: openai, name: gpt-5.4 }
+    model: { provider: openai, name: gpt-5.6-sol }
     instruction: "Summarize {{text}} in {{style}} style"
   input:                                  # step-level: parent → child
     text: "{{researcher.findings}}"
@@ -201,8 +201,7 @@ inputSchema:
 
 model:
   provider: openai        # openai | anthropic | google | mistral
-  name: gpt-5.4
-  temperature: 0.7        # optional (0-2)
+  name: gpt-5.6-sol
   maxTokens: 4096         # optional
   topP: 1.0               # optional
   topK: 40                # optional
@@ -525,7 +524,7 @@ steps:
         text: string
       model:
         provider: openai
-        name: gpt-5.4
+        name: gpt-5.6-sol
       instruction: "Summarize: {{text}}"
       outputSchema:
         summary: string
@@ -567,7 +566,7 @@ steps:
         feedback: string
       model:
         provider: openai
-        name: gpt-5.4
+        name: gpt-5.6-sol
       instruction: |
         Write about {{topic}}.
         {{#if feedback}}
@@ -586,8 +585,7 @@ steps:
         draft: string
       model:
         provider: openai
-        name: gpt-5.4
-        temperature: 0
+        name: gpt-5.6-sol
       instruction: "Review this draft: {{draft}}"
       outputSchema:
         approved: boolean
@@ -619,7 +617,7 @@ branches:
         text: string
       model:
         provider: openai
-        name: gpt-5.4
+        name: gpt-5.6-sol
       instruction: "Extract entities from: {{text}}"
       outputSchema:
         entities: string

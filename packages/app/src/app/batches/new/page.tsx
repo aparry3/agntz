@@ -22,8 +22,7 @@ description: Summarize each customer record for an operations review.
 kind: llm
 model:
   provider: openai
-  name: gpt-5.4-mini
-  temperature: 0.2
+  name: gpt-5.6-terra
   maxTokens: 800
 instruction: |
   You are a careful operations analyst.

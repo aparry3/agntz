@@ -8,30 +8,43 @@ the hosted client on individual run requests.
 
 ## Supported providers
 
-| Provider | Env var | Provider id |
-|---|---|---|
-| OpenAI | \`OPENAI_API_KEY\` | \`openai\` |
-| Anthropic | \`ANTHROPIC_API_KEY\` | \`anthropic\` |
-| Google | \`GOOGLE_GENERATIVE_AI_API_KEY\` | \`google\` |
-| **OpenRouter** | \`OPENROUTER_API_KEY\` | \`openrouter\` |
-| Mistral | \`MISTRAL_API_KEY\` | \`mistral\` |
-| xAI | \`XAI_API_KEY\` | \`xai\` |
-| Groq | \`GROQ_API_KEY\` | \`groq\` |
-| DeepSeek | \`DEEPSEEK_API_KEY\` | \`deepseek\` |
-| Perplexity | \`PERPLEXITY_API_KEY\` | \`perplexity\` |
-| Cohere | \`COHERE_API_KEY\` | \`cohere\` |
-| Azure OpenAI | \`AZURE_OPENAI_API_KEY\` | \`azure\` |
+| Provider | Env var | Provider id | Current starting points |
+|---|---|---|---|
+| OpenAI | \`OPENAI_API_KEY\` | \`openai\` | \`gpt-5.6-sol\`, \`gpt-5.6-terra\`, \`gpt-5.6-luna\` |
+| Anthropic | \`ANTHROPIC_API_KEY\` | \`anthropic\` | \`claude-fable-5\`, \`claude-opus-5\`, \`claude-sonnet-5\`, \`claude-haiku-4-5\` |
+| Google | \`GOOGLE_GENERATIVE_AI_API_KEY\` | \`google\` | \`gemini-3.6-flash\`, \`gemini-3.5-flash\`, \`gemini-3.5-flash-lite\`, \`gemini-3.1-pro-preview\` |
+| **OpenRouter** | \`OPENROUTER_API_KEY\` | \`openrouter\` | Any current \`<author>/<model>\` slug |
+| Mistral | \`MISTRAL_API_KEY\` | \`mistral\` | \`mistral-medium-3-5\`, \`mistral-small-2603\`, \`mistral-large-2512\` |
+| xAI | \`XAI_API_KEY\` | \`xai\` | \`grok-4.5\` |
+| Groq | \`GROQ_API_KEY\` | \`groq\` | \`openai/gpt-oss-120b\`, \`openai/gpt-oss-20b\` |
+| DeepSeek | \`DEEPSEEK_API_KEY\` | \`deepseek\` | \`deepseek-v4-pro\`, \`deepseek-v4-flash\` |
+| Perplexity | \`PERPLEXITY_API_KEY\` | \`perplexity\` | \`sonar\`, \`sonar-pro\`, \`sonar-reasoning-pro\`, \`sonar-deep-research\` |
+| Cohere | \`COHERE_API_KEY\` | \`cohere\` | \`command-a-plus-05-2026\`, \`command-a-03-2025\`, \`command-a-reasoning-08-2025\` |
+| Azure OpenAI | \`AZURE_OPENAI_API_KEY\` | \`azure\` | Your Azure deployment name |
+
+This table was reviewed on 2026-08-17. The model picker queries each configured
+provider's catalog when one is available and falls back to this curated set if
+the catalog cannot be reached. OpenRouter's public catalog is loaded without a
+key. Perplexity exposes a fixed Sonar model enum rather than a list endpoint,
+and Azure requests use your deployment name, so those two remain configuration
+driven.
 
 ## Picking a model in a manifest
+
+\`provider\` is the provider id from the table. \`name\` must be the exact model
+id—or Azure deployment name—that provider expects.
 
 \`\`\`yaml
 model:
   provider: anthropic
-  name: claude-sonnet-4-6
-  temperature: 0
+  name: claude-sonnet-5
+  maxTokens: 4096
 \`\`\`
 
-\`provider\` is the id from the table above; \`name\` is the exact model id the provider expects (e.g. \`gpt-5.4-mini\`, \`claude-sonnet-4-6\`, \`gemini-3-pro\`).
+OpenAI's \`gpt-5.6\` alias resolves to \`gpt-5.6-sol\`. The Pro capability is a
+reasoning mode on GPT-5.6 rather than a separate model id. Use \`gpt-5.6-terra\`
+for a balanced default and \`gpt-5.6-luna\` for high-volume, cost-sensitive
+work.
 
 ## Common model controls
 
@@ -50,13 +63,11 @@ selected model supports them:
 
 \`\`\`yaml
 model:
-  provider: openai
-  name: gpt-5.4
+  provider: mistral
+  name: mistral-small-2603
   temperature: 0.2
   maxTokens: 4096
   topP: 0.95
-  presencePenalty: 0
-  frequencyPenalty: 0
   stopSequences: ["<END>"]
   seed: 42
   maxRetries: 2
@@ -65,6 +76,17 @@ model:
 Unsupported settings may be ignored or reported as provider warnings. The
 normalized run result records the requested provider/model, the actual model
 reported by the provider, finish reason, response id, warnings, and usage.
+
+Model-specific rules matter on the newest releases:
+
+- Claude Sonnet 5 uses adaptive thinking and rejects non-default
+  \`temperature\`, \`topP\`, or \`topK\`.
+- Gemini 3.6 Flash and Gemini 3.5 Flash-Lite deprecate the sampling controls
+  \`temperature\`, \`topP\`, and \`topK\`.
+- Groq retired \`llama-3.1-8b-instant\` and \`llama-3.3-70b-versatile\` on
+  2026-08-16; use its GPT-OSS production routes.
+- DeepSeek retired the legacy \`deepseek-chat\` and \`deepseek-reasoner\`
+  aliases on 2026-07-24; use a DeepSeek V4 id.
 
 ## Provider-scoped options
 
@@ -75,7 +97,7 @@ settings to Anthropic.
 \`\`\`yaml
 model:
   provider: openai
-  name: gpt-5.4
+  name: gpt-5.6-terra
   providerOptions:
     openai:
       reasoningEffort: medium
@@ -85,12 +107,12 @@ model:
 \`\`\`yaml
 model:
   provider: anthropic
-  name: claude-sonnet-4-6
+  name: claude-sonnet-5
   providerOptions:
     anthropic:
       thinking:
-        type: enabled
-        budgetTokens: 2048
+        type: adaptive
+      effort: medium
 \`\`\`
 
 The inner keys are passed to the selected AI SDK provider. Validate them against
@@ -103,13 +125,9 @@ manifests should use \`providerOptions\`.
 
 ## OpenRouter — one key, hundreds of models
 
-[OpenRouter](https://openrouter.ai) is a meta-provider that proxies to virtually every commercial and open-source model behind a single API key. Use it when you want to:
-
-- Access **open-source models** (Llama, Mistral, DeepSeek, Qwen, …) without standing up your own inference.
-- Try many models without juggling per-provider API keys.
-- Take advantage of OpenRouter's routing, fallbacks, and unified billing.
-
-Set the key and reference any OpenRouter model by its slug (\`<author>/<model>\`):
+[OpenRouter](https://openrouter.ai) proxies commercial and open-source models
+behind a single API key. Set the key and reference a current model by its
+\`<author>/<model>\` slug:
 
 \`\`\`bash
 export OPENROUTER_API_KEY=sk-or-...
@@ -118,40 +136,51 @@ export OPENROUTER_API_KEY=sk-or-...
 \`\`\`yaml
 model:
   provider: openrouter
-  name: anthropic/claude-sonnet-4
+  name: anthropic/claude-sonnet-5
 \`\`\`
 
 \`\`\`yaml
 model:
   provider: openrouter
-  name: meta-llama/llama-3.3-70b-instruct
+  name: google/gemini-3.6-flash
 \`\`\`
 
 \`\`\`yaml
 model:
   provider: openrouter
-  name: deepseek/deepseek-chat
+  name: deepseek/deepseek-v4-pro
 \`\`\`
 
-Free-tier models are available via the \`:free\` suffix (subject to OpenRouter's rate limits):
-
-\`\`\`yaml
-model:
-  provider: openrouter
-  name: meta-llama/llama-3.3-70b-instruct:free
-\`\`\`
-
-OpenRouter reports the per-request USD cost on every response, so traces in the UI show actual spend instead of an estimate.
+OpenRouter reports the per-request USD cost on every response, so traces in the
+UI show actual spend instead of a static estimate.
 
 ### Attribution
 
-By default, requests through OpenRouter are attributed to your app with the headers \`HTTP-Referer: https://agntz.co\` and \`X-Title: agntz\` (used by OpenRouter's public rankings). Override via the provider's stored \`config\`:
+By default, requests through OpenRouter are attributed to your app with the
+headers \`HTTP-Referer: https://agntz.co\` and \`X-Title: agntz\`. Override them
+through the provider's stored \`config\`:
 
 \`\`\`json
 { "referer": "https://your-app.com", "title": "Your App" }
 \`\`\`
 
-## Other providers, custom endpoints
+## Provider model references
 
-Every provider supports a \`baseUrl\` override in its stored config — useful for proxies and OpenAI-compatible gateways. For arbitrary providers not in the table above, supply a custom \`modelProvider\` implementation to \`createRunner\`.
+- [OpenAI models](https://developers.openai.com/api/docs/models)
+- [Anthropic model selection](https://platform.claude.com/docs/en/about-claude/models/choosing-a-model)
+- [Gemini models](https://ai.google.dev/gemini-api/docs/models)
+- [OpenRouter model catalog](https://openrouter.ai/models)
+- [Mistral models](https://docs.mistral.ai/models/overview)
+- [xAI models](https://docs.x.ai/developers/models)
+- [Groq models](https://console.groq.com/docs/models)
+- [DeepSeek updates](https://api-docs.deepseek.com/news/news260424/)
+- [Perplexity Sonar models](https://docs.perplexity.ai/docs/sonar/models)
+- [Cohere models](https://docs.cohere.com/v1/docs/models)
+- [Azure deployment endpoints](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/endpoints)
+
+## Other providers and custom endpoints
+
+Every provider supports a \`baseUrl\` override in its stored config—useful for
+proxies and OpenAI-compatible gateways. For arbitrary providers not in the
+table, supply a custom \`modelProvider\` implementation to \`createRunner\`.
 `;

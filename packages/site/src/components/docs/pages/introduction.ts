@@ -67,7 +67,7 @@ Set the provider API key your agents will use:
 export OPENAI_API_KEY=sk-...
 # or ANTHROPIC_API_KEY=sk-ant-...
 # or GOOGLE_GENERATIVE_AI_API_KEY=...
-# or OPENROUTER_API_KEY=sk-or-...   # 300+ models incl. open-source via one key
+# or OPENROUTER_API_KEY=sk-or-...   # hundreds of models via one key
 \`\`\`
 
 Embedded runtimes call providers directly from your process. Hosted and
@@ -75,8 +75,8 @@ self-hosted clients send run inputs to an Agntz worker, which owns the provider
 credentials and makes the configured model call. **OpenRouter** is available as
 a meta-provider when you want access to many models (Anthropic, Google, Meta,
 DeepSeek, open-source) with a single key — use \`provider: openrouter\` and a
-slug like \`anthropic/claude-sonnet-4\` or
-\`meta-llama/llama-3.3-70b-instruct\`.
+slug like \`anthropic/claude-sonnet-5\` or
+\`deepseek/deepseek-v4-pro\`.
 
 ## Where to go next
 

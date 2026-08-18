@@ -5,6 +5,9 @@ export type Provider =
 	| "mistral"
 	| "groq"
 	| "cohere"
+	| "xai"
+	| "deepseek"
+	| "perplexity"
 	| "openrouter";
 
 export type HarnessSdk = "ts" | "python";

@@ -26,7 +26,7 @@ const STEPS: Step[] = [
 			"id: support-agent",
 			"kind: llm",
 			"model:",
-			"  name: claude-sonnet-4-6",
+			"  name: claude-sonnet-5",
 			"tools: [...]",
 		],
 	},

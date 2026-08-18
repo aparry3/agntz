@@ -812,7 +812,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 				defaults: {
 					model: {
 						provider: process.env.DEFAULT_MODEL_PROVIDER ?? "openai",
-						name: process.env.DEFAULT_MODEL_NAME ?? "gpt-5.4-mini",
+						name: process.env.DEFAULT_MODEL_NAME ?? "gpt-5.6-terra",
 					},
 				},
 				outboundUrlPolicy: opts.outboundUrlPolicy,
@@ -915,7 +915,7 @@ export function createWorkerAPI(opts: WorkerAPIOptions): Hono {
 				defaults: {
 					model: {
 						provider: process.env.DEFAULT_MODEL_PROVIDER ?? "openai",
-						name: process.env.DEFAULT_MODEL_NAME ?? "gpt-5.4-mini",
+						name: process.env.DEFAULT_MODEL_NAME ?? "gpt-5.6-terra",
 					},
 				},
 				outboundUrlPolicy: opts.outboundUrlPolicy,
@@ -4176,7 +4176,7 @@ function normalizeMemoryEntries(value: unknown): MemoryEntry[] {
 function defaultModelConfig(): { provider: string; name: string } {
 	return {
 		provider: process.env.DEFAULT_MODEL_PROVIDER ?? "openai",
-		name: process.env.DEFAULT_MODEL_NAME ?? "gpt-5.4-mini",
+		name: process.env.DEFAULT_MODEL_NAME ?? "gpt-5.6-terra",
 	};
 }
 
@@ -4698,7 +4698,7 @@ async function resolveRunnerAndManifest(
 	const defaults = {
 		model: {
 			provider: process.env.DEFAULT_MODEL_PROVIDER ?? "openai",
-			name: process.env.DEFAULT_MODEL_NAME ?? "gpt-5.4-mini",
+			name: process.env.DEFAULT_MODEL_NAME ?? "gpt-5.6-terra",
 		},
 	};
 

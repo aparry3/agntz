@@ -27,7 +27,7 @@ export { listEvalRunsInProcess } from "@agntz/contracts";
 const DEFAULT_PASS_THRESHOLD = 0.7;
 const DEFAULT_JUDGE_MODEL: ModelConfig = {
 	provider: "openai",
-	name: "gpt-5.4-mini",
+	name: "gpt-5.6-terra",
 };
 
 export interface RunEvalOptions {

@@ -17,8 +17,7 @@ kind: llm
 
 model:
   provider: openai
-  name: gpt-5.4-mini
-  temperature: 0.7
+  name: gpt-5.6-terra
 
 instruction: |
   You are a friendly, helpful assistant. Answer the user's question clearly and concisely.
@@ -129,7 +128,7 @@ steps:
   - agent:
       id: summarizer
       kind: llm
-      model: { provider: openai, name: gpt-5.4 }
+      model: { provider: openai, name: gpt-5.6-sol }
       instruction: |
         Summarize this research: {{researcher}}
       outputSchema:

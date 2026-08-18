@@ -32,7 +32,7 @@ kind: llm
 
 model:
   provider: anthropic
-  name: claude-sonnet-4-6
+  name: claude-sonnet-5
 
 instruction: |
   You are a support agent. Use memory to

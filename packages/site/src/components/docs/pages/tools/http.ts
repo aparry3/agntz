@@ -125,7 +125,7 @@ tools:
       Authorization: "Bearer {{secrets.OPENAI_KEY}}"
     body_type: json
     body:
-      model: "gpt-5.4"
+      model: "gpt-5.6-sol"
       messages: "{{messages}}"
 \`\`\`
 

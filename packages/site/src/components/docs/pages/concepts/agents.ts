@@ -23,8 +23,7 @@ inputSchema:                      # optional — what the agent expects
 
 model:                            # required for kind: llm
   provider: openai
-  name: gpt-5.4-nano
-  temperature: 0
+  name: gpt-5.6-luna
 
 instruction: |                    # required for kind: llm — the system prompt
   Analyze the sentiment of the following text and respond with a JSON object.

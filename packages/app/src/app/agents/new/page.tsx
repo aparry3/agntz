@@ -31,7 +31,7 @@ kind: llm
 
 model:
   provider: openai
-  name: gpt-5.4
+  name: gpt-5.6-sol
 
 instruction: |
   You are a helpful assistant.
@@ -45,7 +45,7 @@ kind: llm
 
 model:
   provider: openai
-  name: gpt-5.4
+  name: gpt-5.6-sol
 
 inputSchema:
   question: string
@@ -61,7 +61,7 @@ kind: llm
 
 model:
   provider: openai
-  name: gpt-5.4
+  name: gpt-5.6-sol
 
 instruction: |
   You are a helpful assistant with access to tools.
@@ -79,7 +79,7 @@ steps:
       kind: llm
       model:
         provider: openai
-        name: gpt-5.4
+        name: gpt-5.6-sol
       instruction: |
         Plan the work for {{topic}}.
 
@@ -88,7 +88,7 @@ steps:
       kind: llm
       model:
         provider: openai
-        name: gpt-5.4
+        name: gpt-5.6-sol
       instruction: |
         Execute the plan: {{planner.output}}
 `,

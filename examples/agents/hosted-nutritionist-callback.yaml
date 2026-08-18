@@ -3,7 +3,7 @@ kind: llm
 name: Hosted nutritionist with application callbacks
 model:
   provider: openai
-  name: gpt-5.4
+  name: gpt-5.6-sol
 instruction: |
   Help the user find recipes. Use find_recipes when their request needs
   application data.
