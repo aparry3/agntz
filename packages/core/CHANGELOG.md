@@ -1,5 +1,12 @@
 # @agntz/core
 
+## 0.5.1
+
+### Patch Changes
+
+- 0830de8: Pass agent system prompts through the AI SDK 7 `instructions` option so
+  standard and streaming invocations no longer fail prompt validation.
+
 ## 0.5.0
 
 ### Minor Changes
