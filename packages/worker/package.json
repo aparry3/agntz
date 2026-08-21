@@ -39,14 +39,14 @@
     "@agntz/memrez": "workspace:*",
     "@agntz/stores": "workspace:*",
     "@ai-sdk/openai": "^4.0.0",
-    "@aws-sdk/client-s3": "^3.1097.0",
-    "@hono/node-server": "^1.19.13",
-    "ai": "^7.0.0",
-    "dotenv": "^16.5.0",
-    "hono": "^4.12.29",
-    "pg": "^8.20.0",
-    "yaml": "^2.8.0",
-    "zod": "^3.25.0"
+    "@aws-sdk/client-s3": "^3.1113.0",
+    "@hono/node-server": "^2.1.1",
+    "ai": "^7.0.67",
+    "dotenv": "^17.4.2",
+    "hono": "^4.13.3",
+    "pg": "^8.23.0",
+    "yaml": "^2.9.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",
