@@ -58,13 +58,13 @@
     }
   },
   "devDependencies": {
-    "@biomejs/biome": "^1.9.0",
-    "@types/node": "^22.0.0",
+    "@biomejs/biome": "^2.5.9",
+    "@types/node": "^26.2.0",
     "better-sqlite3": "^13.0.3",
     "pg": "^8.20.0",
     "tsup": "^8.5.0",
-    "typescript": "^5.9.0",
-    "vitest": "^3.2.0"
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
   },
   "keywords": [
     "agntz",
