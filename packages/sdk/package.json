@@ -51,8 +51,8 @@
     "access": "public"
   },
   "dependencies": {
-    "yaml": "^2.8.0",
-    "zod": "^3.25.0",
+    "yaml": "^2.9.0",
+    "zod": "^4.4.3",
     "@agntz/core": "workspace:*",
     "@agntz/client": "workspace:*",
     "@agntz/stores": "workspace:*"
